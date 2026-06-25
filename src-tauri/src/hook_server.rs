@@ -1,4 +1,5 @@
 use crate::event_bus::{self, HookEvent, PermissionDecision};
+use crate::session_store::SessionStore;
 use http_body_util::{BodyExt, Full};
 use hyper::body::Bytes;
 use hyper::server::conn::http1;
@@ -108,6 +109,9 @@ async fn handle_event(
     app_handle: tauri::AppHandle,
     pending: PendingMap,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
+    // Extract query params before consuming the body
+    let query_string = req.uri().query().unwrap_or("").to_string();
+
     // Read the request body (JSON from hook script)
     let body = match req.collect().await {
         Ok(collected) => collected.to_bytes(),
@@ -139,6 +143,24 @@ async fn handle_event(
 
     let event_id = Uuid::new_v4().to_string();
 
+    // Determine client type from query param or payload
+    let client_type = query_string
+        .split('&')
+        .find_map(|pair| {
+            let mut kv = pair.splitn(2, '=');
+            match (kv.next(), kv.next()) {
+                (Some("client"), Some(v)) => Some(v.to_string()),
+                _ => None,
+            }
+        })
+        .or_else(|| {
+            payload
+                .get("client_type")
+                .and_then(|v| v.as_str())
+                .map(String::from)
+        })
+        .unwrap_or_else(|| "claude-code".to_string());
+
     let hook_event = HookEvent {
         id: event_id.clone(),
         hook_event_name: hook_event_name.clone(),
@@ -155,9 +177,17 @@ async fn handle_event(
             .get("cwd")
             .and_then(|v| v.as_str())
             .map(String::from),
+        client_type,
         payload: payload.clone(),
         timestamp: chrono::Utc::now().to_rfc3339(),
     };
+
+    // Update session store
+    if let Some(store) = app_handle.try_state::<Arc<std::sync::Mutex<SessionStore>>>() {
+        if let Ok(mut store) = store.lock() {
+            store.update_from_event(&hook_event);
+        }
+    }
 
     // Emit event to frontend
     event_bus::emit_hook_event(&app_handle, &hook_event);

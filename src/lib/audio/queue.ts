@@ -10,10 +10,26 @@ export class AudioQueue {
   private currentIndex = 0;
   private player: AudioPlayer;
   private state: AudioQueueState = "idle";
+  private stateCallback: ((state: AudioQueueState) => void) | null = null;
+  private chunkCallback: ((chunk: AudioChunk, index: number) => void) | null =
+    null;
 
   constructor() {
     this.player = new AudioPlayer();
     this.player.setEndedCallback(() => this.playNext());
+  }
+
+  onStateChange(cb: (state: AudioQueueState) => void): void {
+    this.stateCallback = cb;
+  }
+
+  onChunkPlay(cb: (chunk: AudioChunk, index: number) => void): void {
+    this.chunkCallback = cb;
+  }
+
+  private setState(newState: AudioQueueState): void {
+    this.state = newState;
+    this.stateCallback?.(newState);
   }
 
   get length(): number {
@@ -42,7 +58,7 @@ export class AudioQueue {
 
   pause(): void {
     this.player.pause();
-    this.state = "paused";
+    this.setState("paused");
   }
 
   skip(): void {
@@ -51,7 +67,7 @@ export class AudioQueue {
     if (this.currentIndex < this.queue.length) {
       this.playCurrent();
     } else {
-      this.state = "ended";
+      this.setState("ended");
     }
   }
 
@@ -59,16 +75,17 @@ export class AudioQueue {
     this.player.stop();
     this.queue = [];
     this.currentIndex = 0;
-    this.state = "idle";
+    this.setState("idle");
   }
 
   private async playCurrent(): Promise<void> {
     const chunk = this.queue[this.currentIndex];
     if (!chunk) {
-      this.state = "ended";
+      this.setState("ended");
       return;
     }
-    this.state = "playing";
+    this.setState("playing");
+    this.chunkCallback?.(chunk, this.currentIndex);
     try {
       await this.player.play(chunk.buffer);
     } catch (e) {
@@ -82,7 +99,7 @@ export class AudioQueue {
     if (this.currentIndex < this.queue.length) {
       this.playCurrent();
     } else {
-      this.state = "ended";
+      this.setState("ended");
     }
   }
 }

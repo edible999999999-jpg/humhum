@@ -1,374 +1,460 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import type { AppConfig } from "@/types";
+import { PetMascot } from "../Pet/PetMascot";
+import { VOICE_PRESETS, DEFAULT_VOICE } from "./voicePresets";
 
 interface SettingsPanelProps {
   onClose: () => void;
 }
 
-/**
- * Settings panel for configuring DevPod.
- * Includes API key management, voice selection, and hook installation.
- */
+const LANG_TO_STT: Record<string, string> = { zh: "zh-CN", en: "en-US" };
+
 export function SettingsPanel({ onClose }: SettingsPanelProps) {
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [activeTab, setActiveTab] = useState<"general" | "voice" | "hooks">(
-    "general"
-  );
-  const [message, setMessage] = useState<{
-    type: "success" | "error";
-    text: string;
-  } | null>(null);
+  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [hookStatus, setHookStatus] = useState<Record<string, boolean>>({});
+  const [hookLoading, setHookLoading] = useState<Record<string, boolean>>({});
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [clients, setClients] = useState<Array<{ id: string; name: string }>>([]);
 
-  // Load config on mount
   useEffect(() => {
     (async () => {
       try {
-        const { invoke } = await import("@tauri-apps/api/core");
-        const cfg = (await invoke("get_config")) as AppConfig;
-        setConfig(cfg);
+        const [cfg, status, clientList] = await Promise.all([
+          invoke<AppConfig>("get_config"),
+          invoke<Record<string, boolean>>("check_hooks_status"),
+          invoke<Array<{ id: string; name: string }>>("get_supported_clients"),
+        ]);
+        setConfig(cfg as AppConfig);
+        setHookStatus(status as Record<string, boolean>);
+        setClients(clientList as Array<{ id: string; name: string }>);
       } catch (e) {
-        console.error("Failed to load config:", e);
+        console.error("Failed to load settings:", e);
       } finally {
         setLoading(false);
       }
     })();
   }, []);
 
-  const handleSave = async () => {
+  const handleSave = useCallback(async () => {
     if (!config) return;
     setSaving(true);
     setMessage(null);
     try {
-      const { invoke } = await import("@tauri-apps/api/core");
       await invoke("save_config", { newConfig: config });
-      setMessage({ type: "success", text: "Settings saved!" });
+      setMessage({ type: "success", text: "已保存 ~" });
+      setTimeout(() => setMessage(null), 3000);
     } catch (e) {
-      setMessage({ type: "error", text: `Failed to save: ${e}` });
+      setMessage({ type: "error", text: `保存失败: ${e}` });
     } finally {
       setSaving(false);
     }
-  };
+  }, [config]);
 
-  const handleInstallHooks = async () => {
-    try {
-      const { invoke } = await import("@tauri-apps/api/core");
-      const result = (await invoke("install_hooks")) as string;
-      setMessage({ type: "success", text: result });
-    } catch (e) {
-      setMessage({ type: "error", text: `Hook install failed: ${e}` });
-    }
-  };
+  const updateConfig = useCallback(
+    (updater: (prev: AppConfig) => AppConfig) => {
+      setConfig((prev) => (prev ? updater(prev) : prev));
+    },
+    []
+  );
 
-  const handleUninstallHooks = async () => {
-    try {
-      const { invoke } = await import("@tauri-apps/api/core");
-      const result = (await invoke("uninstall_hooks")) as string;
-      setMessage({ type: "success", text: result });
-    } catch (e) {
-      setMessage({ type: "error", text: `Hook uninstall failed: ${e}` });
-    }
-  };
+  const handleHookToggle = useCallback(
+    async (clientId: string, installed: boolean) => {
+      setHookLoading((p) => ({ ...p, [clientId]: true }));
+      try {
+        if (installed) {
+          await invoke("uninstall_hooks_for_client", { clientId });
+          setHookStatus((p) => ({ ...p, [clientId]: false }));
+        } else {
+          await invoke("install_hooks_for_client", { clientId });
+          setHookStatus((p) => ({ ...p, [clientId]: true }));
+        }
+      } catch (e) {
+        setMessage({ type: "error", text: `Hook 操作失败: ${e}` });
+      } finally {
+        setHookLoading((p) => ({ ...p, [clientId]: false }));
+      }
+    },
+    []
+  );
 
   if (loading || !config) {
     return (
-      <div className="absolute inset-0 bg-slate-900/95 backdrop-blur-lg flex items-center justify-center no-drag z-50">
-        <p className="text-slate-400 text-sm">Loading settings...</p>
+      <div className="w-full h-full flex items-center justify-center settings-panel">
+        <div className="flex flex-col items-center gap-3">
+          <PetMascot state="processing" size={48} />
+          <p className="text-white/40 text-xs animate-pulse">加载中...</p>
+        </div>
       </div>
     );
   }
 
+  const voiceOptions = VOICE_PRESETS[config.tts.provider] ?? [];
+  const connectedCount = Object.values(hookStatus).filter(Boolean).length;
+
   return (
-    <div className="absolute inset-0 bg-slate-900/95 backdrop-blur-lg flex flex-col no-drag z-50">
+    <div className="w-full h-full flex flex-col settings-panel">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
-        <h2 className="text-sm font-semibold text-white">Settings</h2>
+      <header className="flex items-center gap-3 px-5 py-4 border-b border-white/[0.06]">
+        <div className="kawaii-avatar-ring">
+          <PetMascot state="idle" size={32} />
+        </div>
+        <div>
+          <h1 className="text-base font-bold text-white/90 tracking-wide">DevPod</h1>
+          <p className="text-[10px] text-white/35 -mt-0.5">你的 AI 编程伴侣</p>
+        </div>
+        <div className="flex-1" />
         <button
           onClick={onClose}
-          className="text-slate-400 hover:text-white text-sm transition-colors"
+          className="kawaii-close-btn"
+          aria-label="Close"
         >
-          ✕
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
+            <path d="M1.5 0.5L5 4L8.5 0.5L9.5 1.5L6 5L9.5 8.5L8.5 9.5L5 6L1.5 9.5L0.5 8.5L4 5L0.5 1.5L1.5 0.5Z" />
+          </svg>
         </button>
-      </div>
+      </header>
 
-      {/* Tabs */}
-      <div className="flex border-b border-white/10">
-        {(["general", "voice", "hooks"] as const).map((tab) => (
+      {/* Scrollable content */}
+      <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4 scrollbar-thin">
+
+        {/* Voice — the star section */}
+        <KawaiiCard icon="~" title="音色选择" subtitle="让伴侣的声音更适合你">
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-2">
+              {(["edge", "openai", "elevenlabs"] as const).map((p) => (
+                <button
+                  key={p}
+                  onClick={() => {
+                    const defaultVoice = DEFAULT_VOICE[p] ?? "";
+                    updateConfig((c) => ({
+                      ...c,
+                      tts: { ...c.tts, provider: p, voice: defaultVoice },
+                    }));
+                  }}
+                  className={`kawaii-chip ${config.tts.provider === p ? "active" : ""}`}
+                >
+                  {p === "edge" && "Edge (免费)"}
+                  {p === "openai" && "OpenAI"}
+                  {p === "elevenlabs" && "ElevenLabs"}
+                </button>
+              ))}
+            </div>
+
+            <div>
+              <label className="kawaii-label">音色</label>
+              {voiceOptions.length > 0 ? (
+                <select
+                  value={config.tts.voice}
+                  onChange={(e) =>
+                    updateConfig((c) => ({ ...c, tts: { ...c.tts, voice: e.target.value } }))
+                  }
+                  className="kawaii-input kawaii-select"
+                >
+                  {voiceOptions.map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.label}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  value={config.tts.voice}
+                  onChange={(e) =>
+                    updateConfig((c) => ({ ...c, tts: { ...c.tts, voice: e.target.value } }))
+                  }
+                  placeholder="Voice ID"
+                  className="kawaii-input"
+                />
+              )}
+            </div>
+
+            <div>
+              <label className="kawaii-label">
+                语速
+                <span className="kawaii-badge ml-2">{config.tts.speed.toFixed(1)}x</span>
+              </label>
+              <input
+                type="range"
+                min="0.5"
+                max="2.0"
+                step="0.1"
+                value={config.tts.speed}
+                onChange={(e) =>
+                  updateConfig((c) => ({
+                    ...c,
+                    tts: { ...c.tts, speed: parseFloat(e.target.value) },
+                  }))
+                }
+                className="kawaii-slider w-full"
+              />
+            </div>
+          </div>
+        </KawaiiCard>
+
+        {/* Connections */}
+        <KawaiiCard
+          icon="~"
+          title="连接"
+          subtitle={`${connectedCount} 个助手已连接`}
+        >
+          <div className="space-y-0 divide-y divide-white/[0.04]">
+            {clients.map((client) => {
+              const installed = hookStatus[client.id] ?? false;
+              const isLoading = hookLoading[client.id] ?? false;
+              return (
+                <div
+                  key={client.id}
+                  className="flex items-center justify-between py-2.5 first:pt-0 last:pb-0"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <div
+                      className={`w-2 h-2 rounded-full transition-all duration-300 ${
+                        installed
+                          ? "bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.5)]"
+                          : "bg-white/15"
+                      }`}
+                    />
+                    <span className="text-sm text-white/75">{client.name}</span>
+                  </div>
+                  <button
+                    onClick={() => handleHookToggle(client.id, installed)}
+                    disabled={isLoading}
+                    className={`kawaii-toggle-btn ${installed ? "connected" : ""}`}
+                  >
+                    {isLoading ? (
+                      <span className="inline-block w-3 h-3 border border-current border-t-transparent rounded-full animate-spin" />
+                    ) : installed ? (
+                      "已连接"
+                    ) : (
+                      "连接"
+                    )}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </KawaiiCard>
+
+        {/* API Key — compact */}
+        <KawaiiCard icon="~" title="密钥" subtitle="BYOK，数据不离开本地">
+          <div className="space-y-3">
+            <div>
+              <label className="kawaii-label">OpenAI API Key</label>
+              <input
+                type="password"
+                value={config.api_keys.openai ?? ""}
+                onChange={(e) =>
+                  updateConfig((c) => ({
+                    ...c,
+                    api_keys: { ...c.api_keys, openai: e.target.value || undefined },
+                  }))
+                }
+                placeholder="sk-... (TTS / 摘要 / Whisper)"
+                className="kawaii-input"
+              />
+            </div>
+            <div>
+              <label className="kawaii-label">ElevenLabs (可选)</label>
+              <input
+                type="password"
+                value={config.api_keys.elevenlabs ?? ""}
+                onChange={(e) =>
+                  updateConfig((c) => ({
+                    ...c,
+                    api_keys: { ...c.api_keys, elevenlabs: e.target.value || undefined },
+                  }))
+                }
+                placeholder="高级音质引擎"
+                className="kawaii-input"
+              />
+            </div>
+          </div>
+        </KawaiiCard>
+
+        {/* Advanced — collapsed by default */}
+        <div className="kawaii-advanced-toggle">
           <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={`flex-1 px-3 py-2 text-xs font-medium transition-colors ${
-              activeTab === tab
-                ? "text-indigo-300 border-b-2 border-indigo-400"
-                : "text-slate-400 hover:text-white"
-            }`}
+            onClick={() => setShowAdvanced(!showAdvanced)}
+            className="kawaii-expand-btn"
           >
-            {tab.charAt(0).toUpperCase() + tab.slice(1)}
+            <span className="text-white/40 text-xs">
+              {showAdvanced ? "收起高级选项" : "展开高级选项"}
+            </span>
+            <span
+              className={`text-white/30 text-[10px] transition-transform duration-300 ${
+                showAdvanced ? "rotate-180" : ""
+              }`}
+            >
+              ▼
+            </span>
           </button>
-        ))}
+
+          <div className={`collapsible ${showAdvanced ? "open" : ""}`}>
+            <div className="kawaii-card mt-3 space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="kawaii-label">语言</label>
+                  <select
+                    value={config.ui.language}
+                    onChange={(e) => {
+                      const lang = e.target.value as "zh" | "en";
+                      updateConfig((c) => ({
+                        ...c,
+                        ui: { ...c.ui, language: lang },
+                        stt: { ...c.stt, language: LANG_TO_STT[lang] ?? "zh-CN" },
+                      }));
+                    }}
+                    className="kawaii-input kawaii-select"
+                  >
+                    <option value="zh">中文</option>
+                    <option value="en">English</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="kawaii-label">STT 引擎</label>
+                  <select
+                    value={config.stt.provider}
+                    onChange={(e) =>
+                      updateConfig((c) => ({
+                        ...c,
+                        stt: {
+                          ...c.stt,
+                          provider: e.target.value as AppConfig["stt"]["provider"],
+                        },
+                      }))
+                    }
+                    className="kawaii-input kawaii-select"
+                  >
+                    <option value="web-speech">Web Speech (免费)</option>
+                    <option value="whisper">Whisper</option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="kawaii-label">Edge TTS Bridge URL</label>
+                <input
+                  type="text"
+                  value={config.tts.edge_bridge_url ?? ""}
+                  onChange={(e) =>
+                    updateConfig((c) => ({
+                      ...c,
+                      tts: { ...c.tts, edge_bridge_url: e.target.value || undefined },
+                    }))
+                  }
+                  placeholder="http://localhost:5050"
+                  className="kawaii-input"
+                />
+              </div>
+              <div>
+                <label className="kawaii-label">摘要模型</label>
+                <input
+                  type="text"
+                  value={config.summarizer.model}
+                  onChange={(e) =>
+                    updateConfig((c) => ({
+                      ...c,
+                      summarizer: { ...c.summarizer, model: e.target.value },
+                    }))
+                  }
+                  placeholder="gpt-4o-mini"
+                  className="kawaii-input"
+                />
+              </div>
+              <div>
+                <label className="kawaii-label">Summarizer API Base</label>
+                <input
+                  type="text"
+                  value={config.summarizer.api_base}
+                  onChange={(e) =>
+                    updateConfig((c) => ({
+                      ...c,
+                      summarizer: { ...c.summarizer, api_base: e.target.value },
+                    }))
+                  }
+                  placeholder="https://api.openai.com/v1"
+                  className="kawaii-input"
+                />
+              </div>
+              <div>
+                <label className="kawaii-label">Hook 端口</label>
+                <input
+                  type="number"
+                  value={config.hook_port}
+                  onChange={(e) =>
+                    updateConfig((c) => ({
+                      ...c,
+                      hook_port: parseInt(e.target.value) || 31275,
+                    }))
+                  }
+                  className="kawaii-input"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
-      {/* Tab content */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-thin">
-        {activeTab === "general" && (
-          <GeneralTab config={config} onChange={setConfig} />
-        )}
-        {activeTab === "voice" && (
-          <VoiceTab config={config} onChange={setConfig} />
-        )}
-        {activeTab === "hooks" && (
-          <HooksTab
-            onInstall={handleInstallHooks}
-            onUninstall={handleUninstallHooks}
-          />
-        )}
-      </div>
-
-      {/* Message */}
+      {/* Message toast */}
       {message && (
         <div
-          className={`px-4 py-2 text-xs ${
+          className={`mx-5 mb-2 px-4 py-2.5 rounded-2xl text-xs text-center transition-all animate-bounce-in ${
             message.type === "success"
-              ? "text-emerald-300 bg-emerald-500/10"
-              : "text-red-300 bg-red-500/10"
+              ? "bg-emerald-500/10 text-emerald-300 border border-emerald-500/20"
+              : "bg-red-500/10 text-red-300 border border-red-500/20"
           }`}
         >
           {message.text}
         </div>
       )}
 
-      {/* Footer */}
-      <div className="px-4 py-3 border-t border-white/10">
+      {/* Save button */}
+      <div className="px-5 py-4 border-t border-white/[0.04]">
         <button
           onClick={handleSave}
           disabled={saving}
-          className="w-full px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+          className="kawaii-save-btn"
         >
-          {saving ? "Saving..." : "Save Settings"}
+          {saving ? (
+            <span className="flex items-center gap-2">
+              <span className="inline-block w-3.5 h-3.5 border-2 border-white/60 border-t-transparent rounded-full animate-spin" />
+              保存中
+            </span>
+          ) : (
+            "保存设置"
+          )}
         </button>
       </div>
     </div>
   );
 }
 
-// --- Sub-components ---
+// ===== Kawaii Card Component =====
 
-function GeneralTab({
-  config,
-  onChange,
+function KawaiiCard({
+  icon: _icon,
+  title,
+  subtitle,
+  children,
 }: {
-  config: AppConfig;
-  onChange: (c: AppConfig) => void;
+  icon: string;
+  title: string;
+  subtitle?: string;
+  children: React.ReactNode;
 }) {
   return (
-    <>
-      {/* OpenAI API Key */}
-      <div>
-        <label className="block text-xs text-slate-400 mb-1">
-          OpenAI API Key
-        </label>
-        <input
-          type="password"
-          value={config.api_keys.openai ?? ""}
-          onChange={(e) =>
-            onChange({
-              ...config,
-              api_keys: { ...config.api_keys, openai: e.target.value || undefined },
-            })
-          }
-          placeholder="sk-..."
-          className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
-        />
-        <p className="text-[10px] text-slate-500 mt-1">
-          Used for TTS (tts-1), STT (Whisper), and summarization
-        </p>
+    <section className="kawaii-card">
+      <div className="flex items-center gap-2 mb-3">
+        <h2 className="text-sm font-semibold text-white/85">{title}</h2>
+        {subtitle && (
+          <span className="text-[10px] text-white/30 ml-auto">{subtitle}</span>
+        )}
       </div>
-
-      {/* ElevenLabs API Key */}
-      <div>
-        <label className="block text-xs text-slate-400 mb-1">
-          ElevenLabs API Key
-        </label>
-        <input
-          type="password"
-          value={config.api_keys.elevenlabs ?? ""}
-          onChange={(e) =>
-            onChange({
-              ...config,
-              api_keys: { ...config.api_keys, elevenlabs: e.target.value || undefined },
-            })
-          }
-          placeholder="Your ElevenLabs key"
-          className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
-        />
-        <p className="text-[10px] text-slate-500 mt-1">
-          Optional, for premium voice quality
-        </p>
-      </div>
-
-      {/* Language */}
-      <div>
-        <label className="block text-xs text-slate-400 mb-1">Language</label>
-        <select
-          value={config.ui.language}
-          onChange={(e) =>
-            onChange({
-              ...config,
-              ui: { ...config.ui, language: e.target.value as "zh" | "en" },
-            })
-          }
-          className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-white focus:outline-none focus:border-indigo-500"
-        >
-          <option value="zh">中文</option>
-          <option value="en">English</option>
-        </select>
-      </div>
-    </>
-  );
-}
-
-function VoiceTab({
-  config,
-  onChange,
-}: {
-  config: AppConfig;
-  onChange: (c: AppConfig) => void;
-}) {
-  return (
-    <>
-      {/* TTS Provider */}
-      <div>
-        <label className="block text-xs text-slate-400 mb-1">
-          TTS Provider
-        </label>
-        <select
-          value={config.tts.provider}
-          onChange={(e) =>
-            onChange({
-              ...config,
-              tts: { ...config.tts, provider: e.target.value as AppConfig["tts"]["provider"] },
-            })
-          }
-          className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-white focus:outline-none focus:border-indigo-500"
-        >
-          <option value="edge">Edge TTS (Free)</option>
-          <option value="openai">OpenAI TTS</option>
-          <option value="elevenlabs">ElevenLabs</option>
-        </select>
-      </div>
-
-      {/* Voice name */}
-      <div>
-        <label className="block text-xs text-slate-400 mb-1">Voice</label>
-        <input
-          type="text"
-          value={config.tts.voice}
-          onChange={(e) =>
-            onChange({ ...config, tts: { ...config.tts, voice: e.target.value } })
-          }
-          placeholder="Voice name / ID"
-          className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
-        />
-        <p className="text-[10px] text-slate-500 mt-1">
-          e.g. "alloy" (OpenAI), "zh-CN-XiaoxiaoNeural" (Edge)
-        </p>
-      </div>
-
-      {/* Speed */}
-      <div>
-        <label className="block text-xs text-slate-400 mb-1">
-          Speed: {config.tts.speed.toFixed(1)}x
-        </label>
-        <input
-          type="range"
-          min="0.5"
-          max="2.0"
-          step="0.1"
-          value={config.tts.speed}
-          onChange={(e) =>
-            onChange({
-              ...config,
-              tts: { ...config.tts, speed: parseFloat(e.target.value) },
-            })
-          }
-          className="w-full accent-indigo-500"
-        />
-      </div>
-
-      {/* STT Provider */}
-      <div>
-        <label className="block text-xs text-slate-400 mb-1">
-          STT Provider
-        </label>
-        <select
-          value={config.stt.provider}
-          onChange={(e) =>
-            onChange({
-              ...config,
-              stt: { ...config.stt, provider: e.target.value as AppConfig["stt"]["provider"] },
-            })
-          }
-          className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-sm text-white focus:outline-none focus:border-indigo-500"
-        >
-          <option value="web-speech">Web Speech API (Free)</option>
-          <option value="whisper">OpenAI Whisper</option>
-        </select>
-      </div>
-    </>
-  );
-}
-
-function HooksTab({
-  onInstall,
-  onUninstall,
-}: {
-  onInstall: () => void;
-  onUninstall: () => void;
-}) {
-  return (
-    <>
-      <div className="bg-slate-800/50 rounded-lg p-3">
-        <h4 className="text-xs font-medium text-white mb-2">
-          Claude Code Hook Integration
-        </h4>
-        <p className="text-[11px] text-slate-400 leading-relaxed mb-3">
-          DevPod listens to Claude Code events by installing hook scripts into{" "}
-          <code className="text-indigo-300">~/.claude/settings.json</code>. When
-          Claude Code completes a task or needs confirmation, DevPod will
-          receive the event and generate a podcast-style voice summary.
-        </p>
-        <p className="text-[11px] text-slate-400 leading-relaxed mb-3">
-          Hook events monitored:{" "}
-          <code className="text-amber-300">PermissionRequest</code>,{" "}
-          <code className="text-emerald-300">Stop</code>,{" "}
-          <code className="text-blue-300">TaskCompleted</code>,{" "}
-          <code className="text-purple-300">Notification</code>
-        </p>
-      </div>
-
-      <div className="flex gap-2">
-        <button
-          onClick={onInstall}
-          className="flex-1 px-3 py-2 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 rounded-lg text-sm font-medium transition-colors border border-emerald-500/30"
-        >
-          Install Hooks
-        </button>
-        <button
-          onClick={onUninstall}
-          className="flex-1 px-3 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded-lg text-sm font-medium transition-colors border border-red-500/30"
-        >
-          Uninstall Hooks
-        </button>
-      </div>
-
-      <div className="bg-slate-800/30 rounded-lg p-3 mt-2">
-        <p className="text-[10px] text-slate-500">
-          After installing hooks, restart Claude Code for changes to take
-          effect. You can verify by running <code>/hooks</code> inside Claude
-          Code.
-        </p>
-      </div>
-    </>
+      {children}
+    </section>
   );
 }

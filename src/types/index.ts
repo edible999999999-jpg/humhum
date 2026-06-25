@@ -22,6 +22,7 @@ export interface HookEvent {
   session_id: string;
   transcript_path?: string;
   cwd?: string;
+  client_type: string;
   payload: Record<string, unknown>;
   timestamp: string;
 }
@@ -151,6 +152,7 @@ export interface AppConfig {
     voice: string;
     speed: number;
     model?: string;
+    edge_bridge_url?: string;
   };
   stt: {
     provider: "web-speech" | "whisper";

@@ -1,28 +1,76 @@
 import type { TTSProvider, TTSOptions, Voice } from "@/types";
 
-/**
- * Edge TTS provider — free, no API key needed.
- * Uses Microsoft Edge's TTS service.
- *
- * In production, this will use the `edge-tts-universal` npm package
- * or call a local `openai-edge-tts` bridge server.
- *
- * For the scaffold, this is a placeholder interface.
- */
 export class EdgeTTSProvider implements TTSProvider {
   readonly name = "Edge TTS (Free)";
   readonly providerId = "edge";
 
-  async synthesize(text: string, _options?: TTSOptions): Promise<ArrayBuffer> {
-    // TODO (Phase 2): Implement actual Edge TTS synthesis
-    // Option A: Use edge-tts-universal npm package (server-side via Tauri command)
-    // Option B: Call local openai-edge-tts bridge at http://localhost:5050/v1/audio/speech
-    console.log(`[EdgeTTS] Synthesize: "${text.slice(0, 50)}..." (scaffold)`);
-    throw new Error("Edge TTS not yet implemented — coming in Phase 2");
+  private bridgeUrl: string;
+  private bridgeAvailable: boolean | null = null;
+
+  constructor(bridgeUrl?: string) {
+    this.bridgeUrl = bridgeUrl || "http://localhost:5050";
+  }
+
+  async synthesize(text: string, options?: TTSOptions): Promise<ArrayBuffer> {
+    if (this.bridgeAvailable !== false) {
+      try {
+        const response = await fetch(`${this.bridgeUrl}/v1/audio/speech`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            input: text,
+            voice: options?.voice ?? "zh-CN-XiaoxiaoNeural",
+            model: "tts-1",
+            speed: options?.speed ?? 1.0,
+          }),
+        });
+        if (response.ok) {
+          this.bridgeAvailable = true;
+          return await response.arrayBuffer();
+        }
+      } catch {
+        this.bridgeAvailable = false;
+        console.warn("[EdgeTTS] Bridge server not available, falling back to Web Speech");
+      }
+    }
+
+    return this.synthesizeWebSpeech(text, options);
+  }
+
+  private synthesizeWebSpeech(
+    text: string,
+    options?: TTSOptions
+  ): Promise<ArrayBuffer> {
+    return new Promise((resolve, reject) => {
+      const synth = window.speechSynthesis;
+      if (!synth) {
+        reject(new Error("Speech synthesis not available"));
+        return;
+      }
+
+      const utterance = new SpeechSynthesisUtterance(text);
+      const voiceId = options?.voice ?? "zh-CN-XiaoxiaoNeural";
+      const lang = voiceId.startsWith("zh")
+        ? "zh-CN"
+        : voiceId.startsWith("ja")
+          ? "ja-JP"
+          : "en-US";
+
+      const voices = synth.getVoices();
+      const matched = voices.find((v) => v.lang === lang);
+      if (matched) utterance.voice = matched;
+      utterance.lang = lang;
+      utterance.rate = options?.speed ?? 1.0;
+
+      utterance.onend = () => resolve(createSilentWav());
+      utterance.onerror = (e) =>
+        reject(new Error(`Speech synthesis error: ${e.error}`));
+
+      synth.speak(utterance);
+    });
   }
 
   async getVoices(): Promise<Voice[]> {
-    // Common Edge TTS voices (subset)
     return [
       { id: "zh-CN-XiaoxiaoNeural", name: "Xiaoxiao (中文)", language: "zh", gender: "female", provider: "edge" },
       { id: "zh-CN-YunxiNeural", name: "Yunxi (中文)", language: "zh", gender: "male", provider: "edge" },
@@ -33,7 +81,34 @@ export class EdgeTTSProvider implements TTSProvider {
   }
 
   isAvailable(): boolean {
-    // Edge TTS is always available (needs internet though)
-    return true;
+    return (
+      typeof window !== "undefined" &&
+      (this.bridgeAvailable === true || "speechSynthesis" in window)
+    );
+  }
+}
+
+function createSilentWav(): ArrayBuffer {
+  const buffer = new ArrayBuffer(44);
+  const view = new DataView(buffer);
+  writeString(view, 0, "RIFF");
+  view.setUint32(4, 36, true);
+  writeString(view, 8, "WAVE");
+  writeString(view, 12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, 22050, true);
+  view.setUint32(28, 44100, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeString(view, 36, "data");
+  view.setUint32(40, 0, true);
+  return buffer;
+}
+
+function writeString(view: DataView, offset: number, str: string): void {
+  for (let i = 0; i < str.length; i++) {
+    view.setUint8(offset + i, str.charCodeAt(i));
   }
 }

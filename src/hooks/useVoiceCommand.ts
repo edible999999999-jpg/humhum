@@ -1,6 +1,7 @@
-import { useCallback, useRef } from "react";
+import { useState, useCallback, useRef } from "react";
 import type { VoiceCommand } from "@/types";
 import { VOICE_COMMANDS } from "@/lib/voice-command/commands";
+import { getActiveSTTProvider } from "@/lib/stt";
 
 interface UseVoiceCommandReturn {
   startListening: () => Promise<void>;
@@ -9,50 +10,52 @@ interface UseVoiceCommandReturn {
   lastCommand: VoiceCommand | null;
 }
 
-/**
- * Voice command recognition hook.
- * In Phase 3, this will connect to Web Speech API or Whisper.
- */
 export function useVoiceCommand(
   onCommand: (command: VoiceCommand, text: string) => void
 ): UseVoiceCommandReturn {
-  const isListeningRef = useRef(false);
-  const lastCommandRef = useRef<VoiceCommand | null>(null);
+  const [isListening, setIsListening] = useState(false);
+  const [lastCommand, setLastCommand] = useState<VoiceCommand | null>(null);
+  const onCommandRef = useRef(onCommand);
+  onCommandRef.current = onCommand;
 
   const startListening = useCallback(async () => {
-    if (isListeningRef.current) return;
-    isListeningRef.current = true;
+    if (isListening) return;
 
-    // Phase 3: Implement actual STT
-    // For scaffold, log a placeholder
-    console.log("[VoiceCommand] Listening for commands... (scaffold)");
+    const provider = getActiveSTTProvider();
+    if (!provider || !provider.isAvailable()) {
+      console.warn("[VoiceCommand] No STT provider available");
+      return;
+    }
 
-    // Future implementation:
-    // const recognition = new webkitSpeechRecognition();
-    // recognition.continuous = false;
-    // recognition.lang = 'zh-CN';
-    // recognition.onresult = (event) => {
-    //   const text = event.results[0][0].transcript;
-    //   const command = matchCommand(text);
-    //   onCommand(command, text);
-    // };
-    // recognition.start();
-  }, [onCommand]);
+    provider.onResult((text, isFinal) => {
+      if (!isFinal) return;
+      const command = matchCommand(text);
+      setLastCommand(command);
+      onCommandRef.current(command, text);
+    });
+
+    provider.onEnd(() => {
+      setIsListening(false);
+    });
+
+    provider.onError((err) => {
+      console.error("[VoiceCommand] STT error:", err);
+      setIsListening(false);
+    });
+
+    setIsListening(true);
+    await provider.startListening({ language: "zh-CN", interimResults: true });
+  }, [isListening]);
 
   const stopListening = useCallback(() => {
-    isListeningRef.current = false;
-    console.log("[VoiceCommand] Stopped listening");
+    const provider = getActiveSTTProvider();
+    provider?.stopListening();
+    setIsListening(false);
   }, []);
 
-  return {
-    startListening,
-    stopListening,
-    isListening: isListeningRef.current,
-    lastCommand: lastCommandRef.current,
-  };
+  return { startListening, stopListening, isListening, lastCommand };
 }
 
-/** Match spoken text to a voice command */
 export function matchCommand(text: string): VoiceCommand {
   const normalized = text.toLowerCase().trim();
 

@@ -9,7 +9,7 @@ pub struct HookEvent {
     pub session_id: String,
     pub transcript_path: Option<String>,
     pub cwd: Option<String>,
-    /// Event-specific payload (tool_name, tool_input, etc.)
+    pub client_type: String,
     pub payload: serde_json::Value,
     pub timestamp: String,
 }

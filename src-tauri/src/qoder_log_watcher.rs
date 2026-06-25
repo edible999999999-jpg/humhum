@@ -1,7 +1,9 @@
 use crate::event_bus::{self, HookEvent};
+use crate::session_store::SessionStore;
 use serde_json::Value;
 use std::collections::HashSet;
 use std::fs;
+use std::sync::Arc;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
@@ -184,6 +186,7 @@ fn process_log_line(line: &str, app_handle: &tauri::AppHandle, processed: &mut H
                     .to_string(),
                 transcript_path: None,
                 cwd: None,
+                client_type: "qoderwork".to_string(),
                 payload: serde_json::json!({
                     "source": "qoderwork",
                     "tool_name": tool_name,
@@ -194,6 +197,7 @@ fn process_log_line(line: &str, app_handle: &tauri::AppHandle, processed: &mut H
 
             log::info!("QoderWork permission requested: {}", tool_name);
             event_bus::emit_hook_event(app_handle, &event);
+            update_session(app_handle, &event);
             event_bus::emit_status_change(app_handle, "waiting-confirmation");
         }
 
@@ -224,6 +228,7 @@ fn process_log_line(line: &str, app_handle: &tauri::AppHandle, processed: &mut H
                         .to_string(),
                     transcript_path: None,
                     cwd: None,
+                    client_type: "qoderwork".to_string(),
                     payload: serde_json::json!({
                         "source": "qoderwork",
                         "phase": phase,
@@ -234,6 +239,7 @@ fn process_log_line(line: &str, app_handle: &tauri::AppHandle, processed: &mut H
 
                 log::info!("QoderWork task completed: phase={}", phase);
                 event_bus::emit_hook_event(app_handle, &event);
+            update_session(app_handle, &event);
             } else {
                 log::debug!("QoderWork phase finished (skipped): {}", phase);
             }
@@ -258,6 +264,7 @@ fn process_log_line(line: &str, app_handle: &tauri::AppHandle, processed: &mut H
                     .to_string(),
                 transcript_path: None,
                 cwd: None,
+                client_type: "qoderwork".to_string(),
                 payload: serde_json::json!({
                     "source": "qoderwork",
                     "tool_name": "Bash",
@@ -269,6 +276,7 @@ fn process_log_line(line: &str, app_handle: &tauri::AppHandle, processed: &mut H
 
             log::info!("QoderWork shell started: {}", &command[..command.len().min(50)]);
             event_bus::emit_hook_event(app_handle, &event);
+            update_session(app_handle, &event);
         }
 
         "model.response.completed" => {
@@ -283,6 +291,7 @@ fn process_log_line(line: &str, app_handle: &tauri::AppHandle, processed: &mut H
                     .to_string(),
                 transcript_path: None,
                 cwd: None,
+                client_type: "qoderwork".to_string(),
                 payload: serde_json::json!({
                     "source": "qoderwork",
                     "timestamp": timestamp,
@@ -292,10 +301,20 @@ fn process_log_line(line: &str, app_handle: &tauri::AppHandle, processed: &mut H
 
             log::info!("QoderWork response completed");
             event_bus::emit_hook_event(app_handle, &event);
+            update_session(app_handle, &event);
         }
 
         _ => {
             // Other events — ignore for now
+        }
+    }
+}
+
+fn update_session(app_handle: &tauri::AppHandle, event: &HookEvent) {
+    use tauri::Manager;
+    if let Some(store) = app_handle.try_state::<Arc<std::sync::Mutex<SessionStore>>>() {
+        if let Ok(mut store) = store.lock() {
+            store.update_from_event(event);
         }
     }
 }

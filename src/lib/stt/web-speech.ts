@@ -1,51 +1,108 @@
 import type { STTProvider, STTOptions } from "@/types";
 
-/**
- * Web Speech API provider — free, built into WebView.
- * Uses webkitSpeechRecognition for real-time speech-to-text.
- */
+interface SpeechRecognitionEvent {
+  results: SpeechRecognitionResultList;
+  resultIndex: number;
+}
+
+interface SpeechRecognitionErrorEvent {
+  error: string;
+  message?: string;
+}
+
+interface SpeechRecognitionInstance extends EventTarget {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  onresult: ((event: SpeechRecognitionEvent) => void) | null;
+  onerror: ((event: SpeechRecognitionErrorEvent) => void) | null;
+  onend: (() => void) | null;
+  start(): void;
+  stop(): void;
+  abort(): void;
+}
+
+declare global {
+  interface Window {
+    SpeechRecognition: new () => SpeechRecognitionInstance;
+    webkitSpeechRecognition: new () => SpeechRecognitionInstance;
+  }
+}
+
 export class WebSpeechProvider implements STTProvider {
   readonly name = "Web Speech API";
   readonly providerId = "web-speech";
 
-  // Phase 3: Will be used when Web Speech API is fully integrated
-  private _recognition: unknown = null;
-  private _resultCallback: ((text: string, isFinal: boolean) => void) | null = null;
-  private _errorCallback: ((error: Error) => void) | null = null;
-  private _endCallback: (() => void) | null = null;
+  private recognition: SpeechRecognitionInstance | null = null;
+  private resultCallback: ((text: string, isFinal: boolean) => void) | null =
+    null;
+  private errorCallback: ((error: Error) => void) | null = null;
+  private endCallback: (() => void) | null = null;
+  private finalTranscript = "";
 
   async startListening(options?: STTOptions): Promise<void> {
-    // TODO (Phase 3): Implement Web Speech API
-    // const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    // this.recognition = new SpeechRecognition();
-    // this.recognition.continuous = options?.continuous ?? false;
-    // this.recognition.interimResults = options?.interimResults ?? true;
-    // this.recognition.lang = options?.language ?? 'zh-CN';
-    // this.recognition.onresult = (event) => { ... };
-    // this.recognition.start();
-    console.log(`[WebSpeech] Start listening (scaffold, lang=${options?.language ?? "zh-CN"})`);
+    const SpeechRecognition =
+      window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      throw new Error("Speech recognition not available");
+    }
+
+    this.finalTranscript = "";
+    this.recognition = new SpeechRecognition();
+    this.recognition.continuous = options?.continuous ?? false;
+    this.recognition.interimResults = options?.interimResults ?? true;
+    this.recognition.lang = options?.language ?? "zh-CN";
+
+    this.recognition.onresult = (event: SpeechRecognitionEvent) => {
+      let interim = "";
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const result = event.results.item(i);
+        if (!result) continue;
+        const transcript = result.item(0)?.transcript ?? "";
+        if (result.isFinal) {
+          this.finalTranscript += transcript;
+          this.resultCallback?.(this.finalTranscript, true);
+        } else {
+          interim += transcript;
+          this.resultCallback?.(this.finalTranscript + interim, false);
+        }
+      }
+    };
+
+    this.recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
+      if (event.error === "no-speech" || event.error === "aborted") return;
+      this.errorCallback?.(new Error(`Speech recognition: ${event.error}`));
+    };
+
+    this.recognition.onend = () => {
+      this.endCallback?.();
+    };
+
+    this.recognition.start();
   }
 
   async stopListening(): Promise<string> {
-    // this.recognition?.stop();
-    console.log("[WebSpeech] Stop listening (scaffold)");
-    return "";
+    this.recognition?.stop();
+    this.recognition = null;
+    return this.finalTranscript;
   }
 
   onResult(callback: (text: string, isFinal: boolean) => void): void {
-    this._resultCallback = callback;
+    this.resultCallback = callback;
   }
 
   onError(callback: (error: Error) => void): void {
-    this._errorCallback = callback;
+    this.errorCallback = callback;
   }
 
   onEnd(callback: () => void): void {
-    this._endCallback = callback;
+    this.endCallback = callback;
   }
 
   isAvailable(): boolean {
-    // Check if Web Speech API is available in the WebView
-    return typeof window !== "undefined" && "webkitSpeechRecognition" in window;
+    return (
+      typeof window !== "undefined" &&
+      ("SpeechRecognition" in window || "webkitSpeechRecognition" in window)
+    );
   }
 }

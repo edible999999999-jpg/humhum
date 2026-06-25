@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "identifier": "com.devpod.app",
   "build": {
-    "beforeDevCommand": "pnpm dev",
+    "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "pnpm build",
+    "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -14,10 +14,8 @@
       {
         "label": "main",
         "title": "DevPod",
-        "width": 100,
-        "height": 120,
-        "minWidth": 80,
-        "minHeight": 100,
+        "width": 280,
+        "height": 350,
         "decorations": false,
         "transparent": true,
         "backgroundColor": [0, 0, 0, 0],
@@ -34,7 +32,7 @@
         "label": "settings",
         "title": "DevPod Settings",
         "width": 420,
-        "height": 520,
+        "height": 620,
         "decorations": true,
         "transparent": false,
         "alwaysOnTop": true,

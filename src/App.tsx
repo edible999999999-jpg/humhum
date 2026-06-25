@@ -1,7 +1,8 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { PetView } from "./components/Pet/PetView";
 import { SettingsPanel } from "./components/Settings/SettingsPanel";
+import { initBootstrap } from "./lib/bootstrap";
 
 /**
  * Root App component — detects which window it's in and renders accordingly.
@@ -26,6 +27,25 @@ export default function App() {
 // ===== Pet Window (main) =====
 
 function PetWindow() {
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    initBootstrap()
+      .then(() => setReady(true))
+      .catch((e) => {
+        console.error("[App] Bootstrap failed:", e);
+        setReady(true);
+      });
+  }, []);
+
+  if (!ready) {
+    return (
+      <div className="w-full h-full flex items-center justify-center bg-transparent">
+        <div className="w-8 h-8 rounded-full bg-indigo-500/20 animate-pulse" />
+      </div>
+    );
+  }
+
   return (
     <div className="w-full h-full flex items-center justify-center bg-transparent">
       <PetView />
@@ -37,7 +57,7 @@ function PetWindow() {
 
 function SettingsWindow() {
   return (
-    <div className="w-full h-full bg-slate-900">
+    <div className="w-full h-full settings-panel">
       <SettingsPanel onClose={() => getCurrentWindow().hide()} />
     </div>
   );
