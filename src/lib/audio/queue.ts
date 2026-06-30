@@ -1,10 +1,6 @@
 import type { AudioChunk, AudioQueueState } from "@/types";
 import { AudioPlayer } from "./player";
 
-/**
- * Audio queue — manages ordered playback of TTS audio chunks.
- * Supports enqueue, play, pause, skip, and clear operations.
- */
 export class AudioQueue {
   private queue: AudioChunk[] = [];
   private currentIndex = 0;
@@ -42,7 +38,6 @@ export class AudioQueue {
 
   enqueue(chunk: AudioChunk): void {
     this.queue.push(chunk);
-    // Auto-play if this is the first chunk
     if (this.queue.length === 1 && this.state === "idle") {
       this.playCurrent();
     }
@@ -71,8 +66,8 @@ export class AudioQueue {
     }
   }
 
-  clear(): void {
-    this.player.stop();
+  async clear(): Promise<void> {
+    await this.player.stop();
     this.queue = [];
     this.currentIndex = 0;
     this.setState("idle");

@@ -55,39 +55,6 @@ body {
   background: rgba(168, 139, 250, 0.4);
 }
 
-/* ===== Pet animations ===== */
-
-.waveform-bar {
-  @apply w-1 bg-gradient-to-t from-indigo-500 to-purple-400 rounded-full;
-  animation: waveform 1s ease-in-out infinite;
-}
-
-.waveform-bar:nth-child(1) { animation-delay: 0s; }
-.waveform-bar:nth-child(2) { animation-delay: 0.1s; }
-.waveform-bar:nth-child(3) { animation-delay: 0.2s; }
-.waveform-bar:nth-child(4) { animation-delay: 0.3s; }
-.waveform-bar:nth-child(5) { animation-delay: 0.4s; }
-
-.pulse-ring {
-  @apply absolute inset-0 rounded-full border-2 border-indigo-400;
-  animation: pulse-ring 1.5s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
-}
-
-@keyframes float {
-  0%, 100% { transform: translateY(0px); }
-  50% { transform: translateY(-6px); }
-}
-
-@keyframes pulse-ring {
-  0% { transform: scale(0.8); opacity: 1; }
-  100% { transform: scale(2); opacity: 0; }
-}
-
-@keyframes waveform {
-  0%, 100% { height: 4px; }
-  50% { height: 20px; }
-}
-
 @keyframes toast-in {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
@@ -360,6 +327,72 @@ body {
   box-shadow: 0 4px 16px rgba(99, 102, 241, 0.15);
 }
 
+/* -- Tab navigation -- */
+.kawaii-tab {
+  padding: 6px 16px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.4);
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.25s ease;
+}
+
+.kawaii-tab:hover {
+  color: rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.kawaii-tab.active {
+  color: rgba(196, 181, 253, 1);
+  background: rgba(168, 139, 250, 0.12);
+  border-color: rgba(168, 139, 250, 0.25);
+}
+
+/* -- Stat card -- */
+.kawaii-stat-card {
+  padding: 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(8px);
+  transition: border-color 0.3s;
+}
+
+.kawaii-stat-card:hover {
+  border-color: rgba(168, 139, 250, 0.15);
+}
+
+.kawaii-stat-value {
+  font-size: 22px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.9);
+  font-family: "SF Mono", "Fira Code", monospace;
+  line-height: 1.2;
+}
+
+.kawaii-stat-label {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.35);
+  letter-spacing: 0.5px;
+}
+
+/* -- Progress bar -- */
+.kawaii-progress-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+  display: flex;
+}
+
+.kawaii-progress-segment {
+  height: 100%;
+  transition: width 0.5s ease;
+}
+
 /* -- Expand button -- */
 .kawaii-expand-btn {
   width: 100%;
@@ -404,13 +437,130 @@ body {
   animation: bounce-in 0.35s ease-out;
 }
 
-/* -- Float animation (pet) -- */
-.animate-float {
-  animation: float 3s ease-in-out infinite;
-}
-
 /* -- Option styling -- */
 option {
   background: #1a1a2e;
   color: white;
+}
+
+/* ===== Confirm Card (Ping Island 级别) ===== */
+
+.confirm-card {
+  background: linear-gradient(165deg, rgba(20, 18, 35, 0.97) 0%, rgba(30, 25, 50, 0.97) 100%);
+  border: 1px solid rgba(251, 191, 36, 0.25);
+  border-radius: 16px;
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.5),
+    0 0 0 1px rgba(251, 191, 36, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  overflow: hidden;
+}
+
+.confirm-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 12px 8px;
+}
+
+.confirm-card-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.confirm-card-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: rgba(251, 191, 36, 0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fbbf24;
+}
+
+.confirm-tag {
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.confirm-tag-time {
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.confirm-tag-client {
+  background: rgba(249, 115, 22, 0.15);
+  color: #fb923c;
+}
+
+.confirm-detail-box {
+  padding: 8px 10px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  max-height: 100px;
+  overflow-y: auto;
+}
+
+.confirm-btn {
+  flex: 1;
+  padding: 8px 12px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: 1px solid transparent;
+  text-align: center;
+}
+
+.confirm-btn-deny {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.25);
+  color: #f87171;
+}
+
+.confirm-btn-deny:hover {
+  background: rgba(239, 68, 68, 0.25);
+  box-shadow: 0 0 12px rgba(239, 68, 68, 0.15);
+}
+
+.confirm-btn-always {
+  background: rgba(139, 92, 246, 0.12);
+  border-color: rgba(139, 92, 246, 0.25);
+  color: #a78bfa;
+}
+
+.confirm-btn-always:hover {
+  background: rgba(139, 92, 246, 0.25);
+  box-shadow: 0 0 12px rgba(139, 92, 246, 0.15);
+}
+
+.confirm-btn-allow {
+  background: rgba(52, 211, 153, 0.12);
+  border-color: rgba(52, 211, 153, 0.25);
+  color: #34d399;
+}
+
+.confirm-btn-allow:hover {
+  background: rgba(52, 211, 153, 0.25);
+  box-shadow: 0 0 12px rgba(52, 211, 153, 0.15);
+}
+
+.confirm-btn:active {
+  transform: scale(0.97);
+}
+
+.confirm-kbd {
+  display: inline-block;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  font-family: "SF Mono", monospace;
+  font-size: 9px;
 }

@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>Hum v5 — Cute Jellyfish with Wavy Dome</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #07071a; color: #ddd; font-family: -apple-system, 'PingFang SC', sans-serif; }
+  h1 { text-align: center; padding: 36px 0 4px; font-size: 28px; color: #c4b5fd; letter-spacing: 3px; }
+  .sub { text-align: center; color: #6b7280; font-size: 13px; margin-bottom: 32px; }
+  .sec { max-width: 1100px; margin: 0 auto; padding: 0 24px; }
+  .st { font-size: 12px; text-transform: uppercase; letter-spacing: 2px; color: #4b5563; margin: 48px 0 18px; padding-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+  .ctrls { display: flex; justify-content: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+  .ctrls button { padding: 6px 16px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.03); color: #9ca3af; cursor: pointer; font-size: 12px; transition: all 0.2s; }
+  .ctrls button:hover, .ctrls button.on { background: rgba(139,92,246,0.12); border-color: rgba(139,92,246,0.3); color: #c4b5fd; }
+  .cl { text-align: center; font-size: 10px; color: #374151; text-transform: uppercase; letter-spacing: 1.5px; margin: 14px 0 5px; }
+  .stage { display: flex; justify-content: center; align-items: center; min-height: 420px; position: relative; }
+  .sg { position: absolute; width: 300px; height: 300px; border-radius: 50%; filter: blur(80px); opacity: 0.06; transition: background 0.8s; }
+  .desc { text-align: center; max-width: 520px; margin: 0 auto 40px; padding: 14px 22px; background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05); border-radius: 12px; }
+  .desc h3 { font-size: 14px; color: #c4b5fd; margin-bottom: 5px; }
+  .desc p { font-size: 12px; color: #6b7280; line-height: 1.7; }
+  .desc .tn { font-size: 11px; color: #8b5cf6; margin-top: 7px; font-style: italic; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; margin-bottom: 60px; }
+  .card { background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05); border-radius: 14px; padding: 14px; display: flex; gap: 12px; align-items: center; cursor: pointer; transition: all 0.3s; }
+  .card:hover { border-color: rgba(139,92,246,0.2); }
+  .card.on { border-color: rgba(139,92,246,0.4); }
+  .card .info h4 { font-size: 13px; color: #d1d5db; margin-bottom: 3px; }
+  .card .info .d { font-size: 11px; color: #6b7280; line-height: 1.5; }
+  .card .info .t { font-size: 10px; color: #8b5cf6; margin-top: 4px; }
+  svg.hum { overflow: visible; }
+</style>
+</head>
+<body>
+<h1>HUM</h1>
+<p class="sub">会哼唱的水母 — VibeCoding Desktop Companion v5</p>
+<div class="sec">
+  <div class="st">Interactive Preview</div>
+  <div class="cl">Scene</div>
+  <div class="ctrls" id="btns">
+    <button class="on" data-s="idle">Idle</button>
+    <button data-s="processing">Processing</button>
+    <button data-s="speaking">Speaking</button>
+    <button data-s="inspect">Inspect Agent</button>
+    <button data-s="listening">Listening</button>
+    <button data-s="waiting">Waiting</button>
+    <button data-s="completed">Completed</button>
+    <button data-s="error">Error</button>
+  </div>
+  <div class="stage"><div class="sg" id="sg"></div><div id="ms"></div></div>
+  <div class="desc" id="desc"></div>
+  <div class="st">All Scenes</div>
+  <div class="grid" id="gr"></div>
+</div>
+<script>
+const S={
+  idle:{t:'Idle — 安静漂浮',d:'Hum 有自己的小世界。缓慢漂浮、呼吸、偶尔眨眼，触手像海草飘荡。水母烫波浪形伞顶随呼吸微微起伏。',n:'触手：5根自由飘荡 / 伞顶波浪轻柔律动',g:'#6366f1'},
+  processing:{t:'Processing — 编织代码',d:'AI Agent 正在工作。触手收拢到身前交叉编织，光点在触手间穿梭流动——代码被编织的隐喻。',n:'触手：向中间收拢交叉 / 光点沿触手流动',g:'#3b82f6'},
+  speaking:{t:'Speaking — 语音播报',d:'核心场景！伞盖随语音脉冲收缩，触手张开如喇叭扩音，底部音频波形条跳动，声波从伞盖扩散。',n:'触手：喇叭形张开 / 底部声波条跳动 / 伞盖脉冲',g:'#8b5cf6'},
+  inspect:{t:'Inspect — 查看 Agent',d:'查看连接的 AI Agent。一根触手拎出发光的 Agent 标识球（橙=Claude, 绿=Codex...），展示给用户。',n:'触手：一根卷住 Agent 球展示 / 其余安静飘荡',g:'#f97316'},
+  listening:{t:'Listening — 倾听',d:'用户语音指令。Hum 歪头侧耳，一根触手变麦克风，末端发绿光。底部出现小声波条。',n:'触手：麦克风触手 / 歪头倾听 / 声纹波形',g:'#10b981'},
+  waiting:{t:'Waiting — 确认',d:'需要用户批准权限。停止漂浮，触手紧张卷起，一根举着权限请求卡片。伞顶波浪加速。',n:'触手：紧缩卷曲 / 一根举卡片 / 头顶感叹号',g:'#f59e0b'},
+  completed:{t:'Completed — 完成！',d:'任务成功！伞盖绽放到最大，波浪顶部膨胀，触手向四周散开释放光点烟花，眯眼开心笑。',n:'触手：全部绽放伸展 / 末端释放光点 / 伞盖膨胀',g:'#10b981'},
+  error:{t:'Error — 嗯？？',d:'出错了。Hum 歪头困惑，两根触手互相纠缠打结，一根挠头。螺旋眼+歪嘴+头顶冒问号。可爱不是吓人。',n:'触手：两根打结 / 一根挠头 / 困惑表情',g:'#f472b6'}
+};
+
+function H(sc, sz=180) {
+  const cx=sz/2, u='u'+Math.random().toString(36).slice(2,7);
+  // Very generous dome: big round head, small body ratio = cute
+  const R=sz*0.26;       // dome radius (big!)
+  const dcy=sz*0.28;     // dome center y
+  const dby=dcy+R*0.88;  // dome bottom y (slightly above full radius for the wavy edge)
+
+  const C={
+    idle:      {b1:'#818cf8',b2:'#6366f1',hi:'#a5b4fc',t:'#8b5cf6',g:'#6366f1',e:'#eef2ff',blush:'#c7d2fe'},
+    processing:{b1:'#60a5fa',b2:'#3b82f6',hi:'#93c5fd',t:'#2563eb',g:'#3b82f6',e:'#dbeafe',blush:'#bfdbfe'},
+    speaking:  {b1:'#a78bfa',b2:'#7c3aed',hi:'#c4b5fd',t:'#6d28d9',g:'#8b5cf6',e:'#ede9fe',blush:'#ddd6fe'},
+    inspect:   {b1:'#818cf8',b2:'#6366f1',hi:'#a5b4fc',t:'#8b5cf6',g:'#6366f1',e:'#eef2ff',blush:'#c7d2fe'},
+    listening: {b1:'#34d399',b2:'#059669',hi:'#6ee7b7',t:'#047857',g:'#10b981',e:'#d1fae5',blush:'#a7f3d0'},
+    waiting:   {b1:'#fbbf24',b2:'#d97706',hi:'#fde68a',t:'#b45309',g:'#f59e0b',e:'#fef9c3',blush:'#fde68a'},
+    completed: {b1:'#34d399',b2:'#059669',hi:'#6ee7b7',t:'#047857',g:'#10b981',e:'#d1fae5',blush:'#a7f3d0'},
+    error:     {b1:'#f9a8d4',b2:'#ec4899',hi:'#fbcfe8',t:'#db2777',g:'#f472b6',e:'#fce7f3',blush:'#fbcfe8'},
+  }[sc];
+
+  // ===== WAVY DOME PATH (水母烫!) =====
+  // The dome is a big circle with wavy/scalloped top edge — organic, not hair
+  // We draw the top half as a series of gentle bumps
+  const bumpN = 5; // number of bumps on top
+  const bumpH = R * 0.12; // bump height
+  let topPath = '';
+  // Start from left
+  const startAng = Math.PI * 0.85;  // start angle (left side)
+  const endAng = Math.PI * 0.15;    // end angle (right side)
+  const angRange = startAng - endAng;
+  // Build wavy top arc
+  let pts = [];
+  const steps = bumpN * 2 + 1;
+  for (let i = 0; i <= steps; i++) {
+    const a = startAng - (angRange * i / steps);
+    const bump = (i % 2 === 1) ? bumpH : 0; // alternate bumps
+    const px = cx + (R + bump) * Math.cos(a);
+    const py = dcy - (R + bump) * Math.sin(a);
+    pts.push({x: px, y: py});
+  }
+  // Smooth curve through points
+  topPath = `M ${cx - R * Math.cos(Math.PI*0.15)} ${dby}`;
+  // Left side up
+  topPath += ` C ${cx - R*1.02} ${dby - R*0.3}, ${cx - R*1.02} ${dcy - R*0.3}, ${pts[0].x} ${pts[0].y}`;
+  // Wavy top
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[i], p1 = pts[i+1];
+    const cpx = (p0.x + p1.x) / 2;
+    const cpy = Math.min(p0.y, p1.y) - (i%2===0 ? bumpH*0.5 : -bumpH*0.2);
+    topPath += ` Q ${cpx} ${cpy}, ${p1.x} ${p1.y}`;
+  }
+  // Right side down
+  const lastP = pts[pts.length-1];
+  topPath += ` C ${cx + R*1.02} ${dcy - R*0.3}, ${cx + R*1.02} ${dby - R*0.3}, ${cx + R * Math.cos(Math.PI*0.15)} ${dby}`;
+  // Bottom scalloped edge (oral frills integrated)
+  const frillN = 6;
+  const frillW = R * 2 * 0.85;
+  let bottomPath = '';
+  for (let i = 0; i < frillN; i++) {
+    const fx = cx + frillW/2 - (frillW / frillN) * i;
+    const fx2 = fx - frillW/frillN;
+    const fcy = dby + 4 + (i%2===0 ? 3 : 5);
+    bottomPath += ` Q ${(fx+fx2)/2} ${fcy}, ${fx2} ${dby}`;
+  }
+  topPath += bottomPath + ' Z';
+
+  // Float params
+  const fl = !['waiting','error'].includes(sc);
+  const fd = sc==='processing'?'2.5':sc==='speaking'?'3':'4';
+  const brth = ['idle','listening','inspect'].includes(sc);
+  const pump = sc==='speaking';
+
+  let svg = `<svg width="${sz}" height="${sz}" viewBox="0 0 ${sz} ${sz}" class="hum" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="${u}bg" cx="50%" cy="35%" r="60%">
+      <stop offset="0%" stop-color="${C.b1}" stop-opacity="0.6"/>
+      <stop offset="75%" stop-color="${C.b2}" stop-opacity="0.28"/>
+      <stop offset="100%" stop-color="${C.b2}" stop-opacity="0.08"/>
+    </radialGradient>
+    <radialGradient id="${u}ig" cx="50%" cy="40%" r="40%">
+      <stop offset="0%" stop-color="${C.hi}" stop-opacity="0.5"/>
+      <stop offset="100%" stop-color="${C.hi}" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="${u}tg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="${C.t}" stop-opacity="0.55"/>
+      <stop offset="100%" stop-color="${C.t}" stop-opacity="0.03"/>
+    </linearGradient>
+    <filter id="${u}gl"><feGaussianBlur stdDeviation="12"/></filter>
+    <!-- Highlight shimmer on dome -->
+    <radialGradient id="${u}sh" cx="35%" cy="25%" r="30%">
+      <stop offset="0%" stop-color="white" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="white" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <g>`;
+
+  // Float
+  if(fl) svg+=`<animateTransform attributeName="transform" type="translate" values="0,0;0,-5;0,0" dur="${fd}s" repeatCount="indefinite"/>`;
+  if(sc==='listening') svg+=`<animateTransform attributeName="transform" type="rotate" values="0 ${cx} ${dcy};-7 ${cx} ${dcy};-7 ${cx} ${dcy}" dur="0.5s" fill="freeze" additive="sum"/>`;
+  if(sc==='error') svg+=`<animateTransform attributeName="transform" type="rotate" values="0 ${cx} ${dcy};6 ${cx} ${dcy};6 ${cx} ${dcy}" dur="0.4s" fill="freeze" additive="sum"/>`;
+
+  // Aura
+  svg+=`<ellipse cx="${cx}" cy="${dcy+10}" rx="${R+16}" ry="${R+8}" fill="${C.g}" opacity="0.08" filter="url(#${u}gl)">`;
+  if(sc==='waiting') svg+=`<animate attributeName="opacity" values="0.05;0.16;0.05;0.12;0.05" dur="1.2s" repeatCount="indefinite"/>`;
+  if(sc==='speaking') svg+=`<animate attributeName="opacity" values="0.06;0.16;0.06" dur="1s" repeatCount="indefinite"/>`;
+  if(sc==='completed') svg+=`<animate attributeName="rx" values="${R+16};${R+35};${R+20}" dur="1.5s" fill="freeze"/>`;
+  svg+=`</ellipse>`;
+
+  // Tentacles (behind dome)
+  svg += TT(sc, cx, dby+2, R, sz, C, u);
+
+  // Dome group
+  svg+=`<g>`;
+  if(brth) svg+=`<animateTransform attributeName="transform" type="scale" values="1 1;1.015 0.985;1 1" dur="3.5s" repeatCount="indefinite" additive="sum"/>`;
+  if(pump) svg+=`<animateTransform attributeName="transform" type="scale" values="1 1;1.035 0.965;1 1" dur="0.8s" repeatCount="indefinite" additive="sum"/>`;
+  if(sc==='completed') svg+=`<animateTransform attributeName="transform" type="scale" values="1 1;1.08 0.94;1.02 0.99" dur="1.2s" fill="freeze" additive="sum"/>`;
+
+  // Main dome shape
+  svg+=`<path d="${topPath}" fill="url(#${u}bg)" stroke="${C.b1}" stroke-width="0.5" stroke-opacity="0.2"/>`;
+  // Highlight shimmer
+  svg+=`<ellipse cx="${cx - R*0.2}" cy="${dcy - R*0.35}" rx="${R*0.35}" ry="${R*0.25}" fill="url(#${u}sh)"/>`;
+  // Inner organ glow
+  svg+=`<ellipse cx="${cx}" cy="${dcy+2}" rx="${R*0.4}" ry="${R*0.3}" fill="url(#${u}ig)">`;
+  if(sc==='processing') svg+=`<animate attributeName="opacity" values="0.3;0.7;0.3" dur="2s" repeatCount="indefinite"/>`;
+  svg+=`</ellipse>`;
+  // Inner pattern
+  svg+=`<path d="M ${cx-R*0.25} ${dcy+R*0.15} Q ${cx} ${dcy-R*0.05} ${cx+R*0.25} ${dcy+R*0.15}" fill="none" stroke="${C.hi}" stroke-width="0.4" opacity="0.1"/>`;
+  svg+=`</g>`;
+
+  // Cheek blush
+  if(['idle','completed','listening','speaking','inspect'].includes(sc)){
+    svg+=`<ellipse cx="${cx-R*0.52}" cy="${dcy+R*0.2}" rx="4" ry="2.5" fill="${C.blush}" opacity="0.18"/>`;
+    svg+=`<ellipse cx="${cx+R*0.52}" cy="${dcy+R*0.2}" rx="4" ry="2.5" fill="${C.blush}" opacity="0.18"/>`;
+  }
+
+  // Eyes
+  const ey = dcy - R*0.05;
+  const esp = R*0.3;
+  svg += EE(sc, cx, ey, esp, R, C, u);
+
+  // Mouth
+  const my = dcy + R*0.28;
+  svg += MM(sc, cx, my, C);
+
+  // Extras
+  svg += XX(sc, cx, dcy, R, dby, sz, C, u);
+
+  // Client dot
+  svg+=`<circle cx="${cx+R*0.72}" cy="${dcy-R*0.7}" r="2.2" fill="${C.g}" opacity="0.55"><animate attributeName="opacity" values="0.35;0.75;0.35" dur="2s" repeatCount="indefinite"/></circle>`;
+
+  svg+=`</g></svg>`;
+  return svg;
+}
+
+// ===== TENTACLES =====
+function TT(sc,cx,by,R,sz,C,u) {
+  const tg=`url(#${u}tg)`;
+  const bw=R*0.85;
+
+  if(sc==='idle') {
+    const xs=[-0.7,-0.35,0,0.35,0.7].map(r=>cx+bw*r);
+    const ls=[38,48,52,48,38];
+    return xs.map((x,i)=>{
+      const sw=(i%2===0)?7:-7; const d=4.2+i*0.3; const l=ls[i];
+      return `<path fill="none" stroke="${tg}" stroke-width="2.2" stroke-linecap="round">
+        <animate attributeName="d"
+          values="M ${x} ${by} C ${x+sw*0.4} ${by+l*0.3} ${x+sw} ${by+l*0.55} ${x-sw*0.3} ${by+l};
+                  M ${x} ${by} C ${x-sw*0.4} ${by+l*0.3} ${x-sw} ${by+l*0.55} ${x+sw*0.3} ${by+l};
+                  M ${x} ${by} C ${x+sw*0.4} ${by+l*0.3} ${x+sw} ${by+l*0.55} ${x-sw*0.3} ${by+l}"
+          dur="${d}s" repeatCount="indefinite"/>
+      </path>`;
+    }).join('');
+  }
+
+  if(sc==='processing') {
+    const xs=[-0.55,-0.28,0,0.28,0.55].map(r=>cx+bw*r);
+    return xs.map((x,i)=>{
+      const tx=cx+(i<2?7:i>2?-7:0); const l=32+Math.abs(2-i)*3;
+      return `<path fill="none" stroke="${tg}" stroke-width="2.2" stroke-linecap="round">
+        <animate attributeName="d"
+          values="M ${x} ${by} C ${x} ${by+l*0.35} ${tx+5} ${by+l*0.6} ${tx+3} ${by+l};
+                  M ${x} ${by} C ${(x+tx)/2} ${by+l*0.3} ${tx-5} ${by+l*0.55} ${tx-3} ${by+l-2};
+                  M ${x} ${by} C ${x} ${by+l*0.35} ${tx+5} ${by+l*0.6} ${tx+3} ${by+l}"
+          dur="2s" repeatCount="indefinite"/>
+      </path>`;
+    }).join('') + [0,1,2].map(i=>`<circle r="2" fill="${C.hi}" opacity="0">
+      <animate attributeName="cx" values="${cx-8+i*8};${cx+3-i*3};${cx-8+i*8}" dur="1.8s" repeatCount="indefinite" begin="${i*0.5}s"/>
+      <animate attributeName="cy" values="${by+30};${by+8};${by+30}" dur="1.8s" repeatCount="indefinite" begin="${i*0.5}s"/>
+      <animate attributeName="opacity" values="0;0.8;0" dur="1.8s" repeatCount="indefinite" begin="${i*0.5}s"/>
+    </circle>`).join('');
+  }
+
+  if(sc==='speaking') {
+    const xs=[-0.7,-0.35,0,0.35,0.7].map(r=>cx+bw*r);
+    const exs=[-1.1,-0.55,0,0.55,1.1].map(r=>cx+bw*r);
+    const ls=[30,36,40,36,30];
+    return xs.map((x,i)=>{
+      const ex=exs[i],l=ls[i];
+      return `<path fill="none" stroke="${tg}" stroke-width="2.2" stroke-linecap="round">
+        <animate attributeName="d"
+          values="M ${x} ${by} C ${(x+ex)/2} ${by+l*0.35} ${ex} ${by+l*0.65} ${ex} ${by+l};
+                  M ${x} ${by} C ${(x+ex)/2+2} ${by+l*0.3} ${ex+3} ${by+l*0.6} ${ex+3} ${by+l-2};
+                  M ${x} ${by} C ${(x+ex)/2} ${by+l*0.35} ${ex} ${by+l*0.65} ${ex} ${by+l}"
+          dur="1.5s" repeatCount="indefinite"/>
+      </path>`;
+    }).join('');
+  }
+
+  if(sc==='inspect') {
+    const idle=[-0.65,-0.33,0,0.33].map(r=>cx+bw*r).map((x,i)=>{
+      const sw=(i%2===0)?4:-4;
+      return `<path fill="none" stroke="${tg}" stroke-width="2" stroke-linecap="round" opacity="0.4">
+        <animate attributeName="d"
+          values="M ${x} ${by} C ${x+sw} ${by+12} ${x+sw*1.2} ${by+22} ${x-sw*0.2} ${by+30};
+                  M ${x} ${by} C ${x-sw} ${by+12} ${x-sw*1.2} ${by+22} ${x+sw*0.2} ${by+30};
+                  M ${x} ${by} C ${x+sw} ${by+12} ${x+sw*1.2} ${by+22} ${x-sw*0.2} ${by+30}"
+          dur="${4.5+i*0.3}s" repeatCount="indefinite"/>
+      </path>`;
+    }).join('');
+    const tx=cx+bw*0.65, ox=tx+20, oy=by+16;
+    return idle+`
+      <path fill="none" stroke="${C.t}" stroke-width="2.5" stroke-linecap="round" opacity="0.6">
+        <animate attributeName="d"
+          values="M ${tx} ${by} C ${tx+10} ${by+4} ${ox-4} ${oy-10} ${ox-1} ${oy-5} S ${ox+5} ${oy+3} ${ox} ${oy+7};
+                  M ${tx} ${by} C ${tx+12} ${by+3} ${ox-3} ${oy-11} ${ox} ${oy-6} S ${ox+6} ${oy+2} ${ox+1} ${oy+6};
+                  M ${tx} ${by} C ${tx+10} ${by+4} ${ox-4} ${oy-10} ${ox-1} ${oy-5} S ${ox+5} ${oy+3} ${ox} ${oy+7}"
+          dur="3s" repeatCount="indefinite"/>
+      </path>
+      <circle cx="${ox}" cy="${oy}" r="8" fill="#f97316" opacity="0.6"><animate attributeName="opacity" values="0.4;0.8;0.4" dur="2s" repeatCount="indefinite"/></circle>
+      <circle cx="${ox}" cy="${oy}" r="11" fill="none" stroke="#f97316" stroke-width="0.7" opacity="0.2"><animate attributeName="r" values="11;14;11" dur="2s" repeatCount="indefinite"/></circle>
+      <text x="${ox}" y="${oy+3}" text-anchor="middle" font-size="7" fill="white" font-weight="700" opacity="0.85">C</text>`;
+  }
+
+  if(sc==='listening') {
+    const idle=[-0.6,-0.28,0,0.3].map(r=>cx+bw*r).map((x,i)=>`
+      <path fill="none" stroke="${tg}" stroke-width="2" stroke-linecap="round" opacity="0.4">
+        <animate attributeName="d"
+          values="M ${x} ${by} C ${x+2} ${by+12} ${x-1} ${by+22} ${x+1} ${by+30};
+                  M ${x} ${by} C ${x-1} ${by+12} ${x+2} ${by+22} ${x-1} ${by+30};
+                  M ${x} ${by} C ${x+2} ${by+12} ${x-1} ${by+22} ${x+1} ${by+30}"
+          dur="5s" repeatCount="indefinite"/>
+      </path>`).join('');
+    const mx=cx+bw*0.72, my2=by+34;
+    return idle+`
+      <path fill="none" stroke="${C.t}" stroke-width="2.5" stroke-linecap="round" opacity="0.6">
+        <animate attributeName="d"
+          values="M ${mx} ${by} C ${mx+6} ${by+10} ${mx+9} ${by+20} ${mx+9} ${my2-4};
+                  M ${mx} ${by} C ${mx+7} ${by+8} ${mx+11} ${by+18} ${mx+11} ${my2-6};
+                  M ${mx} ${by} C ${mx+6} ${by+10} ${mx+9} ${by+20} ${mx+9} ${my2-4}"
+          dur="2.5s" repeatCount="indefinite"/>
+      </path>
+      <circle cx="${mx+9}" cy="${my2-3}" r="4" fill="${C.g}" opacity="0.5">
+        <animate attributeName="opacity" values="0.3;0.85;0.3" dur="1s" repeatCount="indefinite"/>
+        <animate attributeName="r" values="3.5;4.5;3.5" dur="1s" repeatCount="indefinite"/>
+      </circle>`;
+  }
+
+  if(sc==='waiting') {
+    const xs=[-0.45,-0.15,0.15,0.45].map(r=>cx+bw*r);
+    const curled=xs.map((x,i)=>{
+      const d=(i<2)?1:-1;
+      return `<path fill="none" stroke="${tg}" stroke-width="2.2" stroke-linecap="round">
+        <animate attributeName="d"
+          values="M ${x} ${by} C ${x+d*6} ${by+5} ${x+d*10} ${by+9} ${x+d*6} ${by+13};
+                  M ${x} ${by} C ${x+d*7} ${by+4} ${x+d*11} ${by+8} ${x+d*7} ${by+12};
+                  M ${x} ${by} C ${x+d*6} ${by+5} ${x+d*10} ${by+9} ${x+d*6} ${by+13}"
+          dur="1.5s" repeatCount="indefinite"/>
+      </path>`;
+    }).join('');
+    const cy2=by+32;
+    return curled+`
+      <path fill="none" stroke="${C.t}" stroke-width="2.2" stroke-linecap="round" opacity="0.5">
+        <animate attributeName="d" values="M ${cx} ${by} C ${cx} ${by+10} ${cx} ${by+18} ${cx} ${cy2-8};M ${cx} ${by} C ${cx+1} ${by+9} ${cx+1} ${by+17} ${cx+1} ${cy2-9};M ${cx} ${by} C ${cx} ${by+10} ${cx} ${by+18} ${cx} ${cy2-8}" dur="1.8s" repeatCount="indefinite"/>
+      </path>
+      <rect x="${cx-11}" y="${cy2-5}" width="22" height="14" rx="3" fill="${C.b2}" opacity="0.3" stroke="${C.g}" stroke-width="0.7" stroke-opacity="0.35">
+        <animate attributeName="opacity" values="0.2;0.4;0.2" dur="1.2s" repeatCount="indefinite"/>
+      </rect>
+      <line x1="${cx-6}" y1="${cy2+1}" x2="${cx+6}" y2="${cy2+1}" stroke="${C.hi}" stroke-width="0.6" opacity="0.35"/>
+      <line x1="${cx-6}" y1="${cy2+4}" x2="${cx+3}" y2="${cy2+4}" stroke="${C.hi}" stroke-width="0.4" opacity="0.2"/>`;
+  }
+
+  if(sc==='completed') {
+    const angs=[-55,-28,0,28,55]; const xs0=[-0.6,-0.3,0,0.3,0.6].map(r=>cx+bw*r);
+    return angs.map((deg,i)=>{
+      const rad=deg*Math.PI/180, l=42;
+      const ex=cx+Math.sin(rad)*l, ey2=by+Math.cos(rad)*l, x=xs0[i];
+      return `<path fill="none" stroke="${tg}" stroke-width="2.2" stroke-linecap="round">
+        <animate attributeName="d" values="M ${x} ${by} C ${x} ${by+8} ${x} ${by+16} ${x} ${by+20};M ${x} ${by} C ${(x+ex)/2} ${by+l*0.3} ${ex+(i%2?2:-2)} ${ey2-6} ${ex} ${ey2};M ${x} ${by} C ${(x+ex)/2} ${by+l*0.3} ${ex+(i%2?2:-2)} ${ey2-6} ${ex} ${ey2}" dur="1.2s" fill="freeze"/>
+      </path>
+      <circle cx="${ex}" cy="${ey2}" r="2" fill="${C.hi}" opacity="0">
+        <animate attributeName="opacity" values="0;0.9;0" dur="1.6s" begin="0.6s"/>
+        <animate attributeName="cy" values="${ey2};${ey2-12}" dur="1.6s" begin="0.6s"/>
+        <animate attributeName="r" values="2;0.3" dur="1.6s" begin="0.6s"/>
+      </circle>`;
+    }).join('');
+  }
+
+  if(sc==='error') {
+    // Droopy sides
+    const droopy=[-0.55,0.55].map(r=>cx+bw*r).map((x,i)=>
+      `<path d="M ${x} ${by} C ${x} ${by+6} ${x+(i?-3:3)} ${by+14} ${x+(i?-5:5)} ${by+20}" fill="none" stroke="${tg}" stroke-width="2" stroke-linecap="round" opacity="0.3"/>`
+    ).join('');
+    // Tangled middle two
+    const t1=cx-bw*0.2, t2=cx+bw*0.2;
+    const tangled=`
+      <path fill="none" stroke="${C.t}" stroke-width="2.2" stroke-linecap="round" opacity="0.45">
+        <animate attributeName="d" values="M ${t1} ${by} C ${t1} ${by+8} ${t1} ${by+16} ${t1} ${by+22};M ${t1} ${by} C ${t1+8} ${by+6} ${t2+5} ${by+12} ${t1-1} ${by+18} S ${t1+5} ${by+24} ${t1+3} ${by+26};M ${t1} ${by} C ${t1+8} ${by+6} ${t2+5} ${by+12} ${t1-1} ${by+18} S ${t1+5} ${by+24} ${t1+3} ${by+26}" dur="0.7s" fill="freeze"/>
+      </path>
+      <path fill="none" stroke="${C.t}" stroke-width="2.2" stroke-linecap="round" opacity="0.45">
+        <animate attributeName="d" values="M ${t2} ${by} C ${t2} ${by+8} ${t2} ${by+16} ${t2} ${by+22};M ${t2} ${by} C ${t2-8} ${by+6} ${t1-5} ${by+12} ${t2+1} ${by+18} S ${t2-3} ${by+22} ${t2-2} ${by+24};M ${t2} ${by} C ${t2-8} ${by+6} ${t1-5} ${by+12} ${t2+1} ${by+18} S ${t2-3} ${by+22} ${t2-2} ${by+24}" dur="0.7s" fill="freeze"/>
+      </path>`;
+    // Scratch head tentacle
+    const sx=cx+bw*0.45;
+    const scratch=`<path fill="none" stroke="${C.t}" stroke-width="2" stroke-linecap="round" opacity="0.45">
+      <animate attributeName="d" values="M ${sx} ${by} C ${sx+4} ${by-3} ${sx+10} ${by-12} ${sx+6} ${by-18};M ${sx} ${by} C ${sx+5} ${by-4} ${sx+11} ${by-11} ${sx+7} ${by-20};M ${sx} ${by} C ${sx+4} ${by-3} ${sx+10} ${by-12} ${sx+6} ${by-18}" dur="1s" repeatCount="indefinite"/>
+    </path>`;
+    return droopy+tangled+scratch;
+  }
+  return '';
+}
+
+// ===== EYES =====
+function EE(sc,cx,ey,sp,R,C,u) {
+  const lx=cx-sp, rx=cx+sp;
+  if(sc==='completed') return `
+    <path d="M ${lx-4} ${ey+1} Q ${lx} ${ey-4.5} ${lx+4} ${ey+1}" fill="none" stroke="${C.e}" stroke-width="2" stroke-linecap="round" opacity="0.9"/>
+    <path d="M ${rx-4} ${ey+1} Q ${rx} ${ey-4.5} ${rx+4} ${ey+1}" fill="none" stroke="${C.e}" stroke-width="2" stroke-linecap="round" opacity="0.9"/>`;
+  if(sc==='error') return `
+    <g opacity="0.8"><circle cx="${lx}" cy="${ey}" r="4" fill="none" stroke="${C.e}" stroke-width="1.2"/><path d="M ${lx-1.5} ${ey-1} A 1.8 1.8 0 1 1 ${lx+2} ${ey+0.5}" fill="none" stroke="${C.e}" stroke-width="1"/></g>
+    <g opacity="0.8"><line x1="${rx-3}" y1="${ey-3}" x2="${rx+3}" y2="${ey+3}" stroke="${C.e}" stroke-width="1.6" stroke-linecap="round"/><line x1="${rx+3}" y1="${ey-3}" x2="${rx-3}" y2="${ey+3}" stroke="${C.e}" stroke-width="1.6" stroke-linecap="round"/></g>`;
+  if(sc==='waiting') return `
+    <circle cx="${lx}" cy="${ey}" r="4.5" fill="${C.e}" opacity="0.85"/><circle cx="${rx}" cy="${ey}" r="4.5" fill="${C.e}" opacity="0.85"/>
+    <circle cx="${lx}" cy="${ey+0.5}" r="2.2" fill="rgba(0,0,0,0.3)"/><circle cx="${rx}" cy="${ey+0.5}" r="2.2" fill="rgba(0,0,0,0.3)"/>`;
+  if(sc==='processing') return `
+    <circle cx="${lx}" cy="${ey}" r="2.8" fill="${C.e}" opacity="0.75"><animate attributeName="cy" values="${ey};${ey-1.5};${ey}" dur="2.5s" repeatCount="indefinite"/></circle>
+    <circle cx="${rx}" cy="${ey}" r="2.8" fill="${C.e}" opacity="0.75"><animate attributeName="cy" values="${ey};${ey-1.5};${ey}" dur="2.5s" repeatCount="indefinite"/></circle>
+    <circle cx="${lx}" cy="${ey}" r="1.3" fill="rgba(0,0,0,0.25)"><animate attributeName="cy" values="${ey};${ey-1.5};${ey}" dur="2.5s" repeatCount="indefinite"/></circle>
+    <circle cx="${rx}" cy="${ey}" r="1.3" fill="rgba(0,0,0,0.25)"><animate attributeName="cy" values="${ey};${ey-1.5};${ey}" dur="2.5s" repeatCount="indefinite"/></circle>`;
+  // Default — big cute eyes with blink
+  return `
+    <circle cx="${lx}" cy="${ey}" r="3.5" fill="${C.e}" opacity="0.85"><animate attributeName="ry" values="3.5;3.5;0.4;3.5;3.5" dur="5s" repeatCount="indefinite" keyTimes="0;0.46;0.5;0.54;1"/></circle>
+    <circle cx="${rx}" cy="${ey}" r="3.5" fill="${C.e}" opacity="0.85"><animate attributeName="ry" values="3.5;3.5;0.4;3.5;3.5" dur="5s" repeatCount="indefinite" keyTimes="0;0.46;0.5;0.54;1"/></circle>
+    <circle cx="${lx+0.3}" cy="${ey+0.5}" r="1.5" fill="rgba(0,0,0,0.28)"/>
+    <circle cx="${rx+0.3}" cy="${ey+0.5}" r="1.5" fill="rgba(0,0,0,0.28)"/>
+    <!-- Eye sparkle -->
+    <circle cx="${lx-1}" cy="${ey-1.2}" r="0.8" fill="white" opacity="0.5"/>
+    <circle cx="${rx-1}" cy="${ey-1.2}" r="0.8" fill="white" opacity="0.5"/>`;
+}
+
+// ===== MOUTH =====
+function MM(sc,cx,my,C) {
+  if(sc==='speaking') return `<ellipse cx="${cx}" cy="${my}" rx="3.5" fill="${C.e}" opacity="0.45"><animate attributeName="ry" values="1;4;1.5;3;1" dur="0.8s" repeatCount="indefinite"/></ellipse>`;
+  if(sc==='completed') return `<path d="M ${cx-6} ${my} Q ${cx} ${my+6} ${cx+6} ${my}" fill="none" stroke="${C.e}" stroke-width="1.5" stroke-linecap="round" opacity="0.65"/>`;
+  if(sc==='error') return `<path d="M ${cx-3} ${my+1} Q ${cx+1} ${my-1} ${cx+4} ${my+2}" fill="none" stroke="${C.e}" stroke-width="1.2" stroke-linecap="round" opacity="0.45"/>`;
+  if(sc==='waiting') return `<ellipse cx="${cx}" cy="${my}" rx="2.5" ry="3.5" fill="${C.e}" opacity="0.3"/>`;
+  if(sc==='processing') return `<line x1="${cx-3.5}" y1="${my}" x2="${cx+3.5}" y2="${my}" stroke="${C.e}" stroke-width="1.2" stroke-linecap="round" opacity="0.3"/>`;
+  return `<path d="M ${cx-4.5} ${my} Q ${cx} ${my+4} ${cx+4.5} ${my}" fill="none" stroke="${C.e}" stroke-width="1.2" stroke-linecap="round" opacity="0.35"/>`;
+}
+
+// ===== EXTRAS =====
+function XX(sc,cx,dcy,R,bby,sz,C,u) {
+  if(sc==='speaking') {
+    const bn=7,bwi=2.2,bg=2.8,tw=bn*bwi+(bn-1)*bg,sx=cx-tw/2,barY=bby+50;
+    let bars='';
+    for(let i=0;i<bn;i++){const x=sx+i*(bwi+bg),dl=(i*0.08).toFixed(2);
+      bars+=`<rect x="${x}" y="${barY}" width="${bwi}" rx="1.1" fill="${C.t}" opacity="0.4">
+        <animate attributeName="height" values="2;10;3;8;2" dur="0.55s" begin="${dl}s" repeatCount="indefinite"/>
+        <animate attributeName="y" values="${barY};${barY-8};${barY-1};${barY-6};${barY}" dur="0.55s" begin="${dl}s" repeatCount="indefinite"/>
+      </rect>`;
+    }
+    let waves=[0,0.5,1].map(d=>`<ellipse cx="${cx}" cy="${dcy}" fill="none" stroke="${C.g}" stroke-width="0.5" opacity="0">
+      <animate attributeName="rx" values="${R*0.8};${R*1.8}" dur="1.5s" begin="${d}s" repeatCount="indefinite"/>
+      <animate attributeName="ry" values="${R*0.6};${R*1.3}" dur="1.5s" begin="${d}s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0.25;0" dur="1.5s" begin="${d}s" repeatCount="indefinite"/>
+    </ellipse>`).join('');
+    return bars+waves;
+  }
+  if(sc==='waiting') return `<text x="${cx}" y="${dcy-R-6}" text-anchor="middle" font-size="15" font-weight="800" fill="${C.g}" opacity="0.75">!<animate attributeName="y" values="${dcy-R-6};${dcy-R-10};${dcy-R-6}" dur="0.8s" repeatCount="indefinite"/></text>`;
+  if(sc==='completed') return [{x:cx-24,y:dcy-R-4,dx:-8,dy:-16},{x:cx+24,y:dcy-R,dx:10,dy:-14},{x:cx-30,y:dcy+R*0.5,dx:-11,dy:-4},{x:cx+30,y:dcy+R*0.4,dx:12,dy:-7},{x:cx,y:dcy-R-8,dx:0,dy:-18}].map((s,i)=>`<circle cx="${s.x}" cy="${s.y}" r="2.2" fill="${C.hi}" opacity="0">
+    <animate attributeName="cx" values="${s.x};${s.x+s.dx}" dur="1.6s" begin="${i*0.12}s"/>
+    <animate attributeName="cy" values="${s.y};${s.y+s.dy}" dur="1.6s" begin="${i*0.12}s"/>
+    <animate attributeName="opacity" values="0;0.85;0" dur="1.6s" begin="${i*0.12}s"/>
+    <animate attributeName="r" values="2.2;0.4" dur="1.6s" begin="${i*0.12}s"/>
+  </circle>`).join('');
+  if(sc==='listening') {
+    const bn=5,bwi=1.5,bg=2.2,tw=bn*bwi+(bn-1)*bg,sx=cx-tw/2,barY=bby+44;
+    return Array.from({length:bn},(_,i)=>{const x=sx+i*(bwi+bg),dl=(i*0.12).toFixed(2);
+      return `<rect x="${x}" y="${barY}" width="${bwi}" rx="0.75" fill="${C.g}" opacity="0.22">
+        <animate attributeName="height" values="1;5;1" dur="1s" begin="${dl}s" repeatCount="indefinite"/>
+        <animate attributeName="y" values="${barY};${barY-4};${barY}" dur="1s" begin="${dl}s" repeatCount="indefinite"/>
+      </rect>`;}).join('');
+  }
+  if(sc==='error') return `<text x="${cx+3}" y="${dcy-R-4}" text-anchor="middle" font-size="14" fill="${C.g}" opacity="0.65" font-weight="600">?<animate attributeName="y" values="${dcy-R-4};${dcy-R-8};${dcy-R-4}" dur="1.5s" repeatCount="indefinite"/></text>`;
+  return '';
+}
+
+// ===== UI =====
+let cur='idle';
+function set(s){
+  cur=s;
+  document.getElementById('ms').innerHTML=H(s,200);
+  const i=S[s];
+  document.getElementById('desc').innerHTML=`<h3>${i.t}</h3><p>${i.d}</p><div class="tn">${i.n}</div>`;
+  document.getElementById('sg').style.background=i.g;
+  document.querySelectorAll('#btns button').forEach(b=>b.classList.toggle('on',b.dataset.s===s));
+  document.querySelectorAll('.card').forEach(c=>c.classList.toggle('on',c.dataset.s===s));
+}
+
+// Build cards
+const gr=document.getElementById('gr');
+Object.entries(S).forEach(([k,v])=>{
+  const c=document.createElement('div');
+  c.className='card'+(k==='idle'?' on':'');
+  c.dataset.s=k;
+  c.onclick=()=>set(k);
+  c.innerHTML=`<div style="flex-shrink:0">${H(k,100)}</div><div class="info"><h4>${v.t}</h4><div class="d">${v.d.slice(0,80)}...</div><div class="t">${v.n}</div></div>`;
+  gr.appendChild(c);
+});
+
+document.querySelectorAll('#btns button').forEach(b=>b.onclick=()=>set(b.dataset.s));
+set('idle');
+
+setInterval(()=>{
+  if(['completed','error'].includes(cur)) document.getElementById('ms').innerHTML=H(cur,200);
+  document.querySelectorAll('.card').forEach(c=>{
+    const s=c.dataset.s;
+    if(['completed','error'].includes(s)) c.querySelector('div').innerHTML=H(s,100);
+  });
+},4000);
+</script>
+</body>
+</html>

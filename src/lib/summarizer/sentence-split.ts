@@ -44,7 +44,7 @@ export class SentenceSplitter {
         const sentence = this.buffer.slice(0, sentenceEnd).trim();
         this.buffer = this.buffer.slice(sentenceEnd);
 
-        if (sentence.length > 0) {
+        if (sentence.length > 1 && /\w|[一-鿿]/.test(sentence)) {
           chunks.push({
             text: sentence,
             index: this.sentenceIndex++,
@@ -80,7 +80,7 @@ export class SentenceSplitter {
   /** Flush any remaining buffer as the final chunk */
   flush(): SentenceChunk | null {
     const remaining = this.buffer.trim();
-    if (remaining.length === 0) return null;
+    if (remaining.length <= 1 || !/\w|[一-鿿]/.test(remaining)) return null;
 
     this.buffer = "";
     return {

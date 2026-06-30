@@ -72,34 +72,59 @@ fn run_watcher(app_handle: tauri::AppHandle) {
     }
 }
 
-/// Find the most recently modified JSONL file in the sessions directory
+/// Find the most recently modified JSONL file in the sessions directory.
+/// Structure: sessions/<workspace>/<session-uuid>/segments/*.jsonl
 fn find_latest_jsonl(log_dir: &Path) -> Option<PathBuf> {
     let mut latest: Option<(SystemTime, PathBuf)> = None;
 
-    if let Ok(entries) = fs::read_dir(log_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                // Check segments subdirectory
-                let segments_dir = path.join("segments");
-                if segments_dir.exists() {
-                    if let Ok(seg_entries) = fs::read_dir(&segments_dir) {
-                        for seg_entry in seg_entries.flatten() {
-                            let seg_path = seg_entry.path();
-                            if seg_path.extension().map(|e| e == "jsonl").unwrap_or(false) {
-                                if let Ok(metadata) = fs::metadata(&seg_path) {
-                                    if let Ok(modified) = metadata.modified() {
-                                        if latest.is_none() || Some(modified) > latest.as_ref().map(|(t, _)| *t) {
-                                            latest = Some((modified, seg_path));
-                                        }
-                                    }
-                                }
+    let check_jsonl = |path: &Path, latest: &mut Option<(SystemTime, PathBuf)>| {
+        if path.extension().map(|e| e == "jsonl").unwrap_or(false) {
+            if let Ok(metadata) = fs::metadata(path) {
+                if let Ok(modified) = metadata.modified() {
+                    if latest.is_none() || Some(modified) > latest.as_ref().map(|(t, _)| *t) {
+                        *latest = Some((modified, path.to_path_buf()));
+                    }
+                }
+            }
+        }
+    };
+
+    if let Ok(workspace_entries) = fs::read_dir(log_dir) {
+        for ws_entry in workspace_entries.flatten() {
+            let ws_path = ws_entry.path();
+            if !ws_path.is_dir() { continue; }
+
+            // Level 2: session UUID dirs inside workspace
+            if let Ok(session_entries) = fs::read_dir(&ws_path) {
+                for sess_entry in session_entries.flatten() {
+                    let sess_path = sess_entry.path();
+                    if !sess_path.is_dir() { continue; }
+
+                    // Check segments/ subdirectory
+                    let segments_dir = sess_path.join("segments");
+                    if segments_dir.exists() {
+                        if let Ok(seg_entries) = fs::read_dir(&segments_dir) {
+                            for seg_entry in seg_entries.flatten() {
+                                check_jsonl(&seg_entry.path(), &mut latest);
+                            }
+                        }
+                    }
+
+                    // Also check if this dir itself has segments/ (2-level structure)
+                    if sess_path.file_name().map(|n| n == "segments").unwrap_or(false) {
+                        if let Ok(seg_entries) = fs::read_dir(&sess_path) {
+                            for seg_entry in seg_entries.flatten() {
+                                check_jsonl(&seg_entry.path(), &mut latest);
                             }
                         }
                     }
                 }
             }
         }
+    }
+
+    if let Some((_, ref path)) = latest {
+        log::debug!("Latest QoderWork log: {:?}", path);
     }
 
     latest.map(|(_, path)| path)

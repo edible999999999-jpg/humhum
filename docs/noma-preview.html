@@ -1,0 +1,974 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>Noma - DevPod Jellyfish Pet Preview</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0a0a1a;
+    color: #e0e0e0;
+    font-family: -apple-system, 'Helvetica Neue', sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+  h1 { text-align: center; padding: 32px 0 8px; font-size: 28px; color: #a5b4fc; letter-spacing: 2px; }
+  .subtitle { text-align: center; color: #6b7280; font-size: 14px; margin-bottom: 40px; }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 32px;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 24px 60px;
+  }
+  .card {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 20px;
+    padding: 32px 24px 24px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    position: relative;
+    backdrop-filter: blur(10px);
+  }
+  .card-label {
+    position: absolute;
+    top: 12px;
+    left: 16px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: #6b7280;
+    font-weight: 600;
+  }
+  .card-desc {
+    margin-top: 20px;
+    font-size: 12px;
+    color: #9ca3af;
+    text-align: center;
+    line-height: 1.6;
+  }
+  .pet-container {
+    width: 140px;
+    height: 180px;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* ===================== JELLYFISH BASE ===================== */
+  .jellyfish {
+    position: relative;
+    width: 80px;
+    height: 120px;
+  }
+
+  /* Glow aura behind */
+  .jf-aura {
+    position: absolute;
+    width: 100px;
+    height: 100px;
+    top: -10px;
+    left: -10px;
+    border-radius: 50%;
+    filter: blur(20px);
+    opacity: 0.3;
+    transition: background 0.8s, opacity 0.8s;
+  }
+
+  /* Bell (dome) */
+  .jf-bell {
+    position: absolute;
+    width: 64px;
+    height: 48px;
+    left: 8px;
+    top: 0;
+    border-radius: 50% 50% 40% 40%;
+    transition: background 0.6s, box-shadow 0.6s;
+    overflow: hidden;
+  }
+  .jf-bell-inner {
+    position: absolute;
+    width: 36px;
+    height: 24px;
+    top: 8px;
+    left: 14px;
+    border-radius: 50%;
+    opacity: 0.3;
+    transition: background 0.6s;
+  }
+
+  /* Oral arms (the frilly bit under the bell) */
+  .jf-oral {
+    position: absolute;
+    top: 42px;
+    left: 20px;
+    width: 40px;
+    height: 12px;
+    display: flex;
+    justify-content: space-between;
+  }
+  .jf-oral-arm {
+    width: 6px;
+    height: 10px;
+    border-radius: 0 0 50% 50%;
+    opacity: 0.6;
+    transition: background 0.6s;
+  }
+
+  /* Tentacles */
+  .jf-tentacles {
+    position: absolute;
+    top: 48px;
+    left: 6px;
+    width: 68px;
+    height: 70px;
+  }
+  .jf-tentacle {
+    position: absolute;
+    width: 2px;
+    border-radius: 0 0 2px 2px;
+    transform-origin: top center;
+    opacity: 0.5;
+    transition: background 0.6s, height 0.6s;
+  }
+
+  /* Eyes */
+  .jf-eyes {
+    position: absolute;
+    top: 22px;
+    left: 20px;
+    width: 40px;
+    display: flex;
+    justify-content: space-between;
+  }
+  .jf-eye {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.85);
+    transition: all 0.3s;
+  }
+  .jf-eye-pupil {
+    width: 3px;
+    height: 3px;
+    border-radius: 50%;
+    background: rgba(0,0,0,0.4);
+    margin: 1.5px auto 0;
+  }
+
+  /* Mouth */
+  .jf-mouth {
+    position: absolute;
+    top: 32px;
+    left: 35px;
+    width: 10px;
+    height: 5px;
+    transition: all 0.3s;
+  }
+
+  /* Particles (for data flow / sparkles) */
+  .jf-particles {
+    position: absolute;
+    width: 80px;
+    height: 120px;
+    top: 0;
+    left: 0;
+    pointer-events: none;
+  }
+  .jf-particle {
+    position: absolute;
+    width: 3px;
+    height: 3px;
+    border-radius: 50%;
+    opacity: 0;
+  }
+
+  /* Light wave rings */
+  .jf-wave {
+    position: absolute;
+    border-radius: 50%;
+    border: 1px solid;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  /* ===================== IDLE STATE ===================== */
+  .state-idle .jellyfish {
+    animation: idle-float 4s ease-in-out infinite;
+  }
+  .state-idle .jf-aura { background: #6366f1; opacity: 0.2; }
+  .state-idle .jf-bell {
+    background: linear-gradient(180deg, rgba(99,102,241,0.4) 0%, rgba(139,92,246,0.25) 100%);
+    box-shadow: 0 0 20px rgba(99,102,241,0.15), inset 0 -4px 12px rgba(99,102,241,0.1);
+    animation: idle-breathe 3.5s ease-in-out infinite;
+  }
+  .state-idle .jf-bell-inner { background: rgba(165,180,252,0.3); }
+  .state-idle .jf-oral-arm { background: rgba(139,92,246,0.4); }
+  .state-idle .jf-tentacle { background: linear-gradient(180deg, rgba(139,92,246,0.5), rgba(139,92,246,0.05)); }
+  .state-idle .jf-tentacle:nth-child(1) { left: 8px; height: 45px; animation: tentacle-sway-1 5s ease-in-out infinite; }
+  .state-idle .jf-tentacle:nth-child(2) { left: 18px; height: 55px; animation: tentacle-sway-2 4.5s ease-in-out infinite 0.3s; }
+  .state-idle .jf-tentacle:nth-child(3) { left: 28px; height: 60px; animation: tentacle-sway-1 5.5s ease-in-out infinite 0.6s; }
+  .state-idle .jf-tentacle:nth-child(4) { left: 38px; height: 55px; animation: tentacle-sway-2 4.8s ease-in-out infinite 0.2s; }
+  .state-idle .jf-tentacle:nth-child(5) { left: 48px; height: 45px; animation: tentacle-sway-1 5.2s ease-in-out infinite 0.8s; }
+  .state-idle .jf-eye { animation: idle-blink 4s ease-in-out infinite; }
+
+  /* Idle mouth — gentle smile */
+  .state-idle .jf-mouth {
+    border-bottom: 1.5px solid rgba(255,255,255,0.4);
+    border-radius: 0 0 50% 50%;
+    height: 3px;
+  }
+
+  /* Idle stretch (every loop via separate element) */
+  .state-idle .jf-bell::after {
+    content: '';
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    border-radius: inherit;
+    background: radial-gradient(ellipse at center, rgba(165,180,252,0.15) 0%, transparent 70%);
+    animation: idle-glow-pulse 8s ease-in-out infinite;
+  }
+
+  /* ===================== PROCESSING STATE ===================== */
+  .state-processing .jellyfish {
+    animation: idle-float 2.5s ease-in-out infinite;
+  }
+  .state-processing .jf-aura { background: #3b82f6; opacity: 0.3; }
+  .state-processing .jf-bell {
+    background: linear-gradient(180deg, rgba(59,130,246,0.45) 0%, rgba(6,182,212,0.3) 100%);
+    box-shadow: 0 0 25px rgba(59,130,246,0.2), inset 0 -4px 12px rgba(59,130,246,0.15);
+    animation: idle-breathe 2s ease-in-out infinite;
+  }
+  .state-processing .jf-bell-inner {
+    background: rgba(147,197,253,0.4);
+    animation: inner-flow 2s linear infinite;
+  }
+  .state-processing .jf-oral-arm { background: rgba(59,130,246,0.5); }
+  /* Tentacles gather inward — "weaving" */
+  .state-processing .jf-tentacle { background: linear-gradient(180deg, rgba(59,130,246,0.6), rgba(6,182,212,0.1)); }
+  .state-processing .jf-tentacle:nth-child(1) { left: 14px; height: 40px; animation: tentacle-weave-l 2s ease-in-out infinite; }
+  .state-processing .jf-tentacle:nth-child(2) { left: 20px; height: 48px; animation: tentacle-weave-l 2s ease-in-out infinite 0.2s; }
+  .state-processing .jf-tentacle:nth-child(3) { left: 28px; height: 52px; animation: tentacle-weave-c 2.5s ease-in-out infinite; }
+  .state-processing .jf-tentacle:nth-child(4) { left: 36px; height: 48px; animation: tentacle-weave-r 2s ease-in-out infinite 0.2s; }
+  .state-processing .jf-tentacle:nth-child(5) { left: 42px; height: 40px; animation: tentacle-weave-r 2s ease-in-out infinite; }
+  /* Focused eyes — smaller, looking slightly up */
+  .state-processing .jf-eye { width: 5px; height: 5px; transform: translateY(-1px); }
+  .state-processing .jf-eye-pupil { width: 2px; height: 2px; }
+  .state-processing .jf-mouth {
+    border-bottom: 1.5px solid rgba(255,255,255,0.35);
+    border-radius: 0;
+    width: 8px;
+    height: 0;
+  }
+  /* Data particles flowing inside bell */
+  .state-processing .jf-particle {
+    background: #93c5fd;
+    animation: particle-flow 2s linear infinite;
+  }
+  .state-processing .jf-particle:nth-child(1) { left: 25px; animation-delay: 0s; }
+  .state-processing .jf-particle:nth-child(2) { left: 35px; animation-delay: 0.5s; }
+  .state-processing .jf-particle:nth-child(3) { left: 45px; animation-delay: 1s; }
+  .state-processing .jf-particle:nth-child(4) { left: 30px; animation-delay: 1.5s; }
+
+  /* ===================== SPEAKING STATE ===================== */
+  .state-speaking .jellyfish {
+    animation: idle-float 3s ease-in-out infinite;
+  }
+  .state-speaking .jf-aura { background: #8b5cf6; opacity: 0.35; animation: aura-pulse 1.2s ease-in-out infinite; }
+  .state-speaking .jf-bell {
+    background: linear-gradient(180deg, rgba(99,102,241,0.45) 0%, rgba(139,92,246,0.35) 100%);
+    box-shadow: 0 0 30px rgba(139,92,246,0.25);
+    animation: speak-pulse 0.8s ease-in-out infinite;
+  }
+  .state-speaking .jf-bell-inner { background: rgba(196,181,253,0.4); }
+  .state-speaking .jf-oral-arm {
+    background: rgba(139,92,246,0.5);
+    animation: oral-vibrate 0.4s ease-in-out infinite;
+  }
+  .state-speaking .jf-tentacle { background: linear-gradient(180deg, rgba(139,92,246,0.5), rgba(139,92,246,0.05)); }
+  .state-speaking .jf-tentacle:nth-child(1) { left: 6px; height: 40px; animation: tentacle-spread-1 3s ease-in-out infinite; }
+  .state-speaking .jf-tentacle:nth-child(2) { left: 16px; height: 48px; animation: tentacle-spread-2 3s ease-in-out infinite 0.2s; }
+  .state-speaking .jf-tentacle:nth-child(3) { left: 28px; height: 50px; animation: tentacle-sway-1 3.5s ease-in-out infinite; }
+  .state-speaking .jf-tentacle:nth-child(4) { left: 40px; height: 48px; animation: tentacle-spread-3 3s ease-in-out infinite 0.2s; }
+  .state-speaking .jf-tentacle:nth-child(5) { left: 50px; height: 40px; animation: tentacle-spread-4 3s ease-in-out infinite; }
+  /* Mouth animates open-close */
+  .state-speaking .jf-mouth {
+    width: 8px;
+    height: 5px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.45);
+    animation: mouth-speak 0.8s ease-in-out infinite;
+  }
+  .state-speaking .jf-eye { opacity: 0.9; }
+  /* Sound wave rings */
+  .state-speaking .jf-wave {
+    border-color: rgba(139,92,246,0.3);
+    animation: wave-expand 1.5s ease-out infinite;
+  }
+  .state-speaking .jf-wave:nth-child(1) { width: 70px; height: 70px; top: 5px; left: 5px; }
+  .state-speaking .jf-wave:nth-child(2) { width: 70px; height: 70px; top: 5px; left: 5px; animation-delay: 0.5s; }
+  .state-speaking .jf-wave:nth-child(3) { width: 70px; height: 70px; top: 5px; left: 5px; animation-delay: 1s; }
+
+  /* ===================== WAITING STATE ===================== */
+  .state-waiting .jellyfish {
+    animation: none;
+  }
+  .state-waiting .jf-aura { background: #f59e0b; opacity: 0.3; animation: heartbeat-glow 1.2s ease-in-out infinite; }
+  .state-waiting .jf-bell {
+    background: linear-gradient(180deg, rgba(245,158,11,0.4) 0%, rgba(249,115,22,0.3) 100%);
+    box-shadow: 0 0 25px rgba(245,158,11,0.2);
+    animation: waiting-tense 1.2s ease-in-out infinite;
+  }
+  .state-waiting .jf-bell-inner { background: rgba(253,230,138,0.3); }
+  .state-waiting .jf-oral-arm { background: rgba(245,158,11,0.5); }
+  /* Tentacles curled up — tense */
+  .state-waiting .jf-tentacle { background: linear-gradient(180deg, rgba(245,158,11,0.6), rgba(249,115,22,0.1)); }
+  .state-waiting .jf-tentacle:nth-child(1) { left: 12px; height: 25px; animation: tentacle-curl-l 1.5s ease-in-out infinite; }
+  .state-waiting .jf-tentacle:nth-child(2) { left: 20px; height: 30px; animation: tentacle-curl-l 1.5s ease-in-out infinite 0.1s; }
+  .state-waiting .jf-tentacle:nth-child(3) { left: 28px; height: 32px; animation: tentacle-curl-c 1.8s ease-in-out infinite; }
+  .state-waiting .jf-tentacle:nth-child(4) { left: 36px; height: 30px; animation: tentacle-curl-r 1.5s ease-in-out infinite 0.1s; }
+  .state-waiting .jf-tentacle:nth-child(5) { left: 44px; height: 25px; animation: tentacle-curl-r 1.5s ease-in-out infinite; }
+  /* Wide alert eyes */
+  .state-waiting .jf-eye { width: 8px; height: 8px; }
+  .state-waiting .jf-eye-pupil { width: 4px; height: 4px; margin-top: 2px; }
+  .state-waiting .jf-mouth {
+    width: 8px;
+    height: 6px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.35);
+  }
+  /* Alert indicator on top */
+  .state-waiting .jellyfish::after {
+    content: '!';
+    position: absolute;
+    top: -16px;
+    left: 34px;
+    font-size: 14px;
+    font-weight: 800;
+    color: #fbbf24;
+    text-shadow: 0 0 8px rgba(251,191,36,0.6);
+    animation: alert-bounce 0.8s ease-in-out infinite;
+  }
+
+  /* ===================== COMPLETED STATE ===================== */
+  .state-completed .jellyfish {
+    animation: completed-spin 1.5s ease-in-out 1;
+  }
+  .state-completed .jf-aura { background: #10b981; opacity: 0.4; animation: bloom-aura 2s ease-out 1; }
+  .state-completed .jf-bell {
+    background: linear-gradient(180deg, rgba(16,185,129,0.5) 0%, rgba(132,204,22,0.35) 100%);
+    box-shadow: 0 0 35px rgba(16,185,129,0.3);
+    animation: bloom-bell 1.5s ease-out 1;
+  }
+  .state-completed .jf-bell-inner { background: rgba(167,243,208,0.4); }
+  .state-completed .jf-oral-arm { background: rgba(16,185,129,0.5); }
+  /* Tentacles fully spread and sparkle */
+  .state-completed .jf-tentacle { background: linear-gradient(180deg, rgba(16,185,129,0.6), rgba(132,204,22,0.1)); }
+  .state-completed .jf-tentacle:nth-child(1) { left: 2px; height: 50px; animation: tentacle-bloom-1 2s ease-out 1; }
+  .state-completed .jf-tentacle:nth-child(2) { left: 12px; height: 58px; animation: tentacle-bloom-2 2s ease-out 1 0.1s; }
+  .state-completed .jf-tentacle:nth-child(3) { left: 28px; height: 62px; animation: tentacle-bloom-3 2s ease-out 1 0.2s; }
+  .state-completed .jf-tentacle:nth-child(4) { left: 44px; height: 58px; animation: tentacle-bloom-2 2s ease-out 1 0.1s; }
+  .state-completed .jf-tentacle:nth-child(5) { left: 54px; height: 50px; animation: tentacle-bloom-1 2s ease-out 1; }
+  /* Happy squint eyes */
+  .state-completed .jf-eye {
+    width: 8px; height: 3px;
+    border-radius: 0 0 50% 50%;
+    border-bottom: 2px solid rgba(255,255,255,0.9);
+    background: transparent;
+  }
+  .state-completed .jf-eye-pupil { display: none; }
+  .state-completed .jf-mouth {
+    border-bottom: 2px solid rgba(255,255,255,0.7);
+    border-radius: 0 0 50% 50%;
+    width: 12px;
+    height: 5px;
+    left: 34px;
+  }
+  /* Sparkle particles */
+  .state-completed .jf-particle {
+    background: #6ee7b7;
+    border-radius: 50%;
+    animation: sparkle-burst 2s ease-out 1;
+  }
+  .state-completed .jf-particle:nth-child(1) { left: 10px; top: 10px; animation-delay: 0s; }
+  .state-completed .jf-particle:nth-child(2) { left: 60px; top: 15px; animation-delay: 0.15s; }
+  .state-completed .jf-particle:nth-child(3) { left: 5px; top: 50px; animation-delay: 0.3s; }
+  .state-completed .jf-particle:nth-child(4) { left: 65px; top: 45px; animation-delay: 0.2s; }
+
+  /* ===================== LISTENING STATE ===================== */
+  .state-listening .jellyfish {
+    animation: idle-float 3.5s ease-in-out infinite;
+    transform: rotate(-8deg);
+  }
+  .state-listening .jf-aura { background: #10b981; opacity: 0.25; }
+  .state-listening .jf-bell {
+    background: linear-gradient(180deg, rgba(16,185,129,0.4) 0%, rgba(20,184,166,0.3) 100%);
+    box-shadow: 0 0 20px rgba(16,185,129,0.2);
+    animation: idle-breathe 3s ease-in-out infinite;
+    transform: rotate(-5deg);
+  }
+  .state-listening .jf-bell-inner { background: rgba(167,243,208,0.3); }
+  .state-listening .jf-oral-arm { background: rgba(16,185,129,0.4); }
+  .state-listening .jf-tentacle { background: linear-gradient(180deg, rgba(16,185,129,0.5), rgba(20,184,166,0.05)); }
+  .state-listening .jf-tentacle:nth-child(1) { left: 8px; height: 40px; animation: tentacle-sway-1 5s ease-in-out infinite; }
+  .state-listening .jf-tentacle:nth-child(2) { left: 18px; height: 48px; animation: tentacle-sway-2 4.5s ease-in-out infinite 0.3s; }
+  .state-listening .jf-tentacle:nth-child(3) { left: 28px; height: 52px; animation: tentacle-sway-1 5.5s ease-in-out infinite 0.6s; }
+  .state-listening .jf-tentacle:nth-child(4) { left: 38px; height: 48px; animation: tentacle-sway-2 4.8s ease-in-out infinite 0.2s; }
+  /* Mic tentacle — one special long one */
+  .state-listening .jf-tentacle:nth-child(5) {
+    left: 52px; height: 55px;
+    background: linear-gradient(180deg, rgba(52,211,153,0.7), rgba(52,211,153,0.3));
+    animation: mic-tentacle 2s ease-in-out infinite;
+    width: 2.5px;
+  }
+  .state-listening .jf-tentacle:nth-child(5)::after {
+    content: '';
+    position: absolute;
+    bottom: -2px;
+    left: -2.5px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #34d399;
+    box-shadow: 0 0 8px rgba(52,211,153,0.6);
+    animation: mic-glow 1s ease-in-out infinite;
+  }
+  .state-listening .jf-eye { opacity: 0.9; }
+  .state-listening .jf-mouth {
+    border-bottom: 1.5px solid rgba(255,255,255,0.4);
+    border-radius: 0 0 50% 50%;
+    height: 3px;
+  }
+  /* Sound wave on bell surface */
+  .state-listening .jf-bell::after {
+    content: '';
+    position: absolute;
+    top: 6px; left: 12px;
+    width: 40px; height: 20px;
+    border: 1px solid rgba(52,211,153,0.15);
+    border-radius: 50%;
+    animation: surface-ripple 2s ease-in-out infinite;
+  }
+
+  /* ===================== ERROR STATE ===================== */
+  .state-error .jellyfish {
+    animation: error-shake 0.5s ease-in-out 2, error-settle 3s ease-out 1s 1;
+  }
+  .state-error .jf-aura { background: #ef4444; opacity: 0.25; animation: error-flash 0.6s ease-in-out 2; }
+  .state-error .jf-bell {
+    background: linear-gradient(180deg, rgba(239,68,68,0.35) 0%, rgba(225,29,72,0.25) 100%);
+    box-shadow: 0 0 20px rgba(239,68,68,0.15);
+    animation: error-shrink 1s ease-out 1;
+    transform: scaleX(0.85) scaleY(0.9);
+  }
+  .state-error .jf-bell-inner { background: rgba(252,165,165,0.2); }
+  .state-error .jf-oral-arm { background: rgba(239,68,68,0.4); }
+  /* Tentacles curled tight — hurt */
+  .state-error .jf-tentacle { background: linear-gradient(180deg, rgba(239,68,68,0.5), rgba(225,29,72,0.05)); }
+  .state-error .jf-tentacle:nth-child(1) { left: 16px; height: 18px; animation: error-curl 1.5s ease-out 1; }
+  .state-error .jf-tentacle:nth-child(2) { left: 22px; height: 22px; animation: error-curl 1.5s ease-out 0.1s 1; }
+  .state-error .jf-tentacle:nth-child(3) { left: 28px; height: 24px; animation: error-curl 1.5s ease-out 0.15s 1; }
+  .state-error .jf-tentacle:nth-child(4) { left: 34px; height: 22px; animation: error-curl 1.5s ease-out 0.1s 1; }
+  .state-error .jf-tentacle:nth-child(5) { left: 40px; height: 18px; animation: error-curl 1.5s ease-out 1; }
+  /* Sad eyes — angled down */
+  .state-error .jf-eye {
+    width: 7px; height: 7px;
+    background: rgba(255,255,255,0.7);
+  }
+  .state-error .jf-eye:first-child { transform: rotate(10deg); }
+  .state-error .jf-eye:last-child { transform: rotate(-10deg); }
+  .state-error .jf-eye-pupil { width: 3px; height: 3px; margin-top: 3px; }
+  .state-error .jf-mouth {
+    border-top: 1.5px solid rgba(255,255,255,0.5);
+    border-radius: 50% 50% 0 0;
+    height: 3px;
+    width: 8px;
+    top: 34px;
+  }
+  /* Ink drop */
+  .state-error .jf-particle:nth-child(1) {
+    width: 5px; height: 5px;
+    background: rgba(239,68,68,0.5);
+    left: 36px;
+    top: 80px;
+    animation: ink-drop 2s ease-in 0.5s 1;
+  }
+
+  /* ===================== KEYFRAMES ===================== */
+
+  /* Float */
+  @keyframes idle-float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-6px); }
+  }
+
+  /* Bell breathe */
+  @keyframes idle-breathe {
+    0%, 100% { transform: scaleX(1) scaleY(1); }
+    50% { transform: scaleX(1.04) scaleY(0.96); }
+  }
+
+  /* Blink */
+  @keyframes idle-blink {
+    0%, 42%, 58%, 100% { transform: scaleY(1); }
+    50% { transform: scaleY(0.1); }
+  }
+
+  /* Glow pulse */
+  @keyframes idle-glow-pulse {
+    0%, 80%, 100% { opacity: 0; }
+    90% { opacity: 1; }
+  }
+
+  /* Tentacle sway */
+  @keyframes tentacle-sway-1 {
+    0%, 100% { transform: rotate(-3deg); }
+    50% { transform: rotate(3deg); }
+  }
+  @keyframes tentacle-sway-2 {
+    0%, 100% { transform: rotate(4deg); }
+    50% { transform: rotate(-4deg); }
+  }
+
+  /* Tentacle weave (processing) */
+  @keyframes tentacle-weave-l {
+    0%, 100% { transform: rotate(8deg) translateX(4px); }
+    50% { transform: rotate(-2deg) translateX(0); }
+  }
+  @keyframes tentacle-weave-r {
+    0%, 100% { transform: rotate(-8deg) translateX(-4px); }
+    50% { transform: rotate(2deg) translateX(0); }
+  }
+  @keyframes tentacle-weave-c {
+    0%, 100% { transform: rotate(0deg); }
+    25% { transform: rotate(3deg); }
+    75% { transform: rotate(-3deg); }
+  }
+
+  /* Data particles */
+  @keyframes particle-flow {
+    0% { top: 35px; opacity: 0; }
+    20% { opacity: 0.8; }
+    80% { opacity: 0.8; }
+    100% { top: 5px; opacity: 0; }
+  }
+
+  /* Inner glow flow */
+  @keyframes inner-flow {
+    0% { transform: translateY(4px); opacity: 0.2; }
+    50% { transform: translateY(-2px); opacity: 0.5; }
+    100% { transform: translateY(4px); opacity: 0.2; }
+  }
+
+  /* Speaking pulse */
+  @keyframes speak-pulse {
+    0%, 100% { transform: scaleX(1) scaleY(1); }
+    50% { transform: scaleX(1.06) scaleY(0.94); }
+  }
+  @keyframes aura-pulse {
+    0%, 100% { opacity: 0.25; transform: scale(1); }
+    50% { opacity: 0.45; transform: scale(1.08); }
+  }
+  @keyframes oral-vibrate {
+    0%, 100% { transform: scaleY(1); }
+    50% { transform: scaleY(1.3); }
+  }
+  @keyframes mouth-speak {
+    0%, 100% { transform: scaleY(0.6); }
+    30% { transform: scaleY(1.2); }
+    60% { transform: scaleY(0.8); }
+  }
+  /* Sound waves */
+  @keyframes wave-expand {
+    0% { transform: scale(0.6); opacity: 0.5; }
+    100% { transform: scale(1.6); opacity: 0; }
+  }
+
+  /* Tentacle spread (speaking) */
+  @keyframes tentacle-spread-1 {
+    0%, 100% { transform: rotate(-6deg); }
+    50% { transform: rotate(-2deg); }
+  }
+  @keyframes tentacle-spread-2 {
+    0%, 100% { transform: rotate(-3deg); }
+    50% { transform: rotate(1deg); }
+  }
+  @keyframes tentacle-spread-3 {
+    0%, 100% { transform: rotate(3deg); }
+    50% { transform: rotate(-1deg); }
+  }
+  @keyframes tentacle-spread-4 {
+    0%, 100% { transform: rotate(6deg); }
+    50% { transform: rotate(2deg); }
+  }
+
+  /* Waiting / Alert */
+  @keyframes heartbeat-glow {
+    0%, 100% { opacity: 0.2; transform: scale(1); }
+    15% { opacity: 0.5; transform: scale(1.1); }
+    30% { opacity: 0.2; transform: scale(1); }
+    45% { opacity: 0.4; transform: scale(1.05); }
+  }
+  @keyframes waiting-tense {
+    0%, 100% { transform: scaleX(0.95) scaleY(1.02); }
+    50% { transform: scaleX(1) scaleY(0.98); }
+  }
+  @keyframes tentacle-curl-l {
+    0%, 100% { transform: rotate(15deg) scaleY(0.8); }
+    50% { transform: rotate(20deg) scaleY(0.75); }
+  }
+  @keyframes tentacle-curl-r {
+    0%, 100% { transform: rotate(-15deg) scaleY(0.8); }
+    50% { transform: rotate(-20deg) scaleY(0.75); }
+  }
+  @keyframes tentacle-curl-c {
+    0%, 100% { transform: scaleY(0.8); }
+    50% { transform: scaleY(0.7); }
+  }
+  @keyframes alert-bounce {
+    0%, 100% { transform: translateY(0); opacity: 1; }
+    50% { transform: translateY(-4px); opacity: 0.7; }
+  }
+
+  /* Completed / Bloom */
+  @keyframes completed-spin {
+    0% { transform: rotate(0deg); }
+    40% { transform: rotate(15deg); }
+    70% { transform: rotate(-10deg); }
+    100% { transform: rotate(0deg); }
+  }
+  @keyframes bloom-aura {
+    0% { transform: scale(1); opacity: 0.4; }
+    50% { transform: scale(1.5); opacity: 0.6; }
+    100% { transform: scale(1); opacity: 0.3; }
+  }
+  @keyframes bloom-bell {
+    0% { transform: scaleX(1) scaleY(1); }
+    30% { transform: scaleX(1.15) scaleY(0.88); }
+    60% { transform: scaleX(0.95) scaleY(1.05); }
+    100% { transform: scaleX(1) scaleY(1); }
+  }
+  @keyframes tentacle-bloom-1 {
+    0% { transform: rotate(0deg); }
+    40% { transform: rotate(-15deg) translateX(-5px); }
+    100% { transform: rotate(-5deg); }
+  }
+  @keyframes tentacle-bloom-2 {
+    0% { transform: rotate(0deg); }
+    40% { transform: rotate(-8deg) translateX(-2px); }
+    100% { transform: rotate(-2deg); }
+  }
+  @keyframes tentacle-bloom-3 {
+    0% { transform: rotate(0deg); }
+    40% { transform: rotate(0deg) scaleY(1.1); }
+    100% { transform: rotate(0deg); }
+  }
+  @keyframes sparkle-burst {
+    0% { transform: translate(0, 0) scale(0); opacity: 0; }
+    20% { transform: translate(var(--sx, -15px), var(--sy, -20px)) scale(1.5); opacity: 1; }
+    100% { transform: translate(var(--ex, -25px), var(--ey, -40px)) scale(0); opacity: 0; }
+  }
+  .state-completed .jf-particle:nth-child(1) { --sx: -20px; --sy: -25px; --ex: -30px; --ey: -50px; }
+  .state-completed .jf-particle:nth-child(2) { --sx: 20px; --sy: -20px; --ex: 35px; --ey: -45px; }
+  .state-completed .jf-particle:nth-child(3) { --sx: -25px; --sy: 5px; --ex: -40px; --ey: -10px; }
+  .state-completed .jf-particle:nth-child(4) { --sx: 25px; --sy: 0px; --ex: 40px; --ey: -15px; }
+
+  /* Listening */
+  @keyframes mic-tentacle {
+    0%, 100% { transform: rotate(8deg); }
+    50% { transform: rotate(12deg) translateY(-2px); }
+  }
+  @keyframes mic-glow {
+    0%, 100% { opacity: 0.6; transform: scale(1); }
+    50% { opacity: 1; transform: scale(1.2); }
+  }
+  @keyframes surface-ripple {
+    0% { transform: scale(0.8); opacity: 0.3; }
+    50% { transform: scale(1.1); opacity: 0.1; }
+    100% { transform: scale(0.8); opacity: 0.3; }
+  }
+
+  /* Error */
+  @keyframes error-shake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-4px); }
+    75% { transform: translateX(4px); }
+  }
+  @keyframes error-settle {
+    0% { transform: translateY(0); }
+    100% { transform: translateY(2px); }
+  }
+  @keyframes error-flash {
+    0%, 100% { opacity: 0.25; }
+    50% { opacity: 0.5; }
+  }
+  @keyframes error-shrink {
+    0% { transform: scaleX(1) scaleY(1); }
+    30% { transform: scaleX(0.8) scaleY(0.85); }
+    100% { transform: scaleX(0.85) scaleY(0.9); }
+  }
+  @keyframes error-curl {
+    0% { transform: scaleY(1); }
+    50% { transform: scaleY(0.5) rotate(var(--curl-dir, 5deg)); }
+    100% { transform: scaleY(0.6); }
+  }
+  @keyframes ink-drop {
+    0% { top: 70px; opacity: 0; transform: scale(1); }
+    30% { opacity: 0.6; }
+    100% { top: 110px; opacity: 0; transform: scale(0.3); }
+  }
+
+  /* ===================== Interactive toggle ===================== */
+  .controls {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    padding: 20px 0 40px;
+    flex-wrap: wrap;
+    max-width: 700px;
+    margin: 0 auto;
+  }
+  .controls button {
+    padding: 8px 18px;
+    border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.1);
+    background: rgba(255,255,255,0.05);
+    color: #d1d5db;
+    cursor: pointer;
+    font-size: 13px;
+    transition: all 0.2s;
+  }
+  .controls button:hover, .controls button.active {
+    background: rgba(99,102,241,0.2);
+    border-color: rgba(99,102,241,0.4);
+    color: #a5b4fc;
+  }
+
+  /* Single large preview */
+  .preview-large {
+    display: flex;
+    justify-content: center;
+    padding: 40px 0;
+  }
+  .preview-large .pet-container {
+    width: 200px;
+    height: 240px;
+    transform: scale(1.8);
+  }
+</style>
+</head>
+<body>
+
+<h1>NOMA</h1>
+<p class="subtitle">DevPod Desktop Pet - Jellyfish Companion</p>
+
+<!-- Interactive single preview -->
+<div class="controls">
+  <button class="active" onclick="setPreviewState('idle')">idle</button>
+  <button onclick="setPreviewState('processing')">processing</button>
+  <button onclick="setPreviewState('speaking')">speaking</button>
+  <button onclick="setPreviewState('listening')">listening</button>
+  <button onclick="setPreviewState('waiting')">waiting</button>
+  <button onclick="setPreviewState('completed')">completed</button>
+  <button onclick="setPreviewState('error')">error</button>
+</div>
+
+<div class="preview-large">
+  <div id="single-preview" class="pet-container state-idle">
+    <div class="jellyfish">
+      <div class="jf-aura"></div>
+      <div class="jf-particles">
+        <div class="jf-particle"></div>
+        <div class="jf-particle"></div>
+        <div class="jf-particle"></div>
+        <div class="jf-particle"></div>
+      </div>
+      <div class="jf-wave"></div>
+      <div class="jf-wave"></div>
+      <div class="jf-wave"></div>
+      <div class="jf-bell">
+        <div class="jf-bell-inner"></div>
+      </div>
+      <div class="jf-oral">
+        <div class="jf-oral-arm"></div>
+        <div class="jf-oral-arm"></div>
+        <div class="jf-oral-arm"></div>
+        <div class="jf-oral-arm"></div>
+        <div class="jf-oral-arm"></div>
+      </div>
+      <div class="jf-eyes">
+        <div class="jf-eye"><div class="jf-eye-pupil"></div></div>
+        <div class="jf-eye"><div class="jf-eye-pupil"></div></div>
+      </div>
+      <div class="jf-mouth"></div>
+      <div class="jf-tentacles">
+        <div class="jf-tentacle"></div>
+        <div class="jf-tentacle"></div>
+        <div class="jf-tentacle"></div>
+        <div class="jf-tentacle"></div>
+        <div class="jf-tentacle"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<hr style="border-color: rgba(255,255,255,0.05); margin: 20px 60px;">
+
+<!-- All states side by side -->
+<p class="subtitle" style="margin-top: 40px; margin-bottom: 30px;">All States Overview</p>
+<div class="grid">
+
+  <div class="card">
+    <span class="card-label">IDLE</span>
+    <div class="pet-container state-idle">
+      <div class="jellyfish">
+        <div class="jf-aura"></div>
+        <div class="jf-particles"><div class="jf-particle"></div><div class="jf-particle"></div><div class="jf-particle"></div><div class="jf-particle"></div></div>
+        <div class="jf-wave"></div><div class="jf-wave"></div><div class="jf-wave"></div>
+        <div class="jf-bell"><div class="jf-bell-inner"></div></div>
+        <div class="jf-oral"><div class="jf-oral-arm"></div><div class="jf-oral-arm"></div><div class="jf-oral-arm"></div><div class="jf-oral-arm"></div><div class="jf-oral-arm"></div></div>
+        <div class="jf-eyes"><div class="jf-eye"><div class="jf-eye-pupil"></div></div><div class="jf-eye"><div class="jf-eye-pupil"></div></div></div>
+        <div class="jf-mouth"></div>
+        <div class="jf-tentacles"><div class="jf-tentacle"></div><div class="jf-tentacle"></div><div class="jf-tentacle"></div><div class="jf-tentacle"></div><div class="jf-tentacle"></div></div>
+      </div>
+    </div>
+    <div class="card-desc">安静漂浮 / 缓慢呼吸<br>触手自然飘荡 / 偶尔眨眼</div>
+  </div>
+
+  <div class="card">
+    <span class="card-label">PROCESSING</span>
+    <div class="pet-container state-processing">
+      <div class="jellyfish">
+        <div class="jf-aura"></div>
+        <div class="jf-particles"><div class="jf-particle"></div><div class="jf-particle"></div><div class="jf-particle"></div><div class="jf-particle"></div></div>
+        <div class="jf-wave"></div><div class="jf-wave"></div><div class="jf-wave"></div>
+        <div class="jf-bell"><div class="jf-bell-inner"></div></div>
+        <div class="jf-oral"><div class="jf-oral-arm"></div><div class="jf-oral-arm"></div><div class="jf-oral-arm"></div><div class="jf-oral-arm"></div><div class="jf-oral-arm"></div></div>
+        <div class="jf-eyes"><div class="jf-eye"><div class="jf-eye-pupil"></div></div><div class="jf-eye"><div class="jf-eye-pupil"></div></div></div>
+        <div class="jf-mouth"></div>
+        <div class="jf-tentacles"><div class="jf-tentacle"></div><div class="jf-tentacle"></div><div class="jf-tentacle"></div><div class="jf-tentacle"></div><div class="jf-tentacle"></div></div>
+      </div>
+    </div>
+    <div class="card-desc">触手收拢编织 / 体内光点流动<br>蓝色光晕 / 加速漂浮</div>
+  </div>
+
+  <div class="card">
+    <span class="card-label">SPEAKING</span>
+    <div class="pet-container state-speaking">
+      <div class="jellyfish">
+        <div class="jf-aura"></div>
+        <div class="jf-particles"><div class="jf-particle"></div><div class="jf-particle"></div><div class="jf-particle"></div><div class="jf-particle"></div></div>
+        <div class="jf-wave"></div><div class="jf-wave"></div><div class="jf-wave"></div>
+        <div class="jf-bell"><div class="jf-bell-inner"></div></div>
+        <div class="jf-oral"><div class="jf-oral-arm"></div><div class="jf-oral-arm"></div><div class="jf-oral-arm"></div><div class="jf-oral-arm"></div><div class="jf-oral-arm"></div></div>
+        <div class="jf-eyes"><div class="jf-eye"><div class="jf-eye-pupil"></div></div><div class="jf-eye"><div class="jf-eye-pupil"></div></div></div>
+        <div class="jf-mouth"></div>
+        <div class="jf-tentacles"><div class="jf-tentacle"></div><div class="jf-tentacle"></div><div class="jf-tentacle"></div><div class="jf-tentacle"></div><div class="jf-tentacle"></div></div>
+      </div>
+    </div>
+    <div class="card-desc">伞盖节奏收缩 / 紫色光波扩散<br>嘴巴开合 / 触手微张广播</div>
+  </div>
+
+  <div class="card">
+    <span class="card-label">LISTENING</span>
+    <div class="pet-container state-listening">
+      <div class="jellyfish">
+        <div class="jf-aura"></div>
+        <div class="jf-particles"><div class="jf-particle"></div><div class="jf-particle"></div><div class="jf-particle"></div><div class="jf-particle"></div></div>
+        <div class="jf-wave"></div><div class="jf-wave"></div><div class="jf-wave"></div>
+        <div class="jf-bell"><div class="jf-bell-inner"></div></div>
+        <div class="jf-oral"><div class="jf-oral-arm"></div><div class="jf-oral-arm"></div><div class="jf-oral-arm"></div><div class="jf-oral-arm"></div><div class="jf-oral-arm"></div></div>
+        <div class="jf-eyes"><div class="jf-eye"><div class="jf-eye-pupil"></div></div><div class="jf-eye"><div class="jf-eye-pupil"></div></div></div>
+        <div class="jf-mouth"></div>
+        <div class="jf-tentacles"><div class="jf-tentacle"></div><div class="jf-tentacle"></div><div class="jf-tentacle"></div><div class="jf-tentacle"></div><div class="jf-tentacle"></div></div>
+      </div>
+    </div>
+    <div class="card-desc">歪头倾听 / 麦克风触手伸出<br>绿色光晕 / 伞盖表面声波纹</div>
+  </div>
+
+  <div class="card">
+    <span class="card-label">WAITING</span>
+    <div class="pet-container state-waiting">
+      <div class="jellyfish">
+        <div class="jf-aura"></div>
+        <div class="jf-particles"><div class="jf-particle"></div><div class="jf-particle"></div><div class="jf-particle"></div><div class="jf-particle"></div></div>
+        <div class="jf-wave"></div><div class="jf-wave"></div><div class="jf-wave"></div>
+        <div class="jf-bell"><div class="jf-bell-inner"></div></div>
+        <div class="jf-oral"><div class="jf-oral-arm"></div><div class="jf-oral-arm"></div><div class="jf-oral-arm"></div><div class="jf-oral-arm"></div><div class="jf-oral-arm"></div></div>
+        <div class="jf-eyes"><div class="jf-eye"><div class="jf-eye-pupil"></div></div><div class="jf-eye"><div class="jf-eye-pupil"></div></div></div>
+        <div class="jf-mouth"></div>
+        <div class="jf-tentacles"><div class="jf-tentacle"></div><div class="jf-tentacle"></div><div class="jf-tentacle"></div><div class="jf-tentacle"></div><div class="jf-tentacle"></div></div>
+      </div>
+    </div>
+    <div class="card-desc">停止漂浮 / 触手紧缩卷起<br>琥珀色心跳闪烁 / 头顶感叹号</div>
+  </div>
+
+  <div class="card">
+    <span class="card-label">COMPLETED</span>
+    <div class="pet-container state-completed">
+      <div class="jellyfish">
+        <div class="jf-aura"></div>
+        <div class="jf-particles"><div class="jf-particle"></div><div class="jf-particle"></div><div class="jf-particle"></div><div class="jf-particle"></div></div>
+        <div class="jf-wave"></div><div class="jf-wave"></div><div class="jf-wave"></div>
+        <div class="jf-bell"><div class="jf-bell-inner"></div></div>
+        <div class="jf-oral"><div class="jf-oral-arm"></div><div class="jf-oral-arm"></div><div class="jf-oral-arm"></div><div class="jf-oral-arm"></div><div class="jf-oral-arm"></div></div>
+        <div class="jf-eyes"><div class="jf-eye"><div class="jf-eye-pupil"></div></div><div class="jf-eye"><div class="jf-eye-pupil"></div></div></div>
+        <div class="jf-mouth"></div>
+        <div class="jf-tentacles"><div class="jf-tentacle"></div><div class="jf-tentacle"></div><div class="jf-tentacle"></div><div class="jf-tentacle"></div><div class="jf-tentacle"></div></div>
+      </div>
+    </div>
+    <div class="card-desc">伞盖绽放展开 / 触手散开放烟花<br>翠绿光爆发 / 微微旋转 / 眯眼笑</div>
+  </div>
+
+  <div class="card">
+    <span class="card-label">ERROR</span>
+    <div class="pet-container state-error">
+      <div class="jellyfish">
+        <div class="jf-aura"></div>
+        <div class="jf-particles"><div class="jf-particle"></div><div class="jf-particle"></div><div class="jf-particle"></div><div class="jf-particle"></div></div>
+        <div class="jf-wave"></div><div class="jf-wave"></div><div class="jf-wave"></div>
+        <div class="jf-bell"><div class="jf-bell-inner"></div></div>
+        <div class="jf-oral"><div class="jf-oral-arm"></div><div class="jf-oral-arm"></div><div class="jf-oral-arm"></div><div class="jf-oral-arm"></div><div class="jf-oral-arm"></div></div>
+        <div class="jf-eyes"><div class="jf-eye"><div class="jf-eye-pupil"></div></div><div class="jf-eye"><div class="jf-eye-pupil"></div></div></div>
+        <div class="jf-mouth"></div>
+        <div class="jf-tentacles"><div class="jf-tentacle"></div><div class="jf-tentacle"></div><div class="jf-tentacle"></div><div class="jf-tentacle"></div><div class="jf-tentacle"></div></div>
+      </div>
+    </div>
+    <div class="card-desc">抖动后蜷缩 / 触手抱紧自己<br>暗红闪烁 / 滴落一滴墨汁</div>
+  </div>
+
+</div>
+
+<script>
+function setPreviewState(state) {
+  const el = document.getElementById('single-preview');
+  el.className = 'pet-container state-' + state;
+
+  // Re-trigger one-shot animations by cloning
+  const jf = el.querySelector('.jellyfish');
+  const clone = jf.cloneNode(true);
+  jf.parentNode.replaceChild(clone, jf);
+
+  // Update active button
+  document.querySelectorAll('.controls button').forEach(btn => {
+    btn.classList.toggle('active', btn.textContent === state);
+  });
+}
+
+// Auto-replay completed and error states (they use one-shot animations)
+setInterval(() => {
+  document.querySelectorAll('.grid .state-completed, .grid .state-error').forEach(container => {
+    const jf = container.querySelector('.jellyfish');
+    const clone = jf.cloneNode(true);
+    jf.parentNode.replaceChild(clone, jf);
+  });
+}, 4000);
+</script>
+
+</body>
+</html>

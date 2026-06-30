@@ -6,6 +6,8 @@ import { synthesize } from "./tts";
 
 export type PipelineState = "idle" | "summarizing" | "speaking" | "error";
 
+const BATCH_WINDOW_MS = 2000;
+
 export class VoicePipeline {
   private summarizer: OpenAISummarizer;
   private splitter: SentenceSplitter;
@@ -14,6 +16,9 @@ export class VoicePipeline {
   private stateCallback: ((state: PipelineState) => void) | null = null;
   private sentenceCallback: ((text: string) => void) | null = null;
   private processing = false;
+
+  private pendingEvents: HookEvent[] = [];
+  private batchTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     summarizer: OpenAISummarizer,
@@ -49,32 +54,62 @@ export class VoicePipeline {
   }
 
   async processEvent(event: HookEvent): Promise<void> {
+    console.log("[VoicePipeline] Event queued:", event.hook_event_name);
+
+    this.pendingEvents.push(event);
+
+    if (this.batchTimer) clearTimeout(this.batchTimer);
+
+    // If already processing, just queue — the current run will pick up pending events when done
     if (this.processing) {
-      this.stop();
+      console.log("[VoicePipeline] Already processing, event batched for later");
+      return;
     }
 
+    // Wait briefly to batch rapid-fire events
+    await new Promise<void>((resolve) => {
+      this.batchTimer = setTimeout(resolve, BATCH_WINDOW_MS);
+    });
+
+    this.runBatch();
+  }
+
+  private async runBatch(): Promise<void> {
+    if (this.processing) return;
+    if (this.pendingEvents.length === 0) return;
+
+    const events = this.pendingEvents.splice(0);
     this.processing = true;
-    this.audioQueue.clear();
+    await this.audioQueue.clear();
     this.splitter.reset();
     this.setState("summarizing");
 
+    // Merge multiple events into one summarizer call
+    const mergedEvent = events.length === 1 ? events[0]! : mergeEvents(events);
+
     try {
       let chunkId = 0;
+      let tokenCount = 0;
 
-      for await (const token of this.summarizer.summarize(event)) {
+      console.log("[VoicePipeline] Starting summarizer for", events.length, "events...");
+      for await (const token of this.summarizer.summarize(mergedEvent)) {
+        tokenCount++;
         const sentences = this.splitter.feed(token);
 
         for (const sentence of sentences) {
+          console.log("[VoicePipeline] Sentence:", sentence.text.slice(0, 50));
           this.sentenceCallback?.(sentence.text);
           this.setState("speaking");
 
           const buffer = await synthesize(sentence.text);
-          const chunk: AudioChunk = {
-            id: `chunk-${chunkId++}`,
-            buffer,
-            text: sentence.text,
-          };
-          this.audioQueue.enqueue(chunk);
+          if (buffer.byteLength >= 100) {
+            const chunk: AudioChunk = {
+              id: `chunk-${chunkId++}`,
+              buffer,
+              text: sentence.text,
+            };
+            this.audioQueue.enqueue(chunk);
+          }
         }
       }
 
@@ -84,20 +119,31 @@ export class VoicePipeline {
         if (this.state !== "speaking") this.setState("speaking");
 
         const buffer = await synthesize(lastChunk.text);
-        const chunk: AudioChunk = {
-          id: `chunk-${chunkId++}`,
-          buffer,
-          text: lastChunk.text,
-        };
-        this.audioQueue.enqueue(chunk);
+        if (buffer.byteLength >= 100) {
+          const chunk: AudioChunk = {
+            id: `chunk-${chunkId++}`,
+            buffer,
+            text: lastChunk.text,
+          };
+          this.audioQueue.enqueue(chunk);
+        }
       }
 
       this.processing = false;
+      console.log("[VoicePipeline] Done. Chunks:", chunkId);
+
       if (this.audioQueue.currentState === "ended" || chunkId === 0) {
         this.setState("idle");
       }
+
+      // Check if more events arrived during processing
+      if (this.pendingEvents.length > 0) {
+        console.log("[VoicePipeline] Processing queued events:", this.pendingEvents.length);
+        this.runBatch();
+      }
     } catch (e) {
-      console.error("[VoicePipeline] Error:", e);
+      const msg = e instanceof Error ? e.message : JSON.stringify(e);
+      console.error("[VoicePipeline] Error:", msg);
       this.processing = false;
       this.setState("error");
       setTimeout(() => {
@@ -108,8 +154,31 @@ export class VoicePipeline {
 
   stop(): void {
     this.processing = false;
+    this.pendingEvents = [];
+    if (this.batchTimer) {
+      clearTimeout(this.batchTimer);
+      this.batchTimer = null;
+    }
     this.audioQueue.clear();
     this.splitter.reset();
     this.setState("idle");
   }
+}
+
+function mergeEvents(events: HookEvent[]): HookEvent {
+  const types = [...new Set(events.map((e) => e.hook_event_name))];
+  const base = events[events.length - 1]!;
+
+  return {
+    ...base,
+    hook_event_name: types.join("+") as HookEvent["hook_event_name"],
+    payload: {
+      merged: true,
+      count: events.length,
+      events: events.map((e) => ({
+        type: e.hook_event_name,
+        payload: e.payload,
+      })),
+    },
+  };
 }

@@ -4,6 +4,7 @@ use crate::config::AppConfig;
 use crate::event_bus::PermissionDecision;
 use crate::hook_server::PendingMap;
 use crate::session_store::SessionStore;
+use crate::stats_store::StatsStore;
 use serde_json::Value;
 use std::sync::Arc;
 use tauri::{Manager, State};
@@ -474,6 +475,135 @@ fn uninstall_toml_hooks(config_path: &std::path::Path, events: &[&str]) -> Resul
     Ok(())
 }
 
+/// Forward WebView console logs to Rust logger
+#[tauri::command]
+pub fn webview_log(level: String, msg: String) {
+    match level.as_str() {
+        "error" => log::error!("[WebView] {}", msg),
+        "warn" => log::warn!("[WebView] {}", msg),
+        _ => log::info!("[WebView] {}", msg),
+    }
+}
+
+/// Proxy HTTP POST request through Rust — returns text (bypasses CORS)
+#[tauri::command]
+pub async fn proxy_post(url: String, headers: Value, body: String) -> Result<String, String> {
+    let client = reqwest::Client::new();
+    let mut req = client.post(&url);
+
+    if let Some(obj) = headers.as_object() {
+        for (k, v) in obj {
+            if let Some(val) = v.as_str() {
+                req = req.header(k.as_str(), val);
+            }
+        }
+    }
+
+    let response = req
+        .body(body)
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+
+    let status = response.status().as_u16();
+    let text = response
+        .text()
+        .await
+        .map_err(|e| format!("Read body failed: {}", e))?;
+
+    if status >= 400 {
+        return Err(format!("HTTP {}: {}", status, &text[..text.len().min(200)]));
+    }
+
+    Ok(text)
+}
+
+/// Proxy HTTP POST request through Rust — returns binary as base64 (for TTS)
+#[tauri::command]
+pub async fn proxy_post_binary(url: String, headers: Value, body: String) -> Result<String, String> {
+    use base64::Engine;
+
+    let client = reqwest::Client::new();
+    let mut req = client.post(&url);
+
+    if let Some(obj) = headers.as_object() {
+        for (k, v) in obj {
+            if let Some(val) = v.as_str() {
+                req = req.header(k.as_str(), val);
+            }
+        }
+    }
+
+    let response = req
+        .body(body)
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+
+    let status = response.status().as_u16();
+    if status >= 400 {
+        let text = response.text().await.unwrap_or_default();
+        return Err(format!("HTTP {}: {}", status, &text[..text.len().min(200)]));
+    }
+
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|e| format!("Read body failed: {}", e))?;
+
+    Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
+}
+
+/// Play MP3 audio natively via afplay (bypasses WebView audio restrictions)
+/// Blocks until playback finishes so AudioQueue can sequence correctly.
+#[tauri::command]
+pub async fn play_audio(base64_data: String) -> Result<(), String> {
+    use base64::Engine;
+    use std::io::Write;
+
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(&base64_data)
+        .map_err(|e| format!("Base64 decode error: {}", e))?;
+
+    let tmp_dir = std::env::temp_dir().join("devpod-audio");
+    std::fs::create_dir_all(&tmp_dir).ok();
+    let tmp_file = tmp_dir.join(format!("tts-{}.mp3", uuid::Uuid::new_v4()));
+
+    let mut file = std::fs::File::create(&tmp_file)
+        .map_err(|e| format!("Failed to create temp file: {}", e))?;
+    file.write_all(&bytes)
+        .map_err(|e| format!("Failed to write audio: {}", e))?;
+    drop(file);
+
+    let path_str = tmp_file.to_string_lossy().to_string();
+    let mut child = tokio::process::Command::new("afplay")
+        .arg(&path_str)
+        .spawn()
+        .map_err(|e| format!("afplay spawn failed: {}", e))?;
+
+    let status = child.wait().await
+        .map_err(|e| format!("afplay wait failed: {}", e))?;
+
+    let _ = std::fs::remove_file(&path_str);
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("afplay exited with: {}", status))
+    }
+}
+
+/// Stop any currently playing afplay audio
+#[tauri::command]
+pub async fn stop_audio() -> Result<(), String> {
+    tokio::process::Command::new("killall")
+        .args(["-9", "afplay"])
+        .status()
+        .await
+        .ok();
+    Ok(())
+}
+
 /// Check which clients have DevPod hooks installed
 #[tauri::command]
 pub async fn check_hooks_status() -> Result<Value, String> {
@@ -490,4 +620,14 @@ pub async fn check_hooks_status() -> Result<Value, String> {
         statuses.insert(client.id.to_string(), Value::Bool(installed));
     }
     Ok(Value::Object(statuses))
+}
+
+/// Get aggregated usage statistics
+#[tauri::command]
+pub async fn get_stats(
+    store: State<'_, Arc<std::sync::Mutex<StatsStore>>>,
+) -> Result<Value, String> {
+    let store = store.lock().map_err(|e| format!("Lock error: {}", e))?;
+    let stats = store.get_aggregated_stats();
+    serde_json::to_value(stats).map_err(|e| format!("Serialize error: {}", e))
 }

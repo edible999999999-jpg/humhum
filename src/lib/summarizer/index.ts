@@ -1,9 +1,6 @@
+import { invoke } from "@tauri-apps/api/core";
 import type { HookEvent, Summarizer, SummarizerOptions } from "@/types";
 
-/**
- * LLM Summarizer — turns raw Claude Code event data into podcast-style scripts.
- * Uses an OpenAI-compatible API with streaming.
- */
 export class OpenAISummarizer implements Summarizer {
   readonly name = "OpenAI Summarizer";
 
@@ -21,7 +18,7 @@ export class OpenAISummarizer implements Summarizer {
     this.apiKey = opts.apiKey;
     this.baseUrl = opts.baseUrl ?? "https://api.openai.com/v1";
     this.model = opts.model ?? "gpt-4o-mini";
-    this.maxTokens = opts.maxTokens ?? 500;
+    this.maxTokens = opts.maxTokens ?? 100;
   }
 
   async *summarize(
@@ -29,80 +26,49 @@ export class OpenAISummarizer implements Summarizer {
     options?: SummarizerOptions
   ): AsyncIterable<string> {
     const prompt = buildPodcastPrompt(event, options);
+    const url = `${this.baseUrl}/chat/completions`;
+    console.log("[Summarizer] Calling:", url, "model:", this.model);
 
-    const response = await fetch(`${this.baseUrl}/chat/completions`, {
-      method: "POST",
+    const requestBody = JSON.stringify({
+      model: this.model,
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: prompt },
+      ],
+      max_tokens: this.maxTokens,
+      stream: false,
+    });
+
+    const responseText = (await invoke("proxy_post", {
+      url,
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        model: this.model,
-        messages: [
-          {
-            role: "system",
-            content: SYSTEM_PROMPT,
-          },
-          {
-            role: "user",
-            content: prompt,
-          },
-        ],
-        max_tokens: this.maxTokens,
-        stream: true,
-      }),
-    });
+      body: requestBody,
+    })) as string;
 
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => "");
-      console.error("[Summarizer] API error:", response.status, errorText);
-      throw new Error(`Summarizer error: ${response.status} ${errorText.slice(0, 200)}`);
-    }
+    const json = JSON.parse(responseText) as {
+      choices: Array<{ message: { content?: string } }>;
+    };
+    const content = json.choices?.[0]?.message?.content ?? "";
+    console.log("[Summarizer] Got response:", content.slice(0, 80));
 
-    const reader = response.body?.getReader();
-    if (!reader) throw new Error("No response body");
-
-    const decoder = new TextDecoder();
-    let buffer = "";
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed.startsWith("data: ")) continue;
-        const data = trimmed.slice(6);
-        if (data === "[DONE]") return;
-
-        try {
-          const parsed = JSON.parse(data) as {
-            choices: Array<{ delta: { content?: string } }>;
-          };
-          const content = parsed.choices[0]?.delta?.content;
-          if (content) yield content;
-        } catch {
-          // Skip malformed SSE chunks
-        }
-      }
+    for (const char of content) {
+      yield char;
     }
   }
 }
 
-const SYSTEM_PROMPT = `你是一位播客主播，正在向听众播报一个开发任务的进展。
-请将技术输出转化为自然、口语化的播报。
+const SYSTEM_PROMPT = `你是桌面小助手，用一两句话简短播报开发进展。
 
 规则：
-- 像跟同事聊天一样说话，不要念文档
-- 用短句（TTS 更容易自然朗读）
-- 加过渡语："好，来看看这个..."、"有意思的是..."
-- 不要读代码、文件路径、JSON — 用口语描述
-- 控制在 150 字以内（约 60 秒播报）
-- 如果是确认请求，最后清楚说明"需要你确认是否允许"`;
+- 用最简短的口语，像同事随口说一句
+- 不超过50字
+- 不读代码、路径、JSON
+- 多个事件合并说，如"刚跑完两个任务，都顺利"
+- 确认请求要说"需要你确认"
+- 不要客套开场白，直接说重点`;
 
 function buildPodcastPrompt(
   event: HookEvent,

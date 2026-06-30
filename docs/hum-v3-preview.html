@@ -1,0 +1,783 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>Hum - DevPod Jellyfish v3</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #08081a; color: #e0e0e0; font-family: -apple-system, 'PingFang SC', sans-serif; }
+  h1 { text-align: center; padding: 36px 0 4px; font-size: 28px; color: #c4b5fd; letter-spacing: 3px; }
+  .subtitle { text-align: center; color: #6b7280; font-size: 13px; margin-bottom: 32px; }
+  .section { max-width: 1100px; margin: 0 auto; padding: 0 24px; }
+  .section-title {
+    font-size: 12px; text-transform: uppercase; letter-spacing: 2px;
+    color: #4b5563; margin: 48px 0 20px; padding-bottom: 8px;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+  }
+
+  /* Controls */
+  .controls { display: flex; justify-content: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+  .controls button {
+    padding: 6px 16px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.08);
+    background: rgba(255,255,255,0.03); color: #9ca3af; cursor: pointer; font-size: 12px;
+    transition: all 0.2s;
+  }
+  .controls button:hover, .controls button.active {
+    background: rgba(139,92,246,0.12); border-color: rgba(139,92,246,0.3); color: #c4b5fd;
+  }
+  .ctrl-label { text-align: center; font-size: 10px; color: #374151; text-transform: uppercase; letter-spacing: 1.5px; margin: 16px 0 6px; }
+
+  /* Main stage */
+  .stage {
+    display: flex; justify-content: center; align-items: center;
+    min-height: 380px; position: relative; margin-bottom: 20px;
+  }
+  .stage-glow {
+    position: absolute; width: 300px; height: 300px;
+    border-radius: 50%; filter: blur(80px); opacity: 0.08;
+    background: #6366f1; transition: background 0.8s;
+  }
+
+  /* Scene description */
+  .scene-desc {
+    text-align: center; max-width: 500px; margin: 0 auto 40px;
+    padding: 16px 24px; background: rgba(255,255,255,0.02);
+    border: 1px solid rgba(255,255,255,0.05); border-radius: 12px;
+  }
+  .scene-desc h3 { font-size: 14px; color: #c4b5fd; margin-bottom: 6px; }
+  .scene-desc p { font-size: 12px; color: #6b7280; line-height: 1.7; }
+  .scene-desc .tentacle-note { font-size: 11px; color: #8b5cf6; margin-top: 8px; font-style: italic; }
+
+  /* Grid for all scenes */
+  .scenes-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 24px; margin-bottom: 60px;
+  }
+  .scene-card {
+    background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05);
+    border-radius: 16px; padding: 20px; display: flex; gap: 16px; align-items: center;
+    cursor: pointer; transition: all 0.3s;
+  }
+  .scene-card:hover { border-color: rgba(139,92,246,0.2); background: rgba(139,92,246,0.03); }
+  .scene-card.active { border-color: rgba(139,92,246,0.4); }
+  .scene-card .preview { flex-shrink: 0; }
+  .scene-card .info h4 { font-size: 13px; color: #d1d5db; margin-bottom: 4px; }
+  .scene-card .info .desc { font-size: 11px; color: #6b7280; line-height: 1.5; }
+  .scene-card .info .tentacle-action { font-size: 10px; color: #8b5cf6; margin-top: 6px; }
+
+  /* SVG jellyfish shared styles */
+  .hum-svg { overflow: visible; filter: drop-shadow(0 0 12px rgba(99,102,241,0.15)); }
+</style>
+</head>
+<body>
+
+<h1>HUM</h1>
+<p class="subtitle">会哼唱的水母 — DevPod VibeCoding Companion</p>
+
+<div class="section">
+
+  <div class="section-title">Interactive Preview</div>
+  <div class="ctrl-label">VibeCoding Scene</div>
+  <div class="controls" id="scene-btns">
+    <button class="active" onclick="setScene('idle')">Idle / 待机</button>
+    <button onclick="setScene('processing')">Processing / 编织代码</button>
+    <button onclick="setScene('speaking')">Speaking / 语音播报</button>
+    <button onclick="setScene('inspect')">Inspect / 查看Agent</button>
+    <button onclick="setScene('listening')">Listening / 倾听</button>
+    <button onclick="setScene('waiting')">Waiting / 需要确认</button>
+    <button onclick="setScene('completed')">Completed / 完成</button>
+    <button onclick="setScene('error')">Error / 出错</button>
+  </div>
+
+  <div class="stage">
+    <div class="stage-glow" id="stage-glow"></div>
+    <div id="main-stage"></div>
+  </div>
+
+  <div class="scene-desc" id="scene-desc"></div>
+
+  <!-- All scenes overview -->
+  <div class="section-title">All VibeCoding Scenes</div>
+  <div class="scenes-grid" id="scenes-grid"></div>
+
+</div>
+
+<script>
+const SCENES = {
+  idle: {
+    title: 'Idle — 安静漂浮',
+    desc: '用户正在写代码，Hum 不打扰。它有自己的小世界——缓慢漂浮、呼吸、偶尔眨眼，触手像海草一样自然飘荡。',
+    tentacle: '触手：5根均匀分布，自然飘荡如水草，各自独立摇曳',
+    glow: '#6366f1'
+  },
+  processing: {
+    title: 'Processing — 编织代码',
+    desc: 'Claude Code 或其他 AI Agent 正在执行任务。Hum 的触手从飘散状态收拢到身前，像在编织一张网——这是代码正在被生成的隐喻。',
+    tentacle: '触手：向中间收拢交叉编织，末端有光点在触手间流动（数据流动）',
+    glow: '#3b82f6'
+  },
+  speaking: {
+    title: 'Speaking — 语音播报',
+    desc: 'Hum 正在向用户播报摘要。这是产品核心场景——伞盖随语音节奏脉冲收缩，触手轻轻张开像扩音器，底部出现音频波形条。',
+    tentacle: '触手：均匀向外张开呈喇叭形，随语音节奏微微摆动，像声波在扩散',
+    glow: '#8b5cf6'
+  },
+  inspect: {
+    title: 'Inspect — 查看 Agent',
+    desc: '用户想查看当前连接的 AI Coding Agent 状态。Hum 用一根触手"拎"出一个发光的 Agent 标识球，展示给用户看。',
+    tentacle: '触手：一根触手伸长卷住一个发光圆球（Agent标识），其余触手安静。球的颜色对应 Agent（橙=Claude, 绿=Codex...）',
+    glow: '#f97316'
+  },
+  listening: {
+    title: 'Listening — 倾听用户',
+    desc: '用户正在用语音下达指令。Hum 歪头侧耳倾听，一根触手变成"麦克风"——末端发出绿色光点，伞盖表面出现声波纹理。',
+    tentacle: '触手：一根触手末端膨大发光（麦克风），身体微倾，其余触手安静悬停',
+    glow: '#10b981'
+  },
+  waiting: {
+    title: 'Waiting — 需要确认',
+    desc: 'Claude Code 请求权限，需要用户批准。Hum 停止漂浮，触手紧张地卷起，一根触手举起一个"卷轴"（权限请求），头顶出现感叹号。',
+    tentacle: '触手：多数紧缩卷曲，一根触手高举展示"请求卡片"，姿态紧张',
+    glow: '#f59e0b'
+  },
+  completed: {
+    title: 'Completed — 任务完成',
+    desc: '任务成功完成！Hum 的伞盖完全绽放，触手向四周散开释放光点烟花，眯着眼笑。',
+    tentacle: '触手：全部向外伸展到最大，末端释放出小光点向上飘散（烟花），随后缓慢收回',
+    glow: '#10b981'
+  },
+  error: {
+    title: 'Error — 出错受伤',
+    desc: '执行出错了。Hum 抖动一下然后蜷缩起来，触手紧紧抱住自己，颜色变暗红，底部滴落一滴"墨汁"。不是警告框，是共情。',
+    tentacle: '触手：快速向内卷缩抱住身体，像受伤的动物蜷缩自保',
+    glow: '#ef4444'
+  }
+};
+
+// ===================== SVG JELLYFISH GENERATOR =====================
+function createJellyfish(scene, size = 160) {
+  const s = size;
+  const cx = s / 2;
+  const bellW = s * 0.42;   // bell width
+  const bellH = s * 0.30;   // bell height
+  const bellTop = s * 0.08;
+  const bellCx = cx;
+  const bellCy = bellTop + bellH * 0.5;
+
+  // Color palettes per scene
+  const palettes = {
+    idle:       { bell: '#6366f1', bellLight: '#818cf8', inner: '#a5b4fc', tentacle: '#8b5cf6', glow: '#6366f1', eye: '#e0e7ff' },
+    processing: { bell: '#3b82f6', bellLight: '#60a5fa', inner: '#93c5fd', tentacle: '#2563eb', glow: '#3b82f6', eye: '#dbeafe' },
+    speaking:   { bell: '#7c3aed', bellLight: '#8b5cf6', inner: '#c4b5fd', tentacle: '#6d28d9', glow: '#8b5cf6', eye: '#ede9fe' },
+    inspect:    { bell: '#6366f1', bellLight: '#818cf8', inner: '#a5b4fc', tentacle: '#8b5cf6', glow: '#f97316', eye: '#e0e7ff' },
+    listening:  { bell: '#059669', bellLight: '#10b981', inner: '#6ee7b7', tentacle: '#047857', glow: '#10b981', eye: '#d1fae5' },
+    waiting:    { bell: '#d97706', bellLight: '#f59e0b', inner: '#fcd34d', tentacle: '#b45309', glow: '#f59e0b', eye: '#fef3c7' },
+    completed:  { bell: '#059669', bellLight: '#10b981', inner: '#6ee7b7', tentacle: '#047857', glow: '#10b981', eye: '#d1fae5' },
+    error:      { bell: '#dc2626', bellLight: '#ef4444', inner: '#fca5a5', tentacle: '#b91c1c', glow: '#ef4444', eye: '#fee2e2' },
+  };
+  const p = palettes[scene] || palettes.idle;
+
+  // Animation IDs (unique per instance to avoid conflicts)
+  const uid = 'h' + Math.random().toString(36).slice(2,8);
+
+  // ---- Build tentacle paths based on scene ----
+  const tentacles = buildTentacles(scene, cx, bellTop + bellH - 2, bellW, s, p, uid);
+  const extras = buildExtras(scene, cx, bellTop, bellH, bellW, s, p, uid);
+
+  return `
+  <svg width="${s}" height="${s}" viewBox="0 0 ${s} ${s}" class="hum-svg" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <!-- Bell gradient -->
+      <radialGradient id="${uid}-bg" cx="50%" cy="40%" r="55%">
+        <stop offset="0%" stop-color="${p.bellLight}" stop-opacity="0.5"/>
+        <stop offset="70%" stop-color="${p.bell}" stop-opacity="0.3"/>
+        <stop offset="100%" stop-color="${p.bell}" stop-opacity="0.1"/>
+      </radialGradient>
+      <!-- Inner glow -->
+      <radialGradient id="${uid}-ig" cx="50%" cy="50%" r="50%">
+        <stop offset="0%" stop-color="${p.inner}" stop-opacity="0.4"/>
+        <stop offset="100%" stop-color="${p.inner}" stop-opacity="0"/>
+      </radialGradient>
+      <!-- Tentacle gradient -->
+      <linearGradient id="${uid}-tg" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="${p.tentacle}" stop-opacity="0.6"/>
+        <stop offset="100%" stop-color="${p.tentacle}" stop-opacity="0.05"/>
+      </linearGradient>
+      <!-- Aura blur -->
+      <filter id="${uid}-blur">
+        <feGaussianBlur stdDeviation="8" />
+      </filter>
+    </defs>
+
+    <!-- Floating animation wrapper -->
+    <g>
+      ${scene === 'idle' || scene === 'speaking' || scene === 'processing' || scene === 'inspect' || scene === 'listening' ? `
+      <animateTransform attributeName="transform" type="translate" values="0,0;0,-4;0,0" dur="${scene === 'processing' ? '2.5s' : '4s'}" repeatCount="indefinite" />
+      ` : ''}
+      ${scene === 'error' ? `
+      <animateTransform attributeName="transform" type="translate" values="0,0;-3,0;3,0;-2,0;2,0;0,0" dur="0.5s" repeatCount="2" />
+      ` : ''}
+
+      <!-- Aura glow -->
+      <ellipse cx="${cx}" cy="${bellCy + 8}" rx="${bellW + 10}" ry="${bellH + 5}" fill="${p.glow}" opacity="0.12" filter="url(#${uid}-blur)">
+        ${scene === 'waiting' ? `<animate attributeName="opacity" values="0.08;0.2;0.08;0.15;0.08" dur="1.2s" repeatCount="indefinite"/>` : ''}
+        ${scene === 'speaking' ? `<animate attributeName="opacity" values="0.1;0.2;0.1" dur="1s" repeatCount="indefinite"/>` : ''}
+        ${scene === 'completed' ? `<animate attributeName="rx" values="${bellW+10};${bellW+25};${bellW+10}" dur="2s" repeatCount="1"/>` : ''}
+      </ellipse>
+
+      <!-- Tentacles (behind bell) -->
+      ${tentacles}
+
+      <!-- Bell (dome) -->
+      <g>
+        ${scene === 'speaking' ? `<animateTransform attributeName="transform" type="scale" values="1,1;1.04,0.96;1,1" dur="0.8s" repeatCount="indefinite" additive="sum"/>` : ''}
+        ${scene === 'idle' ? `<animateTransform attributeName="transform" type="scale" values="1,1;1.02,0.98;1,1" dur="3.5s" repeatCount="indefinite" additive="sum"/>` : ''}
+        ${scene === 'error' ? `<animateTransform attributeName="transform" type="scale" values="1,1;0.92,0.94;0.92,0.94" dur="0.8s" fill="freeze"/>` : ''}
+
+        <!-- Bell outer shape -->
+        <path d="
+          M ${cx - bellW} ${bellTop + bellH}
+          Q ${cx - bellW} ${bellTop + bellH * 0.3}, ${cx - bellW * 0.7} ${bellTop}
+          Q ${cx} ${bellTop - bellH * 0.15}, ${cx + bellW * 0.7} ${bellTop}
+          Q ${cx + bellW} ${bellTop + bellH * 0.3}, ${cx + bellW} ${bellTop + bellH}
+          Q ${cx + bellW * 0.6} ${bellTop + bellH + 4}, ${cx} ${bellTop + bellH + 3}
+          Q ${cx - bellW * 0.6} ${bellTop + bellH + 4}, ${cx - bellW} ${bellTop + bellH}
+          Z
+        " fill="url(#${uid}-bg)" stroke="${p.bellLight}" stroke-width="0.5" stroke-opacity="0.3"/>
+
+        <!-- Inner glow organ -->
+        <ellipse cx="${cx}" cy="${bellCy - 2}" rx="${bellW * 0.45}" ry="${bellH * 0.35}" fill="url(#${uid}-ig)">
+          ${scene === 'processing' ? `<animate attributeName="opacity" values="0.2;0.5;0.2" dur="2s" repeatCount="indefinite"/>` : ''}
+        </ellipse>
+
+        <!-- Subtle pattern lines inside bell -->
+        <path d="M ${cx - bellW*0.3} ${bellCy + 4} Q ${cx} ${bellCy - 2} ${cx + bellW*0.3} ${bellCy + 4}" fill="none" stroke="${p.inner}" stroke-width="0.5" stroke-opacity="0.15"/>
+        <path d="M ${cx - bellW*0.2} ${bellCy + 7} Q ${cx} ${bellCy + 2} ${cx + bellW*0.2} ${bellCy + 7}" fill="none" stroke="${p.inner}" stroke-width="0.4" stroke-opacity="0.1"/>
+
+        <!-- Oral arms (frilly edge under bell) -->
+        ${buildOralArms(cx, bellTop + bellH, bellW, p, uid, scene)}
+      </g>
+
+      <!-- Eyes -->
+      ${buildEyes(scene, cx, bellCy - 2, bellW, p, uid)}
+
+      <!-- Mouth -->
+      ${buildMouth(scene, cx, bellCy + bellH * 0.28, p, uid)}
+
+      <!-- Scene-specific extras (agent orb, permission card, sparkles, voice bars, etc) -->
+      ${extras}
+
+      <!-- Client indicator dot (top-right of bell) -->
+      <circle cx="${cx + bellW * 0.7}" cy="${bellTop + 4}" r="2.5" fill="${p.glow}" opacity="0.7">
+        <animate attributeName="opacity" values="0.5;0.9;0.5" dur="2s" repeatCount="indefinite"/>
+      </circle>
+    </g>
+  </svg>`;
+}
+
+// ===================== TENTACLES PER SCENE =====================
+function buildTentacles(scene, cx, baseY, bellW, s, p, uid) {
+  const tCount = 5;
+  const spread = bellW * 0.8;
+  const startX = cx - spread;
+  const gap = (spread * 2) / (tCount - 1);
+
+  switch(scene) {
+    case 'idle': return idleTentacles(cx, baseY, bellW, s, p, uid);
+    case 'processing': return processingTentacles(cx, baseY, bellW, s, p, uid);
+    case 'speaking': return speakingTentacles(cx, baseY, bellW, s, p, uid);
+    case 'inspect': return inspectTentacles(cx, baseY, bellW, s, p, uid);
+    case 'listening': return listeningTentacles(cx, baseY, bellW, s, p, uid);
+    case 'waiting': return waitingTentacles(cx, baseY, bellW, s, p, uid);
+    case 'completed': return completedTentacles(cx, baseY, bellW, s, p, uid);
+    case 'error': return errorTentacles(cx, baseY, bellW, s, p, uid);
+    default: return idleTentacles(cx, baseY, bellW, s, p, uid);
+  }
+}
+
+function idleTentacles(cx, by, bw, s, p, uid) {
+  // 5 evenly spread, gently swaying like seaweed
+  const xs = [-bw*0.7, -bw*0.35, 0, bw*0.35, bw*0.7];
+  const lens = [40, 50, 55, 50, 40];
+  return xs.map((dx, i) => {
+    const x = cx + dx;
+    const len = lens[i];
+    const sway = (i % 2 === 0) ? 6 : -6;
+    const dur = 4.5 + i * 0.3;
+    return `
+      <path d="M ${x} ${by} Q ${x + sway} ${by + len*0.5} ${x - sway*0.3} ${by + len}"
+        fill="none" stroke="url(#${uid}-tg)" stroke-width="2.5" stroke-linecap="round">
+        <animate attributeName="d"
+          values="M ${x} ${by} Q ${x + sway} ${by + len*0.5} ${x - sway*0.3} ${by + len};
+                  M ${x} ${by} Q ${x - sway} ${by + len*0.5} ${x + sway*0.3} ${by + len};
+                  M ${x} ${by} Q ${x + sway} ${by + len*0.5} ${x - sway*0.3} ${by + len}"
+          dur="${dur}s" repeatCount="indefinite"/>
+      </path>`;
+  }).join('');
+}
+
+function processingTentacles(cx, by, bw, s, p, uid) {
+  // Tentacles converge inward — weaving/knitting motion
+  const xs = [-bw*0.6, -bw*0.3, 0, bw*0.3, bw*0.6];
+  return xs.map((dx, i) => {
+    const x = cx + dx;
+    const targetX = cx + (i < 2 ? 8 : i > 2 ? -8 : 0);
+    const len = 38 + Math.abs(2-i) * 3;
+    const mid = by + len * 0.55;
+    return `
+      <path fill="none" stroke="url(#${uid}-tg)" stroke-width="2.5" stroke-linecap="round">
+        <animate attributeName="d"
+          values="M ${x} ${by} Q ${x} ${mid} ${targetX + 5} ${by + len};
+                  M ${x} ${by} Q ${(x+targetX)/2} ${mid - 3} ${targetX - 5} ${by + len - 3};
+                  M ${x} ${by} Q ${x} ${mid} ${targetX + 5} ${by + len}"
+          dur="2s" repeatCount="indefinite"/>
+      </path>`;
+  }).join('') +
+  // Data particles flowing along tentacles
+  [0,1,2].map(i => `
+    <circle r="2" fill="${p.inner}" opacity="0">
+      <animate attributeName="cx" values="${cx - 10 + i*10};${cx};${cx + 5 - i*5}" dur="2s" repeatCount="indefinite" begin="${i*0.6}s"/>
+      <animate attributeName="cy" values="${by + 35};${by + 15};${by + 35}" dur="2s" repeatCount="indefinite" begin="${i*0.6}s"/>
+      <animate attributeName="opacity" values="0;0.8;0" dur="2s" repeatCount="indefinite" begin="${i*0.6}s"/>
+    </circle>
+  `).join('');
+}
+
+function speakingTentacles(cx, by, bw, s, p, uid) {
+  // Tentacles spread outward like a trumpet/speaker cone
+  const xs = [-bw*0.7, -bw*0.35, 0, bw*0.35, bw*0.7];
+  const endXs = [-bw*1.0, -bw*0.5, 0, bw*0.5, bw*1.0];
+  const lens = [35, 42, 46, 42, 35];
+  return xs.map((dx, i) => {
+    const x = cx + dx;
+    const ex = cx + endXs[i];
+    const len = lens[i];
+    return `
+      <path fill="none" stroke="url(#${uid}-tg)" stroke-width="2.5" stroke-linecap="round">
+        <animate attributeName="d"
+          values="M ${x} ${by} Q ${(x+ex)/2} ${by+len*0.5} ${ex} ${by+len};
+                  M ${x} ${by} Q ${(x+ex)/2 + 2} ${by+len*0.5 - 2} ${ex + 3} ${by+len - 2};
+                  M ${x} ${by} Q ${(x+ex)/2} ${by+len*0.5} ${ex} ${by+len}"
+          dur="1.5s" repeatCount="indefinite"/>
+      </path>`;
+  }).join('');
+}
+
+function inspectTentacles(cx, by, bw, s, p, uid) {
+  // 4 tentacles idle, 1 extended holding an agent orb
+  const xs = [-bw*0.7, -bw*0.35, 0, bw*0.35];
+  const idle = xs.map((dx, i) => {
+    const x = cx + dx;
+    const sway = (i % 2 === 0) ? 4 : -4;
+    return `
+      <path d="M ${x} ${by} Q ${x + sway} ${by + 30} ${x - sway*0.3} ${by + 38}"
+        fill="none" stroke="url(#${uid}-tg)" stroke-width="2" stroke-linecap="round" opacity="0.4">
+        <animate attributeName="d"
+          values="M ${x} ${by} Q ${x + sway} ${by+30} ${x - sway*0.3} ${by+38};
+                  M ${x} ${by} Q ${x - sway} ${by+30} ${x + sway*0.3} ${by+38};
+                  M ${x} ${by} Q ${x + sway} ${by+30} ${x - sway*0.3} ${by+38}"
+          dur="5s" repeatCount="indefinite"/>
+      </path>`;
+  }).join('');
+
+  // Active tentacle — curled around an orb
+  const tx = cx + bw * 0.7;
+  const orbX = tx + 18;
+  const orbY = by + 20;
+  const active = `
+    <path fill="none" stroke="${p.tentacle}" stroke-width="3" stroke-linecap="round" stroke-opacity="0.7">
+      <animate attributeName="d"
+        values="M ${tx} ${by} Q ${tx + 12} ${by + 8} ${orbX - 5} ${orbY - 8} Q ${orbX + 6} ${orbY - 4} ${orbX + 2} ${orbY + 8} Q ${orbX - 2} ${orbY + 10} ${orbX - 8} ${orbY + 4};
+                M ${tx} ${by} Q ${tx + 14} ${by + 6} ${orbX - 4} ${orbY - 10} Q ${orbX + 7} ${orbY - 5} ${orbX + 3} ${orbY + 7} Q ${orbX - 1} ${orbY + 11} ${orbX - 7} ${orbY + 5};
+                M ${tx} ${by} Q ${tx + 12} ${by + 8} ${orbX - 5} ${orbY - 8} Q ${orbX + 6} ${orbY - 4} ${orbX + 2} ${orbY + 8} Q ${orbX - 2} ${orbY + 10} ${orbX - 8} ${orbY + 4}"
+        dur="3s" repeatCount="indefinite"/>
+    </path>
+    <!-- Agent Orb -->
+    <circle cx="${orbX}" cy="${orbY}" r="8" fill="#f97316" opacity="0.7">
+      <animate attributeName="opacity" values="0.5;0.85;0.5" dur="2s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="${orbX}" cy="${orbY}" r="11" fill="none" stroke="#f97316" stroke-width="0.8" opacity="0.3">
+      <animate attributeName="r" values="11;14;11" dur="2s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0.3;0.1;0.3" dur="2s" repeatCount="indefinite"/>
+    </circle>
+    <text x="${orbX}" y="${orbY + 3}" text-anchor="middle" font-size="7" fill="white" font-weight="700" opacity="0.9">C</text>
+  `;
+  return idle + active;
+}
+
+function listeningTentacles(cx, by, bw, s, p, uid) {
+  // Body tilted, mic tentacle extended
+  const xs = [-bw*0.65, -bw*0.3, 0, bw*0.35];
+  const idle = xs.map((dx, i) => {
+    const x = cx + dx;
+    return `
+      <path d="M ${x} ${by} Q ${x + 3} ${by + 28} ${x - 2} ${by + 36}"
+        fill="none" stroke="url(#${uid}-tg)" stroke-width="2" stroke-linecap="round" opacity="0.4">
+        <animate attributeName="d"
+          values="M ${x} ${by} Q ${x+3} ${by+28} ${x-2} ${by+36};
+                  M ${x} ${by} Q ${x-2} ${by+28} ${x+3} ${by+36};
+                  M ${x} ${by} Q ${x+3} ${by+28} ${x-2} ${by+36}"
+          dur="5s" repeatCount="indefinite"/>
+      </path>`;
+  }).join('');
+
+  // Mic tentacle
+  const mx = cx + bw * 0.75;
+  const micY = by + 42;
+  const mic = `
+    <path fill="none" stroke="${p.tentacle}" stroke-width="2.5" stroke-linecap="round" stroke-opacity="0.65">
+      <animate attributeName="d"
+        values="M ${mx} ${by} Q ${mx + 6} ${by + 15} ${mx + 10} ${micY - 6};
+                M ${mx} ${by} Q ${mx + 8} ${by + 13} ${mx + 12} ${micY - 8};
+                M ${mx} ${by} Q ${mx + 6} ${by + 15} ${mx + 10} ${micY - 6}"
+        dur="2.5s" repeatCount="indefinite"/>
+    </path>
+    <circle cx="${mx + 10}" cy="${micY - 5}" r="4" fill="${p.glow}" opacity="0.6">
+      <animate attributeName="opacity" values="0.4;0.9;0.4" dur="1s" repeatCount="indefinite"/>
+      <animate attributeName="r" values="3.5;4.5;3.5" dur="1s" repeatCount="indefinite"/>
+    </circle>
+  `;
+  return idle + mic;
+}
+
+function waitingTentacles(cx, by, bw, s, p, uid) {
+  // Tense curled tentacles + one holding up a "card"
+  const xs = [-bw*0.5, -bw*0.2, bw*0.2, bw*0.5];
+  const curled = xs.map((dx, i) => {
+    const x = cx + dx;
+    const curl = (i < 2) ? 8 : -8;
+    return `
+      <path fill="none" stroke="url(#${uid}-tg)" stroke-width="2.5" stroke-linecap="round">
+        <animate attributeName="d"
+          values="M ${x} ${by} Q ${x + curl} ${by + 10} ${x + curl*1.5} ${by + 14} Q ${x + curl*0.8} ${by + 18} ${x + curl*0.3} ${by + 16};
+                  M ${x} ${by} Q ${x + curl*1.1} ${by + 9} ${x + curl*1.6} ${by + 13} Q ${x + curl*0.9} ${by + 17} ${x + curl*0.4} ${by + 15};
+                  M ${x} ${by} Q ${x + curl} ${by + 10} ${x + curl*1.5} ${by + 14} Q ${x + curl*0.8} ${by + 18} ${x + curl*0.3} ${by + 16}"
+          dur="1.5s" repeatCount="indefinite"/>
+      </path>`;
+  }).join('');
+
+  // Card-holding tentacle
+  const cardX = cx;
+  const cardY = by + 38;
+  const card = `
+    <path fill="none" stroke="${p.tentacle}" stroke-width="2.5" stroke-linecap="round" stroke-opacity="0.6">
+      <animate attributeName="d"
+        values="M ${cx} ${by} Q ${cx} ${by + 18} ${cardX} ${cardY - 8};
+                M ${cx} ${by} Q ${cx + 2} ${by + 16} ${cardX + 1} ${cardY - 10};
+                M ${cx} ${by} Q ${cx} ${by + 18} ${cardX} ${cardY - 8}"
+        dur="1.8s" repeatCount="indefinite"/>
+    </path>
+    <!-- Permission card -->
+    <rect x="${cardX - 12}" y="${cardY - 6}" width="24" height="16" rx="3" fill="${p.bell}" opacity="0.4" stroke="${p.glow}" stroke-width="0.8" stroke-opacity="0.5">
+      <animate attributeName="opacity" values="0.3;0.5;0.3" dur="1.2s" repeatCount="indefinite"/>
+    </rect>
+    <line x1="${cardX - 7}" y1="${cardY}" x2="${cardX + 7}" y2="${cardY}" stroke="${p.inner}" stroke-width="0.8" opacity="0.5"/>
+    <line x1="${cardX - 7}" y1="${cardY + 4}" x2="${cardX + 4}" y2="${cardY + 4}" stroke="${p.inner}" stroke-width="0.6" opacity="0.3"/>
+  `;
+  return curled + card;
+}
+
+function completedTentacles(cx, by, bw, s, p, uid) {
+  // Fully extended outward with sparkles
+  const angles = [-50, -25, 0, 25, 50];
+  const len = 50;
+  return angles.map((deg, i) => {
+    const rad = deg * Math.PI / 180;
+    const ex = cx + Math.sin(rad) * len;
+    const ey = by + Math.cos(rad) * len;
+    const mx = cx + Math.sin(rad) * len * 0.5 + (i%2===0 ? 3 : -3);
+    const my = by + Math.cos(rad) * len * 0.5;
+    const x = cx + [-bw*0.6, -bw*0.3, 0, bw*0.3, bw*0.6][i];
+    return `
+      <path fill="none" stroke="url(#${uid}-tg)" stroke-width="2.5" stroke-linecap="round">
+        <animate attributeName="d"
+          values="M ${x} ${by} Q ${x} ${by + 15} ${x} ${by + 25};
+                  M ${x} ${by} Q ${mx} ${my} ${ex} ${ey};
+                  M ${x} ${by} Q ${mx} ${my} ${ex} ${ey}"
+          dur="1.5s" fill="freeze"/>
+      </path>
+      <!-- Sparkle at tip -->
+      <circle cx="${ex}" cy="${ey}" r="2" fill="${p.inner}" opacity="0">
+        <animate attributeName="opacity" values="0;0.9;0" dur="2s" begin="0.8s" repeatCount="1"/>
+        <animate attributeName="cy" values="${ey};${ey - 15}" dur="2s" begin="0.8s" repeatCount="1"/>
+        <animate attributeName="r" values="2;0" dur="2s" begin="0.8s" repeatCount="1"/>
+      </circle>`;
+  }).join('');
+}
+
+function errorTentacles(cx, by, bw, s, p, uid) {
+  // Curled inward tightly — hugging self
+  const xs = [-bw*0.4, -bw*0.2, 0, bw*0.2, bw*0.4];
+  return xs.map((dx, i) => {
+    const x = cx + dx;
+    const curl = (i < 2) ? 6 : (i > 2) ? -6 : 0;
+    const tightX = cx + dx * 0.3;
+    return `
+      <path fill="none" stroke="url(#${uid}-tg)" stroke-width="2" stroke-linecap="round">
+        <animate attributeName="d"
+          values="M ${x} ${by} Q ${x} ${by + 15} ${x} ${by + 25};
+                  M ${x} ${by} Q ${x + curl} ${by + 8} ${tightX} ${by + 12};
+                  M ${x} ${by} Q ${x + curl} ${by + 8} ${tightX} ${by + 12}"
+          dur="0.8s" fill="freeze"/>
+      </path>`;
+  }).join('') +
+  // Ink drop
+  `<circle cx="${cx}" cy="${by + 30}" r="2.5" fill="${p.bell}" opacity="0">
+    <animate attributeName="cy" values="${by + 15};${by + 55}" dur="2.5s" begin="0.6s" repeatCount="1"/>
+    <animate attributeName="opacity" values="0;0.5;0" dur="2.5s" begin="0.6s" repeatCount="1"/>
+    <animate attributeName="r" values="2.5;0.5" dur="2.5s" begin="0.6s" repeatCount="1"/>
+  </circle>`;
+}
+
+// ===================== ORAL ARMS =====================
+function buildOralArms(cx, baseY, bellW, p, uid, scene) {
+  const count = 7;
+  const w = bellW * 1.2;
+  const startX = cx - w / 2;
+  const gap = w / (count - 1);
+  return Array.from({length: count}, (_, i) => {
+    const x = startX + i * gap;
+    const h = 4 + Math.sin(i * 0.8) * 2;
+    return `<path d="M ${x} ${baseY} Q ${x + 1.5} ${baseY + h} ${x + 3} ${baseY}"
+      fill="none" stroke="${p.tentacle}" stroke-width="1.2" stroke-linecap="round" opacity="0.35"
+      ${scene === 'speaking' ? `><animate attributeName="d" values="M ${x} ${baseY} Q ${x+1.5} ${baseY+h} ${x+3} ${baseY};M ${x} ${baseY} Q ${x+1.5} ${baseY+h+2} ${x+3} ${baseY};M ${x} ${baseY} Q ${x+1.5} ${baseY+h} ${x+3} ${baseY}" dur="0.4s" repeatCount="indefinite"/></path>` : '/>'}`
+  }).join('');
+}
+
+// ===================== EYES =====================
+function buildEyes(scene, cx, bellCy, bellW, p, uid) {
+  const eyeSpacing = bellW * 0.28;
+  const eyeY = bellCy;
+  const lx = cx - eyeSpacing;
+  const rx = cx + eyeSpacing;
+
+  if (scene === 'completed') {
+    // Happy squint
+    return `
+      <path d="M ${lx-3.5} ${eyeY+1} Q ${lx} ${eyeY-3} ${lx+3.5} ${eyeY+1}" fill="none" stroke="${p.eye}" stroke-width="1.8" stroke-linecap="round" opacity="0.9"/>
+      <path d="M ${rx-3.5} ${eyeY+1} Q ${rx} ${eyeY-3} ${rx+3.5} ${eyeY+1}" fill="none" stroke="${p.eye}" stroke-width="1.8" stroke-linecap="round" opacity="0.9"/>
+    `;
+  }
+  if (scene === 'error') {
+    // Sad droopy eyes
+    return `
+      <ellipse cx="${lx}" cy="${eyeY}" rx="3" ry="3.5" fill="${p.eye}" opacity="0.6"/>
+      <ellipse cx="${rx}" cy="${eyeY}" rx="3" ry="3.5" fill="${p.eye}" opacity="0.6"/>
+      <circle cx="${lx}" cy="${eyeY+1}" r="1.5" fill="rgba(0,0,0,0.3)"/>
+      <circle cx="${rx}" cy="${eyeY+1}" r="1.5" fill="rgba(0,0,0,0.3)"/>
+      <!-- Sad brow -->
+      <line x1="${lx-3}" y1="${eyeY-4}" x2="${lx+2}" y2="${eyeY-5.5}" stroke="${p.eye}" stroke-width="0.8" opacity="0.4"/>
+      <line x1="${rx+3}" y1="${eyeY-4}" x2="${rx-2}" y2="${eyeY-5.5}" stroke="${p.eye}" stroke-width="0.8" opacity="0.4"/>
+    `;
+  }
+  if (scene === 'waiting') {
+    // Wide alert eyes
+    return `
+      <circle cx="${lx}" cy="${eyeY}" r="3.5" fill="${p.eye}" opacity="0.85"/>
+      <circle cx="${rx}" cy="${eyeY}" r="3.5" fill="${p.eye}" opacity="0.85"/>
+      <circle cx="${lx}" cy="${eyeY}" r="1.8" fill="rgba(0,0,0,0.35)"/>
+      <circle cx="${rx}" cy="${eyeY}" r="1.8" fill="rgba(0,0,0,0.35)"/>
+    `;
+  }
+  if (scene === 'processing') {
+    // Focused small eyes looking up
+    return `
+      <circle cx="${lx}" cy="${eyeY - 1}" r="2.2" fill="${p.eye}" opacity="0.8">
+        <animate attributeName="cy" values="${eyeY-1};${eyeY-2};${eyeY-1}" dur="2.5s" repeatCount="indefinite"/>
+      </circle>
+      <circle cx="${rx}" cy="${eyeY - 1}" r="2.2" fill="${p.eye}" opacity="0.8">
+        <animate attributeName="cy" values="${eyeY-1};${eyeY-2};${eyeY-1}" dur="2.5s" repeatCount="indefinite"/>
+      </circle>
+    `;
+  }
+  if (scene === 'listening') {
+    // Attentive eyes
+    return `
+      <circle cx="${lx}" cy="${eyeY}" r="2.8" fill="${p.eye}" opacity="0.85"/>
+      <circle cx="${rx}" cy="${eyeY}" r="2.8" fill="${p.eye}" opacity="0.85"/>
+      <circle cx="${lx + 0.5}" cy="${eyeY}" r="1.3" fill="rgba(0,0,0,0.3)"/>
+      <circle cx="${rx + 0.5}" cy="${eyeY}" r="1.3" fill="rgba(0,0,0,0.3)"/>
+    `;
+  }
+  // Default (idle, speaking, inspect)
+  return `
+    <circle cx="${lx}" cy="${eyeY}" r="2.5" fill="${p.eye}" opacity="0.8">
+      <animate attributeName="ry" values="2.5;2.5;0.3;2.5;2.5" dur="5s" repeatCount="indefinite" keyTimes="0;0.46;0.5;0.54;1"/>
+    </circle>
+    <circle cx="${rx}" cy="${eyeY}" r="2.5" fill="${p.eye}" opacity="0.8">
+      <animate attributeName="ry" values="2.5;2.5;0.3;2.5;2.5" dur="5s" repeatCount="indefinite" keyTimes="0;0.46;0.5;0.54;1"/>
+    </circle>
+    <circle cx="${lx}" cy="${eyeY}" r="1.2" fill="rgba(0,0,0,0.3)"/>
+    <circle cx="${rx}" cy="${eyeY}" r="1.2" fill="rgba(0,0,0,0.3)"/>
+  `;
+}
+
+// ===================== MOUTH =====================
+function buildMouth(scene, cx, my, p, uid) {
+  if (scene === 'speaking') {
+    return `<ellipse cx="${cx}" cy="${my}" rx="3" fill="${p.eye}" opacity="0.5">
+      <animate attributeName="ry" values="1;3;1.5;2.5;1" dur="0.8s" repeatCount="indefinite"/>
+    </ellipse>`;
+  }
+  if (scene === 'completed') {
+    return `<path d="M ${cx-5} ${my} Q ${cx} ${my+4} ${cx+5} ${my}" fill="none" stroke="${p.eye}" stroke-width="1.5" stroke-linecap="round" opacity="0.7"/>`;
+  }
+  if (scene === 'error') {
+    return `<path d="M ${cx-4} ${my+2} Q ${cx} ${my-2} ${cx+4} ${my+2}" fill="none" stroke="${p.eye}" stroke-width="1.2" stroke-linecap="round" opacity="0.5"/>`;
+  }
+  if (scene === 'waiting') {
+    return `<ellipse cx="${cx}" cy="${my}" rx="2.5" ry="3" fill="${p.eye}" opacity="0.3"/>`;
+  }
+  if (scene === 'processing') {
+    return `<line x1="${cx-3}" y1="${my}" x2="${cx+3}" y2="${my}" stroke="${p.eye}" stroke-width="1.2" stroke-linecap="round" opacity="0.35"/>`;
+  }
+  // Default gentle smile
+  return `<path d="M ${cx-4} ${my} Q ${cx} ${my+3} ${cx+4} ${my}" fill="none" stroke="${p.eye}" stroke-width="1.2" stroke-linecap="round" opacity="0.4"/>`;
+}
+
+// ===================== EXTRAS (voice bars, alert, sparkles) =====================
+function buildExtras(scene, cx, bellTop, bellH, bellW, s, p, uid) {
+  if (scene === 'speaking') {
+    // Voice visualizer bars at bottom + sound wave rings
+    const barCount = 7;
+    const barW = 2;
+    const barGap = 3;
+    const totalW = barCount * barW + (barCount - 1) * barGap;
+    const startX = cx - totalW / 2;
+    const barY = bellTop + bellH + 58;
+    const bars = Array.from({length: barCount}, (_, i) => {
+      const x = startX + i * (barW + barGap);
+      const delay = (i * 0.08).toFixed(2);
+      return `<rect x="${x}" y="${barY}" width="${barW}" rx="1" fill="${p.tentacle}" opacity="0.5">
+        <animate attributeName="height" values="2;8;3;6;2" dur="0.6s" begin="${delay}s" repeatCount="indefinite"/>
+        <animate attributeName="y" values="${barY};${barY-6};${barY-1};${barY-4};${barY}" dur="0.6s" begin="${delay}s" repeatCount="indefinite"/>
+      </rect>`;
+    }).join('');
+
+    // Sound wave rings
+    const waves = [0, 0.5, 1].map(delay => `
+      <ellipse cx="${cx}" cy="${bellTop + bellH*0.5}" rx="${bellW}" ry="${bellH*0.6}" fill="none" stroke="${p.glow}" stroke-width="0.6" opacity="0">
+        <animate attributeName="rx" values="${bellW};${bellW*1.8}" dur="1.5s" begin="${delay}s" repeatCount="indefinite"/>
+        <animate attributeName="ry" values="${bellH*0.6};${bellH*1.2}" dur="1.5s" begin="${delay}s" repeatCount="indefinite"/>
+        <animate attributeName="opacity" values="0.35;0" dur="1.5s" begin="${delay}s" repeatCount="indefinite"/>
+      </ellipse>`).join('');
+
+    return bars + waves;
+  }
+
+  if (scene === 'waiting') {
+    // Alert exclamation mark
+    return `
+      <text x="${cx}" y="${bellTop - 6}" text-anchor="middle" font-size="14" font-weight="800" fill="${p.glow}" opacity="0.8">
+        <tspan>!</tspan>
+        <animate attributeName="y" values="${bellTop - 6};${bellTop - 10};${bellTop - 6}" dur="0.8s" repeatCount="indefinite"/>
+        <animate attributeName="opacity" values="0.6;1;0.6" dur="0.8s" repeatCount="indefinite"/>
+      </text>
+    `;
+  }
+
+  if (scene === 'completed') {
+    // Sparkle burst particles
+    return [
+      {x: cx-25, y: bellTop-5, dx: -8, dy: -18},
+      {x: cx+25, y: bellTop, dx: 10, dy: -15},
+      {x: cx-30, y: bellTop+bellH, dx: -12, dy: -5},
+      {x: cx+30, y: bellTop+bellH-5, dx: 14, dy: -8},
+      {x: cx, y: bellTop-10, dx: 0, dy: -20},
+    ].map((sp, i) => `
+      <circle cx="${sp.x}" cy="${sp.y}" r="2" fill="${p.inner}" opacity="0">
+        <animate attributeName="cx" values="${sp.x};${sp.x + sp.dx}" dur="1.8s" begin="${i*0.15}s" repeatCount="1"/>
+        <animate attributeName="cy" values="${sp.y};${sp.y + sp.dy}" dur="1.8s" begin="${i*0.15}s" repeatCount="1"/>
+        <animate attributeName="opacity" values="0;0.9;0" dur="1.8s" begin="${i*0.15}s" repeatCount="1"/>
+        <animate attributeName="r" values="2;0.5" dur="1.8s" begin="${i*0.15}s" repeatCount="1"/>
+      </circle>
+    `).join('');
+  }
+
+  if (scene === 'listening') {
+    // Subtle listening bars (smaller than speaking)
+    const barCount = 5;
+    const barW = 1.5;
+    const barGap = 2.5;
+    const totalW = barCount * barW + (barCount - 1) * barGap;
+    const startX = cx - totalW / 2;
+    const barY = bellTop + bellH + 52;
+    return Array.from({length: barCount}, (_, i) => {
+      const x = startX + i * (barW + barGap);
+      const delay = (i * 0.12).toFixed(2);
+      return `<rect x="${x}" y="${barY}" width="${barW}" rx="0.75" fill="${p.glow}" opacity="0.3">
+        <animate attributeName="height" values="1;4;1" dur="1s" begin="${delay}s" repeatCount="indefinite"/>
+        <animate attributeName="y" values="${barY};${barY-3};${barY}" dur="1s" begin="${delay}s" repeatCount="indefinite"/>
+      </rect>`;
+    }).join('');
+  }
+
+  return '';
+}
+
+// ===================== SCENE MANAGEMENT =====================
+const sceneDescs = SCENES;
+let currentScene = 'idle';
+
+function setScene(scene) {
+  currentScene = scene;
+  // Update main preview
+  document.getElementById('main-stage').innerHTML = createJellyfish(scene, 160);
+  // Update description
+  const info = sceneDescs[scene];
+  document.getElementById('scene-desc').innerHTML = `
+    <h3>${info.title}</h3>
+    <p>${info.desc}</p>
+    <div class="tentacle-note">${info.tentacle}</div>
+  `;
+  document.getElementById('stage-glow').style.background = info.glow;
+  // Update buttons
+  document.querySelectorAll('#scene-btns button').forEach(b => b.classList.remove('active'));
+  event?.currentTarget?.classList.add('active');
+  // Update scene cards
+  document.querySelectorAll('.scene-card').forEach(c => c.classList.toggle('active', c.dataset.scene === scene));
+}
+
+// Build scene cards
+const grid = document.getElementById('scenes-grid');
+Object.entries(SCENES).forEach(([key, info]) => {
+  const card = document.createElement('div');
+  card.className = 'scene-card' + (key === 'idle' ? ' active' : '');
+  card.dataset.scene = key;
+  card.onclick = () => {
+    setScene(key);
+    document.querySelectorAll('#scene-btns button').forEach(b =>
+      b.classList.toggle('active', b.textContent.toLowerCase().includes(key.slice(0,4)))
+    );
+  };
+  card.innerHTML = `
+    <div class="preview">${createJellyfish(key, 90)}</div>
+    <div class="info">
+      <h4>${info.title}</h4>
+      <div class="desc">${info.desc.slice(0, 80)}...</div>
+      <div class="tentacle-action">${info.tentacle.split('：')[1] || info.tentacle}</div>
+    </div>
+  `;
+  grid.appendChild(card);
+});
+
+// Init
+setScene('idle');
+
+// Replay one-shot animations
+setInterval(() => {
+  if (currentScene === 'completed' || currentScene === 'error') {
+    document.getElementById('main-stage').innerHTML = createJellyfish(currentScene, 160);
+  }
+  // Also refresh scene cards
+  document.querySelectorAll('.scene-card').forEach(card => {
+    const s = card.dataset.scene;
+    if (s === 'completed' || s === 'error') {
+      card.querySelector('.preview').innerHTML = createJellyfish(s, 90);
+    }
+  });
+}, 4000);
+</script>
+
+</body>
+</html>

@@ -101,5 +101,7 @@ export async function initBootstrap(): Promise<void> {
     stt: config.stt.provider,
     hasSummarizer: !!summarizer,
     hasPipeline: !!pipeline,
+    apiKey: config.api_keys.openai ? "SET" : "MISSING",
+    apiBase: config.summarizer.api_base,
   });
 }

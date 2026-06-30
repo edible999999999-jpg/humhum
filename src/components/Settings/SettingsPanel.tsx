@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { AppConfig } from "@/types";
 import { PetMascot } from "../Pet/PetMascot";
 import { VOICE_PRESETS, DEFAULT_VOICE } from "./voicePresets";
+import { StatsPanel } from "./StatsPanel";
 
 interface SettingsPanelProps {
   onClose: () => void;
@@ -19,6 +20,7 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
   const [hookLoading, setHookLoading] = useState<Record<string, boolean>>({});
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [clients, setClients] = useState<Array<{ id: string; name: string }>>([]);
+  const [activeTab, setActiveTab] = useState<"settings" | "stats">("settings");
 
   useEffect(() => {
     (async () => {
@@ -118,8 +120,31 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
         </button>
       </header>
 
-      {/* Scrollable content */}
-      <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4 scrollbar-thin">
+      {/* Tab Navigation */}
+      <div className="flex px-5 pt-3 pb-0 gap-1">
+        <button
+          onClick={() => setActiveTab("settings")}
+          className={`kawaii-tab ${activeTab === "settings" ? "active" : ""}`}
+        >
+          设置
+        </button>
+        <button
+          onClick={() => setActiveTab("stats")}
+          className={`kawaii-tab ${activeTab === "stats" ? "active" : ""}`}
+        >
+          统计
+        </button>
+      </div>
+
+      {/* Stats tab */}
+      {activeTab === "stats" && (
+        <div className="flex-1 overflow-y-auto px-5 py-4 scrollbar-thin">
+          <StatsPanel />
+        </div>
+      )}
+
+      {/* Settings tab — Scrollable content */}
+      {activeTab === "settings" && <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4 scrollbar-thin">
 
         {/* Voice — the star section */}
         <KawaiiCard icon="~" title="音色选择" subtitle="让伴侣的声音更适合你">
@@ -397,10 +422,10 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
             </div>
           </div>
         </div>
-      </div>
+      </div>}
 
       {/* Message toast */}
-      {message && (
+      {activeTab === "settings" && message && (
         <div
           className={`mx-5 mb-2 px-4 py-2.5 rounded-2xl text-xs text-center transition-all animate-bounce-in ${
             message.type === "success"
@@ -413,22 +438,24 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
       )}
 
       {/* Save button */}
-      <div className="px-5 py-4 border-t border-white/[0.04]">
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          className="kawaii-save-btn"
-        >
-          {saving ? (
-            <span className="flex items-center gap-2">
-              <span className="inline-block w-3.5 h-3.5 border-2 border-white/60 border-t-transparent rounded-full animate-spin" />
-              保存中
-            </span>
-          ) : (
-            "保存设置"
-          )}
-        </button>
-      </div>
+      {activeTab === "settings" && (
+        <div className="px-5 py-4 border-t border-white/[0.04]">
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="kawaii-save-btn"
+          >
+            {saving ? (
+              <span className="flex items-center gap-2">
+                <span className="inline-block w-3.5 h-3.5 border-2 border-white/60 border-t-transparent rounded-full animate-spin" />
+                保存中
+              </span>
+            ) : (
+              "保存设置"
+            )}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

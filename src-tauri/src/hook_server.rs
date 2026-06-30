@@ -1,5 +1,6 @@
 use crate::event_bus::{self, HookEvent, PermissionDecision};
 use crate::session_store::SessionStore;
+use crate::stats_store::StatsStore;
 use http_body_util::{BodyExt, Full};
 use hyper::body::Bytes;
 use hyper::server::conn::http1;
@@ -186,6 +187,23 @@ async fn handle_event(
     if let Some(store) = app_handle.try_state::<Arc<std::sync::Mutex<SessionStore>>>() {
         if let Ok(mut store) = store.lock() {
             store.update_from_event(&hook_event);
+        }
+    }
+
+    // Record stats on session end events
+    if matches!(hook_event_name.as_str(), "Stop" | "TaskCompleted" | "SessionEnd") {
+        if let Some(transcript_path) = &hook_event.transcript_path {
+            if let Some(store) = app_handle.try_state::<Arc<std::sync::Mutex<StatsStore>>>() {
+                if let Ok(mut store) = store.lock() {
+                    if let Err(e) = store.record_session_end(
+                        transcript_path,
+                        &hook_event.session_id,
+                        &hook_event.client_type,
+                    ) {
+                        log::error!("[Stats] Failed to record session: {}", e);
+                    }
+                }
+            }
         }
     }
 

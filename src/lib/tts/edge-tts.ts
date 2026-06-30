@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import type { TTSProvider, TTSOptions, Voice } from "@/types";
 
 export class EdgeTTSProvider implements TTSProvider {
@@ -5,36 +6,43 @@ export class EdgeTTSProvider implements TTSProvider {
   readonly providerId = "edge";
 
   private bridgeUrl: string;
-  private bridgeAvailable: boolean | null = null;
 
   constructor(bridgeUrl?: string) {
     this.bridgeUrl = bridgeUrl || "http://localhost:5050";
   }
 
   async synthesize(text: string, options?: TTSOptions): Promise<ArrayBuffer> {
-    if (this.bridgeAvailable !== false) {
-      try {
-        const response = await fetch(`${this.bridgeUrl}/v1/audio/speech`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            input: text,
-            voice: options?.voice ?? "zh-CN-XiaoxiaoNeural",
-            model: "tts-1",
-            speed: options?.speed ?? 1.0,
-          }),
-        });
-        if (response.ok) {
-          this.bridgeAvailable = true;
-          return await response.arrayBuffer();
-        }
-      } catch {
-        this.bridgeAvailable = false;
-        console.warn("[EdgeTTS] Bridge server not available, falling back to Web Speech");
-      }
-    }
+    const url = `${this.bridgeUrl}/v1/audio/speech`;
+    const body = JSON.stringify({
+      input: text,
+      voice: options?.voice ?? "zh-CN-XiaoxiaoNeural",
+      model: "tts-1",
+      speed: options?.speed ?? 1.0,
+    });
 
-    return this.synthesizeWebSpeech(text, options);
+    console.log("[EdgeTTS] Calling bridge via Rust proxy:", url);
+
+    try {
+      const base64 = (await invoke("proxy_post_binary", {
+        url,
+        headers: { "Content-Type": "application/json" },
+        body,
+      })) as string;
+
+      const binary = atob(base64);
+      const buf = new ArrayBuffer(binary.length);
+      const view = new Uint8Array(buf);
+      for (let i = 0; i < binary.length; i++) {
+        view[i] = binary.charCodeAt(i);
+      }
+
+      console.log("[EdgeTTS] Got", buf.byteLength, "bytes from bridge");
+      return buf;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.warn("[EdgeTTS] Bridge failed:", msg, "— falling back to Web Speech");
+      return this.synthesizeWebSpeech(text, options);
+    }
   }
 
   private synthesizeWebSpeech(
@@ -81,10 +89,7 @@ export class EdgeTTSProvider implements TTSProvider {
   }
 
   isAvailable(): boolean {
-    return (
-      typeof window !== "undefined" &&
-      (this.bridgeAvailable === true || "speechSynthesis" in window)
-    );
+    return true;
   }
 }
 

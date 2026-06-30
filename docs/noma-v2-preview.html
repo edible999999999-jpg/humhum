@@ -1,0 +1,826 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>DevPod Pet - Full Design System Preview</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #07070f;
+    color: #e0e0e0;
+    font-family: -apple-system, 'Helvetica Neue', 'PingFang SC', sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ==================== LAYOUT ==================== */
+  .section { max-width: 1100px; margin: 0 auto; padding: 0 24px; }
+  .section-title {
+    font-size: 13px; text-transform: uppercase; letter-spacing: 2px;
+    color: #6b7280; margin: 48px 0 24px; padding-bottom: 8px;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+  }
+  h1 { text-align: center; padding: 40px 0 6px; font-size: 32px; color: #c4b5fd; letter-spacing: 3px; }
+  .subtitle { text-align: center; color: #6b7280; font-size: 13px; margin-bottom: 12px; }
+
+  /* Name candidates */
+  .name-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 12px; margin-bottom: 16px;
+  }
+  .name-card {
+    background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 12px; padding: 16px;
+  }
+  .name-card h3 { font-size: 18px; margin-bottom: 4px; }
+  .name-card .meaning { font-size: 11px; color: #9ca3af; margin-bottom: 6px; }
+  .name-card .reason { font-size: 11px; color: #6b7280; line-height: 1.5; }
+  .name-card.recommended { border-color: rgba(139,92,246,0.4); background: rgba(139,92,246,0.05); }
+  .name-card.recommended::before { content: 'RECOMMENDED'; font-size: 9px; color: #8b5cf6; letter-spacing: 1px; display: block; margin-bottom: 6px; }
+
+  /* Controls */
+  .controls {
+    display: flex; justify-content: center; gap: 8px; padding: 16px 0;
+    flex-wrap: wrap;
+  }
+  .controls button {
+    padding: 6px 14px; border-radius: 8px;
+    border: 1px solid rgba(255,255,255,0.1);
+    background: rgba(255,255,255,0.04); color: #9ca3af;
+    cursor: pointer; font-size: 12px; transition: all 0.2s;
+  }
+  .controls button:hover, .controls button.active {
+    background: rgba(139,92,246,0.15); border-color: rgba(139,92,246,0.3); color: #c4b5fd;
+  }
+  .controls-label {
+    font-size: 11px; color: #4b5563; text-align: center; margin-bottom: 4px;
+    text-transform: uppercase; letter-spacing: 1px;
+  }
+
+  /* Main preview area */
+  .preview-stage {
+    display: flex; justify-content: center; align-items: center;
+    padding: 40px 0 20px; min-height: 320px;
+    position: relative;
+  }
+  .stage-bg {
+    position: absolute; inset: 0;
+    background: radial-gradient(ellipse at center, var(--stage-glow, rgba(99,102,241,0.06)) 0%, transparent 70%);
+    transition: background 0.8s;
+  }
+
+  /* Theme grid */
+  .theme-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 20px; margin-bottom: 40px;
+  }
+  .theme-card {
+    background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 16px; padding: 24px 16px 16px; text-align: center;
+    cursor: pointer; transition: all 0.3s; position: relative;
+  }
+  .theme-card:hover { border-color: rgba(255,255,255,0.15); transform: translateY(-2px); }
+  .theme-card.active { border-color: rgba(139,92,246,0.5); background: rgba(139,92,246,0.05); }
+  .theme-label { font-size: 12px; font-weight: 600; margin-top: 12px; }
+  .theme-sublabel { font-size: 10px; color: #6b7280; margin-top: 2px; }
+
+  /* Client badge grid */
+  .client-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px; margin-bottom: 20px;
+  }
+  .client-card {
+    background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 12px; padding: 16px; text-align: center;
+    cursor: pointer; transition: all 0.3s;
+  }
+  .client-card:hover { border-color: rgba(255,255,255,0.15); }
+  .client-card.active { border-color: var(--client-color, rgba(255,255,255,0.3)); }
+  .client-badge {
+    display: inline-block; padding: 2px 8px; border-radius: 4px;
+    font-size: 10px; font-weight: 700; color: white; text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .client-desc { font-size: 10px; color: #6b7280; margin-top: 6px; }
+
+  /* All-states overview */
+  .states-row {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 16px; margin-bottom: 60px;
+  }
+  .state-cell {
+    display: flex; flex-direction: column; align-items: center;
+    padding: 20px 8px 12px;
+    background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.04);
+    border-radius: 14px;
+  }
+  .state-cell-label { font-size: 10px; color: #6b7280; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; }
+  .state-cell-desc { font-size: 10px; color: #4b5563; text-align: center; margin-top: 10px; line-height: 1.5; }
+
+  /* ==================== JELLYFISH COMPONENT ==================== */
+  .jf-wrap {
+    width: 100px; height: 140px;
+    position: relative; display: flex; align-items: center; justify-content: center;
+  }
+  .jf-wrap.large { transform: scale(2); }
+
+  .jf {
+    position: relative; width: 80px; height: 120px;
+  }
+
+  /* Aura */
+  .jf-aura {
+    position: absolute; width: 90px; height: 90px; top: -5px; left: -5px;
+    border-radius: 50%; filter: blur(18px); opacity: 0.25;
+    transition: all 0.8s;
+  }
+
+  /* Bell */
+  .jf-bell {
+    position: absolute; width: 56px; height: 42px; left: 12px; top: 6px;
+    border-radius: 50% 50% 38% 38%;
+    transition: all 0.6s; overflow: hidden;
+  }
+  .jf-bell-inner {
+    position: absolute; width: 30px; height: 18px; top: 8px; left: 13px;
+    border-radius: 50%; opacity: 0.3; transition: all 0.6s;
+  }
+  /* Organ pattern inside bell */
+  .jf-bell-pattern {
+    position: absolute; inset: 0;
+    background: radial-gradient(ellipse at 50% 70%, var(--pattern-color, rgba(255,255,255,0.05)) 0%, transparent 60%);
+    transition: all 0.6s;
+  }
+
+  /* Client ring — shows which AI is connected */
+  .jf-client-ring {
+    position: absolute; width: 62px; height: 48px; left: 9px; top: 3px;
+    border-radius: 50% 50% 38% 38%;
+    border: 1.5px solid transparent;
+    opacity: 0; transition: all 0.5s;
+  }
+  .client-connected .jf-client-ring {
+    opacity: 0.6;
+    animation: client-ring-pulse 3s ease-in-out infinite;
+  }
+
+  /* Client indicator dot */
+  .jf-client-dot {
+    position: absolute; width: 6px; height: 6px; top: 2px; right: 10px;
+    border-radius: 50%; opacity: 0; transition: all 0.3s;
+    box-shadow: 0 0 6px var(--client-color, transparent);
+  }
+  .client-connected .jf-client-dot { opacity: 1; }
+
+  /* Oral arms */
+  .jf-oral {
+    position: absolute; top: 42px; left: 20px; width: 40px; height: 10px;
+    display: flex; justify-content: space-between;
+  }
+  .jf-oral-arm {
+    width: 5px; height: 8px; border-radius: 0 0 50% 50%;
+    opacity: 0.5; transition: all 0.6s;
+  }
+
+  /* Tentacles */
+  .jf-tentacles { position: absolute; top: 46px; left: 6px; width: 68px; height: 72px; }
+  .jf-t {
+    position: absolute; width: 2px; border-radius: 0 0 2px 2px;
+    transform-origin: top center; opacity: 0.45;
+    transition: all 0.6s;
+  }
+
+  /* Eyes */
+  .jf-eyes {
+    position: absolute; top: 22px; left: 24px; width: 32px;
+    display: flex; justify-content: space-between;
+  }
+  .jf-eye {
+    width: 5px; height: 5px; border-radius: 50%;
+    background: rgba(255,255,255,0.8); transition: all 0.3s;
+    position: relative;
+  }
+  .jf-pupil {
+    width: 2.5px; height: 2.5px; border-radius: 50%;
+    background: rgba(0,0,0,0.35); margin: 1px auto 0;
+  }
+
+  /* Mouth */
+  .jf-mouth {
+    position: absolute; top: 31px; left: 36px;
+    transition: all 0.3s;
+  }
+
+  /* Particles */
+  .jf-particles { position: absolute; inset: 0; pointer-events: none; }
+  .jf-p {
+    position: absolute; width: 2.5px; height: 2.5px;
+    border-radius: 50%; opacity: 0;
+  }
+
+  /* Sound waves */
+  .jf-waves { position: absolute; inset: 0; pointer-events: none; }
+  .jf-w {
+    position: absolute; border-radius: 50%;
+    border: 1px solid; opacity: 0;
+  }
+
+  /* Voice visualizer bar — unique to voice-first product */
+  .jf-voice-bar {
+    position: absolute; bottom: -8px; left: 50%; transform: translateX(-50%);
+    display: flex; gap: 1.5px; align-items: end; height: 12px;
+    opacity: 0; transition: opacity 0.3s;
+  }
+  .jf-vb {
+    width: 2px; border-radius: 1px;
+    transition: background 0.3s;
+  }
+
+  /* ==================== THEMES (CSS Custom Properties) ==================== */
+
+  /* Theme: Deep Ocean (default) */
+  .theme-ocean {
+    --bell-bg: linear-gradient(180deg, rgba(99,102,241,0.35) 0%, rgba(139,92,246,0.22) 100%);
+    --bell-shadow: 0 0 20px rgba(99,102,241,0.12);
+    --bell-inner: rgba(165,180,252,0.25);
+    --aura-color: #6366f1;
+    --oral-color: rgba(139,92,246,0.4);
+    --tentacle-from: rgba(139,92,246,0.45);
+    --tentacle-to: rgba(139,92,246,0.03);
+    --pattern-color: rgba(165,180,252,0.06);
+    --voice-bar-color: rgba(139,92,246,0.5);
+    --proc-bell: linear-gradient(180deg, rgba(59,130,246,0.4) 0%, rgba(6,182,212,0.25) 100%);
+    --proc-aura: #3b82f6;
+    --proc-particle: #93c5fd;
+    --speak-bell: linear-gradient(180deg, rgba(139,92,246,0.4) 0%, rgba(168,85,247,0.3) 100%);
+    --speak-aura: #8b5cf6;
+    --speak-wave: rgba(139,92,246,0.25);
+    --listen-bell: linear-gradient(180deg, rgba(16,185,129,0.35) 0%, rgba(20,184,166,0.25) 100%);
+    --listen-aura: #10b981;
+    --listen-mic: #34d399;
+    --wait-bell: linear-gradient(180deg, rgba(245,158,11,0.35) 0%, rgba(249,115,22,0.25) 100%);
+    --wait-aura: #f59e0b;
+    --comp-bell: linear-gradient(180deg, rgba(16,185,129,0.45) 0%, rgba(132,204,22,0.3) 100%);
+    --comp-aura: #10b981;
+    --comp-sparkle: #6ee7b7;
+    --err-bell: linear-gradient(180deg, rgba(239,68,68,0.3) 0%, rgba(225,29,72,0.2) 100%);
+    --err-aura: #ef4444;
+  }
+
+  /* Theme: Bioluminescent */
+  .theme-biolum {
+    --bell-bg: linear-gradient(180deg, rgba(6,182,212,0.35) 0%, rgba(45,212,191,0.2) 100%);
+    --bell-shadow: 0 0 25px rgba(6,182,212,0.15);
+    --bell-inner: rgba(103,232,249,0.25);
+    --aura-color: #06b6d4;
+    --oral-color: rgba(45,212,191,0.4);
+    --tentacle-from: rgba(6,182,212,0.45);
+    --tentacle-to: rgba(45,212,191,0.03);
+    --pattern-color: rgba(103,232,249,0.06);
+    --voice-bar-color: rgba(6,182,212,0.5);
+    --proc-bell: linear-gradient(180deg, rgba(14,165,233,0.4) 0%, rgba(56,189,248,0.25) 100%);
+    --proc-aura: #0ea5e9;
+    --proc-particle: #7dd3fc;
+    --speak-bell: linear-gradient(180deg, rgba(6,182,212,0.45) 0%, rgba(20,184,166,0.35) 100%);
+    --speak-aura: #06b6d4;
+    --speak-wave: rgba(6,182,212,0.25);
+    --listen-bell: linear-gradient(180deg, rgba(52,211,153,0.35) 0%, rgba(110,231,183,0.25) 100%);
+    --listen-aura: #34d399;
+    --listen-mic: #6ee7b7;
+    --wait-bell: linear-gradient(180deg, rgba(251,191,36,0.35) 0%, rgba(253,224,71,0.2) 100%);
+    --wait-aura: #fbbf24;
+    --comp-bell: linear-gradient(180deg, rgba(52,211,153,0.45) 0%, rgba(163,230,53,0.3) 100%);
+    --comp-aura: #34d399;
+    --comp-sparkle: #a7f3d0;
+    --err-bell: linear-gradient(180deg, rgba(244,63,94,0.3) 0%, rgba(251,113,133,0.2) 100%);
+    --err-aura: #f43f5e;
+  }
+
+  /* Theme: Phantom (dark monochrome) */
+  .theme-phantom {
+    --bell-bg: linear-gradient(180deg, rgba(148,163,184,0.2) 0%, rgba(100,116,139,0.12) 100%);
+    --bell-shadow: 0 0 15px rgba(148,163,184,0.08);
+    --bell-inner: rgba(203,213,225,0.15);
+    --aura-color: #64748b;
+    --oral-color: rgba(100,116,139,0.3);
+    --tentacle-from: rgba(148,163,184,0.3);
+    --tentacle-to: rgba(100,116,139,0.02);
+    --pattern-color: rgba(203,213,225,0.04);
+    --voice-bar-color: rgba(148,163,184,0.4);
+    --proc-bell: linear-gradient(180deg, rgba(148,163,184,0.3) 0%, rgba(203,213,225,0.15) 100%);
+    --proc-aura: #94a3b8;
+    --proc-particle: #cbd5e1;
+    --speak-bell: linear-gradient(180deg, rgba(148,163,184,0.3) 0%, rgba(100,116,139,0.2) 100%);
+    --speak-aura: #94a3b8;
+    --speak-wave: rgba(148,163,184,0.2);
+    --listen-bell: linear-gradient(180deg, rgba(203,213,225,0.25) 0%, rgba(226,232,240,0.15) 100%);
+    --listen-aura: #cbd5e1;
+    --listen-mic: #e2e8f0;
+    --wait-bell: linear-gradient(180deg, rgba(250,204,21,0.25) 0%, rgba(234,179,8,0.15) 100%);
+    --wait-aura: #facc15;
+    --comp-bell: linear-gradient(180deg, rgba(203,213,225,0.35) 0%, rgba(226,232,240,0.2) 100%);
+    --comp-aura: #cbd5e1;
+    --comp-sparkle: #f1f5f9;
+    --err-bell: linear-gradient(180deg, rgba(239,68,68,0.2) 0%, rgba(185,28,28,0.12) 100%);
+    --err-aura: #dc2626;
+  }
+
+  /* Theme: Sakura */
+  .theme-sakura {
+    --bell-bg: linear-gradient(180deg, rgba(244,114,182,0.3) 0%, rgba(251,113,133,0.2) 100%);
+    --bell-shadow: 0 0 20px rgba(244,114,182,0.12);
+    --bell-inner: rgba(251,207,232,0.25);
+    --aura-color: #f472b6;
+    --oral-color: rgba(244,114,182,0.35);
+    --tentacle-from: rgba(244,114,182,0.4);
+    --tentacle-to: rgba(251,113,133,0.03);
+    --pattern-color: rgba(251,207,232,0.06);
+    --voice-bar-color: rgba(244,114,182,0.5);
+    --proc-bell: linear-gradient(180deg, rgba(232,121,249,0.35) 0%, rgba(192,132,252,0.25) 100%);
+    --proc-aura: #e879f9;
+    --proc-particle: #f0abfc;
+    --speak-bell: linear-gradient(180deg, rgba(244,114,182,0.4) 0%, rgba(251,113,133,0.3) 100%);
+    --speak-aura: #f472b6;
+    --speak-wave: rgba(244,114,182,0.2);
+    --listen-bell: linear-gradient(180deg, rgba(192,132,252,0.3) 0%, rgba(167,139,250,0.2) 100%);
+    --listen-aura: #c084fc;
+    --listen-mic: #d8b4fe;
+    --wait-bell: linear-gradient(180deg, rgba(251,191,36,0.3) 0%, rgba(253,224,71,0.18) 100%);
+    --wait-aura: #fbbf24;
+    --comp-bell: linear-gradient(180deg, rgba(192,132,252,0.4) 0%, rgba(244,114,182,0.3) 100%);
+    --comp-aura: #c084fc;
+    --comp-sparkle: #f0abfc;
+    --err-bell: linear-gradient(180deg, rgba(239,68,68,0.25) 0%, rgba(185,28,28,0.15) 100%);
+    --err-aura: #ef4444;
+  }
+
+  /* Theme: Aurora */
+  .theme-aurora {
+    --bell-bg: linear-gradient(180deg, rgba(34,211,238,0.3) 0%, rgba(168,85,247,0.2) 100%);
+    --bell-shadow: 0 0 22px rgba(34,211,238,0.12);
+    --bell-inner: rgba(103,232,249,0.2);
+    --aura-color: #22d3ee;
+    --oral-color: rgba(34,211,238,0.35);
+    --tentacle-from: rgba(168,85,247,0.4);
+    --tentacle-to: rgba(34,211,238,0.03);
+    --pattern-color: rgba(103,232,249,0.05);
+    --voice-bar-color: rgba(34,211,238,0.5);
+    --proc-bell: linear-gradient(180deg, rgba(56,189,248,0.35) 0%, rgba(99,102,241,0.25) 100%);
+    --proc-aura: #38bdf8;
+    --proc-particle: #a5f3fc;
+    --speak-bell: linear-gradient(180deg, rgba(168,85,247,0.4) 0%, rgba(139,92,246,0.3) 100%);
+    --speak-aura: #a855f7;
+    --speak-wave: rgba(168,85,247,0.2);
+    --listen-bell: linear-gradient(180deg, rgba(52,211,153,0.3) 0%, rgba(34,211,238,0.25) 100%);
+    --listen-aura: #34d399;
+    --listen-mic: #5eead4;
+    --wait-bell: linear-gradient(180deg, rgba(251,146,60,0.3) 0%, rgba(251,191,36,0.2) 100%);
+    --wait-aura: #fb923c;
+    --comp-bell: linear-gradient(180deg, rgba(34,211,238,0.45) 0%, rgba(52,211,153,0.3) 100%);
+    --comp-aura: #22d3ee;
+    --comp-sparkle: #a5f3fc;
+    --err-bell: linear-gradient(180deg, rgba(251,113,133,0.3) 0%, rgba(244,63,94,0.2) 100%);
+    --err-aura: #fb7185;
+  }
+
+  /* ==================== STATE ANIMATIONS ==================== */
+
+  /* --- IDLE --- */
+  .s-idle .jf { animation: float 4s ease-in-out infinite; }
+  .s-idle .jf-aura { background: var(--aura-color); }
+  .s-idle .jf-bell { background: var(--bell-bg); box-shadow: var(--bell-shadow); animation: breathe 3.5s ease-in-out infinite; }
+  .s-idle .jf-bell-inner { background: var(--bell-inner); }
+  .s-idle .jf-oral-arm { background: var(--oral-color); }
+  .s-idle .jf-t { background: linear-gradient(180deg, var(--tentacle-from), var(--tentacle-to)); }
+  .s-idle .jf-t:nth-child(1) { left: 8px; height: 42px; animation: sway1 5s ease-in-out infinite; }
+  .s-idle .jf-t:nth-child(2) { left: 18px; height: 50px; animation: sway2 4.5s ease-in-out infinite 0.3s; }
+  .s-idle .jf-t:nth-child(3) { left: 28px; height: 55px; animation: sway1 5.5s ease-in-out infinite 0.6s; }
+  .s-idle .jf-t:nth-child(4) { left: 38px; height: 50px; animation: sway2 4.8s ease-in-out infinite 0.2s; }
+  .s-idle .jf-t:nth-child(5) { left: 48px; height: 42px; animation: sway1 5.2s ease-in-out infinite 0.8s; }
+  .s-idle .jf-eye { animation: blink 5s ease-in-out infinite; }
+  .s-idle .jf-mouth { width: 8px; height: 3px; border-bottom: 1.5px solid rgba(255,255,255,0.35); border-radius: 0 0 50% 50%; }
+  .s-idle .jf-voice-bar { opacity: 0; }
+
+  /* --- PROCESSING --- */
+  .s-proc .jf { animation: float 2.5s ease-in-out infinite; }
+  .s-proc .jf-aura { background: var(--proc-aura); opacity: 0.3; }
+  .s-proc .jf-bell { background: var(--proc-bell); animation: breathe 2s ease-in-out infinite; }
+  .s-proc .jf-bell-inner { background: var(--bell-inner); animation: inner-pulse 2s linear infinite; }
+  .s-proc .jf-oral-arm { background: var(--oral-color); }
+  .s-proc .jf-t { background: linear-gradient(180deg, var(--tentacle-from), var(--tentacle-to)); }
+  .s-proc .jf-t:nth-child(1) { left: 14px; height: 38px; animation: weave-l 2s ease-in-out infinite; }
+  .s-proc .jf-t:nth-child(2) { left: 20px; height: 44px; animation: weave-l 2s ease-in-out infinite 0.2s; }
+  .s-proc .jf-t:nth-child(3) { left: 28px; height: 48px; animation: weave-c 2.5s ease-in-out infinite; }
+  .s-proc .jf-t:nth-child(4) { left: 36px; height: 44px; animation: weave-r 2s ease-in-out infinite 0.2s; }
+  .s-proc .jf-t:nth-child(5) { left: 42px; height: 38px; animation: weave-r 2s ease-in-out infinite; }
+  .s-proc .jf-eye { width: 4px; height: 4px; }
+  .s-proc .jf-pupil { width: 2px; height: 2px; }
+  .s-proc .jf-mouth { width: 7px; height: 0; border-bottom: 1.5px solid rgba(255,255,255,0.3); }
+  .s-proc .jf-p { background: var(--proc-particle); animation: p-flow 2s linear infinite; }
+  .s-proc .jf-p:nth-child(1) { left: 22px; animation-delay: 0s; }
+  .s-proc .jf-p:nth-child(2) { left: 32px; animation-delay: 0.5s; }
+  .s-proc .jf-p:nth-child(3) { left: 42px; animation-delay: 1s; }
+  .s-proc .jf-p:nth-child(4) { left: 27px; animation-delay: 1.5s; }
+  .s-proc .jf-voice-bar { opacity: 0; }
+
+  /* --- SPEAKING (voice-first design!) --- */
+  .s-speak .jf { animation: float 3s ease-in-out infinite; }
+  .s-speak .jf-aura { background: var(--speak-aura); opacity: 0.35; animation: aura-beat 1.2s ease-in-out infinite; }
+  .s-speak .jf-bell { background: var(--speak-bell); animation: speak-pump 0.8s ease-in-out infinite; }
+  .s-speak .jf-bell-inner { background: var(--bell-inner); opacity: 0.4; }
+  .s-speak .jf-oral-arm { background: var(--oral-color); animation: oral-vib 0.4s ease-in-out infinite; }
+  .s-speak .jf-t { background: linear-gradient(180deg, var(--tentacle-from), var(--tentacle-to)); }
+  .s-speak .jf-t:nth-child(1) { left: 4px; height: 38px; animation: spread1 3s ease-in-out infinite; }
+  .s-speak .jf-t:nth-child(2) { left: 14px; height: 44px; animation: spread2 3s ease-in-out infinite 0.2s; }
+  .s-speak .jf-t:nth-child(3) { left: 28px; height: 46px; animation: sway1 3.5s ease-in-out infinite; }
+  .s-speak .jf-t:nth-child(4) { left: 42px; height: 44px; animation: spread3 3s ease-in-out infinite 0.2s; }
+  .s-speak .jf-t:nth-child(5) { left: 52px; height: 38px; animation: spread4 3s ease-in-out infinite; }
+  .s-speak .jf-mouth { width: 7px; height: 4px; border-radius: 50%; background: rgba(255,255,255,0.4); animation: mouth-talk 0.8s ease-in-out infinite; }
+  .s-speak .jf-w { border-color: var(--speak-wave); animation: wave-out 1.5s ease-out infinite; }
+  .s-speak .jf-w:nth-child(1) { width: 60px; height: 50px; top: 8px; left: 10px; }
+  .s-speak .jf-w:nth-child(2) { width: 60px; height: 50px; top: 8px; left: 10px; animation-delay: 0.5s; }
+  .s-speak .jf-w:nth-child(3) { width: 60px; height: 50px; top: 8px; left: 10px; animation-delay: 1s; }
+  /* Voice bars — THE signature feature */
+  .s-speak .jf-voice-bar { opacity: 1; }
+  .s-speak .jf-vb { background: var(--voice-bar-color); }
+  .s-speak .jf-vb:nth-child(1) { animation: vbar 0.6s ease-in-out infinite; }
+  .s-speak .jf-vb:nth-child(2) { animation: vbar 0.6s ease-in-out infinite 0.1s; }
+  .s-speak .jf-vb:nth-child(3) { animation: vbar 0.6s ease-in-out infinite 0.2s; }
+  .s-speak .jf-vb:nth-child(4) { animation: vbar 0.6s ease-in-out infinite 0.15s; }
+  .s-speak .jf-vb:nth-child(5) { animation: vbar 0.6s ease-in-out infinite 0.25s; }
+  .s-speak .jf-vb:nth-child(6) { animation: vbar 0.6s ease-in-out infinite 0.08s; }
+  .s-speak .jf-vb:nth-child(7) { animation: vbar 0.6s ease-in-out infinite 0.18s; }
+
+  /* --- LISTENING --- */
+  .s-listen .jf { animation: float 3.5s ease-in-out infinite; transform: rotate(-6deg); }
+  .s-listen .jf-aura { background: var(--listen-aura); opacity: 0.25; }
+  .s-listen .jf-bell { background: var(--listen-bell); animation: breathe 3s ease-in-out infinite; transform: rotate(-4deg); }
+  .s-listen .jf-bell-inner { background: var(--bell-inner); }
+  .s-listen .jf-oral-arm { background: var(--oral-color); }
+  .s-listen .jf-t { background: linear-gradient(180deg, var(--tentacle-from), var(--tentacle-to)); }
+  .s-listen .jf-t:nth-child(1) { left: 8px; height: 38px; animation: sway1 5s ease-in-out infinite; }
+  .s-listen .jf-t:nth-child(2) { left: 18px; height: 44px; animation: sway2 4.5s ease-in-out infinite 0.3s; }
+  .s-listen .jf-t:nth-child(3) { left: 28px; height: 48px; animation: sway1 5.5s ease-in-out infinite 0.6s; }
+  .s-listen .jf-t:nth-child(4) { left: 38px; height: 44px; animation: sway2 4.8s ease-in-out infinite 0.2s; }
+  .s-listen .jf-t:nth-child(5) { left: 52px; height: 48px; width: 2.5px; background: linear-gradient(180deg, var(--listen-mic), rgba(52,211,153,0.2)); animation: mic-wave 2s ease-in-out infinite; }
+  .s-listen .jf-t:nth-child(5)::after {
+    content: ''; position: absolute; bottom: -2px; left: -2.5px;
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--listen-mic); box-shadow: 0 0 8px var(--listen-mic);
+    animation: mic-dot 1s ease-in-out infinite;
+  }
+  .s-listen .jf-mouth { width: 8px; height: 3px; border-bottom: 1.5px solid rgba(255,255,255,0.35); border-radius: 0 0 50% 50%; }
+  .s-listen .jf-voice-bar { opacity: 0.5; }
+  .s-listen .jf-vb { background: var(--listen-mic); }
+  .s-listen .jf-vb:nth-child(1) { animation: vbar-listen 1s ease-in-out infinite; }
+  .s-listen .jf-vb:nth-child(2) { animation: vbar-listen 1s ease-in-out infinite 0.15s; }
+  .s-listen .jf-vb:nth-child(3) { animation: vbar-listen 1s ease-in-out infinite 0.3s; }
+  .s-listen .jf-vb:nth-child(4) { animation: vbar-listen 1s ease-in-out infinite 0.2s; }
+  .s-listen .jf-vb:nth-child(5) { animation: vbar-listen 1s ease-in-out infinite 0.35s; }
+  .s-listen .jf-vb:nth-child(6) { animation: vbar-listen 1s ease-in-out infinite 0.1s; }
+  .s-listen .jf-vb:nth-child(7) { animation: vbar-listen 1s ease-in-out infinite 0.25s; }
+
+  /* --- WAITING --- */
+  .s-wait .jf { animation: none; }
+  .s-wait .jf-aura { background: var(--wait-aura); opacity: 0.3; animation: heartbeat 1.2s ease-in-out infinite; }
+  .s-wait .jf-bell { background: var(--wait-bell); animation: tense 1.2s ease-in-out infinite; }
+  .s-wait .jf-bell-inner { background: rgba(253,230,138,0.2); }
+  .s-wait .jf-oral-arm { background: rgba(245,158,11,0.4); }
+  .s-wait .jf-t { background: linear-gradient(180deg, rgba(245,158,11,0.5), rgba(249,115,22,0.05)); }
+  .s-wait .jf-t:nth-child(1) { left: 14px; height: 22px; animation: curl-l 1.5s ease-in-out infinite; }
+  .s-wait .jf-t:nth-child(2) { left: 22px; height: 26px; animation: curl-l 1.5s ease-in-out infinite 0.1s; }
+  .s-wait .jf-t:nth-child(3) { left: 28px; height: 28px; animation: curl-c 1.8s ease-in-out infinite; }
+  .s-wait .jf-t:nth-child(4) { left: 34px; height: 26px; animation: curl-r 1.5s ease-in-out infinite 0.1s; }
+  .s-wait .jf-t:nth-child(5) { left: 42px; height: 22px; animation: curl-r 1.5s ease-in-out infinite; }
+  .s-wait .jf-eye { width: 7px; height: 7px; }
+  .s-wait .jf-pupil { width: 3.5px; height: 3.5px; margin-top: 1.5px; }
+  .s-wait .jf-mouth { width: 7px; height: 5px; border-radius: 50%; background: rgba(255,255,255,0.3); }
+  .s-wait .jf::after {
+    content: '!'; position: absolute; top: -14px; left: 36px;
+    font-size: 13px; font-weight: 800; color: #fbbf24;
+    text-shadow: 0 0 8px rgba(251,191,36,0.5);
+    animation: alert-bob 0.8s ease-in-out infinite;
+  }
+  .s-wait .jf-voice-bar { opacity: 0; }
+
+  /* --- COMPLETED --- */
+  .s-comp .jf { animation: comp-twist 1.5s ease-in-out 1; }
+  .s-comp .jf-aura { background: var(--comp-aura); opacity: 0.4; animation: bloom-glow 2s ease-out 1; }
+  .s-comp .jf-bell { background: var(--comp-bell); animation: bloom-bell 1.5s ease-out 1; }
+  .s-comp .jf-bell-inner { background: rgba(167,243,208,0.3); }
+  .s-comp .jf-oral-arm { background: rgba(16,185,129,0.5); }
+  .s-comp .jf-t { background: linear-gradient(180deg, rgba(16,185,129,0.5), rgba(132,204,22,0.05)); }
+  .s-comp .jf-t:nth-child(1) { left: 2px; height: 45px; animation: bloom-t1 2s ease-out 1; }
+  .s-comp .jf-t:nth-child(2) { left: 12px; height: 52px; animation: bloom-t2 2s ease-out 0.1s 1; }
+  .s-comp .jf-t:nth-child(3) { left: 28px; height: 56px; animation: bloom-t3 2s ease-out 0.2s 1; }
+  .s-comp .jf-t:nth-child(4) { left: 44px; height: 52px; animation: bloom-t2 2s ease-out 0.1s 1; }
+  .s-comp .jf-t:nth-child(5) { left: 54px; height: 45px; animation: bloom-t1 2s ease-out 1; }
+  .s-comp .jf-eye { width: 7px; height: 2.5px; border-radius: 0 0 50% 50%; border-bottom: 2px solid rgba(255,255,255,0.85); background: transparent; }
+  .s-comp .jf-pupil { display: none; }
+  .s-comp .jf-mouth { width: 10px; height: 4px; border-bottom: 2px solid rgba(255,255,255,0.65); border-radius: 0 0 50% 50%; left: 35px; }
+  .s-comp .jf-p { background: var(--comp-sparkle); animation: sparkle 2s ease-out 1; }
+  .s-comp .jf-p:nth-child(1) { left: 8px; top: 8px; --dx: -20px; --dy: -30px; }
+  .s-comp .jf-p:nth-child(2) { left: 62px; top: 12px; --dx: 20px; --dy: -25px; animation-delay: 0.15s; }
+  .s-comp .jf-p:nth-child(3) { left: 4px; top: 45px; --dx: -25px; --dy: -5px; animation-delay: 0.3s; }
+  .s-comp .jf-p:nth-child(4) { left: 66px; top: 40px; --dx: 22px; --dy: -8px; animation-delay: 0.2s; }
+  .s-comp .jf-voice-bar { opacity: 0; }
+
+  /* --- ERROR --- */
+  .s-err .jf { animation: err-shake 0.5s ease-in-out 2; }
+  .s-err .jf-aura { background: var(--err-aura); opacity: 0.25; animation: err-flash 0.6s ease-in-out 2; }
+  .s-err .jf-bell { background: var(--err-bell); transform: scaleX(0.88) scaleY(0.92); animation: err-shrink 1s ease-out 1; }
+  .s-err .jf-bell-inner { background: rgba(252,165,165,0.15); }
+  .s-err .jf-oral-arm { background: rgba(239,68,68,0.3); }
+  .s-err .jf-t { background: linear-gradient(180deg, rgba(239,68,68,0.4), rgba(225,29,72,0.03)); }
+  .s-err .jf-t:nth-child(1) { left: 16px; height: 16px; }
+  .s-err .jf-t:nth-child(2) { left: 22px; height: 20px; }
+  .s-err .jf-t:nth-child(3) { left: 28px; height: 22px; }
+  .s-err .jf-t:nth-child(4) { left: 34px; height: 20px; }
+  .s-err .jf-t:nth-child(5) { left: 40px; height: 16px; }
+  .s-err .jf-eye { width: 6px; height: 6px; background: rgba(255,255,255,0.6); }
+  .s-err .jf-eye:first-child { transform: rotate(8deg); }
+  .s-err .jf-eye:last-child { transform: rotate(-8deg); }
+  .s-err .jf-pupil { margin-top: 2.5px; }
+  .s-err .jf-mouth { width: 7px; height: 3px; border-top: 1.5px solid rgba(255,255,255,0.4); border-radius: 50% 50% 0 0; top: 33px; }
+  .s-err .jf-p:nth-child(1) { width: 4px; height: 4px; background: rgba(239,68,68,0.4); left: 36px; animation: ink 2s ease-in 0.5s 1; }
+  .s-err .jf-voice-bar { opacity: 0; }
+
+  /* ==================== KEYFRAMES ==================== */
+  @keyframes float { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
+  @keyframes breathe { 0%,100% { transform: scaleX(1) scaleY(1); } 50% { transform: scaleX(1.03) scaleY(0.97); } }
+  @keyframes blink { 0%,44%,56%,100% { transform: scaleY(1); } 50% { transform: scaleY(0.1); } }
+  @keyframes sway1 { 0%,100% { transform: rotate(-3deg); } 50% { transform: rotate(3deg); } }
+  @keyframes sway2 { 0%,100% { transform: rotate(3deg); } 50% { transform: rotate(-3deg); } }
+  @keyframes weave-l { 0%,100% { transform: rotate(8deg) translateX(3px); } 50% { transform: rotate(-1deg) translateX(0); } }
+  @keyframes weave-r { 0%,100% { transform: rotate(-8deg) translateX(-3px); } 50% { transform: rotate(1deg) translateX(0); } }
+  @keyframes weave-c { 0%,100% { transform: rotate(0); } 25% { transform: rotate(2deg); } 75% { transform: rotate(-2deg); } }
+  @keyframes inner-pulse { 0% { transform: translateY(3px); opacity: 0.2; } 50% { transform: translateY(-1px); opacity: 0.45; } 100% { transform: translateY(3px); opacity: 0.2; } }
+  @keyframes p-flow { 0% { top: 32px; opacity: 0; } 20% { opacity: 0.7; } 80% { opacity: 0.7; } 100% { top: 6px; opacity: 0; } }
+  @keyframes aura-beat { 0%,100% { opacity: 0.25; transform: scale(1); } 50% { opacity: 0.45; transform: scale(1.06); } }
+  @keyframes speak-pump { 0%,100% { transform: scaleX(1) scaleY(1); } 50% { transform: scaleX(1.05) scaleY(0.95); } }
+  @keyframes oral-vib { 0%,100% { transform: scaleY(1); } 50% { transform: scaleY(1.3); } }
+  @keyframes mouth-talk { 0%,100% { transform: scaleY(0.5); } 30% { transform: scaleY(1.3); } 60% { transform: scaleY(0.7); } }
+  @keyframes wave-out { 0% { transform: scale(0.6); opacity: 0.4; } 100% { transform: scale(1.5); opacity: 0; } }
+  @keyframes spread1 { 0%,100% { transform: rotate(-5deg); } 50% { transform: rotate(-1deg); } }
+  @keyframes spread2 { 0%,100% { transform: rotate(-3deg); } 50% { transform: rotate(1deg); } }
+  @keyframes spread3 { 0%,100% { transform: rotate(3deg); } 50% { transform: rotate(-1deg); } }
+  @keyframes spread4 { 0%,100% { transform: rotate(5deg); } 50% { transform: rotate(1deg); } }
+  @keyframes vbar { 0%,100% { height: 2px; } 50% { height: 10px; } }
+  @keyframes vbar-listen { 0%,100% { height: 1px; } 50% { height: 6px; } }
+  @keyframes mic-wave { 0%,100% { transform: rotate(6deg); } 50% { transform: rotate(10deg) translateY(-2px); } }
+  @keyframes mic-dot { 0%,100% { opacity: 0.5; transform: scale(1); } 50% { opacity: 1; transform: scale(1.15); } }
+  @keyframes heartbeat { 0%,100% { opacity: 0.2; transform: scale(1); } 15% { opacity: 0.5; transform: scale(1.08); } 30% { opacity: 0.2; } 45% { opacity: 0.4; transform: scale(1.04); } }
+  @keyframes tense { 0%,100% { transform: scaleX(0.96) scaleY(1.02); } 50% { transform: scaleX(1) scaleY(0.98); } }
+  @keyframes curl-l { 0%,100% { transform: rotate(12deg) scaleY(0.8); } 50% { transform: rotate(18deg) scaleY(0.7); } }
+  @keyframes curl-r { 0%,100% { transform: rotate(-12deg) scaleY(0.8); } 50% { transform: rotate(-18deg) scaleY(0.7); } }
+  @keyframes curl-c { 0%,100% { transform: scaleY(0.8); } 50% { transform: scaleY(0.65); } }
+  @keyframes alert-bob { 0%,100% { transform: translateY(0); opacity: 1; } 50% { transform: translateY(-3px); opacity: 0.6; } }
+  @keyframes comp-twist { 0% { transform: rotate(0); } 35% { transform: rotate(12deg); } 65% { transform: rotate(-8deg); } 100% { transform: rotate(0); } }
+  @keyframes bloom-glow { 0% { transform: scale(1); opacity: 0.4; } 50% { transform: scale(1.4); opacity: 0.55; } 100% { transform: scale(1); opacity: 0.3; } }
+  @keyframes bloom-bell { 0% { transform: scale(1); } 30% { transform: scaleX(1.12) scaleY(0.9); } 100% { transform: scale(1); } }
+  @keyframes bloom-t1 { 0% { transform: rotate(0); } 40% { transform: rotate(-12deg) translateX(-4px); } 100% { transform: rotate(-4deg); } }
+  @keyframes bloom-t2 { 0% { transform: rotate(0); } 40% { transform: rotate(-6deg) translateX(-2px); } 100% { transform: rotate(-2deg); } }
+  @keyframes bloom-t3 { 0% { transform: rotate(0); } 40% { transform: scaleY(1.08); } 100% { transform: rotate(0); } }
+  @keyframes sparkle { 0% { transform: translate(0,0) scale(0); opacity: 0; } 20% { transform: translate(var(--dx), var(--dy)) scale(1.5); opacity: 1; } 100% { transform: translate(calc(var(--dx)*1.5), calc(var(--dy)*1.5)) scale(0); opacity: 0; } }
+  @keyframes err-shake { 0%,100% { transform: translateX(0); } 25% { transform: translateX(-3px); } 75% { transform: translateX(3px); } }
+  @keyframes err-flash { 0%,100% { opacity: 0.25; } 50% { opacity: 0.5; } }
+  @keyframes err-shrink { 0% { transform: scale(1); } 30% { transform: scaleX(0.82) scaleY(0.87); } 100% { transform: scaleX(0.88) scaleY(0.92); } }
+  @keyframes ink { 0% { top: 65px; opacity: 0; } 30% { opacity: 0.5; } 100% { top: 105px; opacity: 0; transform: scale(0.3); } }
+  @keyframes client-ring-pulse { 0%,100% { opacity: 0.4; } 50% { opacity: 0.7; } }
+</style>
+</head>
+<body>
+
+<!-- ====== SECTION 1: NAMING ====== -->
+<h1>DevPod Pet Design System</h1>
+<p class="subtitle">Naming / Client Mapping / Themes / All States</p>
+
+<div class="section">
+  <div class="section-title">1. Naming Candidates</div>
+  <div class="name-grid">
+    <div class="name-card recommended">
+      <h3 style="color:#c4b5fd">Drift</h3>
+      <div class="meaning">漂流 / 飘荡</div>
+      <div class="reason">水母天然漂浮 + 不打扰用户的"drift in background"语义。简短好记，GitHub无同名热门项目。域名友好。</div>
+    </div>
+    <div class="name-card">
+      <h3 style="color:#67e8f9">Lumi</h3>
+      <div class="meaning">发光体 (luminescence)</div>
+      <div class="reason">强调生物发光特性，通过光传递状态。可爱度高。但GitHub有几个同名小项目。</div>
+    </div>
+    <div class="name-card">
+      <h3 style="color:#a5f3fc">Murmur</h3>
+      <div class="meaning">低语 / 呢喃</div>
+      <div class="reason">完美契合语音播报不打扰的理念。"它不会大喊，只是在你耳边低语。"但发音偏长。</div>
+    </div>
+    <div class="name-card">
+      <h3 style="color:#fbbf24">Vox</h3>
+      <div class="meaning">Voice (拉丁语)</div>
+      <div class="reason">直接点题语音特色。但Vox Media很知名，可能有品牌混淆。</div>
+    </div>
+  </div>
+
+  <!-- ====== SECTION 2: CLIENT CONNECTION MAPPING ====== -->
+  <div class="section-title">2. AI Client Connection Indicator</div>
+  <p style="font-size:12px; color:#6b7280; margin-bottom:16px; line-height:1.6;">
+    水母通过<strong>伞盖边缘光环颜色</strong>和<strong>右上角指示点</strong>显示当前连接的 AI 客户端。<br>
+    点击下方卡片查看不同客户端连接时的外观。"无连接"时光环消失，水母变回纯净状态。
+  </p>
+  <div class="client-grid">
+    <div class="client-card active" style="--client-color:#f97316" onclick="setClient('claude','#f97316')">
+      <span class="client-badge" style="background:#f97316">Claude</span>
+      <div class="client-desc">橙色光环 — 主力客户端</div>
+    </div>
+    <div class="client-card" style="--client-color:#22c55e" onclick="setClient('codex','#22c55e')">
+      <span class="client-badge" style="background:#22c55e">Codex</span>
+      <div class="client-desc">绿色光环</div>
+    </div>
+    <div class="client-card" style="--client-color:#3b82f6" onclick="setClient('qwen','#3b82f6')">
+      <span class="client-badge" style="background:#3b82f6">Qwen</span>
+      <div class="client-desc">蓝色光环</div>
+    </div>
+    <div class="client-card" style="--client-color:#06b6d4" onclick="setClient('gemini','#06b6d4')">
+      <span class="client-badge" style="background:#06b6d4">Gemini</span>
+      <div class="client-desc">青色光环</div>
+    </div>
+    <div class="client-card" style="--client-color:#a855f7" onclick="setClient('kimi','#a855f7')">
+      <span class="client-badge" style="background:#a855f7">Kimi</span>
+      <div class="client-desc">紫色光环</div>
+    </div>
+    <div class="client-card" style="--client-color:#f43f5e" onclick="setClient('qoder','#f43f5e')">
+      <span class="client-badge" style="background:#f43f5e">Qoder</span>
+      <div class="client-desc">玫红光环</div>
+    </div>
+  </div>
+
+  <!-- ====== SECTION 3: INTERACTIVE PREVIEW ====== -->
+  <div class="section-title">3. Interactive Preview</div>
+  <div class="controls-label">State</div>
+  <div class="controls" id="state-controls">
+    <button class="active" onclick="setState('idle')">idle</button>
+    <button onclick="setState('proc')">processing</button>
+    <button onclick="setState('speak')">speaking</button>
+    <button onclick="setState('listen')">listening</button>
+    <button onclick="setState('wait')">waiting</button>
+    <button onclick="setState('comp')">completed</button>
+    <button onclick="setState('err')">error</button>
+  </div>
+  <div class="controls-label">Theme</div>
+  <div class="controls" id="theme-controls">
+    <button class="active" onclick="setTheme('ocean')">Deep Ocean</button>
+    <button onclick="setTheme('biolum')">Bioluminescent</button>
+    <button onclick="setTheme('phantom')">Phantom</button>
+    <button onclick="setTheme('sakura')">Sakura</button>
+    <button onclick="setTheme('aurora')">Aurora</button>
+  </div>
+
+  <div class="preview-stage">
+    <div class="stage-bg"></div>
+    <div id="main-preview" class="jf-wrap large s-idle theme-ocean client-connected" style="--client-ring-color:#f97316; --client-dot-color:#f97316">
+      <div class="jf">
+        <div class="jf-aura"></div>
+        <div class="jf-particles">
+          <div class="jf-p"></div><div class="jf-p"></div><div class="jf-p"></div><div class="jf-p"></div>
+        </div>
+        <div class="jf-waves">
+          <div class="jf-w"></div><div class="jf-w"></div><div class="jf-w"></div>
+        </div>
+        <div class="jf-client-ring" style="border-color: var(--client-ring-color)"></div>
+        <div class="jf-bell">
+          <div class="jf-bell-pattern"></div>
+          <div class="jf-bell-inner"></div>
+        </div>
+        <div class="jf-client-dot" style="background: var(--client-dot-color)"></div>
+        <div class="jf-oral">
+          <div class="jf-oral-arm"></div><div class="jf-oral-arm"></div><div class="jf-oral-arm"></div><div class="jf-oral-arm"></div><div class="jf-oral-arm"></div>
+        </div>
+        <div class="jf-eyes">
+          <div class="jf-eye"><div class="jf-pupil"></div></div>
+          <div class="jf-eye"><div class="jf-pupil"></div></div>
+        </div>
+        <div class="jf-mouth"></div>
+        <div class="jf-tentacles">
+          <div class="jf-t"></div><div class="jf-t"></div><div class="jf-t"></div><div class="jf-t"></div><div class="jf-t"></div>
+        </div>
+        <div class="jf-voice-bar">
+          <div class="jf-vb"></div><div class="jf-vb"></div><div class="jf-vb"></div><div class="jf-vb"></div><div class="jf-vb"></div><div class="jf-vb"></div><div class="jf-vb"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ====== SECTION 4: THEME COMPARISON ====== -->
+  <div class="section-title">4. Theme Skins (idle state)</div>
+  <div class="theme-grid" id="theme-grid"></div>
+
+  <!-- ====== SECTION 5: ALL STATES ====== -->
+  <div class="section-title">5. All States (Deep Ocean theme)</div>
+  <div class="states-row" id="states-row"></div>
+</div>
+
+<script>
+// Jellyfish HTML template
+function jfHTML(extraClass = '') {
+  return `<div class="jf-wrap ${extraClass}"><div class="jf">
+    <div class="jf-aura"></div>
+    <div class="jf-particles"><div class="jf-p"></div><div class="jf-p"></div><div class="jf-p"></div><div class="jf-p"></div></div>
+    <div class="jf-waves"><div class="jf-w"></div><div class="jf-w"></div><div class="jf-w"></div></div>
+    <div class="jf-client-ring"></div>
+    <div class="jf-bell"><div class="jf-bell-pattern"></div><div class="jf-bell-inner"></div></div>
+    <div class="jf-client-dot"></div>
+    <div class="jf-oral"><div class="jf-oral-arm"></div><div class="jf-oral-arm"></div><div class="jf-oral-arm"></div><div class="jf-oral-arm"></div><div class="jf-oral-arm"></div></div>
+    <div class="jf-eyes"><div class="jf-eye"><div class="jf-pupil"></div></div><div class="jf-eye"><div class="jf-pupil"></div></div></div>
+    <div class="jf-mouth"></div>
+    <div class="jf-tentacles"><div class="jf-t"></div><div class="jf-t"></div><div class="jf-t"></div><div class="jf-t"></div><div class="jf-t"></div></div>
+    <div class="jf-voice-bar"><div class="jf-vb"></div><div class="jf-vb"></div><div class="jf-vb"></div><div class="jf-vb"></div><div class="jf-vb"></div><div class="jf-vb"></div><div class="jf-vb"></div></div>
+  </div></div>`;
+}
+
+// State management
+let currentState = 'idle';
+let currentTheme = 'ocean';
+let currentClient = { name: 'claude', color: '#f97316' };
+
+const STATE_MAP = { idle:'s-idle', proc:'s-proc', speak:'s-speak', listen:'s-listen', wait:'s-wait', comp:'s-comp', err:'s-err' };
+const STATE_LABELS = { idle:'Idle', proc:'Processing', speak:'Speaking', listen:'Listening', wait:'Waiting', comp:'Completed', err:'Error' };
+const STATE_DESCS = {
+  idle: '安静漂浮\n缓慢呼吸\n偶尔眨眼',
+  proc: '触手编织\n光点流动\n专注',
+  speak: '伞盖脉冲\n光波扩散\n语音条跳动',
+  listen: '歪头\n麦克风触手\n声纹接收',
+  wait: '紧缩悬停\n心跳闪烁\n感叹号',
+  comp: '绽放\n烟花散开\n眯眼笑',
+  err: '抖动蜷缩\n暗红\n滴墨'
+};
+const THEMES = [
+  { id:'ocean', label:'Deep Ocean', sub:'靛蓝 + 紫罗兰' },
+  { id:'biolum', label:'Bioluminescent', sub:'青色 + 翠绿' },
+  { id:'phantom', label:'Phantom', sub:'冷灰 + 银白' },
+  { id:'sakura', label:'Sakura', sub:'樱花粉 + 薰衣草' },
+  { id:'aurora', label:'Aurora', sub:'极光青 + 渐变紫' },
+];
+
+function setState(s) {
+  currentState = s;
+  updatePreview();
+  document.querySelectorAll('#state-controls button').forEach(b => b.classList.toggle('active', b.textContent.toLowerCase().replace('ing','').startsWith(s.replace('s-',''))));
+  // hack: re-trigger one-shot anims
+  const el = document.getElementById('main-preview');
+  const jf = el.querySelector('.jf');
+  const c = jf.cloneNode(true);
+  jf.replaceWith(c);
+}
+
+function setTheme(t) {
+  currentTheme = t;
+  updatePreview();
+  document.querySelectorAll('#theme-controls button').forEach(b => b.classList.toggle('active', b.textContent.toLowerCase().replace(' ','').includes(t)));
+}
+
+function setClient(name, color) {
+  currentClient = { name, color };
+  updatePreview();
+  document.querySelectorAll('.client-card').forEach(c => c.classList.remove('active'));
+  event.currentTarget.classList.add('active');
+}
+
+function updatePreview() {
+  const el = document.getElementById('main-preview');
+  el.className = `jf-wrap large ${STATE_MAP[currentState]} theme-${currentTheme} client-connected`;
+  el.style.setProperty('--client-ring-color', currentClient.color);
+  el.style.setProperty('--client-dot-color', currentClient.color);
+  el.querySelector('.jf-client-ring').style.borderColor = currentClient.color;
+  el.querySelector('.jf-client-dot').style.background = currentClient.color;
+  el.querySelector('.jf-client-dot').style.boxShadow = `0 0 6px ${currentClient.color}`;
+}
+
+// Generate theme comparison grid
+const tg = document.getElementById('theme-grid');
+THEMES.forEach(t => {
+  const card = document.createElement('div');
+  card.className = 'theme-card' + (t.id === 'ocean' ? ' active' : '');
+  card.onclick = () => { setTheme(t.id); document.querySelectorAll('.theme-card').forEach(c=>c.classList.remove('active')); card.classList.add('active'); };
+  card.innerHTML = `<div class="s-idle theme-${t.id}">${jfHTML()}</div><div class="theme-label" style="color:#d1d5db">${t.label}</div><div class="theme-sublabel">${t.sub}</div>`;
+  tg.appendChild(card);
+});
+
+// Generate all-states row
+const sr = document.getElementById('states-row');
+Object.entries(STATE_MAP).forEach(([key, cls]) => {
+  const cell = document.createElement('div');
+  cell.className = 'state-cell';
+  cell.innerHTML = `<div class="state-cell-label">${STATE_LABELS[key]}</div><div class="${cls} theme-ocean">${jfHTML()}</div><div class="state-cell-desc">${STATE_DESCS[key].replace(/\n/g,'<br>')}</div>`;
+  sr.appendChild(cell);
+});
+
+// Replay one-shot animations periodically
+setInterval(() => {
+  document.querySelectorAll('.s-comp .jf, .s-err .jf').forEach(jf => {
+    const c = jf.cloneNode(true);
+    jf.replaceWith(c);
+  });
+}, 4000);
+</script>
+
+</body>
+</html>

@@ -30,7 +30,9 @@ env_logger = "0.11"
 dirs = "5"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4"] }
+base64 = "0.22"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa = "0.26"
 objc = "0.2"
+dispatch = "0.2"

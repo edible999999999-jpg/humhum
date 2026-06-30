@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { LogicalSize, PhysicalPosition } from "@tauri-apps/api/dpi";
 import { invoke } from "@tauri-apps/api/core";
 import { Bubble } from "./Bubble";
-import { PetMascot } from "./PetMascot";
+import { PetCanvas } from "./PetCanvas";
 import { SessionDashboard } from "./SessionDashboard";
 import { ConfirmToast } from "../Overlay/ConfirmToast";
 import { NotificationToast } from "../Overlay/NotificationToast";
@@ -35,33 +36,13 @@ export function PetView() {
   const [notification, setNotification] = useState<TranscriptEntry | null>(null);
   const [completionEvent, setCompletionEvent] = useState<HookEvent | null>(null);
   const [showDashboard, setShowDashboard] = useState(false);
+  const [windowExpanded, setWindowExpanded] = useState(false);
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dragStartPos = useRef({ x: 0, y: 0 });
   const clickCount = useRef(0);
   const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Position window at bottom-right on first mount
-  useEffect(() => {
-    (async () => {
-      try {
-        const monitor = await import("@tauri-apps/api/dpi");
-        const { availableMonitors } = await import("@tauri-apps/api/window");
-        const monitors = await availableMonitors();
-        const primary = monitors[0];
-        if (primary) {
-          const screenW = primary.size.width / primary.scaleFactor;
-          const screenH = primary.size.height / primary.scaleFactor;
-          const winW = 280;
-          const winH = 350;
-          await appWindow.setPosition(
-            new monitor.LogicalPosition(screenW - winW - 20, screenH - winH - 80)
-          );
-        }
-      } catch {
-        // Fallback: leave at default position
-      }
-    })();
-  }, []);
+  // Position is set from Rust side in apply_macos_transparency (avoids Tauri scaling bugs)
 
   const handleVoiceCommand = useCallback(
     (command: VoiceCommand, _text: string) => {
@@ -98,6 +79,35 @@ export function PetView() {
     setPetState("idle");
   }, [stopListening, setPetState]);
 
+  const DEFAULT_HEIGHT = 450;
+  const EXPANDED_HEIGHT = 650;
+
+  useEffect(() => {
+    setWindowExpanded(false);
+    (async () => {
+      try {
+        const pos = await appWindow.outerPosition();
+        const sf = (await appWindow.scaleFactor()) || 1;
+        if (pendingPermission) {
+          const dy = Math.round((EXPANDED_HEIGHT - DEFAULT_HEIGHT) * sf);
+          await appWindow.setSize(new LogicalSize(280, EXPANDED_HEIGHT));
+          await appWindow.setPosition(new PhysicalPosition(pos.x, Math.max(0, pos.y - dy)));
+          setWindowExpanded(true);
+        } else {
+          const currentSize = await appWindow.outerSize();
+          const logicalH = currentSize.height / sf;
+          if (logicalH > DEFAULT_HEIGHT + 10) {
+            const dy = Math.round((logicalH - DEFAULT_HEIGHT) * sf);
+            await appWindow.setSize(new LogicalSize(280, DEFAULT_HEIGHT));
+            await appWindow.setPosition(new PhysicalPosition(pos.x, pos.y + dy));
+          }
+        }
+      } catch (e) {
+        console.error("[PetView] Resize failed:", e);
+      }
+    })();
+  }, [pendingPermission]);
+
   useKeyboardShortcuts({
     enabled: !!pendingPermission,
     onConfirm: () => handleConfirm("allow"),
@@ -115,10 +125,14 @@ export function PetView() {
 
     pipeline.onStateChange((state) => {
       const petTarget = PIPELINE_TO_PET[state];
-      if (petTarget === "idle" && pendingPermission) {
-        setPetState("listening");
-        startListening();
-      } else if (petTarget === "error" && !pendingPermission) {
+      if (pendingPermission) {
+        if (petTarget === "idle") {
+          setPetState("listening");
+          startListening();
+        } else if (petTarget === "error") {
+          setPetState("waiting");
+        }
+      } else if (petTarget === "error") {
         setPetState("idle");
       } else {
         setPetState(petTarget as ReturnType<typeof usePetState>["petState"]);
@@ -136,6 +150,8 @@ export function PetView() {
     const eventName = latestEvent.hook_event_name;
     const payload = latestEvent.payload as Record<string, unknown>;
     const pipeline = getPipeline();
+
+    console.log("[PetView] Event received:", eventName, "pipeline:", pipeline ? "OK" : "NULL");
 
     if (eventName === "PermissionRequest") {
       playSound("attentionRequired");
@@ -291,9 +307,9 @@ export function PetView() {
         </div>
       )}
 
-      {/* Permission confirmation */}
-      {pendingPermission && (
-        <div className="w-64 mb-3">
+      {/* Permission confirmation — wait for window expansion to avoid clipping */}
+      {pendingPermission && windowExpanded && (
+        <div className="w-72 mb-3">
           <ConfirmToast
             event={pendingPermission}
             onConfirm={handleConfirm}
@@ -326,38 +342,7 @@ function respondToPermission(eventId: string, behavior: string) {
 }
 
 function PetBody({ state }: { state: string }) {
-  return (
-    <div className="relative">
-      {state === "listening" && (
-        <>
-          <div className="pulse-ring" />
-          <div className="pulse-ring" style={{ animationDelay: "0.5s" }} />
-        </>
-      )}
-
-      <div
-        className={`
-          w-14 h-14 rounded-full flex items-center justify-center
-          transition-all duration-300 relative overflow-visible
-          ${getPetStyle(state)}
-        `}
-      >
-        <PetMascot state={state} size={56} />
-
-        {state === "speaking" && (
-          <div className="absolute -bottom-3 left-1/2 -translate-x-1/2 flex gap-0.5 items-end h-3 pointer-events-none">
-            {[...Array(5)].map((_, i) => (
-              <div key={i} className="waveform-bar" />
-            ))}
-          </div>
-        )}
-      </div>
-
-      {state === "waiting" && (
-        <div className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 bg-amber-400 rounded-full animate-pulse pointer-events-none" />
-      )}
-    </div>
-  );
+  return <PetCanvas state={state as import("@/types").PetState} size={140} />;
 }
 
 function getBubbleText(state: string): string {
@@ -375,24 +360,4 @@ function getBubbleText(state: string): string {
   }
 }
 
-function getPetStyle(state: string): string {
-  switch (state) {
-    case "idle":
-      return "bg-gradient-to-br from-indigo-500/20 to-purple-500/20 backdrop-blur-sm animate-float shadow-lg shadow-indigo-500/10";
-    case "processing":
-      return "bg-gradient-to-br from-blue-500/30 to-cyan-500/30 backdrop-blur-sm animate-pulse shadow-lg shadow-blue-500/20";
-    case "speaking":
-      return "bg-gradient-to-br from-indigo-500/30 to-purple-500/30 backdrop-blur-sm shadow-lg shadow-indigo-500/20";
-    case "listening":
-      return "bg-gradient-to-br from-emerald-500/30 to-teal-500/30 backdrop-blur-sm shadow-lg shadow-emerald-500/20";
-    case "waiting":
-      return "bg-gradient-to-br from-amber-500/30 to-orange-500/30 backdrop-blur-sm shadow-lg shadow-amber-500/20";
-    case "completed":
-      return "bg-gradient-to-br from-emerald-500/30 to-lime-500/30 backdrop-blur-sm shadow-lg shadow-emerald-500/30 animate-bounce-subtle";
-    case "error":
-      return "bg-gradient-to-br from-red-500/30 to-rose-500/30 backdrop-blur-sm shadow-lg shadow-red-500/20";
-    default:
-      return "bg-gradient-to-br from-indigo-500/20 to-purple-500/20 backdrop-blur-sm";
-  }
-}
 

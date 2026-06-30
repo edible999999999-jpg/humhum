@@ -5,6 +5,7 @@ mod event_bus;
 mod hook_server;
 mod qoder_log_watcher;
 mod session_store;
+mod stats_store;
 mod window_focus;
 
 use std::sync::Arc;
@@ -23,13 +24,24 @@ pub fn run() {
 
             // Set up the main pet window
             if let Some(window) = app.get_webview_window("main") {
-                let _ = window.set_always_on_top(true);
                 let _ = window.set_skip_taskbar(true);
                 let _ = window.set_shadow(false);
                 let _ = window.set_background_color(Some(tauri::window::Color(0, 0, 0, 0)));
 
                 #[cfg(target_os = "macos")]
                 apply_macos_transparency(&window);
+
+                // Periodically re-assert window level to prevent Tauri/macOS from overriding
+                #[cfg(target_os = "macos")]
+                {
+                    let win_clone = window.clone();
+                    std::thread::spawn(move || {
+                        loop {
+                            std::thread::sleep(std::time::Duration::from_secs(3));
+                            reassert_window_level(&win_clone);
+                        }
+                    });
+                }
             }
 
             // Load configuration
@@ -39,6 +51,14 @@ pub fn run() {
             // Session store
             let session_store = session_store::SessionStore::new();
             app.manage(Arc::new(std::sync::Mutex::new(session_store)));
+
+            // Stats store (persistent)
+            let stats_path = dirs::home_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("."))
+                .join(".devpod")
+                .join("stats.json");
+            let stats_store = stats_store::StatsStore::new(stats_path);
+            app.manage(Arc::new(std::sync::Mutex::new(stats_store)));
 
             // Start the hook event server
             let server_handle = app_handle.clone();
@@ -72,9 +92,37 @@ pub fn run() {
             commands::toggle_settings,
             commands::send_notification,
             commands::check_hooks_status,
+            commands::webview_log,
+            commands::proxy_post,
+            commands::proxy_post_binary,
+            commands::play_audio,
+            commands::stop_audio,
+            commands::get_stats,
         ])
         .run(tauri::generate_context!())
         .expect("error while running DevPod");
+}
+
+#[cfg(target_os = "macos")]
+fn reassert_window_level(window: &tauri::WebviewWindow) {
+    use cocoa::base::id;
+    use objc::{msg_send, sel, sel_impl};
+
+    let ns_window = match window.ns_window() {
+        Ok(w) => w as id,
+        Err(_) => return,
+    };
+
+    let ns_win_ptr = ns_window as usize;
+    dispatch::Queue::main().exec_async(move || unsafe {
+        let ns_window = ns_win_ptr as id;
+        // CGAssistiveTechHighWindowLevel — above fullscreen apps
+        let _: () = msg_send![ns_window, setLevel: 1500_i64];
+        // canJoinAllSpaces(1) | stationary(16) | ignoresCycle(64) | fullScreenAuxiliary(256) | fullScreenDisallowsTiling(4096)
+        let _: () = msg_send![ns_window, setCollectionBehavior: 4433_u64];
+        let _: () = msg_send![ns_window, setHidesOnDeactivate: false];
+        let _: () = msg_send![ns_window, setCanHide: false];
+    });
 }
 
 #[cfg(target_os = "macos")]
@@ -83,8 +131,6 @@ fn apply_macos_transparency(window: &tauri::WebviewWindow) {
     use cocoa::base::{id, nil};
     use cocoa::foundation::NSAutoreleasePool;
     use objc::{msg_send, sel, sel_impl};
-
-    let _ = window.set_visible_on_all_workspaces(true);
 
     let ns_window = match window.ns_window() {
         Ok(w) => w as id,
@@ -100,7 +146,16 @@ fn apply_macos_transparency(window: &tauri::WebviewWindow) {
         ns_window.setHasShadow_(false);
         ns_window.setStyleMask_(NSWindowStyleMask::NSBorderlessWindowMask);
 
-        let _: () = msg_send![ns_window, setLevel: 25_i64];
+        // canJoinAllSpaces(1) | stationary(16) | ignoresCycle(64) | fullScreenAuxiliary(256) | fullScreenDisallowsTiling(4096)
+        let _: () = msg_send![ns_window, setCollectionBehavior: 4433_u64];
+        // CGAssistiveTechHighWindowLevel — above fullscreen apps
+        let _: () = msg_send![ns_window, setLevel: 1500_i64];
+        let _: () = msg_send![ns_window, setHidesOnDeactivate: false];
+        let _: () = msg_send![ns_window, setCanHide: false];
+        // No animations during Space transitions
+        let _: () = msg_send![ns_window, setAnimationBehavior: 2_i64];
+
+        let _: () = msg_send![ns_window, center];
 
         let content_view: id = ns_window.contentView();
         let _: () = msg_send![content_view, setWantsLayer: true];
@@ -124,7 +179,92 @@ fn apply_macos_transparency(window: &tauri::WebviewWindow) {
         }
         make_webview_transparent(content_view);
 
+        // Move window to a SkyLight stationary space (floats above fullscreen apps)
+        move_to_skylight_space(ns_window);
+
         let _: () = msg_send![pool, drain];
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn move_to_skylight_space(ns_window: cocoa::base::id) {
+    use cocoa::base::id;
+    use objc::{class, msg_send, sel, sel_impl};
+    use std::ffi::CString;
+    use std::os::raw::{c_char, c_int, c_void};
+
+    type SLSMainConnectionIDFn = unsafe extern "C" fn() -> c_int;
+    type SLSSpaceCreateFn = unsafe extern "C" fn(c_int, c_int, c_int) -> c_int;
+    type SLSSpaceSetAbsoluteLevelFn = unsafe extern "C" fn(c_int, c_int, c_int) -> c_int;
+    type SLSShowSpacesFn = unsafe extern "C" fn(c_int, id) -> c_int;
+    type SLSAddWindowsToSpacesFn = unsafe extern "C" fn(c_int, c_int, id, c_int) -> c_int;
+
+    extern "C" {
+        fn dlopen(path: *const c_char, mode: c_int) -> *mut c_void;
+        fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
+    }
+
+    unsafe {
+        let path = CString::new(
+            "/System/Library/PrivateFrameworks/SkyLight.framework/Versions/A/SkyLight",
+        )
+        .unwrap();
+        let handle = dlopen(path.as_ptr(), 1); // RTLD_LAZY = 1
+        if handle.is_null() {
+            log::warn!("[SkyLight] Failed to load framework");
+            return;
+        }
+
+        macro_rules! load_fn {
+            ($name:expr, $ty:ty) => {{
+                let sym = CString::new($name).unwrap();
+                let ptr = dlsym(handle, sym.as_ptr());
+                if ptr.is_null() {
+                    log::warn!("[SkyLight] Missing symbol: {}", $name);
+                    return;
+                }
+                std::mem::transmute::<*mut c_void, $ty>(ptr)
+            }};
+        }
+
+        let sls_main_connection_id: SLSMainConnectionIDFn =
+            load_fn!("SLSMainConnectionID", SLSMainConnectionIDFn);
+        let sls_space_create: SLSSpaceCreateFn =
+            load_fn!("SLSSpaceCreate", SLSSpaceCreateFn);
+        let sls_space_set_absolute_level: SLSSpaceSetAbsoluteLevelFn =
+            load_fn!("SLSSpaceSetAbsoluteLevel", SLSSpaceSetAbsoluteLevelFn);
+        let sls_show_spaces: SLSShowSpacesFn =
+            load_fn!("SLSShowSpaces", SLSShowSpacesFn);
+        let sls_add_windows: SLSAddWindowsToSpacesFn = load_fn!(
+            "SLSSpaceAddWindowsAndRemoveFromSpaces",
+            SLSAddWindowsToSpacesFn
+        );
+
+        let conn = sls_main_connection_id();
+        let space = sls_space_create(conn, 1, 0);
+        if space == 0 {
+            log::warn!("[SkyLight] Failed to create space");
+            return;
+        }
+
+        sls_space_set_absolute_level(conn, space, 100);
+
+        // Create NSArray with space ID for SLSShowSpaces
+        let ns_number: id = msg_send![class!(NSNumber), numberWithInt: space];
+        let space_array: id = msg_send![class!(NSArray), arrayWithObject: ns_number];
+        sls_show_spaces(conn, space_array);
+
+        // Get window number and move it to the stationary space
+        let window_number: i64 = msg_send![ns_window, windowNumber];
+        let win_number: id = msg_send![class!(NSNumber), numberWithInt: window_number as i32];
+        let win_array: id = msg_send![class!(NSArray), arrayWithObject: win_number];
+        sls_add_windows(conn, space, win_array, 7);
+
+        log::info!(
+            "[SkyLight] Window {} moved to stationary space {}",
+            window_number,
+            space
+        );
     }
 }
 

@@ -1,0 +1,787 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>Hum v8 — 灯塔水母 · 返老还童</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:#07071a;color:#ddd;font-family:-apple-system,'PingFang SC',sans-serif;padding-bottom:80px}
+  h1{text-align:center;padding:36px 0 4px;font-size:28px;color:#c4b5fd;letter-spacing:3px}
+  .sub{text-align:center;color:#6b7280;font-size:13px;margin-bottom:6px}
+  .sub2{text-align:center;color:#4b5563;font-size:11px;margin-bottom:32px;font-style:italic}
+  .sec{max-width:1200px;margin:0 auto;padding:0 24px}
+  .st{font-size:12px;text-transform:uppercase;letter-spacing:2px;color:#4b5563;margin:48px 0 18px;padding-bottom:8px;border-bottom:1px solid rgba(255,255,255,0.05)}
+  .st .cn{color:#9ca3af;font-size:11px;letter-spacing:0;text-transform:none;margin-left:8px}
+  .ctrls{display:flex;justify-content:center;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+  .ctrls button{padding:6px 16px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.03);color:#9ca3af;cursor:pointer;font-size:12px;transition:all .2s}
+  .ctrls button:hover,.ctrls button.on{background:rgba(139,92,246,.12);border-color:rgba(139,92,246,.3);color:#c4b5fd}
+  .cl{text-align:center;font-size:10px;color:#374151;text-transform:uppercase;letter-spacing:1.5px;margin:14px 0 5px}
+  .stage{display:flex;justify-content:center;align-items:center;min-height:420px;position:relative}
+  .sg{position:absolute;width:300px;height:300px;border-radius:50%;filter:blur(80px);opacity:.06;transition:background .8s}
+  .desc{text-align:center;max-width:620px;margin:0 auto 40px;padding:14px 22px;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.05);border-radius:12px}
+  .desc h3{font-size:14px;color:#c4b5fd;margin-bottom:5px}
+  .desc p{font-size:12px;color:#6b7280;line-height:1.7}
+  .desc .tn{font-size:11px;color:#8b5cf6;margin-top:7px;font-style:italic}
+  .desc .dome-note{font-size:10px;color:#f472b6;margin-top:4px}
+  svg.hum{overflow:visible}
+
+  .lore{display:flex;gap:24px;justify-content:center;flex-wrap:wrap;margin:20px 0 30px}
+  .lore-card{background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.05);border-radius:14px;padding:18px 22px;width:340px}
+  .lore-card h4{font-size:14px;color:#c4b5fd;margin-bottom:8px}
+  .lore-card p{font-size:11px;color:#6b7280;line-height:1.8}
+  .lore-card .hi{color:#f472b6;font-weight:600}
+  .lore-card .g{color:#34d399;font-weight:500}
+  .lore-card .y{color:#fbbf24;font-weight:500}
+
+  .lifecycle{display:flex;justify-content:center;align-items:end;gap:16px;flex-wrap:wrap;margin:24px 0}
+  .lc-item{text-align:center;padding:12px;background:rgba(255,255,255,.015);border:1px solid rgba(255,255,255,.04);border-radius:12px;transition:all .3s;cursor:default;min-width:110px}
+  .lc-item.active{border-color:rgba(139,92,246,.3);background:rgba(139,92,246,.05)}
+  .lc-item .ll{font-size:10px;color:#4b5563;margin-top:6px;text-transform:uppercase;letter-spacing:1px}
+  .lc-item .ln{font-size:12px;color:#d1d5db;margin-top:2px;font-weight:500}
+  .lc-item .lt{font-size:10px;color:#8b5cf6;margin-top:3px}
+  .lc-arrow{font-size:18px;color:#374151;align-self:center}
+
+  .agent-panel{display:flex;justify-content:center;gap:6px;flex-wrap:wrap;margin:16px 0 4px}
+  .agent-btn{display:flex;align-items:center;gap:5px;padding:5px 12px;border-radius:20px;border:1.5px solid rgba(255,255,255,0.06);background:rgba(255,255,255,0.02);cursor:pointer;transition:all .25s;font-size:11px;color:#6b7280}
+  .agent-btn .dot{width:7px;height:7px;border-radius:50%;transition:all .3s;opacity:0.3}
+  .agent-btn.on{border-color:rgba(255,255,255,0.15);background:rgba(255,255,255,0.05)}
+  .agent-btn.on .dot{opacity:1;box-shadow:0 0 6px currentColor}
+  .agent-btn.on .name{color:#d1d5db}
+  .agent-btn:hover{border-color:rgba(255,255,255,0.12)}
+  .session-count{text-align:center;font-size:11px;color:#4b5563;margin:8px 0 4px}
+  .session-count span{color:#c4b5fd;font-weight:600}
+  .session-count .mode{margin-left:8px;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600}
+  .session-count .mode.adult{background:rgba(139,92,246,.15);color:#a78bfa}
+  .session-count .mode.baby{background:rgba(251,191,36,.15);color:#fbbf24}
+
+  .compare{display:flex;justify-content:center;gap:60px;align-items:start;flex-wrap:wrap;margin:30px 0}
+  .compare-col{text-align:center}
+  .compare-col .ct{font-size:13px;color:#9ca3af;margin-bottom:6px;font-weight:500}
+  .compare-col .cs{font-size:10px;color:#4b5563;margin-top:8px;max-width:180px}
+
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:18px;margin-bottom:60px}
+  .card{background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.05);border-radius:14px;padding:14px;display:flex;gap:12px;align-items:center;cursor:pointer;transition:all .3s}
+  .card:hover{border-color:rgba(139,92,246,.2)}
+  .card.on{border-color:rgba(139,92,246,.4)}
+  .card .info h4{font-size:13px;color:#d1d5db;margin-bottom:3px}
+  .card .info .d{font-size:11px;color:#6b7280;line-height:1.5}
+  .card .info .t{font-size:10px;color:#8b5cf6;margin-top:4px}
+
+  .transform-demo{display:flex;justify-content:center;align-items:center;gap:20px;margin:20px 0}
+  .transform-demo .arrow{font-size:28px;color:#fbbf24;animation:pulse-arrow 1.5s infinite}
+  @keyframes pulse-arrow{0%,100%{opacity:0.3;transform:translateX(0)}50%{opacity:1;transform:translateX(5px)}}
+
+  .icon-row{display:flex;justify-content:center;gap:28px;align-items:end;flex-wrap:wrap;margin:24px 0}
+  .icon-item{display:flex;flex-direction:column;align-items:center;gap:8px}
+  .icon-item .lbl{font-size:10px;color:#4b5563;text-transform:uppercase;letter-spacing:1px}
+  .icon-box{display:flex;align-items:center;justify-content:center;border-radius:12px;padding:8px}
+  .icon-box.dark{background:rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.05)}
+  .icon-box.light{background:rgba(255,255,255,0.9);border:1px solid rgba(0,0,0,0.08)}
+  .icon-variants{display:flex;justify-content:center;gap:40px;flex-wrap:wrap;margin:24px 0}
+  .icon-var{display:flex;flex-direction:column;align-items:center;gap:10px}
+  .icon-var .vt{font-size:11px;color:#9ca3af;font-weight:500}
+  .icon-sizes{display:flex;gap:16px;align-items:end}
+</style>
+</head>
+<body>
+<h1>HUM v8</h1>
+<p class="sub">会哼唱的水母 — 灯塔水母 · Turritopsis dohrnii</p>
+<p class="sub2">"The immortal jellyfish that can revert to its juvenile form"</p>
+
+<div class="sec">
+
+<!-- ============================================ -->
+<!-- SECTION 1: LORE & LIFECYCLE -->
+<!-- ============================================ -->
+<div class="st">1. Origin Story <span class="cn">灯塔水母的故事</span></div>
+
+<div class="lore">
+  <div class="lore-card">
+    <h4>为什么是灯塔水母？</h4>
+    <p>灯塔水母 (Turritopsis dohrnii) 是地球上唯一已知能<span class="hi">"返老还童"</span>的生物。当它遭遇压力（环境恶化、受伤、衰老），它不会死去——而是<span class="g">逆转回幼体（水螅体）</span>，重新开始生长。</p>
+    <p style="margin-top:8px">这完美映射了我们的产品理念：当 Hum 管理的会话越来越多、越来越忙碌时，它会<span class="y">返老还童变成幼体</span>，用更小更轻量的形态继续工作——越忙越萌。</p>
+  </div>
+  <div class="lore-card">
+    <h4>生命周期映射</h4>
+    <p><span class="g">成体 (Medusa)</span> — 正常工作模式<br>
+    ≤ 3 个活跃会话时的标准形态。圆顶饱满、触手修长、动画丰富。</p>
+    <p style="margin-top:6px"><span class="y">幼体 (Polyp)</span> — 返老还童模式<br>
+    ≥ 4 个活跃会话时触发。身体缩小变萌、圆顶更圆更透明、触手变成小短腿、眼睛占比变大——像个刚出生的小水母宝宝。</p>
+    <p style="margin-top:6px"><span class="hi">变身动画</span> — 成体缩小→发光→弹出幼体<br>
+    会话减少时幼体长大→发光→弹出成体</p>
+  </div>
+</div>
+
+<div class="cl">Lifecycle — 生命形态</div>
+<div class="lifecycle" id="lifecycle"></div>
+
+<!-- ============================================ -->
+<!-- SECTION 2: FORM COMPARISON -->
+<!-- ============================================ -->
+<div class="st">2. Adult vs Baby <span class="cn">成体 vs 幼体 对比</span></div>
+
+<div class="compare" id="compareStatic"></div>
+
+<div class="cl">Transformation Preview — 变身预览</div>
+<div class="transform-demo" id="transformDemo"></div>
+
+<!-- ============================================ -->
+<!-- SECTION 3: INTERACTIVE SESSION DEMO -->
+<!-- ============================================ -->
+<div class="st">3. Session Demo <span class="cn">交互演示 — 添加会话触发返老还童</span></div>
+
+<div class="cl">Toggle Agent Sessions</div>
+<div class="agent-panel" id="agentPanel"></div>
+<div class="ctrls" id="presets" style="margin-top:6px"></div>
+<div class="session-count">Active: <span id="sessCount">0</span> <span class="mode adult" id="modeLabel">成体 MEDUSA</span></div>
+<div class="stage"><div class="sg" id="sg1"></div><div id="sessDemo"></div></div>
+
+<!-- ============================================ -->
+<!-- SECTION 4: BABY STATES -->
+<!-- ============================================ -->
+<div class="st">4. Baby States <span class="cn">幼体的各种状态</span></div>
+<div class="cl">Scene</div>
+<div class="ctrls" id="btns2">
+  <button class="on" data-s="idle">Idle</button>
+  <button data-s="processing">Processing</button>
+  <button data-s="speaking">Speaking</button>
+  <button data-s="listening">Listening</button>
+  <button data-s="waiting">Waiting</button>
+  <button data-s="completed">Completed</button>
+  <button data-s="error">Error</button>
+</div>
+<div class="stage"><div class="sg" id="sg3"></div><div id="babyStage"></div></div>
+<div class="desc" id="babyDesc"></div>
+
+<!-- ============================================ -->
+<!-- SECTION 5: FULL ADULT STATES (kept from v7) -->
+<!-- ============================================ -->
+<div class="st">5. Adult States <span class="cn">成体状态完整预览</span></div>
+<div class="cl">Scene</div>
+<div class="ctrls" id="btns">
+  <button class="on" data-s="idle">Idle</button>
+  <button data-s="processing">Processing</button>
+  <button data-s="speaking">Speaking</button>
+  <button data-s="inspect">Inspect</button>
+  <button data-s="listening">Listening</button>
+  <button data-s="waiting">Waiting</button>
+  <button data-s="completed">Completed</button>
+  <button data-s="error">Error</button>
+</div>
+<div class="stage"><div class="sg" id="sg2"></div><div id="ms"></div></div>
+<div class="desc" id="desc"></div>
+
+<!-- ============================================ -->
+<!-- SECTION 6: APP ICONS -->
+<!-- ============================================ -->
+<div class="st">6. App Icons <span class="cn">应用图标 — 成体 + 幼体</span></div>
+<div class="cl">Adult Icon</div>
+<div class="icon-variants" id="iconAdult"></div>
+<div class="cl">Baby Icon</div>
+<div class="icon-variants" id="iconBaby"></div>
+<div class="cl">Tray States</div>
+<div class="icon-variants" id="iconTray"></div>
+
+</div>
+
+<script>
+const AGENTS=[
+  {id:'claude-code',name:'Claude',color:'#f97316',short:'C'},
+  {id:'codex',name:'Codex',color:'#22c55e',short:'X'},
+  {id:'qwen-code',name:'Qwen',color:'#3b82f6',short:'Q'},
+  {id:'gemini-cli',name:'Gemini',color:'#06b6d4',short:'G'},
+  {id:'kimi-k1',name:'Kimi',color:'#a855f7',short:'K'},
+  {id:'qoderwork',name:'Qoder',color:'#f43f5e',short:'R'},
+];
+
+let activeSessions=new Set();
+const BABY_THRESHOLD=4;
+
+const S={
+  idle:{t:'Idle',d:'安静漂浮，呼吸微微伸缩',g:'#6366f1'},
+  processing:{t:'Processing',d:'编织代码，光点穿梭',g:'#3b82f6'},
+  speaking:{t:'Speaking',d:'语音播报，声波脉冲',g:'#8b5cf6'},
+  inspect:{t:'Inspect',d:'查看 Agent，展示球体',g:'#f97316'},
+  listening:{t:'Listening',d:'倾听语音，歪头侧耳',g:'#10b981'},
+  waiting:{t:'Waiting',d:'等待确认，紧张缩头',g:'#f59e0b'},
+  completed:{t:'Completed',d:'完成！炸毛绽放！',g:'#10b981'},
+  error:{t:'Error',d:'困惑出错，歪头打结',g:'#f472b6'}
+};
+
+const BS={
+  idle:{t:'Baby Idle — 小水母漂漂',d:'超小超圆的身体软软地漂浮。短短的小触手像在学游泳，眨着大大的眼睛好奇地看世界。触角上的 Agent 球比身体还大，像头上顶着糖葫芦。',n:'软软漂浮 / 大眼好奇 / 小短腿划水',g:'#6366f1'},
+  processing:{t:'Baby Processing — 努力干活中',d:'小小的身体抖抖抖地在努力。短触手拼命够向中间但太短了，只能做出"加油"的动作。头顶冒出小汗珠。',n:'抖抖抖 / 小短手加油 / 冒汗',g:'#3b82f6'},
+  speaking:{t:'Baby Speaking — 奶声奶气',d:'小嘴巴张得特别圆在努力喊话。整个身体随着声音一鼓一鼓的。声波条变成小泡泡。像婴儿在学说话。',n:'大嘴巴喊 / 身体鼓鼓 / 泡泡声波',g:'#8b5cf6'},
+  listening:{t:'Baby Listening — 竖起耳朵',d:'整个身体歪成45度在认真听。触角全部朝声源方向歪过去，像雷达天线。',n:'身体歪歪 / 触角雷达 / 认真脸',g:'#10b981'},
+  waiting:{t:'Baby Waiting — 害怕怕',d:'缩成一个更小的球球，短触手全抱住自己。大眼睛水汪汪的，像要哭了。',n:'缩成球 / 抱住自己 / 水汪汪眼',g:'#f59e0b'},
+  completed:{t:'Baby Completed — 好开心！',d:'从小球弹起来变成星星形！短触手全部张开，像个开心到爆炸的小海星。眼睛变成开心的 >< 形。',n:'弹弹弹！/ 海星绽放 / 开心尖叫',g:'#10b981'},
+  error:{t:'Baby Error — 哇哇哇',d:'大眼睛里转圈圈（晕了），小嘴变成波浪线要哭。整个身体在原地转圈，像迷路了。',n:'转圈圈晕 / 要哭了 / 迷路转',g:'#f472b6'}
+};
+
+// ===== COLORS =====
+function getC(sc){
+  return {
+    idle:      {b1:'#818cf8',b2:'#6366f1',hi:'#a5b4fc',t:'#8b5cf6',g:'#6366f1',e:'#eef2ff',bl:'#c7d2fe'},
+    processing:{b1:'#60a5fa',b2:'#3b82f6',hi:'#93c5fd',t:'#2563eb',g:'#3b82f6',e:'#dbeafe',bl:'#bfdbfe'},
+    speaking:  {b1:'#a78bfa',b2:'#7c3aed',hi:'#c4b5fd',t:'#6d28d9',g:'#8b5cf6',e:'#ede9fe',bl:'#ddd6fe'},
+    inspect:   {b1:'#818cf8',b2:'#6366f1',hi:'#a5b4fc',t:'#8b5cf6',g:'#6366f1',e:'#eef2ff',bl:'#c7d2fe'},
+    listening: {b1:'#34d399',b2:'#059669',hi:'#6ee7b7',t:'#047857',g:'#10b981',e:'#d1fae5',bl:'#a7f3d0'},
+    waiting:   {b1:'#fbbf24',b2:'#d97706',hi:'#fde68a',t:'#b45309',g:'#f59e0b',e:'#fef9c3',bl:'#fde68a'},
+    completed: {b1:'#34d399',b2:'#059669',hi:'#6ee7b7',t:'#047857',g:'#10b981',e:'#d1fae5',bl:'#a7f3d0'},
+    error:     {b1:'#f9a8d4',b2:'#ec4899',hi:'#fbcfe8',t:'#db2777',g:'#f472b6',e:'#fce7f3',bl:'#fbcfe8'},
+  }[sc];
+}
+
+function smoothDome(cx,R,dcy,dby){
+  return `M ${cx-R*0.92} ${dby} C ${cx-R*1.02} ${dby-R*0.4} ${cx-R*0.92} ${dcy-R*0.95} ${cx} ${dcy-R*0.95} C ${cx+R*0.92} ${dcy-R*0.95} ${cx+R*1.02} ${dby-R*0.4} ${cx+R*0.92} ${dby}`;
+}
+
+// ===== BABY JELLYFISH =====
+function Baby(sc,sz=180,sessions=null){
+  const sess=sessions||activeSessions;
+  const activeAgents=[...sess].map(id=>AGENTS.find(a=>a.id===id)).filter(Boolean);
+  const cx=sz/2, u='b'+Math.random().toString(36).slice(2,7);
+  // Baby is rounder and smaller proportionally
+  const R=sz*0.22;
+  const dcy=sz*0.38;
+  const dby=dcy+R*0.65;
+  const C=getC(sc);
+
+  let svg=`<svg width="${sz}" height="${sz}" viewBox="0 0 ${sz} ${sz}" class="hum" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="${u}bg" cx="50%" cy="30%" r="55%"><stop offset="0%" stop-color="${C.b1}" stop-opacity="0.75"/><stop offset="60%" stop-color="${C.b2}" stop-opacity="0.4"/><stop offset="100%" stop-color="${C.b2}" stop-opacity="0.1"/></radialGradient>
+    <radialGradient id="${u}ig" cx="50%" cy="40%" r="40%"><stop offset="0%" stop-color="${C.hi}" stop-opacity="0.6"/><stop offset="100%" stop-color="${C.hi}" stop-opacity="0"/></radialGradient>
+    <linearGradient id="${u}tg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${C.t}" stop-opacity="0.5"/><stop offset="100%" stop-color="${C.t}" stop-opacity="0.05"/></linearGradient>
+    <filter id="${u}gl"><feGaussianBlur stdDeviation="10"/></filter>
+    <radialGradient id="${u}sh" cx="28%" cy="20%" r="30%"><stop offset="0%" stop-color="white" stop-opacity="0.3"/><stop offset="100%" stop-color="white" stop-opacity="0"/></radialGradient>
+  </defs>
+  <g>`;
+
+  // Bouncy float — babies bounce more
+  const bounceDur=sc==='speaking'?'0.6':sc==='processing'?'1.2':'2.5';
+  const bounceH=sc==='completed'?12:sc==='speaking'?8:5;
+  svg+=`<animateTransform attributeName="transform" type="translate" values="0,0;0,-${bounceH};0,0" dur="${bounceDur}s" repeatCount="indefinite"/>`;
+
+  // Baby spin for error
+  if(sc==='error') svg+=`<animateTransform attributeName="transform" type="rotate" values="0 ${cx} ${dcy};8 ${cx} ${dcy};-5 ${cx} ${dcy};0 ${cx} ${dcy}" dur="2s" repeatCount="indefinite" additive="sum"/>`;
+  // Listening tilt
+  if(sc==='listening') svg+=`<animateTransform attributeName="transform" type="rotate" values="0 ${cx} ${dcy};-15 ${cx} ${dcy};-15 ${cx} ${dcy}" dur="0.4s" fill="freeze" additive="sum"/>`;
+
+  // Aura (bigger relative to body for baby)
+  svg+=`<ellipse cx="${cx}" cy="${dcy+8}" rx="${R+20}" ry="${R+12}" fill="${C.g}" opacity="0.1" filter="url(#${u}gl)">`;
+  if(sc==='completed') svg+=`<animate attributeName="opacity" values="0.1;0.25;0.1" dur="0.8s" repeatCount="indefinite"/>`;
+  svg+=`</ellipse>`;
+
+  // Baby tentacles — SHORT and stubby
+  svg+=babyTentacles(sc,cx,dby,R,sz,C,u);
+
+  // Baby dome — EXTRA round, like a ball
+  svg+=`<g>`;
+  // Breathing scale — babies breathe bigger
+  if(['idle','listening'].includes(sc)) svg+=`<animateTransform attributeName="transform" type="scale" values="1 1;1.04 0.96;1 1" dur="2s" repeatCount="indefinite" additive="sum"/>`;
+  if(sc==='speaking') svg+=`<animateTransform attributeName="transform" type="scale" values="1 1;1.1 0.9;1 1" dur="0.6s" repeatCount="indefinite" additive="sum"/>`;
+  if(sc==='processing') svg+=`<animateTransform attributeName="transform" type="scale" values="1 1;0.95 1.03;1 1" dur="1s" repeatCount="indefinite" additive="sum"/>`;
+  if(sc==='waiting') svg+=`<animateTransform attributeName="transform" type="scale" values="1 1;0.88 0.88;0.85 0.85" dur="0.5s" fill="freeze" additive="sum"/>`;
+  if(sc==='completed') svg+=`<animateTransform attributeName="transform" type="scale" values="0.8 0.8;1.2 0.9;1.05 1.0" dur="0.8s" fill="freeze" additive="sum"/>`;
+
+  // Baby dome path — nearly circular
+  const domePath=`M ${cx-R} ${dby}
+    C ${cx-R*1.1} ${dby-R*0.5} ${cx-R*1.05} ${dcy-R*1.1} ${cx} ${dcy-R*1.1}
+    C ${cx+R*1.05} ${dcy-R*1.1} ${cx+R*1.1} ${dby-R*0.5} ${cx+R} ${dby}`;
+  // Simple round frill for baby
+  const frillN=5, frillW=R*1.8;
+  let frill='';
+  for(let i=0;i<frillN;i++){const fx=cx+frillW/2-(frillW/frillN)*i;const fx2=fx-frillW/frillN;frill+=` Q ${(fx+fx2)/2} ${dby+2+(i%2===0?2:3.5)} ${fx2} ${dby}`;}
+
+  if(sc==='completed'){
+    // Star burst shape
+    const starPts=5;let starPath=`M ${cx-R} ${dby}`;
+    const starAngles=[];
+    for(let i=0;i<=starPts*2;i++){
+      const a=Math.PI*0.8-(Math.PI*0.6/(starPts*2))*i;
+      const rr=(i%2===0)?R*1.2:R*1.0;
+      starAngles.push({x:cx+rr*Math.cos(a),y:dcy-rr*Math.sin(a)});
+    }
+    starPath=`M ${cx-R*0.95} ${dby}`;
+    starPath+=` C ${cx-R*1.1} ${dby-R*0.4} ${cx-R*1.1} ${dcy-R*0.7} ${starAngles[0].x} ${starAngles[0].y}`;
+    for(let i=0;i<starAngles.length-1;i++){
+      const p0=starAngles[i],p1=starAngles[i+1];
+      const bulge=(i%2===0)?-R*0.15:R*0.08;
+      starPath+=` Q ${(p0.x+p1.x)/2} ${Math.min(p0.y,p1.y)+bulge} ${p1.x} ${p1.y}`;
+    }
+    starPath+=` C ${cx+R*1.1} ${dcy-R*0.7} ${cx+R*1.1} ${dby-R*0.4} ${cx+R*0.95} ${dby}`;
+    starPath+=frill+' Z';
+
+    const smoothD=domePath+frill+' Z';
+    svg+=`<path fill="url(#${u}bg)" stroke="${C.b1}" stroke-width="0.5" stroke-opacity="0.25"><animate attributeName="d" values="${smoothD};${starPath};${starPath}" dur="0.6s" fill="freeze"/></path>`;
+  } else {
+    svg+=`<path d="${domePath}${frill} Z" fill="url(#${u}bg)" stroke="${C.b1}" stroke-width="0.5" stroke-opacity="0.25"/>`;
+  }
+  svg+=`</g>`;
+
+  // Shimmer — bigger on baby
+  svg+=`<ellipse cx="${cx-R*0.25}" cy="${dcy-R*0.5}" rx="${R*0.35}" ry="${R*0.2}" fill="url(#${u}sh)"/>`;
+  // Inner glow
+  svg+=`<ellipse cx="${cx}" cy="${dcy}" rx="${R*0.35}" ry="${R*0.25}" fill="url(#${u}ig)">`;
+  if(sc==='processing') svg+=`<animate attributeName="opacity" values="0.3;0.8;0.3" dur="1.2s" repeatCount="indefinite"/>`;
+  svg+=`</ellipse>`;
+
+  // BIG blush — always visible on baby
+  const blushR=sz*0.028;
+  svg+=`<ellipse cx="${cx-R*0.55}" cy="${dcy+R*0.15}" rx="${blushR}" ry="${blushR*0.65}" fill="#f9a8d4" opacity="0.3"/>`;
+  svg+=`<ellipse cx="${cx+R*0.55}" cy="${dcy+R*0.15}" rx="${blushR}" ry="${blushR*0.65}" fill="#f9a8d4" opacity="0.3"/>`;
+
+  // BIG eyes — baby proportions (eyes are ~40% of head)
+  svg+=babyEyes(sc,cx,dcy-R*0.12,R*0.35,R,C,sz);
+  // Mouth
+  svg+=babyMouth(sc,cx,dcy+R*0.28,C,R);
+  // Extras
+  svg+=babyExtras(sc,cx,dcy,R,dby,sz,C,u);
+
+  // Session antennae — big orbs on baby look like candy on a stick
+  svg+=babyAntennae(activeAgents,sc,cx,dcy,R,sz,u);
+
+  svg+=`</g></svg>`;
+  return svg;
+}
+
+function babyTentacles(sc,cx,by,R,sz,C,u){
+  const tg=`url(#${u}tg)`;
+  const bw=R*0.7;
+  // Baby has 4 SHORT stubby tentacles
+  const xs=[-0.6,-0.2,0.2,0.6].map(r=>cx+bw*r);
+  const stubLen=sz*0.06;
+
+  if(sc==='completed'){
+    // All spread out like a star
+    return xs.map((x,i)=>{
+      const ang=(-45+(i*30))*Math.PI/180;
+      const ex=x+Math.sin(ang)*stubLen*2.5, ey=by+Math.cos(ang)*stubLen*2.5;
+      return `<path fill="none" stroke="${tg}" stroke-width="${sz*0.018}" stroke-linecap="round">
+        <animate attributeName="d" values="M ${x} ${by} L ${x} ${by+stubLen};M ${x} ${by} C ${(x+ex)/2} ${(by+ey)/2} ${ex} ${ey-3} ${ex} ${ey};M ${x} ${by} C ${(x+ex)/2} ${(by+ey)/2} ${ex} ${ey-3} ${ex} ${ey}" dur="0.5s" fill="freeze"/>
+      </path>`;
+    }).join('');
+  }
+  if(sc==='waiting'){
+    // Curled in, hugging self
+    return xs.map((x,i)=>{
+      const d=(i<2)?1:-1;
+      return `<path fill="none" stroke="${tg}" stroke-width="${sz*0.016}" stroke-linecap="round">
+        <animate attributeName="d" values="M ${x} ${by} C ${x+d*4} ${by+3} ${x+d*6} ${by+5} ${x+d*3} ${by+2};M ${x} ${by} C ${x+d*5} ${by+2} ${x+d*7} ${by+4} ${x+d*4} ${by+1};M ${x} ${by} C ${x+d*4} ${by+3} ${x+d*6} ${by+5} ${x+d*3} ${by+2}" dur="1.5s" repeatCount="indefinite"/>
+      </path>`;
+    }).join('');
+  }
+  if(sc==='processing'){
+    // Waving up and down trying hard
+    return xs.map((x,i)=>{
+      const phase=i*0.2;
+      return `<path fill="none" stroke="${tg}" stroke-width="${sz*0.016}" stroke-linecap="round">
+        <animate attributeName="d" values="M ${x} ${by} C ${x} ${by+3} ${x-2} ${by+stubLen} ${x-3} ${by+stubLen+3};M ${x} ${by} C ${x+1} ${by+2} ${x+3} ${by+stubLen-2} ${x+2} ${by+stubLen+1};M ${x} ${by} C ${x} ${by+3} ${x-2} ${by+stubLen} ${x-3} ${by+stubLen+3}" dur="0.8s" begin="${phase}s" repeatCount="indefinite"/>
+      </path>`;
+    }).join('');
+  }
+  if(sc==='speaking'){
+    // Flapping with voice rhythm
+    return xs.map((x,i)=>{
+      const dir=(i<2)?-1:1;
+      return `<path fill="none" stroke="${tg}" stroke-width="${sz*0.016}" stroke-linecap="round">
+        <animate attributeName="d" values="M ${x} ${by} C ${x+dir*3} ${by+4} ${x+dir*5} ${by+stubLen} ${x+dir*7} ${by+stubLen+2};M ${x} ${by} C ${x-dir*1} ${by+3} ${x-dir*2} ${by+stubLen-1} ${x-dir*1} ${by+stubLen+1};M ${x} ${by} C ${x+dir*3} ${by+4} ${x+dir*5} ${by+stubLen} ${x+dir*7} ${by+stubLen+2}" dur="0.55s" repeatCount="indefinite"/>
+      </path>`;
+    }).join('');
+  }
+  // Default: gentle paddle like learning to swim
+  return xs.map((x,i)=>{
+    const sw=(i%2===0)?3:-3;
+    return `<path fill="none" stroke="${tg}" stroke-width="${sz*0.016}" stroke-linecap="round">
+      <animate attributeName="d" values="M ${x} ${by} C ${x+sw} ${by+4} ${x+sw*0.8} ${by+stubLen} ${x-sw*0.2} ${by+stubLen+3};M ${x} ${by} C ${x-sw} ${by+4} ${x-sw*0.8} ${by+stubLen} ${x+sw*0.2} ${by+stubLen+3};M ${x} ${by} C ${x+sw} ${by+4} ${x+sw*0.8} ${by+stubLen} ${x-sw*0.2} ${by+stubLen+3}" dur="${2.5+i*0.3}s" repeatCount="indefinite"/>
+    </path>`;
+  }).join('');
+}
+
+function babyEyes(sc,cx,ey,sp,R,C,sz){
+  const lx=cx-sp,rx=cx+sp;
+  const er=R*0.32; // BIG eyes relative to head
+  const pr=er*0.55; // pupil
+  const hr=er*0.2; // highlight
+
+  if(sc==='completed') return `
+    <path d="M ${lx-er} ${ey+1} Q ${lx} ${ey-er*1.2} ${lx+er} ${ey+1}" fill="none" stroke="${C.e}" stroke-width="${sz*0.015}" stroke-linecap="round" opacity="0.95"/>
+    <path d="M ${rx-er} ${ey+1} Q ${rx} ${ey-er*1.2} ${rx+er} ${ey+1}" fill="none" stroke="${C.e}" stroke-width="${sz*0.015}" stroke-linecap="round" opacity="0.95"/>`;
+  if(sc==='error') return `
+    <circle cx="${lx}" cy="${ey}" r="${er}" fill="${C.e}" opacity="0.9"/>
+    <circle cx="${rx}" cy="${ey}" r="${er}" fill="${C.e}" opacity="0.9"/>
+    <g><animateTransform attributeName="transform" type="rotate" values="0 ${lx} ${ey};360 ${lx} ${ey}" dur="1.5s" repeatCount="indefinite"/>
+      <circle cx="${lx+pr*0.5}" cy="${ey}" r="${pr*0.4}" fill="rgba(0,0,0,0.35)"/>
+    </g>
+    <g><animateTransform attributeName="transform" type="rotate" values="0 ${rx} ${ey};-360 ${rx} ${ey}" dur="1.8s" repeatCount="indefinite"/>
+      <circle cx="${rx+pr*0.5}" cy="${ey}" r="${pr*0.4}" fill="rgba(0,0,0,0.35)"/>
+    </g>`;
+  if(sc==='waiting') return `
+    <circle cx="${lx}" cy="${ey}" r="${er*1.1}" fill="${C.e}" opacity="0.9"/>
+    <circle cx="${rx}" cy="${ey}" r="${er*1.1}" fill="${C.e}" opacity="0.9"/>
+    <circle cx="${lx}" cy="${ey+1}" r="${pr}" fill="rgba(0,0,0,0.3)"/>
+    <circle cx="${rx}" cy="${ey+1}" r="${pr}" fill="rgba(0,0,0,0.3)"/>
+    <ellipse cx="${lx}" cy="${ey+er*0.9}" rx="${er*0.5}" ry="${er*0.2}" fill="${C.hi}" opacity="0.12">
+      <animate attributeName="opacity" values="0.1;0.2;0.1" dur="1s" repeatCount="indefinite"/>
+    </ellipse>
+    <ellipse cx="${rx}" cy="${ey+er*0.9}" rx="${er*0.5}" ry="${er*0.2}" fill="${C.hi}" opacity="0.12">
+      <animate attributeName="opacity" values="0.1;0.2;0.1" dur="1s" repeatCount="indefinite"/>
+    </ellipse>
+    <circle cx="${lx-hr}" cy="${ey-er*0.4}" r="${hr}" fill="white" opacity="0.6"/>
+    <circle cx="${rx-hr}" cy="${ey-er*0.4}" r="${hr}" fill="white" opacity="0.6"/>`;
+  // Default big round eyes
+  return `
+    <circle cx="${lx}" cy="${ey}" r="${er}" fill="${C.e}" opacity="0.9">
+      <animate attributeName="ry" values="${er};${er};${er*0.1};${er};${er}" dur="4s" repeatCount="indefinite" keyTimes="0;0.44;0.48;0.52;1"/>
+    </circle>
+    <circle cx="${rx}" cy="${ey}" r="${er}" fill="${C.e}" opacity="0.9">
+      <animate attributeName="ry" values="${er};${er};${er*0.1};${er};${er}" dur="4s" repeatCount="indefinite" keyTimes="0;0.44;0.48;0.52;1"/>
+    </circle>
+    <circle cx="${lx+0.5}" cy="${ey+1}" r="${pr}" fill="rgba(0,0,0,0.3)"/>
+    <circle cx="${rx+0.5}" cy="${ey+1}" r="${pr}" fill="rgba(0,0,0,0.3)"/>
+    <circle cx="${lx-hr*0.8}" cy="${ey-er*0.35}" r="${hr}" fill="white" opacity="0.65"/>
+    <circle cx="${rx-hr*0.8}" cy="${ey-er*0.35}" r="${hr}" fill="white" opacity="0.65"/>`;
+}
+
+function babyMouth(sc,cx,my,C,R){
+  const ms=R*0.15;
+  if(sc==='speaking') return `<ellipse cx="${cx}" cy="${my}" rx="${ms*1.5}" fill="${C.e}" opacity="0.5"><animate attributeName="ry" values="${ms*0.5};${ms*2};${ms*0.8};${ms*1.5};${ms*0.5}" dur="0.6s" repeatCount="indefinite"/></ellipse>`;
+  if(sc==='completed') return `<path d="M ${cx-ms*2.5} ${my} Q ${cx} ${my+ms*3} ${cx+ms*2.5} ${my}" fill="none" stroke="${C.e}" stroke-width="1.8" stroke-linecap="round" opacity="0.7"/>`;
+  if(sc==='error') return `<path d="M ${cx-ms*1.5} ${my+ms} Q ${cx} ${my-ms*0.5} ${cx+ms*1.5} ${my+ms*0.8}" fill="none" stroke="${C.e}" stroke-width="1.2" stroke-linecap="round" opacity="0.5"/>`;
+  if(sc==='waiting') return `<ellipse cx="${cx}" cy="${my+1}" rx="${ms}" ry="${ms*1.3}" fill="${C.e}" opacity="0.3"/>`;
+  return `<path d="M ${cx-ms*1.8} ${my} Q ${cx} ${my+ms*2} ${cx+ms*1.8} ${my}" fill="none" stroke="${C.e}" stroke-width="1" stroke-linecap="round" opacity="0.4"/>`;
+}
+
+function babyExtras(sc,cx,dcy,R,bby,sz,C,u){
+  if(sc==='processing'){
+    // Sweat drops
+    return `<circle cx="${cx+R*0.7}" cy="${dcy-R*0.7}" r="1.5" fill="${C.hi}" opacity="0">
+      <animate attributeName="opacity" values="0;0.6;0" dur="1.5s" repeatCount="indefinite"/>
+      <animate attributeName="cy" values="${dcy-R*0.7};${dcy-R*0.4};${dcy-R*0.7}" dur="1.5s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="${cx+R*0.85}" cy="${dcy-R*0.5}" r="1" fill="${C.hi}" opacity="0">
+      <animate attributeName="opacity" values="0;0.4;0" dur="1.5s" begin="0.4s" repeatCount="indefinite"/>
+      <animate attributeName="cy" values="${dcy-R*0.5};${dcy-R*0.2};${dcy-R*0.5}" dur="1.5s" begin="0.4s" repeatCount="indefinite"/>
+    </circle>`;
+  }
+  if(sc==='speaking'){
+    // Bubble-like sound waves instead of bars
+    return [0,0.4,0.8].map(d=>`<circle cx="${cx}" cy="${dcy}" r="${R*0.6}" fill="none" stroke="${C.g}" stroke-width="0.8" opacity="0">
+      <animate attributeName="r" values="${R*0.6};${R*1.6}" dur="1.2s" begin="${d}s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0.2;0" dur="1.2s" begin="${d}s" repeatCount="indefinite"/>
+    </circle>`).join('');
+  }
+  if(sc==='completed'){
+    // Sparkle bursts
+    return Array.from({length:8},(_,i)=>{
+      const a=(i/8)*Math.PI*2;
+      const dx=Math.cos(a)*R*1.8, dy=Math.sin(a)*R*1.8;
+      return `<circle cx="${cx}" cy="${dcy}" r="1.5" fill="${C.hi}" opacity="0">
+        <animate attributeName="cx" values="${cx};${cx+dx}" dur="1s" begin="${i*0.06}s" fill="freeze"/>
+        <animate attributeName="cy" values="${dcy};${dcy+dy}" dur="1s" begin="${i*0.06}s" fill="freeze"/>
+        <animate attributeName="opacity" values="0;0.9;0" dur="1s" begin="${i*0.06}s" fill="freeze"/>
+        <animate attributeName="r" values="1.5;0.3" dur="1s" begin="${i*0.06}s" fill="freeze"/>
+      </circle>`;
+    }).join('');
+  }
+  if(sc==='waiting') return `<text x="${cx}" y="${dcy-R*1.2}" text-anchor="middle" font-size="${sz*0.07}" font-weight="800" fill="${C.g}" opacity="0.6">!<animate attributeName="y" values="${dcy-R*1.2};${dcy-R*1.4};${dcy-R*1.2}" dur="0.7s" repeatCount="indefinite"/></text>`;
+  if(sc==='error') return `<text x="${cx+R*0.5}" y="${dcy-R*0.9}" text-anchor="middle" font-size="${sz*0.06}" fill="${C.g}" opacity="0.5" font-weight="600">?<animate attributeName="y" values="${dcy-R*0.9};${dcy-R*1.1};${dcy-R*0.9}" dur="1.2s" repeatCount="indefinite"/></text>`;
+  return '';
+}
+
+function babyAntennae(agents,sc,cx,dcy,R,sz,u){
+  if(agents.length===0) return '';
+  const n=agents.length;
+  let svgA='';
+  const arcStart=-60,arcEnd=60;
+  agents.forEach((agent,i)=>{
+    const deg=n===1?0:(arcStart+(arcEnd-arcStart)*(i/(n-1)));
+    const rad=deg*Math.PI/180;
+    const domeTopY=dcy-R*1.1;
+    const bx=cx+Math.sin(rad)*R*0.55;
+    const by_a=domeTopY+Math.abs(deg)*0.03;
+    const len=sz*0.06;
+    const tx=bx+Math.sin(rad)*len;
+    const ty=by_a-Math.cos(rad*0.4)*len;
+    const orbR=sz*0.02+1.2; // bigger orb on baby — "candy on a stick"
+
+    // wobbly stalk
+    svgA+=`<path fill="none" stroke="${agent.color}" stroke-width="${sz*0.01}" stroke-linecap="round" opacity="0.65">
+      <animate attributeName="d" values="M ${bx} ${by_a} Q ${bx+2} ${(by_a+ty)/2} ${tx+1} ${ty};M ${bx} ${by_a} Q ${bx-2} ${(by_a+ty)/2-1} ${tx-1} ${ty+1};M ${bx} ${by_a} Q ${bx+2} ${(by_a+ty)/2} ${tx+1} ${ty}" dur="${1.8+i*0.3}s" repeatCount="indefinite"/>
+    </path>`;
+    // big orb
+    svgA+=`<circle cx="${tx}" cy="${ty}" r="${orbR}" fill="${agent.color}" opacity="0.85">
+      <animate attributeName="opacity" values="0.6;1;0.6" dur="${1.5+i*0.2}s" repeatCount="indefinite"/>
+    </circle>`;
+    svgA+=`<circle cx="${tx}" cy="${ty}" r="${orbR*2.5}" fill="${agent.color}" opacity="0">
+      <animate attributeName="opacity" values="0.05;0.15;0.05" dur="${1.5+i*0.2}s" repeatCount="indefinite"/>
+    </circle>`;
+    if(sz>=120){
+      svgA+=`<text x="${tx}" y="${ty-orbR-2}" text-anchor="middle" font-size="${sz*0.025+2}" fill="${agent.color}" font-weight="700" opacity="0.6">${agent.short}</text>`;
+    }
+  });
+  return svgA;
+}
+
+// ===== ADULT (from v7, simplified) =====
+function Adult(sc,sz=180,sessions=null){
+  const sess=sessions||activeSessions;
+  const activeAgents=[...sess].map(id=>AGENTS.find(a=>a.id===id)).filter(Boolean);
+  const cx=sz/2,u='a'+Math.random().toString(36).slice(2,7);
+  const R=sz*0.26,dcy=sz*0.28,dby=dcy+R*0.85;
+  const C=getC(sc);
+
+  let domePath;
+  if(sc==='completed'){
+    const bumpN=5,bumpH=R*0.16;let pts=[];
+    for(let i=0;i<=bumpN*2;i++){const a=Math.PI*0.85-(Math.PI*0.7/(bumpN*2))*i;const extra=(i%2===1)?bumpH:0;pts.push({x:cx+(R*1.08+extra)*Math.cos(a),y:dcy-(R*1.08+extra)*Math.sin(a)});}
+    domePath=`M ${cx-R*0.92} ${dby}`;domePath+=` C ${cx-R*1.05} ${dby-R*0.4} ${cx-R*1.08} ${dcy-R*0.5} ${pts[0].x} ${pts[0].y}`;
+    for(let i=0;i<pts.length-1;i++){const p0=pts[i],p1=pts[i+1];const cpy=Math.min(p0.y,p1.y)-(i%2===0?bumpH*0.6:-bumpH*0.15);domePath+=` Q ${(p0.x+p1.x)/2} ${cpy} ${p1.x} ${p1.y}`;}
+    domePath+=` C ${cx+R*1.08} ${dcy-R*0.5} ${cx+R*1.05} ${dby-R*0.4} ${cx+R*0.92} ${dby}`;
+  } else if(sc==='waiting'){
+    domePath=`M ${cx-R*0.92} ${dby+2} C ${cx-R*0.92} ${dby-R*0.3} ${cx-R*0.8} ${dcy-R*0.75} ${cx} ${dcy-R*0.72} C ${cx+R*0.8} ${dcy-R*0.75} ${cx+R*0.92} ${dby-R*0.3} ${cx+R*0.92} ${dby+2}`;
+  } else if(sc==='error'){
+    domePath=`M ${cx-R*0.88} ${dby+1} C ${cx-R*0.9} ${dby-R*0.3} ${cx-R*0.75} ${dcy-R*0.9} ${cx+R*0.05} ${dcy-R*0.88} C ${cx+R*0.85} ${dcy-R*0.82} ${cx+R*0.95} ${dby-R*0.25} ${cx+R*0.92} ${dby+2}`;
+  } else { domePath=smoothDome(cx,R,dcy,dby); }
+
+  const frillN=7,frillW=R*1.7;let frill='';
+  for(let i=0;i<frillN;i++){const fx=cx+frillW/2-(frillW/frillN)*i;const fx2=fx-frillW/frillN;frill+=` Q ${(fx+fx2)/2} ${dby+3+(i%2===0?3:5)} ${fx2} ${dby+1}`;}
+  domePath+=frill+' Z';
+
+  const fd=sc==='processing'?'2.5':sc==='speaking'?'3':'4';
+  let svg=`<svg width="${sz}" height="${sz}" viewBox="0 0 ${sz} ${sz}" class="hum" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="${u}bg" cx="50%" cy="32%" r="62%"><stop offset="0%" stop-color="${C.b1}" stop-opacity="0.6"/><stop offset="75%" stop-color="${C.b2}" stop-opacity="0.28"/><stop offset="100%" stop-color="${C.b2}" stop-opacity="0.06"/></radialGradient>
+    <linearGradient id="${u}tg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${C.t}" stop-opacity="0.55"/><stop offset="100%" stop-color="${C.t}" stop-opacity="0.03"/></linearGradient>
+    <filter id="${u}gl"><feGaussianBlur stdDeviation="12"/></filter>
+    <radialGradient id="${u}sh" cx="32%" cy="22%" r="28%"><stop offset="0%" stop-color="white" stop-opacity="0.2"/><stop offset="100%" stop-color="white" stop-opacity="0"/></radialGradient>
+    <radialGradient id="${u}ig" cx="50%" cy="40%" r="40%"><stop offset="0%" stop-color="${C.hi}" stop-opacity="0.5"/><stop offset="100%" stop-color="${C.hi}" stop-opacity="0"/></radialGradient>
+  </defs>
+  <g>`;
+  if(!['waiting','error'].includes(sc)) svg+=`<animateTransform attributeName="transform" type="translate" values="0,0;0,-5;0,0" dur="${fd}s" repeatCount="indefinite"/>`;
+  if(sc==='listening') svg+=`<animateTransform attributeName="transform" type="rotate" values="0 ${cx} ${dcy};-7 ${cx} ${dcy}" dur="0.5s" fill="freeze" additive="sum"/>`;
+  if(sc==='error') svg+=`<animateTransform attributeName="transform" type="rotate" values="0 ${cx} ${dcy};5 ${cx} ${dcy}" dur="0.4s" fill="freeze" additive="sum"/>`;
+  svg+=`<ellipse cx="${cx}" cy="${dcy+10}" rx="${R+16}" ry="${R+8}" fill="${C.g}" opacity="0.08" filter="url(#${u}gl)"/>`;
+  // Tentacles
+  const tg=`url(#${u}tg)`,bw=R*0.85;
+  const xs=[-0.7,-0.35,0,0.35,0.7].map(r=>cx+bw*r),ls=[38,48,52,48,38];
+  svg+=xs.map((x,i)=>{const sw=(i%2===0)?7:-7,d=4.2+i*0.3,l=ls[i];return `<path fill="none" stroke="${tg}" stroke-width="2.2" stroke-linecap="round"><animate attributeName="d" values="M ${x} ${dby+2} C ${x+sw*0.4} ${dby+2+l*0.3} ${x+sw} ${dby+2+l*0.55} ${x-sw*0.3} ${dby+2+l};M ${x} ${dby+2} C ${x-sw*0.4} ${dby+2+l*0.3} ${x-sw} ${dby+2+l*0.55} ${x+sw*0.3} ${dby+2+l};M ${x} ${dby+2} C ${x+sw*0.4} ${dby+2+l*0.3} ${x+sw} ${dby+2+l*0.55} ${x-sw*0.3} ${dby+2+l}" dur="${d}s" repeatCount="indefinite"/></path>`;}).join('');
+  // Dome
+  svg+=`<path d="${domePath}" fill="url(#${u}bg)" stroke="${C.b1}" stroke-width="0.5" stroke-opacity="0.2"/>`;
+  svg+=`<ellipse cx="${cx-R*0.22}" cy="${dcy-R*0.4}" rx="${R*0.32}" ry="${R*0.22}" fill="url(#${u}sh)"/>`;
+  svg+=`<ellipse cx="${cx}" cy="${dcy+2}" rx="${R*0.38}" ry="${R*0.28}" fill="url(#${u}ig)"/>`;
+  // Blush
+  svg+=`<ellipse cx="${cx-R*0.52}" cy="${dcy+R*0.18}" rx="4" ry="2.5" fill="${C.bl}" opacity="0.18"/>`;
+  svg+=`<ellipse cx="${cx+R*0.52}" cy="${dcy+R*0.18}" rx="4" ry="2.5" fill="${C.bl}" opacity="0.18"/>`;
+  // Eyes
+  const ey=dcy-R*0.06,sp=R*0.3,lx=cx-sp,rx=cx+sp;
+  svg+=`<circle cx="${lx}" cy="${ey}" r="3.5" fill="${C.e}" opacity="0.85"><animate attributeName="ry" values="3.5;3.5;0.4;3.5;3.5" dur="5s" repeatCount="indefinite" keyTimes="0;0.46;0.5;0.54;1"/></circle><circle cx="${rx}" cy="${ey}" r="3.5" fill="${C.e}" opacity="0.85"><animate attributeName="ry" values="3.5;3.5;0.4;3.5;3.5" dur="5s" repeatCount="indefinite" keyTimes="0;0.46;0.5;0.54;1"/></circle><circle cx="${lx+0.3}" cy="${ey+0.5}" r="1.5" fill="rgba(0,0,0,0.28)"/><circle cx="${rx+0.3}" cy="${ey+0.5}" r="1.5" fill="rgba(0,0,0,0.28)"/><circle cx="${lx-1}" cy="${ey-1.2}" r="0.8" fill="white" opacity="0.5"/><circle cx="${rx-1}" cy="${ey-1.2}" r="0.8" fill="white" opacity="0.5"/>`;
+  // Mouth
+  const my=dcy+R*0.26;
+  svg+=`<path d="M ${cx-4.5} ${my} Q ${cx} ${my+4} ${cx+4.5} ${my}" fill="none" stroke="${C.e}" stroke-width="1.2" stroke-linecap="round" opacity="0.35"/>`;
+  // Antennae
+  const arcStart=-70,arcEnd=70;
+  activeAgents.forEach((agent,i)=>{
+    const deg=activeAgents.length===1?0:(arcStart+(arcEnd-arcStart)*(i/(activeAgents.length-1)));
+    const rad=deg*Math.PI/180;
+    const bx=cx+Math.sin(rad)*R*0.65,by_a=(dcy-R*0.95)+Math.abs(deg)*0.04;
+    const len=sz*0.08,tx=bx+Math.sin(rad)*len,ty=by_a-Math.cos(rad*0.5)*len;
+    const orbR=sz*0.015+0.8;
+    svg+=`<path fill="none" stroke="${agent.color}" stroke-width="${sz*0.012}" stroke-linecap="round" opacity="0.7"><animate attributeName="d" values="M ${bx} ${by_a} Q ${bx+2} ${(by_a+ty)/2} ${tx+1} ${ty};M ${bx} ${by_a} Q ${bx-2} ${(by_a+ty)/2} ${tx-1} ${ty};M ${bx} ${by_a} Q ${bx+2} ${(by_a+ty)/2} ${tx+1} ${ty}" dur="${3+i*0.4}s" repeatCount="indefinite"/></path>`;
+    svg+=`<circle cx="${tx}" cy="${ty}" r="${orbR}" fill="${agent.color}" opacity="0.85"><animate attributeName="opacity" values="0.6;1;0.6" dur="${2+i*0.2}s" repeatCount="indefinite"/></circle>`;
+    svg+=`<circle cx="${tx}" cy="${ty}" r="${orbR*2.5}" fill="${agent.color}" opacity="0"><animate attributeName="opacity" values="0.06;0.18;0.06" dur="${2+i*0.2}s" repeatCount="indefinite"/></circle>`;
+    if(sz>=140) svg+=`<text x="${tx}" y="${ty-orbR-3}" text-anchor="middle" font-size="${sz*0.028+2}" fill="${agent.color}" font-weight="700" opacity="0.65">${agent.short}</text>`;
+  });
+  svg+=`</g></svg>`;
+  return svg;
+}
+
+// Smart renderer: picks adult or baby based on session count
+function H(sc,sz=180,sessions=null){
+  const sess=sessions||activeSessions;
+  return sess.size>=BABY_THRESHOLD ? Baby(sc,sz,sess) : Adult(sc,sz,sess);
+}
+
+// ===== ICON RENDERERS =====
+function iconAdult(sz,dark=true){
+  const cx=sz/2,cy=sz*0.42,R=sz*0.28,dby=cy+R*0.7;
+  const fill=dark?'#8b5cf6':'#a78bfa';const eyeCol=dark?'#1e1b4b':'#ffffff';
+  let s=`<svg width="${sz}" height="${sz}" viewBox="0 0 ${sz} ${sz}" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="iat${sz}${dark?'d':'l'}" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${fill}" stop-opacity="0.7"/><stop offset="100%" stop-color="${fill}" stop-opacity="0.1"/></linearGradient></defs>`;
+  const tn=sz>=48?5:3,tw=R*1.3;
+  for(let i=0;i<tn;i++){const x=cx-tw/2+(tw/(tn-1))*i;const sw=(i%2===0?1:-1)*sz*0.035;const l=sz*0.2;s+=`<path d="M ${x} ${dby+1} C ${x+sw} ${dby+l*0.3} ${x+sw*2} ${dby+l*0.6} ${x-sw*0.5} ${dby+l}" fill="none" stroke="url(#iat${sz}${dark?'d':'l'})" stroke-width="${Math.max(1.2,sz*0.025)}" stroke-linecap="round"/>`;}
+  let dp=smoothDome(cx,R,cy,dby);const fn=5,fw=R*1.5;for(let i=0;i<fn;i++){const x1=cx-fw/2+(fw/fn)*i;const x2=x1+fw/fn;dp+=` Q ${(x1+x2)/2} ${dby+2+(i%2?2.5:1)} ${x2} ${dby+1}`;}dp+=' Z';
+  s+=`<path d="${dp}" fill="${fill}" opacity="0.85"/><ellipse cx="${cx-R*0.18}" cy="${cy-R*0.3}" rx="${R*0.22}" ry="${R*0.12}" fill="white" opacity="${dark?0.25:0.35}"/>`;
+  if(sz>=48){s+=`<ellipse cx="${cx-R*0.45}" cy="${cy+R*0.12}" rx="${sz*0.025}" ry="${sz*0.015}" fill="#f9a8d4" opacity="0.25"/><ellipse cx="${cx+R*0.45}" cy="${cy+R*0.12}" rx="${sz*0.025}" ry="${sz*0.015}" fill="#f9a8d4" opacity="0.25"/>`;}
+  const esp=R*0.28,er=Math.max(1,sz*0.028);
+  s+=`<circle cx="${cx-esp}" cy="${cy-R*0.05}" r="${er}" fill="${eyeCol}"/><circle cx="${cx+esp}" cy="${cy-R*0.05}" r="${er}" fill="${eyeCol}"/>`;
+  if(sz>=48){s+=`<circle cx="${cx-esp-er*0.3}" cy="${cy-R*0.05-er*0.3}" r="${er*0.3}" fill="white" opacity="0.6"/><circle cx="${cx+esp-er*0.3}" cy="${cy-R*0.05-er*0.3}" r="${er*0.3}" fill="white" opacity="0.6"/>`;}
+  if(sz>=32) s+=`<path d="M ${cx-R*0.12} ${cy+R*0.22} Q ${cx} ${cy+R*0.32} ${cx+R*0.12} ${cy+R*0.22}" fill="none" stroke="${eyeCol}" stroke-width="${Math.max(0.5,sz*0.012)}" stroke-linecap="round" opacity="0.5"/>`;
+  s+=`</svg>`;return s;
+}
+
+function iconBabyFn(sz,dark=true){
+  const cx=sz/2,cy=sz*0.44,R=sz*0.24,dby=cy+R*0.55;
+  const fill=dark?'#fbbf24':'#f59e0b';const fill2=dark?'#a78bfa':'#8b5cf6';
+  const eyeCol=dark?'#1e1b4b':'#ffffff';
+  let s=`<svg width="${sz}" height="${sz}" viewBox="0 0 ${sz} ${sz}" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="ibt${sz}${dark?'d':'l'}" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${fill2}" stop-opacity="0.5"/><stop offset="100%" stop-color="${fill2}" stop-opacity="0.05"/></linearGradient></defs>`;
+  // shorter stubby tentacles
+  const tn=sz>=48?4:3,tw=R*0.9;
+  for(let i=0;i<tn;i++){const x=cx-tw/2+(tw/(tn-1))*i;const sw=(i%2===0?1:-1)*2;const l=sz*0.1;s+=`<path d="M ${x} ${dby+1} C ${x+sw} ${dby+l*0.4} ${x+sw*2} ${dby+l*0.7} ${x} ${dby+l}" fill="none" stroke="url(#ibt${sz}${dark?'d':'l'})" stroke-width="${Math.max(1,sz*0.02)}" stroke-linecap="round"/>`;}
+  // nearly circular dome
+  const dp2=`M ${cx-R} ${dby} C ${cx-R*1.1} ${dby-R*0.5} ${cx-R*1.05} ${cy-R*1.1} ${cx} ${cy-R*1.1} C ${cx+R*1.05} ${cy-R*1.1} ${cx+R*1.1} ${dby-R*0.5} ${cx+R} ${dby}`;
+  let fr2='';for(let i=0;i<3;i++){const x1=cx-R*0.85+(R*1.7/3)*i;const x2=x1+R*1.7/3;fr2+=` Q ${(x1+x2)/2} ${dby+2} ${x2} ${dby}`;}
+  s+=`<path d="${dp2}${fr2} Z" fill="${fill2}" opacity="0.8"/>`;
+  s+=`<ellipse cx="${cx-R*0.2}" cy="${cy-R*0.4}" rx="${R*0.3}" ry="${R*0.15}" fill="white" opacity="${dark?0.3:0.4}"/>`;
+  // big blush
+  if(sz>=32){s+=`<ellipse cx="${cx-R*0.5}" cy="${cy+R*0.1}" rx="${sz*0.03}" ry="${sz*0.018}" fill="#f9a8d4" opacity="0.35"/><ellipse cx="${cx+R*0.5}" cy="${cy+R*0.1}" rx="${sz*0.03}" ry="${sz*0.018}" fill="#f9a8d4" opacity="0.35"/>`;}
+  // BIG eyes
+  const esp=R*0.3,er=Math.max(1.2,sz*0.04);
+  s+=`<circle cx="${cx-esp}" cy="${cy-R*0.08}" r="${er}" fill="${dark?'#eef2ff':'white'}" opacity="0.95"/><circle cx="${cx+esp}" cy="${cy-R*0.08}" r="${er}" fill="${dark?'#eef2ff':'white'}" opacity="0.95"/>`;
+  s+=`<circle cx="${cx-esp+er*0.15}" cy="${cy-R*0.08+er*0.15}" r="${er*0.45}" fill="${eyeCol}"/><circle cx="${cx+esp+er*0.15}" cy="${cy-R*0.08+er*0.15}" r="${er*0.45}" fill="${eyeCol}"/>`;
+  if(sz>=48){s+=`<circle cx="${cx-esp-er*0.25}" cy="${cy-R*0.08-er*0.3}" r="${er*0.2}" fill="white" opacity="0.7"/><circle cx="${cx+esp-er*0.25}" cy="${cy-R*0.08-er*0.3}" r="${er*0.2}" fill="white" opacity="0.7"/>`;}
+  if(sz>=32) s+=`<path d="M ${cx-R*0.1} ${cy+R*0.2} Q ${cx} ${cy+R*0.32} ${cx+R*0.1} ${cy+R*0.2}" fill="none" stroke="${eyeCol}" stroke-width="${Math.max(0.5,sz*0.012)}" stroke-linecap="round" opacity="0.5"/>`;
+  s+=`</svg>`;return s;
+}
+
+function iconTrayState(sz,state){
+  const cx=sz/2,cy=sz*0.42,R=sz*0.26,dby=cy+R*0.7;
+  const cols={idle:'#818cf8',active:'#22c55e',speaking:'#a78bfa',error:'#f472b6',notification:'#f59e0b',baby:'#fbbf24'};
+  const col=cols[state]||cols.idle;
+  let s=`<svg width="${sz}" height="${sz}" viewBox="0 0 ${sz} ${sz}" xmlns="http://www.w3.org/2000/svg">`;
+  if(state==='baby'){
+    const R2=sz*0.22;
+    s+=`<path d="M ${cx-R2} ${dby} C ${cx-R2*1.1} ${dby-R2*0.5} ${cx-R2*1.05} ${cy-R2*1.1} ${cx} ${cy-R2*1.1} C ${cx+R2*1.05} ${cy-R2*1.1} ${cx+R2*1.1} ${dby-R2*0.5} ${cx+R2} ${dby}" fill="${col}" opacity="0.7"/>`;
+    const er2=Math.max(1,sz*0.035);const esp2=R2*0.3;
+    s+=`<circle cx="${cx-esp2}" cy="${cy-R2*0.05}" r="${er2}" fill="white" opacity="0.9"/><circle cx="${cx+esp2}" cy="${cy-R2*0.05}" r="${er2}" fill="white" opacity="0.9"/>`;
+    [0,1,2].forEach(i=>{const x=cx-R2*0.4+R2*0.4*i;s+=`<line x1="${x}" y1="${dby}" x2="${x+(i%2?1:-1)}" y2="${dby+sz*0.08}" stroke="${col}" stroke-width="${Math.max(0.8,sz*0.03)}" stroke-linecap="round" opacity="0.4"/>`;});
+  } else {
+    s+=`<path d="${smoothDome(cx,R,cy,dby)}" fill="${col}" opacity="0.6"/>`;
+    const tn=3,tw=R*1;for(let i=0;i<tn;i++){const x=cx-tw/2+(tw/(tn-1))*i;const dir=(i%2===0?1:-1)*2;s+=`<line x1="${x}" y1="${dby}" x2="${x+dir}" y2="${dby+sz*0.14}" stroke="${col}" stroke-width="${Math.max(0.8,sz*0.03)}" stroke-linecap="round" opacity="0.4"/>`;};
+    if(state==='speaking'){[0.6,0.9].forEach(r=>{s+=`<path d="M ${cx+R*r} ${cy-R*0.3} Q ${cx+R*(r+0.15)} ${cy} ${cx+R*r} ${cy+R*0.3}" fill="none" stroke="${col}" stroke-width="${Math.max(0.5,sz*0.025)}" opacity="0.5"/>`;});}
+    else if(state==='error'){const esp=R*0.25;s+=`<line x1="${cx-esp-2}" y1="${cy-2}" x2="${cx-esp+2}" y2="${cy+2}" stroke="white" stroke-width="${Math.max(0.8,sz*0.03)}" stroke-linecap="round"/><line x1="${cx-esp+2}" y1="${cy-2}" x2="${cx-esp-2}" y2="${cy+2}" stroke="white" stroke-width="${Math.max(0.8,sz*0.03)}" stroke-linecap="round"/>`;}
+    else if(state==='notification'){s+=`<text x="${cx}" y="${cy+R*0.1}" text-anchor="middle" font-size="${sz*0.3}" fill="white" font-weight="800" opacity="0.8">!</text>`;}
+    else{const esp=R*0.25,er=Math.max(0.8,sz*0.025);s+=`<circle cx="${cx-esp}" cy="${cy-R*0.05}" r="${er}" fill="white" opacity="0.8"/><circle cx="${cx+esp}" cy="${cy-R*0.05}" r="${er}" fill="white" opacity="0.8"/>`;}
+  }
+  s+=`</svg>`;return s;
+}
+
+// ===== UI =====
+// Lifecycle diagram
+const lcEl=document.getElementById('lifecycle');
+const stages=[
+  {name:'水螅体',en:'Polyp',desc:'附着生长',svg:()=>Baby('idle',80,new Set(AGENTS.slice(0,5).map(a=>a.id)))},
+  null,
+  {name:'碟状体',en:'Ephyra',desc:'自由游动',svg:()=>Baby('idle',100,new Set(AGENTS.slice(0,4).map(a=>a.id)))},
+  null,
+  {name:'成体',en:'Medusa',desc:'完全体',svg:()=>Adult('idle',120,new Set(['claude-code']))},
+  null,
+  {name:'返老还童',en:'Revert',desc:'压力触发',svg:()=>Baby('processing',80,new Set(AGENTS.map(a=>a.id))),highlight:true},
+];
+stages.forEach(st=>{
+  if(!st){lcEl.innerHTML+='<div class="lc-arrow">→</div>';return;}
+  const d=document.createElement('div');d.className='lc-item'+(st.highlight?' active':'');
+  d.innerHTML=`${st.svg()}<div class="ll">${st.en}</div><div class="ln">${st.name}</div><div class="lt">${st.desc}</div>`;
+  lcEl.appendChild(d);
+});
+
+// Form comparison
+const cmpEl=document.getElementById('compareStatic');
+cmpEl.innerHTML=`
+  <div class="compare-col"><div class="ct">成体 Medusa</div>${Adult('idle',180,new Set(['claude-code','codex']))}<div class="cs">≤3 sessions<br>圆顶饱满 · 触手修长 · 5根触手<br>优雅飘逸</div></div>
+  <div class="compare-col"><div class="ct">幼体 Polyp</div>${Baby('idle',180,new Set(AGENTS.map(a=>a.id)))}<div class="cs">≥4 sessions<br>身体缩小 · 眼睛超大 · 短短触手<br>越忙越萌</div></div>`;
+
+// Transform demo
+const tdEl=document.getElementById('transformDemo');
+tdEl.innerHTML=`${Adult('idle',150,new Set(['claude-code','codex','qwen-code']))}<div class="arrow">→</div>${Baby('idle',150,new Set(AGENTS.slice(0,4).map(a=>a.id)))}`;
+
+// Agent session panel
+const agentPanel=document.getElementById('agentPanel');
+AGENTS.forEach(a=>{
+  const btn=document.createElement('div');btn.className='agent-btn';btn.dataset.id=a.id;
+  btn.innerHTML=`<span class="dot" style="color:${a.color};background:${a.color}"></span><span class="name">${a.name}</span>`;
+  btn.onclick=()=>{
+    if(activeSessions.has(a.id)){activeSessions.delete(a.id);btn.classList.remove('on');}
+    else{activeSessions.add(a.id);btn.classList.add('on');}
+    updateSessionUI();
+  };
+  agentPanel.appendChild(btn);
+});
+
+const presetsEl=document.getElementById('presets');
+[{l:'0',ids:[]},{l:'1 Claude',ids:['claude-code']},{l:'3 Sessions',ids:['claude-code','codex','qwen-code']},{l:'4 → Baby!',ids:['claude-code','codex','qwen-code','gemini-cli']},{l:'All 6',ids:AGENTS.map(a=>a.id)}].forEach(p=>{
+  const b=document.createElement('button');b.textContent=p.l;
+  b.onclick=()=>{activeSessions=new Set(p.ids);document.querySelectorAll('.agent-btn').forEach(ab=>ab.classList.toggle('on',p.ids.includes(ab.dataset.id)));updateSessionUI();};
+  presetsEl.appendChild(b);
+});
+
+function updateSessionUI(){
+  const n=activeSessions.size;
+  document.getElementById('sessCount').textContent=n;
+  const ml=document.getElementById('modeLabel');
+  if(n>=BABY_THRESHOLD){ml.textContent='幼体 POLYP';ml.className='mode baby';}
+  else{ml.textContent='成体 MEDUSA';ml.className='mode adult';}
+  document.getElementById('sessDemo').innerHTML=H('idle',220);
+}
+
+// Baby states section
+let babyCur='idle';
+function setBaby(s){
+  babyCur=s;const i=BS[s];
+  document.getElementById('babyStage').innerHTML=Baby(s,200,new Set(AGENTS.slice(0,5).map(a=>a.id)));
+  document.getElementById('babyDesc').innerHTML=`<h3>${i.t}</h3><p>${i.d}</p><div class="tn">${i.n}</div>`;
+  document.getElementById('sg3').style.background=i.g;
+  document.querySelectorAll('#btns2 button').forEach(b=>b.classList.toggle('on',b.dataset.s===s));
+}
+document.querySelectorAll('#btns2 button').forEach(b=>b.onclick=()=>setBaby(b.dataset.s));
+setBaby('idle');
+
+// Adult states section
+let adultCur='idle';
+function setAdult(s){
+  adultCur=s;const i=S[s];
+  document.getElementById('ms').innerHTML=Adult(s,200,new Set(['claude-code','codex']));
+  document.getElementById('desc').innerHTML=`<h3>${i.t}</h3><p>${i.d}</p>`;
+  document.getElementById('sg2').style.background=i.g;
+  document.querySelectorAll('#btns button').forEach(b=>b.classList.toggle('on',b.dataset.s===s));
+}
+document.querySelectorAll('#btns button').forEach(b=>b.onclick=()=>setAdult(b.dataset.s));
+setAdult('idle');
+
+// Initial session state
+activeSessions=new Set(['claude-code','codex']);
+document.querySelectorAll('.agent-btn').forEach(ab=>ab.classList.toggle('on',activeSessions.has(ab.dataset.id)));
+updateSessionUI();
+
+// Refresh animated states
+setInterval(()=>{
+  if(['completed','error'].includes(babyCur)) document.getElementById('babyStage').innerHTML=Baby(babyCur,200,new Set(AGENTS.slice(0,5).map(a=>a.id)));
+  if(['completed','error'].includes(adultCur)) document.getElementById('ms').innerHTML=Adult(adultCur,200,new Set(['claude-code','codex']));
+},4000);
+
+// Icons
+const iconAdultEl=document.getElementById('iconAdult');
+[{t:'Dark',dark:true},{t:'Light',dark:false}].forEach(v=>{
+  const d=document.createElement('div');d.className='icon-var';d.innerHTML=`<div class="vt">${v.t}</div>`;
+  const row=document.createElement('div');row.className='icon-sizes';
+  [16,32,48,128].forEach(sz=>{const item=document.createElement('div');item.className='icon-item';const box=document.createElement('div');box.className='icon-box '+(v.dark?'dark':'light');box.style.padding=sz>=64?'12px':'6px';box.innerHTML=iconAdult(sz,v.dark);item.appendChild(box);item.innerHTML+=`<div class="lbl">${sz}px</div>`;row.appendChild(item);});
+  d.appendChild(row);iconAdultEl.appendChild(d);
+});
+
+const iconBabyEl=document.getElementById('iconBaby');
+[{t:'Dark',dark:true},{t:'Light',dark:false}].forEach(v=>{
+  const d=document.createElement('div');d.className='icon-var';d.innerHTML=`<div class="vt">${v.t}</div>`;
+  const row=document.createElement('div');row.className='icon-sizes';
+  [16,32,48,128].forEach(sz=>{const item=document.createElement('div');item.className='icon-item';const box=document.createElement('div');box.className='icon-box '+(v.dark?'dark':'light');box.style.padding=sz>=64?'12px':'6px';box.innerHTML=iconBabyFn(sz,v.dark);item.appendChild(box);item.innerHTML+=`<div class="lbl">${sz}px</div>`;row.appendChild(item);});
+  d.appendChild(row);iconBabyEl.appendChild(d);
+});
+
+const iconTrayEl=document.getElementById('iconTray');
+['idle','active','speaking','error','notification','baby'].forEach(st=>{
+  const row=document.createElement('div');row.style.display='inline-flex';row.style.flexDirection='column';row.style.alignItems='center';row.style.margin='0 10px';
+  [24,48].forEach(sz=>{const box=document.createElement('div');box.className='icon-box dark';box.style.padding='4px';box.style.margin='4px';box.innerHTML=iconTrayState(sz,st);row.appendChild(box);});
+  row.innerHTML+=`<div style="font-size:10px;color:#4b5563;margin-top:4px">${st}</div>`;
+  iconTrayEl.appendChild(row);
+});
+</script>
+</body>
+</html>
