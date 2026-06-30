@@ -100,6 +100,9 @@ export class VoicePipeline {
       console.error("[VoicePipeline] Error:", e);
       this.processing = false;
       this.setState("error");
+      setTimeout(() => {
+        if (this.state === "error") this.setState("idle");
+      }, 5000);
     }
   }
 

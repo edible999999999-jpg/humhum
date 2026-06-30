@@ -54,7 +54,9 @@ export class OpenAISummarizer implements Summarizer {
     });
 
     if (!response.ok) {
-      throw new Error(`Summarizer error: ${response.status}`);
+      const errorText = await response.text().catch(() => "");
+      console.error("[Summarizer] API error:", response.status, errorText);
+      throw new Error(`Summarizer error: ${response.status} ${errorText.slice(0, 200)}`);
     }
 
     const reader = response.body?.getReader();

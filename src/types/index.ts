@@ -43,6 +43,7 @@ export type PetState =
   | "speaking" // Playing TTS audio
   | "listening" // Waiting for voice command
   | "waiting" // Waiting for user confirmation
+  | "completed" // Task done — evil grin
   | "error"; // Something went wrong
 
 // --- TTS ---

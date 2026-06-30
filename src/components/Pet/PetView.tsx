@@ -82,7 +82,7 @@ export function PetView() {
   const { startListening, stopListening } = useVoiceCommand(handleVoiceCommand);
 
   const handleConfirm = useCallback(
-    (behavior: "allow" | "deny") => {
+    (behavior: "allow" | "deny" | "allowAlways") => {
       if (!pendingPermission) return;
       respondToPermission(pendingPermission.id, behavior);
       setPendingPermission(null);
@@ -102,6 +102,7 @@ export function PetView() {
     enabled: !!pendingPermission,
     onConfirm: () => handleConfirm("allow"),
     onReject: () => handleConfirm("deny"),
+    onAlwaysAllow: () => handleConfirm("allowAlways"),
     onTogglePlayback: () => {
       if (audioState === "playing") pauseAudio();
       else playAudio();
@@ -117,6 +118,8 @@ export function PetView() {
       if (petTarget === "idle" && pendingPermission) {
         setPetState("listening");
         startListening();
+      } else if (petTarget === "error" && !pendingPermission) {
+        setPetState("idle");
       } else {
         setPetState(petTarget as ReturnType<typeof usePetState>["petState"]);
       }
@@ -157,12 +160,19 @@ export function PetView() {
       });
 
       if (pipeline) {
-        pipeline.processEvent(latestEvent);
+        pipeline.processEvent(latestEvent).catch(console.error);
       }
     } else if (eventName === "TaskCompleted" || eventName === "Stop") {
       playSound("taskCompleted");
+      setPetState("completed");
       setCompletionEvent(latestEvent);
-      setTimeout(() => setCompletionEvent(null), 8000);
+      setTimeout(() => {
+        setCompletionEvent(null);
+        setPetState("idle");
+      }, 8000);
+      if (pipeline) {
+        pipeline.processEvent(latestEvent).catch(console.error);
+      }
     } else if (eventName === "Notification") {
       playSound("processingStarted");
       const notifText = (payload.message as string) ?? "收到通知";
@@ -175,7 +185,7 @@ export function PetView() {
       setTimeout(() => setNotification(null), 5000);
 
       if (pipeline) {
-        pipeline.processEvent(latestEvent);
+        pipeline.processEvent(latestEvent).catch(console.error);
       } else {
         setPetState("processing");
         setTimeout(() => setPetState("idle"), 3000);
@@ -201,6 +211,7 @@ export function PetView() {
   }, []);
 
   const handleMouseUp = useCallback(async (e: React.MouseEvent) => {
+    if (e.button !== 0) return;
     const dx = Math.abs(e.clientX - dragStartPos.current.x);
     const dy = Math.abs(e.clientY - dragStartPos.current.y);
     if (dx >= 5 || dy >= 5) return;
@@ -212,19 +223,15 @@ export function PetView() {
       clickCount.current = 0;
       invoke("focus_terminal").catch(console.error);
     } else {
-      clickTimer.current = setTimeout(async () => {
-        if (clickCount.current === 1) {
-          await invoke("toggle_settings");
-        }
+      clickTimer.current = setTimeout(() => {
         clickCount.current = 0;
       }, 250);
     }
   }, []);
 
-  // Right-click → hide window (use tray to re-show)
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
-    appWindow.hide();
+    invoke("toggle_settings").catch(console.error);
   }, []);
 
   const handlePetEnter = useCallback(() => {
@@ -361,6 +368,8 @@ function getBubbleText(state: string): string {
       return "!";
     case "listening":
       return "🎤";
+    case "completed":
+      return "嘿嘿~";
     default:
       return "";
   }
@@ -378,6 +387,8 @@ function getPetStyle(state: string): string {
       return "bg-gradient-to-br from-emerald-500/30 to-teal-500/30 backdrop-blur-sm shadow-lg shadow-emerald-500/20";
     case "waiting":
       return "bg-gradient-to-br from-amber-500/30 to-orange-500/30 backdrop-blur-sm shadow-lg shadow-amber-500/20";
+    case "completed":
+      return "bg-gradient-to-br from-emerald-500/30 to-lime-500/30 backdrop-blur-sm shadow-lg shadow-emerald-500/30 animate-bounce-subtle";
     case "error":
       return "bg-gradient-to-br from-red-500/30 to-rose-500/30 backdrop-blur-sm shadow-lg shadow-red-500/20";
     default:

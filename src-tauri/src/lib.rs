@@ -100,6 +100,8 @@ fn apply_macos_transparency(window: &tauri::WebviewWindow) {
         ns_window.setHasShadow_(false);
         ns_window.setStyleMask_(NSWindowStyleMask::NSBorderlessWindowMask);
 
+        let _: () = msg_send![ns_window, setLevel: 25_i64];
+
         let content_view: id = ns_window.contentView();
         let _: () = msg_send![content_view, setWantsLayer: true];
 

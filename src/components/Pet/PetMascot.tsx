@@ -83,6 +83,30 @@ function Eyes({
     );
   }
 
+  if (state === "completed") {
+    // Narrowed scheming eyes — evil squint
+    return (
+      <>
+        <path
+          d={`M ${cx1 - r * 1.2} ${cy + r * 0.3} Q ${cx1} ${cy - r * 1.5} ${cx1 + r * 1.2} ${cy + r * 0.3}`}
+          fill="none"
+          stroke="white"
+          strokeWidth={1.8}
+          strokeLinecap="round"
+          opacity={0.95}
+        />
+        <path
+          d={`M ${cx2 - r * 1.2} ${cy + r * 0.3} Q ${cx2} ${cy - r * 1.5} ${cx2 + r * 1.2} ${cy + r * 0.3}`}
+          fill="none"
+          stroke="white"
+          strokeWidth={1.8}
+          strokeLinecap="round"
+          opacity={0.95}
+        />
+      </>
+    );
+  }
+
   if (state === "waiting" || state === "error") {
     // Wide eyes
     return (
@@ -187,6 +211,33 @@ function Mouth({
     );
   }
 
+  if (state === "completed") {
+    // Evil grin — wide toothy smile
+    const gw = w * 1.4;
+    return (
+      <>
+        {/* Upper lip curve */}
+        <path
+          d={`M ${cx - gw} ${cy} Q ${cx} ${cy + 7} ${cx + gw} ${cy}`}
+          fill="white"
+          opacity={0.85}
+        />
+        {/* Teeth lines */}
+        {[-0.6, -0.2, 0.2, 0.6].map((t, i) => (
+          <line
+            key={i}
+            x1={cx + gw * t}
+            y1={cy + 0.5}
+            x2={cx + gw * t}
+            y2={cy + 3.5}
+            stroke="rgba(0,0,0,0.3)"
+            strokeWidth={0.6}
+          />
+        ))}
+      </>
+    );
+  }
+
   if (state === "error") {
     // Sad mouth — inverted curve
     return (
@@ -233,6 +284,8 @@ function getBodyClass(state: string): string {
       return "fill-emerald-500/40";
     case "waiting":
       return "fill-amber-500/40";
+    case "completed":
+      return "fill-emerald-500/50";
     case "error":
       return "fill-red-500/40";
     default:

@@ -2,7 +2,7 @@ import type { HookEvent } from "@/types";
 
 interface ConfirmToastProps {
   event: HookEvent;
-  onConfirm: (behavior: "allow" | "deny") => void;
+  onConfirm: (behavior: "allow" | "deny" | "allowAlways") => void;
   onDismiss: () => void;
 }
 
@@ -52,19 +52,25 @@ export function ConfirmToast({ event, onConfirm, onDismiss }: ConfirmToastProps)
         </p>
       </div>
 
-      {/* Action buttons — compact */}
-      <div className="flex gap-2">
-        <button
-          onClick={() => onConfirm("allow")}
-          className="flex-1 px-2 py-1 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 rounded text-xs font-medium transition-colors border border-emerald-500/20"
-        >
-          允许
-        </button>
+      {/* Action buttons — 3 options like Ping Island */}
+      <div className="flex gap-1.5">
         <button
           onClick={() => onConfirm("deny")}
-          className="flex-1 px-2 py-1 bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded text-xs font-medium transition-colors border border-red-500/20"
+          className="px-2 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded text-xs font-medium transition-colors border border-red-500/20"
         >
           拒绝
+        </button>
+        <button
+          onClick={() => onConfirm("allowAlways")}
+          className="flex-1 px-2 py-1.5 bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 rounded text-xs font-medium transition-colors border border-indigo-500/20"
+        >
+          始终允许
+        </button>
+        <button
+          onClick={() => onConfirm("allow")}
+          className="flex-1 px-2 py-1.5 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 rounded text-xs font-medium transition-colors border border-emerald-500/20"
+        >
+          允许
         </button>
       </div>
     </div>

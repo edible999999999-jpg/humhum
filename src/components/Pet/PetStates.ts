@@ -9,11 +9,12 @@
 import type { PetState } from "@/types";
 
 export const VALID_TRANSITIONS: Record<PetState, PetState[]> = {
-  idle: ["processing", "error"],
-  processing: ["speaking", "waiting", "error"],
-  speaking: ["idle", "listening", "waiting", "error"],
+  idle: ["processing", "completed", "error"],
+  processing: ["speaking", "waiting", "completed", "error"],
+  speaking: ["idle", "listening", "waiting", "completed", "error"],
   listening: ["idle", "processing", "error"],
   waiting: ["idle", "speaking", "error"],
+  completed: ["idle", "processing"],
   error: ["idle"],
 };
 

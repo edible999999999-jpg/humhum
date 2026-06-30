@@ -98,7 +98,7 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
   return (
     <div className="w-full h-full flex flex-col settings-panel">
       {/* Header */}
-      <header className="flex items-center gap-3 px-5 py-4 border-b border-white/[0.06]">
+      <header data-tauri-drag-region className="flex items-center gap-3 px-5 py-4 border-b border-white/[0.06]">
         <div className="kawaii-avatar-ring">
           <PetMascot state="idle" size={32} />
         </div>

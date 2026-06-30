@@ -3,6 +3,7 @@ import { useEffect } from "react";
 interface ShortcutHandlers {
   onConfirm?: () => void;
   onReject?: () => void;
+  onAlwaysAllow?: () => void;
   onTogglePlayback?: () => void;
   enabled: boolean;
 }
@@ -10,6 +11,7 @@ interface ShortcutHandlers {
 export function useKeyboardShortcuts({
   onConfirm,
   onReject,
+  onAlwaysAllow,
   onTogglePlayback,
   enabled,
 }: ShortcutHandlers) {
@@ -34,6 +36,11 @@ export function useKeyboardShortcuts({
           e.preventDefault();
           onReject?.();
           break;
+        case "a":
+        case "A":
+          e.preventDefault();
+          onAlwaysAllow?.();
+          break;
         case " ":
           e.preventDefault();
           onTogglePlayback?.();
@@ -43,5 +50,5 @@ export function useKeyboardShortcuts({
 
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [enabled, onConfirm, onReject, onTogglePlayback]);
+  }, [enabled, onConfirm, onReject, onAlwaysAllow, onTogglePlayback]);
 }
