@@ -60,11 +60,23 @@ pub struct SummarizerConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct UiConfig {
     /// Pet position: "bottom-right" | "bottom-left" | "top-right" | "top-left"
     pub position: String,
     /// Language: "zh" | "en"
     pub language: String,
+    pub auto_confirm: bool,
+}
+
+impl Default for UiConfig {
+    fn default() -> Self {
+        Self {
+            position: "bottom-right".to_string(),
+            language: "zh".to_string(),
+            auto_confirm: false,
+        }
+    }
 }
 
 impl Default for AppConfig {
@@ -87,10 +99,7 @@ impl Default for AppConfig {
                 model: "gpt-4o-mini".to_string(),
                 max_tokens: 500,
             },
-            ui: UiConfig {
-                position: "bottom-right".to_string(),
-                language: "zh".to_string(),
-            },
+            ui: UiConfig::default(),
         }
     }
 }

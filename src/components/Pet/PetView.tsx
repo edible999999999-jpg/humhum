@@ -18,7 +18,7 @@ import { useKeyboardShortcuts } from "../../hooks/useKeyboardShortcuts";
 import { useAudioQueue } from "../../hooks/useAudioQueue";
 import { getPipeline } from "../../lib/bootstrap";
 import type { PipelineState } from "../../lib/pipeline";
-import type { HookEvent, VoiceCommand, TranscriptEntry } from "../../types";
+import type { AppConfig, HookEvent, VoiceCommand, TranscriptEntry } from "../../types";
 
 interface SessionInfo {
   session_id: string;
@@ -56,6 +56,11 @@ export function PetView() {
   const dragStartPos = useRef({ x: 0, y: 0 });
   const clickCount = useRef(0);
   const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const configRef = useRef<AppConfig | null>(null);
+
+  useEffect(() => {
+    invoke<AppConfig>("get_config").then((cfg) => { configRef.current = cfg; }).catch(console.error);
+  }, []);
 
   const pendingPermission = permissionQueue[0] ?? null;
   const queueLength = permissionQueue.length;
@@ -63,9 +68,13 @@ export function PetView() {
   useEffect(() => {
     const poll = async () => {
       try {
-        const sessions = await invoke<SessionInfo[]>("get_active_sessions");
+        const [sessions, cfg] = await Promise.all([
+          invoke<SessionInfo[]>("get_active_sessions"),
+          invoke<AppConfig>("get_config"),
+        ]);
         const unique = [...new Set(sessions.map((s) => s.client_type))];
         setActiveClients(unique);
+        configRef.current = cfg;
       } catch {
         // ignore
       }
@@ -246,6 +255,13 @@ export function PetView() {
           body: "等待你选择选项",
         });
         setTimeout(() => setQuestionEvent(null), 60000);
+        if (pipeline) {
+          pipeline.processEvent(latestEvent).catch(console.error);
+        }
+        return;
+      }
+
+      if (configRef.current?.ui?.auto_confirm) {
         if (pipeline) {
           pipeline.processEvent(latestEvent).catch(console.error);
         }

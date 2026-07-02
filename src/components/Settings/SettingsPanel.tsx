@@ -265,6 +265,24 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
           </div>
         </KawaiiCard>
 
+        {/* Rage mode — auto confirm */}
+        <KawaiiCard icon="~" title="狂暴模式" subtitle="自动确认所有权限请求">
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-white/60">开启后，Hum 自动批准所有权限请求</span>
+            <button
+              onClick={() =>
+                updateConfig((c) => ({
+                  ...c,
+                  ui: { ...c.ui, auto_confirm: !c.ui.auto_confirm },
+                }))
+              }
+              className={`kawaii-toggle-btn ${config.ui.auto_confirm ? "connected" : ""}`}
+            >
+              {config.ui.auto_confirm ? "已开启" : "关闭"}
+            </button>
+          </div>
+        </KawaiiCard>
+
         {/* API Key — compact */}
         <KawaiiCard icon="~" title="密钥" subtitle="BYOK，数据不离开本地">
           <div className="space-y-3">

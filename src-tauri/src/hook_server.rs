@@ -247,6 +247,24 @@ async fn handle_event(
 
     // For PermissionRequest events (except AskUserQuestion), wait for user decision
     if needs_blocking {
+        // Rage mode: auto-confirm without waiting
+        let config_arc = app_handle.state::<Arc<std::sync::Mutex<crate::config::AppConfig>>>().inner().clone();
+        let auto_confirm = config_arc.lock().unwrap().ui.auto_confirm;
+
+        if auto_confirm {
+            log::info!("Auto-confirm (rage mode) for event {}", event_id);
+            let response = serde_json::json!({
+                "hookSpecificOutput": {
+                    "hookEventName": "PermissionRequest",
+                    "decision": {
+                        "behavior": "allow",
+                    }
+                }
+            });
+            event_bus::emit_status_change(&app_handle, "idle");
+            return Ok(json_response(StatusCode::OK, &response));
+        }
+
         event_bus::emit_status_change(&app_handle, "waiting-confirmation");
 
         let (tx, rx) = oneshot::channel();

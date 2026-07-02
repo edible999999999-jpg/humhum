@@ -103,21 +103,26 @@ FPS: 20 idle / 30 active / 60 drag · powerPreference: low-power
 ### 安装
 
 ```bash
-# 克隆项目
-git clone <your-repo-url>
-cd humhum-ai-companion
+# 1. 克隆项目
+git clone https://github.com/edible999999999-jpg/humhum.git
+cd humhum
 
-# 安装前端依赖
+# 2. 安装前端依赖
 npm install
 
-# 安装 Edge TTS Bridge 依赖
-pip3 install edge-tts aiohttp
-
-# 启动 Edge TTS Bridge（后台运行）
-python3 scripts/edge-tts-bridge.py &
-
-# 开发模式
+# 3. 开发模式启动（自动编译 Rust + 启动 Vite）
 npm run tauri dev
+
+# 4.（可选）安装 Edge TTS Bridge（免费语音播报）
+pip3 install edge-tts aiohttp
+python3 scripts/edge-tts-bridge.py &
+```
+
+### 生产构建
+
+```bash
+npm run tauri build
+# 产物在 src-tauri/target/release/bundle/
 ```
 
 ### 连接 AI 编程助手
