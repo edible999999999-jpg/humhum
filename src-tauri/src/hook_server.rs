@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, oneshot};
 use uuid::Uuid;
@@ -43,6 +43,36 @@ pub async fn start_server(app_handle: tauri::AppHandle) {
     app_handle.manage(pending.clone());
 
     log::info!("DevPod hook server starting on http://{}", addr);
+
+    // Periodically clean up stale pending requests whose HTTP connections were dropped
+    let cleanup_pending = pending.clone();
+    let cleanup_app = app_handle.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+            let mut map = cleanup_pending.lock().await;
+            let now = chrono::Utc::now();
+            let stale_ids: Vec<String> = map
+                .iter()
+                .filter(|(_, pr)| {
+                    if let Ok(ts) = chrono::DateTime::parse_from_rfc3339(&pr.event.timestamp) {
+                        (now - ts.with_timezone(&chrono::Utc)).num_seconds() > 125
+                    } else {
+                        true
+                    }
+                })
+                .map(|(id, _)| id.clone())
+                .collect();
+
+            for id in &stale_ids {
+                map.remove(id);
+                cleanup_app
+                    .emit("devpod://permission-timeout", id)
+                    .unwrap_or_else(|e| log::error!("[Cleanup] emit failed: {}", e));
+                log::info!("[Cleanup] Removed stale pending request: {}", id);
+            }
+        }
+    });
 
     let listener = match TcpListener::bind(addr).await {
         Ok(l) => l,
@@ -90,6 +120,7 @@ async fn handle_request(
     log::debug!("{} {}", method, path);
 
     match (method.as_str(), path.as_str()) {
+        ("OPTIONS", _) => Ok(cors_preflight_response()),
         ("POST", "/event") => handle_event(req, app_handle, pending).await,
         ("GET", "/health") => Ok(json_response(StatusCode::OK, &serde_json::json!({
             "status": "ok",
@@ -210,8 +241,12 @@ async fn handle_event(
     // Emit event to frontend
     event_bus::emit_hook_event(&app_handle, &hook_event);
 
-    // For PermissionRequest events, we need to wait for user decision
-    if hook_event_name == "PermissionRequest" {
+    // AskUserQuestion doesn't need to block — answer goes to terminal, not back through hook
+    let tool_name = payload.get("tool_name").and_then(|v| v.as_str()).unwrap_or("");
+    let needs_blocking = hook_event_name == "PermissionRequest" && tool_name != "AskUserQuestion";
+
+    // For PermissionRequest events (except AskUserQuestion), wait for user decision
+    if needs_blocking {
         event_bus::emit_status_change(&app_handle, "waiting-confirmation");
 
         let (tx, rx) = oneshot::channel();
@@ -228,13 +263,22 @@ async fn handle_event(
         // Wait for the frontend to respond with a decision (timeout: 120s)
         let decision = tokio::time::timeout(std::time::Duration::from_secs(120), rx).await;
 
+        // Clean up PendingMap entry regardless of outcome
+        {
+            let mut map = pending.lock().await;
+            map.remove(&event_id);
+        }
+
         match decision {
             Ok(Ok(d)) => {
+                // Hook protocol only accepts "allow" or "deny" — map allowAlways → allow
+                let hook_behavior = if d.behavior == "allowAlways" { "allow" } else { &d.behavior };
+                log::info!("Permission decided for {}: {} (hook: {})", event_id, d.behavior, hook_behavior);
                 let response = serde_json::json!({
                     "hookSpecificOutput": {
                         "hookEventName": "PermissionRequest",
                         "decision": {
-                            "behavior": d.behavior,
+                            "behavior": hook_behavior,
                         }
                     }
                 });
@@ -243,6 +287,7 @@ async fn handle_event(
             }
             Ok(Err(_)) => {
                 log::warn!("Permission sender dropped for event {}", event_id);
+                event_bus::emit_status_change(&app_handle, "idle");
                 Ok(json_response(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     &serde_json::json!({"error": "internal error"}),
@@ -250,6 +295,9 @@ async fn handle_event(
             }
             Err(_) => {
                 log::warn!("Permission request timed out for event {}", event_id);
+                // Notify frontend to dismiss the stale ConfirmToast
+                app_handle.emit("devpod://permission-timeout", &event_id)
+                    .unwrap_or_else(|e| log::error!("Failed to emit timeout: {}", e));
                 event_bus::emit_status_change(&app_handle, "idle");
                 Ok(json_response(
                     StatusCode::GATEWAY_TIMEOUT,
@@ -315,7 +363,7 @@ async fn handle_respond(
     };
 
     let behavior = match payload.get("behavior").and_then(|v| v.as_str()) {
-        Some(b) if b == "allow" || b == "deny" => b.to_string(),
+        Some(b) if b == "allow" || b == "deny" || b == "allowAlways" => b.to_string(),
         _ => {
             return Ok(json_response(
                 StatusCode::BAD_REQUEST,
@@ -355,12 +403,25 @@ async fn handle_respond(
     }
 }
 
+fn cors_preflight_response() -> Response<Full<Bytes>> {
+    Response::builder()
+        .status(StatusCode::NO_CONTENT)
+        .header("access-control-allow-origin", "*")
+        .header("access-control-allow-methods", "GET, POST, OPTIONS")
+        .header("access-control-allow-headers", "content-type")
+        .header("access-control-max-age", "86400")
+        .body(Full::new(Bytes::new()))
+        .unwrap()
+}
+
 fn json_response(status: StatusCode, body: &Value) -> Response<Full<Bytes>> {
     let json = serde_json::to_string(body).unwrap_or_default();
     Response::builder()
         .status(status)
         .header("content-type", "application/json")
         .header("access-control-allow-origin", "*")
+        .header("access-control-allow-methods", "GET, POST, OPTIONS")
+        .header("access-control-allow-headers", "content-type")
         .body(Full::new(Bytes::from(json)))
         .unwrap()
 }

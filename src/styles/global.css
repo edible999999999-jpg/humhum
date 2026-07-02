@@ -564,3 +564,19 @@ option {
   font-family: "SF Mono", monospace;
   font-size: 9px;
 }
+
+/* ===== Jet Propulsion Bubbles ===== */
+
+@keyframes jet-bubble {
+  0% {
+    opacity: 0.6;
+    transform: translate(0, 0) scale(1);
+  }
+  60% {
+    opacity: 0.4;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(var(--dx, 0), var(--dy, 0)) scale(0.3);
+  }
+}

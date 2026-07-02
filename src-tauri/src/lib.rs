@@ -98,6 +98,7 @@ pub fn run() {
             commands::play_audio,
             commands::stop_audio,
             commands::get_stats,
+            commands::type_in_terminal,
         ])
         .run(tauri::generate_context!())
         .expect("error while running DevPod");
@@ -155,7 +156,18 @@ fn apply_macos_transparency(window: &tauri::WebviewWindow) {
         // No animations during Space transitions
         let _: () = msg_send![ns_window, setAnimationBehavior: 2_i64];
 
-        let _: () = msg_send![ns_window, center];
+        // Position at bottom-right of the main screen
+        let screen: id = msg_send![ns_window, screen];
+        if screen != nil {
+            let frame: cocoa::foundation::NSRect = msg_send![screen, visibleFrame];
+            let win_frame: cocoa::foundation::NSRect = msg_send![ns_window, frame];
+            let x = frame.origin.x + frame.size.width - win_frame.size.width - 20.0;
+            let y = frame.origin.y + 40.0; // near bottom in macOS coords
+            let origin = cocoa::foundation::NSPoint::new(x, y);
+            let _: () = msg_send![ns_window, setFrameOrigin: origin];
+        } else {
+            let _: () = msg_send![ns_window, center];
+        }
 
         let content_view: id = ns_window.contentView();
         let _: () = msg_send![content_view, setWantsLayer: true];

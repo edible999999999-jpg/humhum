@@ -47,6 +47,6 @@ export class PixiApp {
 
   destroy() {
     if (instance === this) instance = null;
-    this.app.destroy(true, { children: true });
+    this.app.destroy(false, { children: true });
   }
 }

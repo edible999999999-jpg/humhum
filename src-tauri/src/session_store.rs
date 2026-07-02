@@ -41,6 +41,11 @@ impl SessionStore {
 
         let project_name = event.cwd.as_ref().and_then(|cwd| {
             cwd.rsplit('/').next().map(String::from)
+        }).or_else(|| {
+            match event.client_type.as_str() {
+                "qoderwork" => Some("QoderWork".to_string()),
+                _ => None,
+            }
         });
 
         let session = self

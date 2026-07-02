@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import type { HookEvent } from "@/types";
 
 interface ConfirmToastProps {
@@ -12,11 +12,80 @@ export function ConfirmToast({ event, onConfirm, onDismiss }: ConfirmToastProps)
   const toolName = (payload.tool_name as string) ?? "Unknown";
   const toolInput = (payload.tool_input as Record<string, unknown>) ?? {};
   const [elapsed, setElapsed] = useState(0);
+  const [status, setStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
+  const [errorMsg, setErrorMsg] = useState("");
+  const onConfirmRef = useRef(onConfirm);
+  onConfirmRef.current = onConfirm;
+
+  const dismiss = useCallback((behavior: "allow" | "deny" | "allowAlways") => {
+    onConfirmRef.current(behavior);
+  }, []);
 
   useEffect(() => {
     const timer = setInterval(() => setElapsed((e) => e + 1), 1000);
     return () => clearInterval(timer);
   }, []);
+
+  // Force-dismiss after status becomes "sent" — safety net
+  useEffect(() => {
+    if (status !== "sent") return;
+    const timer = setTimeout(() => {
+      console.log("[ConfirmToast] Force-dismiss after sent");
+      dismiss("allow");
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [status, dismiss]);
+
+  const handleClick = async (behavior: "allow" | "deny" | "allowAlways") => {
+    setStatus("sending");
+    console.log(`[ConfirmToast] Button clicked: ${behavior}, event_id: ${event.id}`);
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+
+    try {
+      const res = await fetch("http://localhost:31275/respond", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ event_id: event.id, behavior }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      const data = await res.json();
+      console.log("[ConfirmToast] HTTP respond result:", res.status, data);
+
+      if (res.ok) {
+        setStatus("sent");
+        setTimeout(() => dismiss(behavior), 300);
+        return;
+      }
+      // Stale request (receiver dropped) — auto-dismiss
+      if (res.status === 404 || res.status === 500 || res.status === 409) {
+        console.warn("[ConfirmToast] Stale request, auto-dismissing:", data);
+        dismiss(behavior);
+        return;
+      }
+      setErrorMsg(`HTTP ${res.status}: ${JSON.stringify(data)}`);
+    } catch (e) {
+      clearTimeout(timeout);
+      console.warn("[ConfirmToast] HTTP failed:", e);
+      setErrorMsg(`HTTP failed: ${e}`);
+    }
+
+    // Fallback to IPC
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("respond_to_permission", { eventId: event.id, behavior });
+      console.log("[ConfirmToast] IPC respond succeeded");
+      setStatus("sent");
+      setTimeout(() => dismiss(behavior), 300);
+    } catch (e) {
+      console.error("[ConfirmToast] IPC also failed:", e);
+      setStatus("error");
+      setErrorMsg(`Both HTTP and IPC failed`);
+      setTimeout(() => dismiss(behavior), 2000);
+    }
+  };
 
   const detail = getToolDetail(toolName, toolInput);
   const timeLabel = elapsed < 60 ? `<${elapsed + 1}s` : `${Math.floor(elapsed / 60)}m`;
@@ -50,15 +119,39 @@ export function ConfirmToast({ event, onConfirm, onDismiss }: ConfirmToastProps)
         )}
       </div>
 
+      {/* Status feedback */}
+      {status !== "idle" && (
+        <div className={`px-3 pb-1.5 text-[10px] font-semibold ${
+          status === "sending" ? "text-amber-300" :
+          status === "sent" ? "text-green-400" : "text-red-400"
+        }`}>
+          {status === "sending" && "发送中..."}
+          {status === "sent" && "已发送!"}
+          {status === "error" && errorMsg}
+        </div>
+      )}
+
       {/* Action buttons */}
       <div className="flex gap-1.5 px-3 pb-2">
-        <button onClick={() => onConfirm("deny")} className="confirm-btn confirm-btn-deny text-xs py-1.5">
+        <button
+          onClick={() => handleClick("deny")}
+          disabled={status === "sending" || status === "sent"}
+          className="confirm-btn confirm-btn-deny text-xs py-1.5"
+        >
           拒绝 <kbd className="confirm-kbd ml-1">N</kbd>
         </button>
-        <button onClick={() => onConfirm("allowAlways")} className="confirm-btn confirm-btn-always text-xs py-1.5">
+        <button
+          onClick={() => handleClick("allowAlways")}
+          disabled={status === "sending" || status === "sent"}
+          className="confirm-btn confirm-btn-always text-xs py-1.5"
+        >
           始终 <kbd className="confirm-kbd ml-1">A</kbd>
         </button>
-        <button onClick={() => onConfirm("allow")} className="confirm-btn confirm-btn-allow text-xs py-1.5">
+        <button
+          onClick={() => handleClick("allow")}
+          disabled={status === "sending" || status === "sent"}
+          className="confirm-btn confirm-btn-allow text-xs py-1.5"
+        >
           允许 <kbd className="confirm-kbd ml-1">Y</kbd>
         </button>
       </div>
@@ -71,7 +164,7 @@ function getToolDetail(toolName: string, input: Record<string, unknown>): string
     case "Bash": {
       const cmd = input.command as string;
       if (!cmd) return "";
-      return `command: ${cmd.slice(0, 200)}${cmd.length > 200 ? "..." : ""}`;
+      return cmd.slice(0, 200) + (cmd.length > 200 ? "..." : "");
     }
     case "Write":
     case "Edit":
@@ -79,10 +172,24 @@ function getToolDetail(toolName: string, input: Record<string, unknown>): string
       const fp = input.file_path as string;
       if (!fp) return "";
       const parts = fp.split("/");
-      const short = parts.length > 3 ? `.../${parts.slice(-3).join("/")}` : fp;
-      return `file: ${short}`;
+      return parts.length > 3 ? `.../${parts.slice(-3).join("/")}` : fp;
     }
-    default:
-      return JSON.stringify(input, null, 2).slice(0, 200);
+    case "WebFetch":
+    case "WebSearch": {
+      const url = (input.url ?? input.query ?? "") as string;
+      return url.slice(0, 150);
+    }
+    case "Agent": {
+      const desc = (input.description ?? input.prompt ?? "") as string;
+      return desc.slice(0, 150) + (desc.length > 150 ? "..." : "");
+    }
+    default: {
+      const desc = (input.description ?? input.command ?? input.file_path ?? input.query ?? "") as string;
+      if (desc) return desc.slice(0, 150) + (desc.length > 150 ? "..." : "");
+      const keys = Object.keys(input).filter((k) => k !== "cwd" && k !== "hook_event_name" && k !== "effort");
+      if (keys.length === 0) return "";
+      const first = input[keys[0]!];
+      return typeof first === "string" ? first.slice(0, 150) : "";
+    }
   }
 }

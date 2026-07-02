@@ -12,6 +12,17 @@ export interface HumColors {
   bl: string; // blush
 }
 
+export interface AgentCreatureColors {
+  light: string;
+  med: string;
+  dark: string;
+}
+
+export interface ActiveAgent {
+  id: string;
+  color: string;
+}
+
 export interface EngineConfig {
   size: number;
   devicePixelRatio: number;

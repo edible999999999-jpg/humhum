@@ -1,59 +1,68 @@
 import { useRef, useEffect } from "react";
-import { PixiApp } from "@/engine/PixiApp";
-import { HumSprite } from "@/engine/HumSprite";
-import { Ticker } from "pixi.js";
+import { FallbackRenderer } from "@/engine/FallbackRenderer";
+import { FPS, AGENT_BRAND_COLOR } from "@/engine/constants";
 import type { PetState } from "@/types";
+import type { ActiveAgent } from "@/engine/types";
 
 interface PetCanvasProps {
   state: PetState;
   size?: number;
+  activeClients?: string[];
 }
 
-export function PetCanvas({ state, size = 140 }: PetCanvasProps) {
+export function PetCanvas({ state, size = 140, activeClients = [] }: PetCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const engineRef = useRef<{ app: PixiApp; hum: HumSprite } | null>(null);
+  const rendererRef = useRef<FallbackRenderer | null>(null);
+  const rafRef = useRef<number>(0);
+  const stateRef = useRef<PetState>(state);
+  const agentsRef = useRef<ActiveAgent[]>([]);
+
+  stateRef.current = state;
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    let disposed = false;
     const dpr = window.devicePixelRatio ?? 1;
+    canvas.width = size * dpr;
+    canvas.height = size * dpr;
 
-    (async () => {
-      const app = await PixiApp.create(canvas, { size, devicePixelRatio: dpr });
-      if (disposed) {
-        app.destroy();
-        return;
-      }
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
 
-      const hum = new HumSprite(size, dpr);
-      app.app.stage.addChild(hum);
+    const renderer = new FallbackRenderer(size, dpr);
+    rendererRef.current = renderer;
 
-      const ticker = app.app.ticker;
-      ticker.maxFPS = 30;
-      const onTick = (t: Ticker) => {
-        hum.tick(t.deltaMS / 1000);
-      };
-      ticker.add(onTick);
+    let lastTime = performance.now();
 
-      engineRef.current = { app, hum };
-    })();
+    function loop(now: number) {
+      const dt = (now - lastTime) / 1000;
+      lastTime = now;
+
+      renderer.setState(stateRef.current);
+      renderer.setAgents(agentsRef.current);
+
+      const offscreen = renderer.render(dt);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(offscreen, 0, 0);
+
+      rafRef.current = requestAnimationFrame(loop);
+    }
+
+    rafRef.current = requestAnimationFrame(loop);
 
     return () => {
-      disposed = true;
-      const engine = engineRef.current;
-      if (engine) {
-        engine.hum.destroy();
-        engine.app.destroy();
-        engineRef.current = null;
-      }
+      cancelAnimationFrame(rafRef.current);
+      rendererRef.current = null;
     };
   }, [size]);
 
   useEffect(() => {
-    engineRef.current?.hum.setState(state);
-  }, [state]);
+    agentsRef.current = activeClients.map((id) => ({
+      id,
+      color: AGENT_BRAND_COLOR[id] ?? "#94a3b8",
+    }));
+  }, [activeClients]);
 
   return (
     <canvas

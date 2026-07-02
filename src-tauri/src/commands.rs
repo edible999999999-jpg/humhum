@@ -197,8 +197,39 @@ pub async fn toggle_settings(app: tauri::AppHandle) -> Result<(), String> {
         if win.is_visible().unwrap_or(false) {
             win.hide().map_err(|e| format!("Failed to hide: {}", e))?;
         } else {
+            // Position next to the main window
+            if let Some(main_win) = app.get_webview_window("main") {
+                if let Ok(pos) = main_win.outer_position() {
+                    let sf = main_win.scale_factor().unwrap_or(1.0);
+                    let x = (pos.x as f64 / sf) as i32 - 440;
+                    let y = (pos.y as f64 / sf) as i32;
+                    let _ = win.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(
+                        x.max(0) as f64,
+                        y.max(0) as f64,
+                    )));
+                }
+            }
+
             win.show().map_err(|e| format!("Failed to show: {}", e))?;
             win.set_focus().map_err(|e| format!("Failed to focus: {}", e))?;
+
+            // Set window level AFTER show/focus so Tauri can't reset it
+            #[cfg(target_os = "macos")]
+            {
+                use cocoa::base::id;
+                use objc::{msg_send, sel, sel_impl};
+                if let Ok(ns_win) = win.ns_window() {
+                    let ns_win = ns_win as id;
+                    let ns_win_ptr = ns_win as usize;
+                    dispatch::Queue::main().exec_async(move || unsafe {
+                        let ns_win = ns_win_ptr as id;
+                        // Same collection behavior as main window
+                        let _: () = msg_send![ns_win, setCollectionBehavior: 4433_u64];
+                        let _: () = msg_send![ns_win, setLevel: 1501_i64];
+                        let _: () = msg_send![ns_win, setHidesOnDeactivate: false];
+                    });
+                }
+            }
         }
     }
     Ok(())
@@ -252,21 +283,30 @@ pub async fn respond_to_permission(
     behavior: String,
     reason: Option<String>,
 ) -> Result<(), String> {
+    log::info!("[Permission] Responding to {} with behavior={}", event_id, behavior);
     let mut map = pending.lock().await;
     if let Some(mut pr) = map.remove(&event_id) {
         if let Some(sender) = pr.sender.take() {
             let decision = PermissionDecision {
-                behavior,
+                behavior: behavior.clone(),
                 reason,
             };
-            sender
-                .send(decision)
-                .map_err(|_| "Failed to send decision (receiver dropped)".to_string())?;
-            Ok(())
+            match sender.send(decision) {
+                Ok(_) => {
+                    log::info!("[Permission] Decision sent successfully: {}", behavior);
+                    Ok(())
+                }
+                Err(_) => {
+                    log::error!("[Permission] Receiver dropped — HTTP connection already timed out");
+                    Err("Connection timed out — hook already expired. Try responding faster next time.".to_string())
+                }
+            }
         } else {
+            log::warn!("[Permission] Already responded to {}", event_id);
             Err("Already responded to this request".to_string())
         }
     } else {
+        log::warn!("[Permission] No pending request found for {}", event_id);
         Err(format!("No pending permission request with id: {}", event_id))
     }
 }
@@ -275,6 +315,12 @@ pub async fn respond_to_permission(
 #[tauri::command]
 pub async fn focus_terminal() -> Result<(), String> {
     window_focus::focus_terminal_app()
+}
+
+/// Focus the terminal and type text + Enter (for AskUserQuestion responses)
+#[tauri::command]
+pub async fn type_in_terminal(text: String) -> Result<(), String> {
+    window_focus::type_in_terminal_async(&text).await
 }
 
 /// Get list of supported clients

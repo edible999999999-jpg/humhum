@@ -72,6 +72,7 @@ fn run_watcher(app_handle: tauri::AppHandle) {
     }
 }
 
+
 /// Find the most recently modified JSONL file in the sessions directory.
 /// Structure: sessions/<workspace>/<session-uuid>/segments/*.jsonl
 fn find_latest_jsonl(log_dir: &Path) -> Option<PathBuf> {
@@ -192,8 +193,11 @@ fn process_log_line(line: &str, app_handle: &tauri::AppHandle, processed: &mut H
         .to_string();
 
     match event_type {
-        "permission.requested" => {
-            // Permission request — needs user confirmation
+        // Both permission.requested and tool.requested share the same data format:
+        //   { "tool_name": "...", "args": { ... } }
+        // permission.requested = needs user confirmation (Bash, Write, etc.)
+        // tool.requested = tool invocation (AskUserQuestion, etc.)
+        "permission.requested" | "tool.requested" => {
             let tool_name = value
                 .get("data")
                 .and_then(|d| d.get("tool_name"))
@@ -201,9 +205,26 @@ fn process_log_line(line: &str, app_handle: &tauri::AppHandle, processed: &mut H
                 .unwrap_or("unknown")
                 .to_string();
 
+            // Use data.args as tool_input so questions/options match frontend format
+            let tool_input = value
+                .get("data")
+                .and_then(|d| d.get("args"))
+                .cloned()
+                .unwrap_or_else(|| {
+                    value.get("data").cloned().unwrap_or(serde_json::json!({}))
+                });
+
+            // AskUserQuestion → emit as PermissionRequest (frontend routes to QuestionToast)
+            // Other tool.requested events without permission semantics → emit as PreToolUse
+            let hook_event_name = if event_type == "permission.requested" || tool_name == "AskUserQuestion" {
+                "PermissionRequest"
+            } else {
+                "PreToolUse"
+            };
+
             let event = HookEvent {
                 id: uuid::Uuid::new_v4().to_string(),
-                hook_event_name: "PermissionRequest".to_string(),
+                hook_event_name: hook_event_name.to_string(),
                 session_id: value
                     .get("turn_id")
                     .and_then(|v| v.as_str())
@@ -215,15 +236,18 @@ fn process_log_line(line: &str, app_handle: &tauri::AppHandle, processed: &mut H
                 payload: serde_json::json!({
                     "source": "qoderwork",
                     "tool_name": tool_name,
+                    "tool_input": tool_input,
                     "timestamp": timestamp,
                 }),
                 timestamp: chrono::Utc::now().to_rfc3339(),
             };
 
-            log::info!("QoderWork permission requested: {}", tool_name);
+            log::info!("QoderWork {}: {} (from {})", hook_event_name, tool_name, event_type);
             event_bus::emit_hook_event(app_handle, &event);
             update_session(app_handle, &event);
-            event_bus::emit_status_change(app_handle, "waiting-confirmation");
+            if hook_event_name == "PermissionRequest" {
+                event_bus::emit_status_change(app_handle, "waiting-confirmation");
+            }
         }
 
         "session.phase.finished" => {

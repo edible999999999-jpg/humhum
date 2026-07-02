@@ -44,7 +44,7 @@ const CLIENT_COLORS: Record<string, string> = {
   "qwen-code": "bg-blue-500",
   "gemini-cli": "bg-cyan-500",
   "kimi-k1": "bg-purple-500",
-  qoderwork: "bg-rose-500",
+  qoderwork: "bg-green-400",
 };
 
 function formatTokens(n: number): string {
@@ -98,7 +98,9 @@ export function StatsPanel() {
   if (!hasData) {
     return (
       <div className="flex flex-col items-center justify-center py-12 gap-3">
-        <div className="text-3xl opacity-30">📊</div>
+        <svg className="opacity-30" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <line x1="18" y1="20" x2="18" y2="10" /><line x1="12" y1="20" x2="12" y2="4" /><line x1="6" y1="20" x2="6" y2="14" />
+        </svg>
         <p className="text-white/40 text-xs text-center leading-relaxed">
           暂无统计数据<br />
           <span className="text-white/25">

@@ -4,10 +4,12 @@ import { LogicalSize, PhysicalPosition } from "@tauri-apps/api/dpi";
 import { invoke } from "@tauri-apps/api/core";
 import { Bubble } from "./Bubble";
 import { PetCanvas } from "./PetCanvas";
+import { BubbleParticles, useBubbleTrail } from "./BubbleTrail";
 import { SessionDashboard } from "./SessionDashboard";
 import { ConfirmToast } from "../Overlay/ConfirmToast";
 import { NotificationToast } from "../Overlay/NotificationToast";
 import { CompletionPanel } from "../Overlay/CompletionPanel";
+import { QuestionToast } from "../Overlay/QuestionToast";
 import { playSound } from "../../lib/audio/sound-effects";
 import { usePetState } from "../../hooks/usePetState";
 import { useEventBus } from "../../hooks/useEventBus";
@@ -18,12 +20,21 @@ import { getPipeline } from "../../lib/bootstrap";
 import type { PipelineState } from "../../lib/pipeline";
 import type { HookEvent, VoiceCommand, TranscriptEntry } from "../../types";
 
+interface SessionInfo {
+  session_id: string;
+  client_type: string;
+}
+
 const PIPELINE_TO_PET: Record<PipelineState, string> = {
   idle: "idle",
   summarizing: "processing",
   speaking: "speaking",
   error: "error",
 };
+
+const COMPACT_HEIGHT = 210;
+const OVERLAY_HEIGHT = 420;
+const PERMISSION_HEIGHT = 650;
 
 const appWindow = getCurrentWindow();
 
@@ -32,87 +43,146 @@ export function PetView() {
   const { latestEvent } = useEventBus();
   const { pause: pauseAudio, play: playAudio, state: audioState } = useAudioQueue();
   const [summaryText, setSummaryText] = useState("");
-  const [pendingPermission, setPendingPermission] = useState<HookEvent | null>(null);
+  const [permissionQueue, setPermissionQueue] = useState<HookEvent[]>([]);
   const [notification, setNotification] = useState<TranscriptEntry | null>(null);
   const [completionEvent, setCompletionEvent] = useState<HookEvent | null>(null);
+  const completionSpeaking = useRef(false);
+  const [questionEvent, setQuestionEvent] = useState<HookEvent | null>(null);
   const [showDashboard, setShowDashboard] = useState(false);
-  const [windowExpanded, setWindowExpanded] = useState(false);
+  const [windowReady, setWindowReady] = useState(false);
+  const [activeClients, setActiveClients] = useState<string[]>([]);
+  const { bubbles, burst: burstBubbles } = useBubbleTrail();
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dragStartPos = useRef({ x: 0, y: 0 });
   const clickCount = useRef(0);
   const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Position is set from Rust side in apply_macos_transparency (avoids Tauri scaling bugs)
+  const pendingPermission = permissionQueue[0] ?? null;
+  const queueLength = permissionQueue.length;
 
-  const handleVoiceCommand = useCallback(
-    (command: VoiceCommand, _text: string) => {
-      if (!pendingPermission) return;
-      if (command === "confirm") {
-        respondToPermission(pendingPermission.id, "allow");
-        setPendingPermission(null);
-        setPetState("idle");
-      } else if (command === "reject") {
-        respondToPermission(pendingPermission.id, "deny");
-        setPendingPermission(null);
-        setPetState("idle");
+  useEffect(() => {
+    const poll = async () => {
+      try {
+        const sessions = await invoke<SessionInfo[]>("get_active_sessions");
+        const unique = [...new Set(sessions.map((s) => s.client_type))];
+        setActiveClients(unique);
+      } catch {
+        // ignore
       }
-    },
-    [pendingPermission, setPetState]
+    };
+    poll();
+    const timer = setInterval(poll, 5000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const voiceRef = useRef<(cmd: VoiceCommand, text: string) => void>(() => {});
+  const { startListening, stopListening } = useVoiceCommand(
+    useCallback((cmd: VoiceCommand, text: string) => voiceRef.current(cmd, text), []),
   );
 
-  const { startListening, stopListening } = useVoiceCommand(handleVoiceCommand);
+  const dismissPermission = useCallback(() => {
+    setPermissionQueue((q) => q.slice(1));
+    if (queueLength <= 1) {
+      stopListening();
+      setPetState("idle");
+    }
+  }, [queueLength, stopListening, setPetState]);
 
   const handleConfirm = useCallback(
+    (_behavior: "allow" | "deny" | "allowAlways") => {
+      // ConfirmToast already sent the respond — just manage queue
+      dismissPermission();
+    },
+    [dismissPermission],
+  );
+
+  const handleKeyboardConfirm = useCallback(
     (behavior: "allow" | "deny" | "allowAlways") => {
       if (!pendingPermission) return;
       respondToPermission(pendingPermission.id, behavior);
-      setPendingPermission(null);
-      stopListening();
-      setPetState("idle");
+      dismissPermission();
     },
-    [pendingPermission, stopListening, setPetState]
+    [pendingPermission, dismissPermission],
   );
 
-  const handleDismiss = useCallback(() => {
-    setPendingPermission(null);
-    stopListening();
-    setPetState("idle");
-  }, [stopListening, setPetState]);
+  // Wire voice commands via ref to avoid hook ordering issues
+  voiceRef.current = (command: VoiceCommand, _text: string) => {
+    if (!pendingPermission) return;
+    if (command === "confirm") handleKeyboardConfirm("allow");
+    else if (command === "reject") handleKeyboardConfirm("deny");
+  };
 
-  const DEFAULT_HEIGHT = 450;
-  const EXPANDED_HEIGHT = 650;
+  const handleDismiss = useCallback(() => {
+    setPermissionQueue((q) => q.slice(1));
+    if (queueLength <= 1) {
+      stopListening();
+      setPetState("idle");
+    }
+  }, [queueLength, stopListening, setPetState]);
+
+  // --- Dynamic window sizing ---
+  const currentWindowHeight = useRef(COMPACT_HEIGHT);
+  const resizeLock = useRef(false);
+
+  const hasActiveOverlay = showDashboard || !!notification || !!completionEvent || !!questionEvent;
+  const targetHeight = pendingPermission || questionEvent
+    ? PERMISSION_HEIGHT
+    : hasActiveOverlay
+      ? OVERLAY_HEIGHT
+      : COMPACT_HEIGHT;
 
   useEffect(() => {
-    setWindowExpanded(false);
+    if (resizeLock.current) return;
+    const prevH = currentWindowHeight.current;
+    if (Math.abs(targetHeight - prevH) < 10) {
+      if (targetHeight > COMPACT_HEIGHT) setWindowReady(true);
+      return;
+    }
+
+    resizeLock.current = true;
+    setWindowReady(false);
+
     (async () => {
       try {
         const pos = await appWindow.outerPosition();
         const sf = (await appWindow.scaleFactor()) || 1;
-        if (pendingPermission) {
-          const dy = Math.round((EXPANDED_HEIGHT - DEFAULT_HEIGHT) * sf);
-          await appWindow.setSize(new LogicalSize(280, EXPANDED_HEIGHT));
-          await appWindow.setPosition(new PhysicalPosition(pos.x, Math.max(0, pos.y - dy)));
-          setWindowExpanded(true);
-        } else {
-          const currentSize = await appWindow.outerSize();
-          const logicalH = currentSize.height / sf;
-          if (logicalH > DEFAULT_HEIGHT + 10) {
-            const dy = Math.round((logicalH - DEFAULT_HEIGHT) * sf);
-            await appWindow.setSize(new LogicalSize(280, DEFAULT_HEIGHT));
-            await appWindow.setPosition(new PhysicalPosition(pos.x, pos.y + dy));
-          }
-        }
+        const dy = Math.round((targetHeight - prevH) * sf);
+
+        await appWindow.setSize(new LogicalSize(280, targetHeight));
+        await appWindow.setPosition(
+          new PhysicalPosition(pos.x, Math.max(0, pos.y - dy)),
+        );
+
+        currentWindowHeight.current = targetHeight;
+        if (targetHeight > COMPACT_HEIGHT) setWindowReady(true);
       } catch (e) {
         console.error("[PetView] Resize failed:", e);
+      } finally {
+        resizeLock.current = false;
       }
     })();
-  }, [pendingPermission]);
+  }, [targetHeight]);
+
+  // Listen for server-side permission timeout to dismiss from queue
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    (async () => {
+      const { listen } = await import("@tauri-apps/api/event");
+      unlisten = await listen<string>("devpod://permission-timeout", (event) => {
+        console.log("[PetView] Permission timed out:", event.payload);
+        setPermissionQueue((q) => q.filter((e) => e.id !== event.payload));
+      });
+    })();
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, []);
 
   useKeyboardShortcuts({
     enabled: !!pendingPermission,
-    onConfirm: () => handleConfirm("allow"),
-    onReject: () => handleConfirm("deny"),
-    onAlwaysAllow: () => handleConfirm("allowAlways"),
+    onConfirm: () => handleKeyboardConfirm("allow"),
+    onReject: () => handleKeyboardConfirm("deny"),
+    onAlwaysAllow: () => handleKeyboardConfirm("allowAlways"),
     onTogglePlayback: () => {
       if (audioState === "playing") pauseAudio();
       else playAudio();
@@ -131,6 +201,10 @@ export function PetView() {
           startListening();
         } else if (petTarget === "error") {
           setPetState("waiting");
+        }
+      } else if (completionSpeaking.current) {
+        if (state === "idle") {
+          completionSpeaking.current = false;
         }
       } else if (petTarget === "error") {
         setPetState("idle");
@@ -153,12 +227,40 @@ export function PetView() {
 
     console.log("[PetView] Event received:", eventName, "pipeline:", pipeline ? "OK" : "NULL");
 
+    if (latestEvent.client_type) {
+      setActiveClients((prev) =>
+        prev.includes(latestEvent.client_type) ? prev : [...prev, latestEvent.client_type],
+      );
+    }
+
     if (eventName === "PermissionRequest") {
-      playSound("attentionRequired");
-      setPendingPermission(latestEvent);
-      setPetState("waiting");
       const toolName = (payload.tool_name as string) ?? "Unknown";
       const toolInput = (payload.tool_input as Record<string, unknown>) ?? {};
+
+      if (toolName === "AskUserQuestion") {
+        playSound("attentionRequired");
+        setQuestionEvent(latestEvent);
+        setPetState("waiting");
+        invoke("send_notification", {
+          title: "需要选择",
+          body: "等待你选择选项",
+        });
+        setTimeout(() => setQuestionEvent(null), 60000);
+        if (pipeline) {
+          pipeline.processEvent(latestEvent).catch(console.error);
+        }
+        return;
+      }
+
+      playSound("attentionRequired");
+      setPermissionQueue((q) => [...q, latestEvent]);
+      setPetState("waiting");
+
+      // Auto-dismiss after 120s (matches hook timeout)
+      const evtId = latestEvent.id;
+      setTimeout(() => {
+        setPermissionQueue((q) => q.filter((e) => e.id !== evtId));
+      }, 120_000);
 
       let detail = "";
       if (toolName === "Bash" && toolInput.command) {
@@ -171,7 +273,7 @@ export function PetView() {
       }
 
       invoke("send_notification", {
-        title: `⚠️ ${toolName} 需要确认`,
+        title: `${toolName} 需要确认`,
         body: `Claude Code 请求执行 ${toolName}${detail}`,
       });
 
@@ -182,8 +284,10 @@ export function PetView() {
       playSound("taskCompleted");
       setPetState("completed");
       setCompletionEvent(latestEvent);
+      completionSpeaking.current = true;
       setTimeout(() => {
         setCompletionEvent(null);
+        completionSpeaking.current = false;
         setPetState("idle");
       }, 8000);
       if (pipeline) {
@@ -208,23 +312,39 @@ export function PetView() {
       }
     } else if (eventName === "PreToolUse" || eventName === "PostToolUse") {
       const toolName = (payload.tool_name as string) ?? "";
-      const action = eventName === "PreToolUse" ? "正在使用" : "已完成";
-      invoke("send_notification", {
-        title: `🔧 ${toolName}`,
-        body: `${latestEvent.client_type} ${action} ${toolName}`,
-      });
+
+      if (eventName === "PreToolUse" && toolName === "AskUserQuestion") {
+        playSound("attentionRequired");
+        setQuestionEvent(latestEvent);
+        setPetState("waiting");
+        invoke("send_notification", {
+          title: "需要选择",
+          body: "Claude Code 在等你选择选项",
+        });
+        setTimeout(() => setQuestionEvent(null), 60000);
+      } else {
+        const action = eventName === "PreToolUse" ? "正在使用" : "已完成";
+        invoke("send_notification", {
+          title: toolName,
+          body: `${latestEvent.client_type} ${action} ${toolName}`,
+        });
+      }
     }
   }, [latestEvent, setPetState]);
 
-  const handleMouseDown = useCallback(async (e: React.MouseEvent) => {
-    if (e.button !== 0) return;
-    dragStartPos.current = { x: e.clientX, y: e.clientY };
-    try {
-      await appWindow.startDragging();
-    } catch {
-      // Drag might fail
-    }
-  }, []);
+  const handleMouseDown = useCallback(
+    async (e: React.MouseEvent) => {
+      if (e.button !== 0) return;
+      dragStartPos.current = { x: e.clientX, y: e.clientY };
+      burstBubbles(e.clientX, e.clientY + 20);
+      try {
+        await appWindow.startDragging();
+      } catch {
+        // Drag might fail
+      }
+    },
+    [burstBubbles],
+  );
 
   const handleMouseUp = useCallback(async (e: React.MouseEvent) => {
     if (e.button !== 0) return;
@@ -240,6 +360,9 @@ export function PetView() {
       invoke("focus_terminal").catch(console.error);
     } else {
       clickTimer.current = setTimeout(() => {
+        if (clickCount.current === 1) {
+          setShowDashboard((prev) => !prev);
+        }
         clickCount.current = 0;
       }, 250);
     }
@@ -247,7 +370,11 @@ export function PetView() {
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
-    invoke("toggle_settings").catch(console.error);
+    e.stopPropagation();
+    console.log("[PetView] Right-click → toggle_settings");
+    invoke("toggle_settings").catch((err) =>
+      console.error("[PetView] toggle_settings failed:", err),
+    );
   }, []);
 
   const handlePetEnter = useCallback(() => {
@@ -257,7 +384,7 @@ export function PetView() {
 
   const handlePetLeave = useCallback(() => {
     if (hoverTimer.current) clearTimeout(hoverTimer.current);
-    hoverTimer.current = null;
+    hoverTimer.current = setTimeout(() => setShowDashboard(false), 200);
   }, []);
 
   const handleDashboardLeave = useCallback(() => {
@@ -269,7 +396,7 @@ export function PetView() {
       ? summaryText || getBubbleText(petState)
       : getBubbleText(petState);
 
-  const hasOverlay = !!pendingPermission || !!notification;
+  const hasOverlay = !!pendingPermission || !!notification || !!questionEvent;
 
   return (
     <div
@@ -287,7 +414,7 @@ export function PetView() {
         </div>
       )}
 
-      {/* Completion panel — richer than toast */}
+      {/* Completion panel */}
       {completionEvent && !pendingPermission && (
         <div className="w-64 mb-3">
           <CompletionPanel
@@ -307,42 +434,85 @@ export function PetView() {
         </div>
       )}
 
-      {/* Permission confirmation — wait for window expansion to avoid clipping */}
-      {pendingPermission && windowExpanded && (
+      {/* AskUserQuestion — show options, type selection into terminal */}
+      {questionEvent && !pendingPermission && windowReady && (
+        <div className="w-72 mb-3">
+          <QuestionToast
+            event={questionEvent}
+            onDismiss={() => { setQuestionEvent(null); setPetState("idle"); }}
+          />
+        </div>
+      )}
+
+      {/* Permission confirmation — wait for window expansion */}
+      {pendingPermission && windowReady && (
         <div className="w-72 mb-3">
           <ConfirmToast
             event={pendingPermission}
             onConfirm={handleConfirm}
             onDismiss={handleDismiss}
           />
+          {queueLength > 1 && (
+            <div className="text-center mt-1.5 text-[10px] text-white/40">
+              +{queueLength - 1} 个待确认
+            </div>
+          )}
         </div>
       )}
 
       {/* Bubble */}
       {!showDashboard && <Bubble state={petState} text={bubbleText} />}
 
-      {/* Pet body — draggable, hover → dashboard */}
+      {/* Pet body — draggable, hover → dashboard, right-click → settings */}
       <div
-        className="cursor-grab active:cursor-grabbing"
+        className="relative cursor-grab active:cursor-grabbing"
         onMouseDown={handleMouseDown}
         onMouseUp={handleMouseUp}
         onMouseEnter={handlePetEnter}
         onMouseLeave={handlePetLeave}
+        onContextMenu={handleContextMenu}
       >
-        <PetBody state={petState} />
+        <PetBody state={petState} activeClients={activeClients} />
+        <BubbleParticles bubbles={bubbles} />
       </div>
     </div>
   );
 }
 
-function respondToPermission(eventId: string, behavior: string) {
-  invoke("respond_to_permission", { eventId, behavior }).catch((e) =>
-    console.error("[PetView] Permission response failed:", e)
-  );
+async function respondToPermission(eventId: string, behavior: string) {
+  console.log("[PetView] Sending permission response:", eventId, behavior);
+
+  // Try direct HTTP to hook server first (bypasses Tauri IPC)
+  try {
+    const res = await fetch("http://localhost:31275/respond", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ event_id: eventId, behavior }),
+    });
+    const data = await res.json();
+    console.log("[PetView] HTTP respond result:", data);
+    if (res.ok) return;
+  } catch (e) {
+    console.warn("[PetView] HTTP respond failed, falling back to IPC:", e);
+  }
+
+  // Fallback to Tauri IPC
+  try {
+    await invoke("respond_to_permission", { eventId, behavior });
+    console.log("[PetView] IPC respond succeeded");
+  } catch (e) {
+    console.error("[PetView] IPC respond also failed:", e);
+  }
 }
 
-function PetBody({ state }: { state: string }) {
-  return <PetCanvas state={state as import("@/types").PetState} size={140} />;
+function PetBody({ state, activeClients }: { state: string; activeClients: string[] }) {
+  return (
+    <PetCanvas
+      state={state as import("@/types").PetState}
+      size={140}
+      activeClients={activeClients}
+    />
+  );
 }
 
 function getBubbleText(state: string): string {
@@ -352,12 +522,10 @@ function getBubbleText(state: string): string {
     case "waiting":
       return "!";
     case "listening":
-      return "🎤";
+      return "...";
     case "completed":
       return "嘿嘿~";
     default:
       return "";
   }
 }
-
-

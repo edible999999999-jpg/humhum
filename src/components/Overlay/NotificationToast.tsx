@@ -16,12 +16,6 @@ export function NotificationToast({ entry, onDismiss }: NotificationToastProps) 
     command: "border-l-emerald-400",
   };
 
-  const typeIcons: Record<string, string> = {
-    summary: "✅",
-    system: "ℹ️",
-    command: "🎤",
-  };
-
   return (
     <div
       className={`
@@ -32,8 +26,8 @@ export function NotificationToast({ entry, onDismiss }: NotificationToastProps) 
         flex items-start gap-2
       `}
     >
-      <span className="text-sm flex-shrink-0 mt-0.5">
-        {typeIcons[entry.type] ?? "•"}
+      <span className="flex-shrink-0 mt-0.5 text-slate-400">
+        <TypeIcon type={entry.type} />
       </span>
       <div className="flex-1 min-w-0">
         <p className="text-xs text-slate-200 leading-snug truncate">
@@ -51,4 +45,20 @@ export function NotificationToast({ entry, onDismiss }: NotificationToastProps) 
       </button>
     </div>
   );
+}
+
+function TypeIcon({ type }: { type: string }) {
+  const size = 14;
+  const props = { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
+
+  switch (type) {
+    case "summary":
+      return <svg {...props}><polyline points="20 6 9 17 4 12" /></svg>;
+    case "system":
+      return <svg {...props}><circle cx="12" cy="12" r="10" /><line x1="12" y1="16" x2="12" y2="12" /><line x1="12" y1="8" x2="12.01" y2="8" /></svg>;
+    case "command":
+      return <svg {...props}><polyline points="4 17 10 11 4 5" /><line x1="12" y1="19" x2="20" y2="19" /></svg>;
+    default:
+      return <svg {...props}><circle cx="12" cy="12" r="1" fill="currentColor" /></svg>;
+  }
 }

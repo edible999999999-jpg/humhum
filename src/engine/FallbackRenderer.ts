@@ -1,5 +1,6 @@
-import { COLORS } from "./constants";
-import type { HumColors, PetState } from "./types";
+import { COLORS, BABY_THRESHOLD } from "./constants";
+import { drawAbsorbedAgents } from "./AgentCreatures";
+import type { HumColors, PetState, ActiveAgent } from "./types";
 
 export class FallbackRenderer {
   private canvas: OffscreenCanvas;
@@ -7,6 +8,7 @@ export class FallbackRenderer {
   private sz: number;
   private time = 0;
   private state: PetState = "idle";
+  private agents: ActiveAgent[] = [];
 
   constructor(size: number, dpr: number) {
     this.sz = size;
@@ -19,6 +21,10 @@ export class FallbackRenderer {
 
   setState(state: PetState) {
     this.state = state;
+  }
+
+  setAgents(agents: ActiveAgent[]) {
+    this.agents = agents;
   }
 
   render(dt: number): OffscreenCanvas {
@@ -34,10 +40,19 @@ export class FallbackRenderer {
     const dcy = sz * 0.28;
     const dby = dcy + R * 0.85;
 
+    const isJuvenile = this.agents.length >= BABY_THRESHOLD;
+    const juvScale = isJuvenile ? 0.65 : 1;
+
     const floatPhase = this.getFloatPhase();
 
     ctx.save();
     ctx.translate(0, floatPhase);
+
+    if (isJuvenile) {
+      ctx.translate(cx, sz * 0.42);
+      ctx.scale(juvScale, juvScale);
+      ctx.translate(-cx, -sz * 0.42);
+    }
 
     this.drawGlow(ctx, cx, dcy, R, C);
     this.drawTentacles(ctx, cx, dby + 2, R, C);
@@ -48,6 +63,8 @@ export class FallbackRenderer {
     this.drawEyes(ctx, cx, dcy - R * 0.06, R * 0.3, C);
     this.drawMouth(ctx, cx, dcy + R * 0.26, C);
     this.drawStatusDot(ctx, cx, dcy, R, C);
+
+    drawAbsorbedAgents(ctx, this.agents, cx, dcy, R, sz, this.time);
 
     ctx.restore();
 
@@ -72,12 +89,18 @@ export class FallbackRenderer {
       opacity = 0.06 + 0.10 * Math.abs(Math.sin(this.time * 3.14));
     }
 
+    const rx = R + 16;
+    const ry = R + 8;
+    const gy = dcy + 10;
+    const grad = ctx.createRadialGradient(cx, gy, 0, cx, gy, Math.max(rx, ry));
+    grad.addColorStop(0, this.withAlpha(C.g, opacity));
+    grad.addColorStop(0.6, this.withAlpha(C.g, opacity * 0.4));
+    grad.addColorStop(1, this.withAlpha(C.g, 0));
+
     ctx.save();
-    ctx.globalAlpha = opacity;
-    ctx.filter = "blur(12px)";
-    ctx.fillStyle = C.g;
+    ctx.fillStyle = grad;
     ctx.beginPath();
-    ctx.ellipse(cx, dcy + 10, R + 16, R + 8, 0, 0, Math.PI * 2);
+    ctx.ellipse(cx, gy, rx, ry, 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
   }

@@ -1,7 +1,7 @@
 import { Container, Sprite, Texture } from "pixi.js";
 import { FallbackRenderer } from "./FallbackRenderer";
 import { FPS } from "./constants";
-import type { PetState } from "./types";
+import type { PetState, ActiveAgent } from "./types";
 
 export class HumSprite extends Container {
   private fallback: FallbackRenderer;
@@ -30,6 +30,10 @@ export class HumSprite extends Container {
     this.fallback.setState(state);
     this.frameInterval = 1 / this.getFps();
     this.elapsed = this.frameInterval;
+  }
+
+  setAgents(agents: ActiveAgent[]) {
+    this.fallback.setAgents(agents);
   }
 
   tick(delta: number) {

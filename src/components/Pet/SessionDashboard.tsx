@@ -20,7 +20,7 @@ const CLIENT_COLORS: Record<string, string> = {
   "qwen-code": "bg-blue-500",
   "gemini-cli": "bg-cyan-500",
   "kimi-k1": "bg-purple-500",
-  qoderwork: "bg-rose-500",
+  qoderwork: "bg-green-400",
 };
 
 const CLIENT_LABELS: Record<string, string> = {
@@ -73,7 +73,7 @@ export function SessionDashboard({ visible }: SessionDashboardProps) {
   if (!visible) return null;
 
   return (
-    <div className="w-full rounded-xl bg-slate-900/95 backdrop-blur-xl border border-white/10 shadow-2xl overflow-hidden">
+    <div className="w-full rounded-xl bg-slate-900 border border-white/10 shadow-2xl overflow-hidden">
       {/* Header */}
       <div className="px-3 py-2 border-b border-white/5 flex items-center justify-between">
         <span className="text-[11px] font-semibold text-white/60 uppercase tracking-wider">
