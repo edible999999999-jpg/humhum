@@ -15,7 +15,7 @@ class EventBus {
     if (this.initialized) return;
     this.initialized = true;
 
-    await listen<HookEvent>("devpod://hook-event", (event) => {
+    await listen<HookEvent>("humhum://hook-event", (event) => {
       this.callbacks.forEach((cb) => cb(event.payload));
     });
   }

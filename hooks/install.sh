@@ -1,24 +1,24 @@
 #!/bin/bash
-# DevPod Hook Installer
-# Installs DevPod hook scripts into Claude Code's settings.
+# HumHum Hook Installer
+# Installs HumHum hook scripts into Claude Code's settings.
 #
 # Usage: ./install.sh [--port PORT]
 #
 # This script:
-#   1. Copies hook scripts to ~/.devpod/hooks/
+#   1. Copies hook scripts to ~/.humhum/hooks/
 #   2. Makes them executable
 #   3. Merges hook configuration into ~/.claude/settings.json
 #   4. Preserves existing hooks from other tools
 
 set -euo pipefail
 
-DEVPod_HOME="$HOME/.devpod"
-HOOK_DIR="$DEVPod_HOME/hooks"
+HUMHUM_HOME="$HOME/.humhum"
+HOOK_DIR="$HUMHUM_HOME/hooks"
 CLAUDE_SETTINGS="$HOME/.claude/settings.json"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PORT="${1:-31275}"
 
-echo "🎙️  DevPod Hook Installer"
+echo "🎙️  HumHum Hook Installer"
 echo "========================="
 echo ""
 
@@ -27,13 +27,13 @@ mkdir -p "$HOOK_DIR"
 mkdir -p "$HOME/.claude"
 
 # Copy hook script
-cp "$SCRIPT_DIR/devpod-hook.sh" "$HOOK_DIR/devpod-hook.sh"
-chmod +x "$HOOK_DIR/devpod-hook.sh"
+cp "$SCRIPT_DIR/humhum-hook.sh" "$HOOK_DIR/humhum-hook.sh"
+chmod +x "$HOOK_DIR/humhum-hook.sh"
 
-echo "✓ Hook script installed to $HOOK_DIR/devpod-hook.sh"
+echo "✓ Hook script installed to $HOOK_DIR/humhum-hook.sh"
 
 # Build the hook configuration
-HOOK_CMD="$HOOK_DIR/devpod-hook.sh"
+HOOK_CMD="$HOOK_DIR/humhum-hook.sh"
 
 # Read existing settings or create empty object
 if [ -f "$CLAUDE_SETTINGS" ]; then
@@ -52,9 +52,9 @@ if not isinstance(settings, dict):
 
 hooks = settings.get('hooks', {})
 
-# DevPod hook entries
+# HumHum hook entries
 hook_cmd = '$HOOK_CMD'
-devpod_hooks = {
+humhum_hooks = {
     'PermissionRequest': [{
         'hooks': [{
             'type': 'command',
@@ -82,8 +82,8 @@ devpod_hooks = {
     }]
 }
 
-# Merge (DevPod entries override existing ones for these events)
-for key, value in devpod_hooks.items():
+# Merge (HumHum entries override existing ones for these events)
+for key, value in humhum_hooks.items():
     hooks[key] = value
 
 settings['hooks'] = hooks

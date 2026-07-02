@@ -1,6 +1,6 @@
-# Contributing to DevPod
+# Contributing to HumHum
 
-Thank you for your interest in contributing! DevPod is an open-source project and we welcome contributions of all kinds.
+Thank you for your interest in contributing! HumHum is an open-source project and we welcome contributions of all kinds.
 
 ## Getting Started
 
@@ -22,7 +22,7 @@ Thank you for your interest in contributing! DevPod is an open-source project an
 
 ### Hook Scripts
 - Source: `hooks/`
-- Test with: `echo '{"hook_event_name":"Stop","session_id":"test"}' | ./hooks/devpod-hook.sh`
+- Test with: `echo '{"hook_event_name":"Stop","session_id":"test"}' | ./hooks/humhum-hook.sh`
 
 ## Adding a New TTS Provider
 

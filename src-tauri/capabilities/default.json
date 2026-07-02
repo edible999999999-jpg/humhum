@@ -1,6 +1,6 @@
 {
   "identifier": "default",
-  "description": "Default capabilities for DevPod (main + settings windows)",
+  "description": "Default capabilities for HumHum (main + settings windows)",
   "windows": ["main", "settings"],
   "permissions": [
     "core:default",
@@ -30,7 +30,7 @@
     {
       "identifier": "fs:scope",
       "allow": [
-        { "path": "$HOME/.devpod/**" },
+        { "path": "$HOME/.humhum/**" },
         { "path": "$HOME/.claude/**" },
         { "path": "$APPDATA/**" },
         { "path": "$APPCONFIG/**" }

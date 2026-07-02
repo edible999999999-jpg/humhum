@@ -68,11 +68,11 @@ pub async fn install_hooks(
     };
 
     // Determine hook script path
-    let hook_script = home.join(".devpod").join("hooks").join("devpod-hook.sh");
+    let hook_script = home.join(".humhum").join("hooks").join("humhum-hook.sh");
     let hook_cmd = hook_script.to_string_lossy().to_string();
 
     // Build hooks configuration
-    let devpod_hooks = serde_json::json!({
+    let humhum_hooks = serde_json::json!({
         "PermissionRequest": [{
             "hooks": [{
                 "type": "command",
@@ -103,17 +103,17 @@ pub async fn install_hooks(
     // Merge hooks into settings — APPEND to existing hook arrays, don't replace
     if let Some(existing_hooks) = settings.get("hooks").and_then(|h| h.as_object()) {
         let mut merged = existing_hooks.clone();
-        if let Some(new_hooks) = devpod_hooks.as_object() {
+        if let Some(new_hooks) = humhum_hooks.as_object() {
             for (key, value) in new_hooks {
                 if let Some(existing_arr) = merged.get(key).and_then(|v| v.as_array()) {
-                    // Check if devpod hook already exists in this event
+                    // Check if humhum hook already exists in this event
                     let already_installed = existing_arr.iter().any(|group| {
                         group.get("hooks")
                             .and_then(|h| h.as_array())
                             .map(|hooks| hooks.iter().any(|h| {
                                 h.get("command")
                                     .and_then(|c| c.as_str())
-                                    .map(|c| c.contains("devpod-hook"))
+                                    .map(|c| c.contains("humhum-hook"))
                                     .unwrap_or(false)
                             }))
                             .unwrap_or(false)
@@ -132,7 +132,7 @@ pub async fn install_hooks(
         }
         settings["hooks"] = Value::Object(merged);
     } else {
-        settings["hooks"] = devpod_hooks;
+        settings["hooks"] = humhum_hooks;
     }
 
     // Write back
@@ -147,7 +147,7 @@ pub async fn install_hooks(
     ))
 }
 
-/// Uninstall DevPod hooks from ~/.claude/settings.json
+/// Uninstall HumHum hooks from ~/.claude/settings.json
 #[tauri::command]
 pub async fn uninstall_hooks() -> Result<String, String> {
     let home = dirs::home_dir().ok_or("Cannot determine home directory")?;
@@ -162,7 +162,7 @@ pub async fn uninstall_hooks() -> Result<String, String> {
     let mut settings: Value =
         serde_json::from_str(&content).unwrap_or(serde_json::json!({}));
 
-    // Remove DevPod hook events
+    // Remove HumHum hook events
     if let Some(hooks) = settings.get_mut("hooks").and_then(|h| h.as_object_mut()) {
         let events = [
             "PermissionRequest",
@@ -180,7 +180,7 @@ pub async fn uninstall_hooks() -> Result<String, String> {
     std::fs::write(&settings_path, content)
         .map_err(|e| format!("Failed to write: {}", e))?;
 
-    Ok("DevPod hooks removed from Claude Code settings".to_string())
+    Ok("HumHum hooks removed from Claude Code settings".to_string())
 }
 
 /// Get recent events (for the frontend to display)
@@ -352,7 +352,7 @@ pub async fn install_hooks_for_client(
             .map_err(|e| format!("Failed to create dir: {}", e))?;
     }
 
-    let hook_script = home.join(".devpod").join("hooks").join("devpod-hook.sh");
+    let hook_script = home.join(".humhum").join("hooks").join("humhum-hook.sh");
     let hook_cmd = format!("{}?client={}", hook_script.to_string_lossy(), client_id);
 
     match profile.config_format {
@@ -427,7 +427,7 @@ fn install_json_hooks(
                         .map(|hs| hs.iter().any(|h| {
                             h.get("command")
                                 .and_then(|c| c.as_str())
-                                .map(|c| c.contains("devpod"))
+                                .map(|c| c.contains("humhum"))
                                 .unwrap_or(false)
                         }))
                         .unwrap_or(false)
@@ -611,7 +611,7 @@ pub async fn play_audio(base64_data: String) -> Result<(), String> {
         .decode(&base64_data)
         .map_err(|e| format!("Base64 decode error: {}", e))?;
 
-    let tmp_dir = std::env::temp_dir().join("devpod-audio");
+    let tmp_dir = std::env::temp_dir().join("humhum-audio");
     std::fs::create_dir_all(&tmp_dir).ok();
     let tmp_file = tmp_dir.join(format!("tts-{}.mp3", uuid::Uuid::new_v4()));
 
@@ -650,7 +650,7 @@ pub async fn stop_audio() -> Result<(), String> {
     Ok(())
 }
 
-/// Check which clients have DevPod hooks installed
+/// Check which clients have HumHum hooks installed
 #[tauri::command]
 pub async fn check_hooks_status() -> Result<Value, String> {
     let home = dirs::home_dir().ok_or("Cannot determine home directory")?;
@@ -659,7 +659,7 @@ pub async fn check_hooks_status() -> Result<Value, String> {
         let config_path = home.join(client.config_path);
         let installed = if config_path.exists() {
             let content = std::fs::read_to_string(&config_path).unwrap_or_default();
-            content.contains("devpod")
+            content.contains("humhum")
         } else {
             false
         };

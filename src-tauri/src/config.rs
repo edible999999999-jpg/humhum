@@ -4,7 +4,7 @@ use std::path::PathBuf;
 /// Application configuration stored on disk
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
-    /// DevPod local server port for receiving hook events
+    /// HumHum local server port for receiving hook events
     pub hook_port: u16,
 
     /// API keys for various services (BYOK)
@@ -99,12 +99,27 @@ impl AppConfig {
     /// Get the config file path
     fn config_path() -> PathBuf {
         let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-        home.join(".devpod").join("config.json")
+        home.join(".humhum").join("config.json")
     }
 
     /// Load config from disk, or return default
     pub fn load(_app_handle: &tauri::AppHandle) -> Self {
         let path = Self::config_path();
+
+        // Migrate ~/.devpod → ~/.humhum if needed
+        if !path.parent().map(|p| p.exists()).unwrap_or(false) {
+            let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+            let old_dir = home.join(".devpod");
+            if old_dir.exists() {
+                let new_dir = home.join(".humhum");
+                if let Err(e) = std::fs::rename(&old_dir, &new_dir) {
+                    log::warn!("Failed to migrate ~/.devpod → ~/.humhum: {}", e);
+                } else {
+                    log::info!("Migrated ~/.devpod → ~/.humhum");
+                }
+            }
+        }
+
         if path.exists() {
             match std::fs::read_to_string(&path) {
                 Ok(content) => match serde_json::from_str(&content) {

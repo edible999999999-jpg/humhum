@@ -42,7 +42,7 @@ pub async fn start_server(app_handle: tauri::AppHandle) {
     // Store pending map in app state for commands to access
     app_handle.manage(pending.clone());
 
-    log::info!("DevPod hook server starting on http://{}", addr);
+    log::info!("HumHum hook server starting on http://{}", addr);
 
     // Periodically clean up stale pending requests whose HTTP connections were dropped
     let cleanup_pending = pending.clone();
@@ -67,7 +67,7 @@ pub async fn start_server(app_handle: tauri::AppHandle) {
             for id in &stale_ids {
                 map.remove(id);
                 cleanup_app
-                    .emit("devpod://permission-timeout", id)
+                    .emit("humhum://permission-timeout", id)
                     .unwrap_or_else(|e| log::error!("[Cleanup] emit failed: {}", e));
                 log::info!("[Cleanup] Removed stale pending request: {}", id);
             }
@@ -124,7 +124,7 @@ async fn handle_request(
         ("POST", "/event") => handle_event(req, app_handle, pending).await,
         ("GET", "/health") => Ok(json_response(StatusCode::OK, &serde_json::json!({
             "status": "ok",
-            "name": "DevPod",
+            "name": "HumHum",
             "version": env!("CARGO_PKG_VERSION"),
         }))),
         ("GET", "/pending") => handle_pending(pending).await,
@@ -296,7 +296,7 @@ async fn handle_event(
             Err(_) => {
                 log::warn!("Permission request timed out for event {}", event_id);
                 // Notify frontend to dismiss the stale ConfirmToast
-                app_handle.emit("devpod://permission-timeout", &event_id)
+                app_handle.emit("humhum://permission-timeout", &event_id)
                     .unwrap_or_else(|e| log::error!("Failed to emit timeout: {}", e));
                 event_bus::emit_status_change(&app_handle, "idle");
                 Ok(json_response(

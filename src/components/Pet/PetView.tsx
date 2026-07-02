@@ -168,7 +168,7 @@ export function PetView() {
     let unlisten: (() => void) | null = null;
     (async () => {
       const { listen } = await import("@tauri-apps/api/event");
-      unlisten = await listen<string>("devpod://permission-timeout", (event) => {
+      unlisten = await listen<string>("humhum://permission-timeout", (event) => {
         console.log("[PetView] Permission timed out:", event.payload);
         setPermissionQueue((q) => q.filter((e) => e.id !== event.payload));
       });

@@ -4,7 +4,7 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 
 ## 项目简介
 
-DevPod 是一个 Tauri v2 桌面宠物应用，监听多种 AI 编程助手事件（Codex、Codex、Qwen Code、Gemini CLI、Kimi K1 的 hooks 以及 QoderWork 日志），将其转化为播客风格的语音播报，并支持语音指令和键盘快捷键交互。UI 是一个透明的、始终置顶的圆形小窗口。
+HumHum 是一个 Tauri v2 桌面宠物应用，监听多种 AI 编程助手事件（Codex、Codex、Qwen Code、Gemini CLI、Kimi K1 的 hooks 以及 QoderWork 日志），将其转化为播客风格的语音播报，并支持语音指令和键盘快捷键交互。UI 是一个透明的、始终置顶的圆形小窗口。
 
 ## 常用命令
 
@@ -72,8 +72,8 @@ TTS、STT 使用注册表模式（`src/lib/tts/index.ts`、`src/lib/stt/index.ts
 ## 关键约定
 
 - 路径别名：`@` 映射到 `src/`（`vite.config.ts` 和 `tsconfig.json`）
-- Tauri 事件前缀：`devpod://`（如 `devpod://hook-event`、`devpod://status-change`）
-- 配置存储：`~/.devpod/config.json`（Rust `config.rs` 读写），默认端口 31275
+- Tauri 事件前缀：`humhum://`（如 `humhum://hook-event`、`humhum://status-change`）
+- 配置存储：`~/.humhum/config.json`（Rust `config.rs` 读写），默认端口 31275
 - API key 采用 BYOK 模式
 - 主窗口无边框、透明、始终置顶，`lib.rs` 中 macOS 特有 Cocoa/CoreGraphics 代码实现圆形遮罩
-- Tauri capability 权限限制：文件系统访问仅限 `~/.devpod/`、`~/.Codex/`
+- Tauri capability 权限限制：文件系统访问仅限 `~/.humhum/`、`~/.Codex/`

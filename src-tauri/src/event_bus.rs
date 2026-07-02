@@ -37,7 +37,7 @@ pub struct EventBusState {
 /// Emit a hook event to the frontend via Tauri's event system
 pub fn emit_hook_event(app_handle: &tauri::AppHandle, event: &HookEvent) {
     app_handle
-        .emit("devpod://hook-event", event)
+        .emit("humhum://hook-event", event)
         .unwrap_or_else(|e| {
             log::error!("Failed to emit hook event: {}", e);
         });
@@ -46,7 +46,7 @@ pub fn emit_hook_event(app_handle: &tauri::AppHandle, event: &HookEvent) {
 /// Emit a status change to the frontend (e.g., pet state transition)
 pub fn emit_status_change(app_handle: &tauri::AppHandle, status: &str) {
     app_handle
-        .emit("devpod://status-change", status)
+        .emit("humhum://status-change", status)
         .unwrap_or_else(|e| {
             log::error!("Failed to emit status change: {}", e);
         });

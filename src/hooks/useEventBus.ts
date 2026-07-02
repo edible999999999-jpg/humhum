@@ -26,7 +26,7 @@ export function useEventBus(): UseEventBusReturn {
       try {
         const { listen } = await import("@tauri-apps/api/event");
         unlistenFn = (await listen<HookEvent>(
-          "devpod://hook-event",
+          "humhum://hook-event",
           (event) => {
             console.log("[EventBus] Received:", event.payload);
             setEvents((prev) => [...prev, event.payload]);

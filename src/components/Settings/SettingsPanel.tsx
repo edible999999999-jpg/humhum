@@ -105,7 +105,7 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
           <PetMascot state="idle" size={32} />
         </div>
         <div>
-          <h1 className="text-base font-bold text-white/90 tracking-wide">DevPod</h1>
+          <h1 className="text-base font-bold text-white/90 tracking-wide">HumHum</h1>
           <p className="text-[10px] text-white/35 -mt-0.5">你的 AI 编程伴侣</p>
         </div>
         <div className="flex-1" />

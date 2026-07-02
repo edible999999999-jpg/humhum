@@ -55,7 +55,7 @@ pub fn run() {
             // Stats store (persistent)
             let stats_path = dirs::home_dir()
                 .unwrap_or_else(|| std::path::PathBuf::from("."))
-                .join(".devpod")
+                .join(".humhum")
                 .join("stats.json");
             let stats_store = stats_store::StatsStore::new(stats_path);
             app.manage(Arc::new(std::sync::Mutex::new(stats_store)));
@@ -101,7 +101,7 @@ pub fn run() {
             commands::type_in_terminal,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running DevPod");
+        .expect("error while running HumHum");
 }
 
 #[cfg(target_os = "macos")]
@@ -286,16 +286,16 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     };
 
-    let show = MenuItem::with_id(app, "show", "Show DevPod", true, None::<&str>)?;
-    let hide = MenuItem::with_id(app, "hide", "Hide DevPod", true, None::<&str>)?;
+    let show = MenuItem::with_id(app, "show", "Show HumHum", true, None::<&str>)?;
+    let hide = MenuItem::with_id(app, "hide", "Hide HumHum", true, None::<&str>)?;
     let settings = MenuItem::with_id(app, "settings", "Settings...", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&show, &hide, &settings, &quit])?;
 
-    TrayIconBuilder::with_id("devpod-tray")
+    TrayIconBuilder::with_id("humhum-tray")
         .icon(app.default_window_icon().unwrap().clone())
         .menu(&menu)
-        .tooltip("DevPod - Developer Podcast Pet")
+        .tooltip("HumHum - AI Coding Companion")
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "quit" => {

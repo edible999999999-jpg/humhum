@@ -1,6 +1,6 @@
 # Hum Design System
 
-> 会哼唱的水母 · Turritopsis dohrnii · DevPod AI Companion Mascot
+> 会哼唱的水母 · Turritopsis dohrnii · HumHum AI Companion Mascot
 
 ---
 
@@ -40,7 +40,7 @@ Hum lives in the deep sea between user and AI. The visual language draws from **
 
 ### Character Profile
 - **Species**: Turritopsis dohrnii (灯塔水母 / immortal jellyfish)
-- **Role**: DevPod's AI companion — monitors coding agents, delivers voice summaries
+- **Role**: HumHum's AI companion — monitors coding agents, delivers voice summaries
 - **Personality**: Gentle, curious, hardworking. Gets flustered when busy but never gives up.
 - **Special ability**: Reverts to juvenile form under pressure (≥4 sessions)
 
@@ -101,7 +101,7 @@ Hum lives in the deep sea between user and AI. The visual language draws from **
 
 ## 3. Absorbed Agent Creatures (吸收态生物)
 
-When an AI coding agent connects to DevPod, Hum "absorbs" it — the agent appears as a **tiny glowing sea creature floating inside Hum's translucent dome**. This is the core visual metaphor: Hum eats its helpers and they glow inside like bioluminescent prey.
+When an AI coding agent connects to HumHum, Hum "absorbs" it — the agent appears as a **tiny glowing sea creature floating inside Hum's translucent dome**. This is the core visual metaphor: Hum eats its helpers and they glow inside like bioluminescent prey.
 
 ### Universal Creature Design Rules
 
@@ -593,7 +593,7 @@ When an AI coding agent connects to DevPod, Hum "absorbs" it — the agent appea
 
 ## 9. Style Comparison: Hum vs Ping Island
 
-| Dimension | Ping Island | Hum (DevPod) |
+| Dimension | Ping Island | Hum (HumHum) |
 |-----------|-------------|--------------|
 | **Render style** | Pixel art GIF (8-bit aesthetic) | Smooth vector SVG with gradients & blur |
 | **Agent representation** | Each agent = standalone animal mascot (pig, cloud, diamond, capybara, whale) | Agents = tiny sea creatures absorbed inside jellyfish hub |

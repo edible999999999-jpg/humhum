@@ -1,12 +1,12 @@
 [package]
-name = "devpod"
+name = "humhum"
 version = "0.1.0"
-description = "Developer Podcast Pet - Voice-powered desktop companion for AI coding assistants"
-authors = ["DevPod Contributors"]
+description = "HumHum - Desktop jellyfish companion for AI coding assistants"
+authors = ["HumHum Contributors"]
 edition = "2021"
 
 [lib]
-name = "devpod_lib"
+name = "humhum_lib"
 crate-type = ["lib", "cdylib", "staticlib"]
 
 [build-dependencies]

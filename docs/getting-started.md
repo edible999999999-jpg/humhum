@@ -1,4 +1,4 @@
-# Getting Started with DevPod
+# Getting Started with HumHum
 
 ## Prerequisites
 
@@ -35,8 +35,8 @@ sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file \
 ## Installation
 
 ```bash
-git clone https://github.com/your-org/devpod.git
-cd devpod
+git clone https://github.com/your-org/humhum.git
+cd humhum
 pnpm install
 ```
 
@@ -49,7 +49,7 @@ pnpm tauri dev
 This will:
 1. Start the Vite dev server on `localhost:1420`
 2. Compile the Rust backend
-3. Launch the DevPod window
+3. Launch the HumHum window
 
 ## First Use
 
@@ -77,7 +77,7 @@ curl -X POST http://localhost:31275/event \
 ## Troubleshooting
 
 ### "Port 31275 already in use"
-Another instance of DevPod may be running. Check System Monitor / Activity Monitor, or change the port in Settings.
+Another instance of HumHum may be running. Check System Monitor / Activity Monitor, or change the port in Settings.
 
 ### "Hook script not found"
 Run `./hooks/install.sh` again to reinstall the hook scripts.

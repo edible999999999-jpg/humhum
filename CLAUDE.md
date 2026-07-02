@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目简介
 
-DevPod 是一个 Tauri v2 桌面宠物应用，监听多种 AI 编程助手事件（Claude Code、Codex、Qwen Code、Gemini CLI、Kimi K1 的 hooks 以及 QoderWork 日志），将其转化为语音播报，并支持语音指令和键盘快捷键交互。UI 是一个透明的、始终置顶的圆形小窗口，宠物形象是一只灯塔水母 "Hum"。
+HumHum 是一个 Tauri v2 桌面宠物应用，监听多种 AI 编程助手事件（Claude Code、Codex、Qwen Code、Gemini CLI、Kimi K1 的 hooks 以及 QoderWork 日志），将其转化为语音播报，并支持语音指令和键盘快捷键交互。UI 是一个透明的、始终置顶的圆形小窗口，宠物形象是一只灯塔水母 "Hum"。
 
 ## 常用命令
 
@@ -42,7 +42,7 @@ curl -X POST http://localhost:31275/event \
     → OpenAISummarizer.summarize() (非流式调用，逐字符 yield)
     → SentenceSplitter.feed(char) (逐句切分，首句限60字加速TTFB)
     → TTS.synthesize(sentence) (Edge/OpenAI/ElevenLabs)
-    → Rust play_audio IPC (base64 → /tmp/devpod-audio/*.mp3 → afplay)
+    → Rust play_audio IPC (base64 → /tmp/humhum-audio/*.mp3 → afplay)
     → 宠物状态: idle → processing → speaking → idle
 ```
 
@@ -97,11 +97,11 @@ TTS、STT 使用注册表模式（`src/lib/tts/index.ts`、`src/lib/stt/index.ts
 | 文件 | 职责 |
 |------|------|
 | `lib.rs` | 应用入口：Tauri builder、4 个插件（fs/notification/shell/store）、macOS 窗口透明（Cocoa/ObjC）、SkyLight 全屏浮窗、托盘菜单、管理 3 个 State（AppConfig/SessionStore/StatsStore）、启动 hook_server 和 qoder_log_watcher |
-| `config.rs` | `AppConfig` 结构体（嵌套 ApiKeys/TtsConfig/SttConfig/SummarizerConfig/UiConfig），读写 `~/.devpod/config.json` |
+| `config.rs` | `AppConfig` 结构体（嵌套 ApiKeys/TtsConfig/SttConfig/SummarizerConfig/UiConfig），读写 `~/.humhum/config.json` |
 | `commands.rs` | 23 个 `#[tauri::command]`（含 `proxy_post`/`proxy_post_binary` CORS 代理、`play_audio`/`stop_audio` 原生音频） |
 | `hook_server.rs` | hyper HTTP 服务器，`PendingMap = Arc<tokio::sync::Mutex<HashMap<String, PendingRequest>>>`，在 Stop/TaskCompleted/SessionEnd 事件时记录统计 |
 | `session_store.rs` | 内存中 `HashMap<String, Session>`，按 session_id 聚合事件，跟踪 client_type/cwd/project_name/event_count/status/last_tool_name |
-| `stats_store.rs` | 持久化 `~/.devpod/stats.json`，解析 Claude Code JSONL transcript 提取 token/cost，硬编码 Opus/Sonnet/Haiku 定价，30 天滚动保留，原子写入 |
+| `stats_store.rs` | 持久化 `~/.humhum/stats.json`，解析 Claude Code JSONL transcript 提取 token/cost，硬编码 Opus/Sonnet/Haiku 定价，30 天滚动保留，原子写入 |
 | `client_registry.rs` | 静态 `CLIENTS` 数组定义 5 个客户端 profile |
 | `event_bus.rs` | `HookEvent` 结构体、`PermissionDecision`、`emit_hook_event()`/`emit_status_change()` 辅助函数 |
 | `qoder_log_watcher.rs` | 轮询 QoderWork JSONL 日志 |
@@ -118,7 +118,7 @@ TTS、STT 使用注册表模式（`src/lib/tts/index.ts`、`src/lib/stt/index.ts
 - `install_hooks_for_client` / `uninstall_hooks_for_client` — 按客户端安装/卸载 hooks
 - `respond_to_permission` — 通过 PendingMap oneshot channel 回复权限请求
 - `get_active_sessions` / `get_session` — 查询 SessionStore
-- `check_hooks_status` — 扫描各客户端配置文件检测 DevPod hooks 是否已安装
+- `check_hooks_status` — 扫描各客户端配置文件检测 HumHum hooks 是否已安装
 - `focus_terminal` — macOS 专用，osascript 激活终端应用
 - `toggle_settings` — 显示/隐藏设置窗口
 - `proxy_post` / `proxy_post_binary` — Rust 侧 reqwest CORS 代理
@@ -163,16 +163,16 @@ TTS、STT 使用注册表模式（`src/lib/tts/index.ts`、`src/lib/stt/index.ts
 ## 关键约定
 
 - 路径别名：`@` 映射到 `src/`（`vite.config.ts` 和 `tsconfig.json`）
-- Tauri 事件前缀：`devpod://`（如 `devpod://hook-event`、`devpod://status-change`）
-- 配置存储：`~/.devpod/config.json`（Rust `config.rs` 读写），默认端口 31275
+- Tauri 事件前缀：`humhum://`（如 `humhum://hook-event`、`humhum://status-change`）
+- 配置存储：`~/.humhum/config.json`（Rust `config.rs` 读写），默认端口 31275
 - API key 采用 BYOK 模式，配置中存储，前端通过 `invoke("get_config")` 获取
 - 主窗口无边框、透明、始终置顶、skipTaskbar
-- Tauri capability 权限限制：文件系统访问仅限 `~/.devpod/`、`~/.claude/`、`$APPDATA`、`$APPCONFIG`。CSP `connect-src` 允许 `http://localhost:*` 和 `https:`
+- Tauri capability 权限限制：文件系统访问仅限 `~/.humhum/`、`~/.claude/`、`$APPDATA`、`$APPCONFIG`。CSP `connect-src` 允许 `http://localhost:*` 和 `https:`
 - 全局状态无 React Context / Redux — 前端用模块级单例（bootstrap.ts getter），Rust 侧用 Tauri managed State
 - Summarizer 系统提示设定"桌面小助手"人设，输出中文，限 50 字，不读代码/路径/JSON
 - SentenceSplitter 支持中英文句子边界检测，首句限 60 字优化首次发声延迟
 - 旧的 `PetMascot.tsx`（SVG `dangerouslySetInnerHTML`）保留但不再被 PetView 引用
 - 幼体模式：≥4 活跃会话触发 65% 缩放（`BABY_THRESHOLD` 常量）
-- 统计数据持久化在 `~/.devpod/stats.json`，由 `stats_store.rs` 管理
-- Hook 脚本在 `hooks/devpod-hook.sh`：从 stdin 读 JSON，POST 到 localhost:31275/event，PermissionRequest 时输出响应
+- 统计数据持久化在 `~/.humhum/stats.json`，由 `stats_store.rs` 管理
+- Hook 脚本在 `hooks/humhum-hook.sh`：从 stdin 读 JSON，POST 到 localhost:31275/event，PermissionRequest 时输出响应
 - Edge TTS Bridge：`scripts/edge-tts-bridge.py`，提供 OpenAI 兼容的 `/v1/audio/speech` 端点，默认端口 5050
