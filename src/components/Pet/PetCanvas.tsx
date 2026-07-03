@@ -43,8 +43,8 @@ export function PetCanvas({ state, size = 140, activeClients = [] }: PetCanvasPr
       renderer.setAgents(agentsRef.current);
 
       const offscreen = renderer.render(dt);
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(offscreen, 0, 0);
+      ctx!.clearRect(0, 0, canvas!.width, canvas!.height);
+      ctx!.drawImage(offscreen, 0, 0);
 
       rafRef.current = requestAnimationFrame(loop);
     }
