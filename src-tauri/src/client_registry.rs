@@ -28,7 +28,7 @@ pub const CLIENTS: &[ClientProfile] = &[
         id: "codex",
         name: "Codex CLI",
         config_format: ConfigFormat::Json,
-        config_path: ".codex/settings.json",
+        config_path: ".codex/hooks.json",
         hook_events: &["PermissionRequest", "Stop", "TaskCompleted"],
     },
     ClientProfile {

@@ -14,8 +14,30 @@
 set -euo pipefail
 
 HUMHUM_PORT="${HUMHUM_PORT:-31275}"
-HUMHUM_URL="http://localhost:${HUMHUM_PORT}/event"
+HUMHUM_CLIENT="${HUMHUM_CLIENT:-}"
 DEBUG_LOG="/tmp/humhum-hook-debug.log"
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --client)
+      HUMHUM_CLIENT="${2:-}"
+      shift 2
+      ;;
+    --client=*)
+      HUMHUM_CLIENT="${1#--client=}"
+      shift
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+if [ -n "$HUMHUM_CLIENT" ]; then
+  HUMHUM_URL="http://localhost:${HUMHUM_PORT}/event?client=${HUMHUM_CLIENT}"
+else
+  HUMHUM_URL="http://localhost:${HUMHUM_PORT}/event"
+fi
 
 log_debug() {
   echo "[$(date '+%H:%M:%S')] $1" >> "$DEBUG_LOG"
@@ -31,6 +53,7 @@ fi
 
 HOOK_EVENT=$(echo "$PAYLOAD" | python3 -c "import sys,json; print(json.load(sys.stdin).get('hook_event_name',''))" 2>/dev/null || echo "unknown")
 log_debug "=== Hook invoked: $HOOK_EVENT ==="
+log_debug "Client: ${HUMHUM_CLIENT:-default}"
 log_debug "STDIN payload (first 200 chars): ${PAYLOAD:0:200}"
 
 # Forward to HumHum server
@@ -58,11 +81,11 @@ log_debug "BODY=$BODY"
 # Handle response based on status code
 case "$HTTP_CODE" in
   200)
-    if [ -n "$BODY" ]; then
+    if [ "$HOOK_EVENT" = "PermissionRequest" ] && [ -n "$BODY" ]; then
       log_debug ">>> Writing to stdout: $BODY"
       echo "$BODY"
     else
-      log_debug ">>> Empty body, nothing to output"
+      log_debug ">>> No hook output needed"
     fi
     exit 0
     ;;

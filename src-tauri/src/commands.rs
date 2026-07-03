@@ -6,8 +6,12 @@ use crate::hook_server::PendingMap;
 use crate::session_store::SessionStore;
 use crate::stats_store::StatsStore;
 use serde_json::Value;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::sync::Arc;
 use tauri::{Manager, State};
+
+const HUMHUM_HOOK_SCRIPT: &str = include_str!("../../hooks/humhum-hook.sh");
 
 /// Get the current configuration
 #[tauri::command]
@@ -68,7 +72,7 @@ pub async fn install_hooks(
     };
 
     // Determine hook script path
-    let hook_script = home.join(".humhum").join("hooks").join("humhum-hook.sh");
+    let hook_script = ensure_hook_script_installed(&home)?;
     let hook_cmd = hook_script.to_string_lossy().to_string();
 
     // Build hooks configuration
@@ -352,8 +356,12 @@ pub async fn install_hooks_for_client(
             .map_err(|e| format!("Failed to create dir: {}", e))?;
     }
 
-    let hook_script = home.join(".humhum").join("hooks").join("humhum-hook.sh");
-    let hook_cmd = format!("{}?client={}", hook_script.to_string_lossy(), client_id);
+    let hook_script = ensure_hook_script_installed(&home)?;
+    let hook_cmd = format!(
+        "{} --client {}",
+        shell_quote(&hook_script.to_string_lossy()),
+        shell_quote(&client_id)
+    );
 
     match profile.config_format {
         ConfigFormat::Json => install_json_hooks(&config_path, &hook_cmd, profile.hook_events)?,
@@ -454,6 +462,32 @@ fn install_json_hooks(
         .map_err(|e| format!("Write error: {}", e))?;
 
     Ok(())
+}
+
+fn ensure_hook_script_installed(home: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    let hook_dir = home.join(".humhum").join("hooks");
+    std::fs::create_dir_all(&hook_dir)
+        .map_err(|e| format!("Failed to create hook dir: {}", e))?;
+
+    let hook_script = hook_dir.join("humhum-hook.sh");
+    std::fs::write(&hook_script, HUMHUM_HOOK_SCRIPT)
+        .map_err(|e| format!("Failed to write hook script: {}", e))?;
+
+    #[cfg(unix)]
+    {
+        let mut permissions = std::fs::metadata(&hook_script)
+            .map_err(|e| format!("Failed to stat hook script: {}", e))?
+            .permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&hook_script, permissions)
+            .map_err(|e| format!("Failed to chmod hook script: {}", e))?;
+    }
+
+    Ok(hook_script)
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 fn uninstall_json_hooks(config_path: &std::path::Path, events: &[&str]) -> Result<(), String> {
