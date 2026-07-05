@@ -7,7 +7,7 @@ interface CompletionPanelProps {
 
 const CLIENT_TINTS: Record<string, string> = {
   "claude-code": "border-l-orange-400",
-  codex: "border-l-green-400",
+  codex: "border-l-white",
   "qwen-code": "border-l-blue-400",
   "gemini-cli": "border-l-cyan-400",
   "kimi-k1": "border-l-purple-400",

@@ -13,7 +13,7 @@ export const COLORS: Record<string, HumColors> = {
 
 export const AGENT_COLORS: Record<string, AgentCreatureColors> = {
   "claude-code": { light: "#fbbf24", med: "#f97316", dark: "#ea580c" },
-  codex:         { light: "#86efac", med: "#22c55e", dark: "#16a34a" },
+  codex:         { light: "#ffffff", med: "#f8fafc", dark: "#0f172a" },
   "qwen-code":   { light: "#93c5fd", med: "#3b82f6", dark: "#1d4ed8" },
   "gemini-cli":  { light: "#22d3ee", med: "#06b6d4", dark: "#0891b2" },
   "kimi-k1":     { light: "#d8b4fe", med: "#a855f7", dark: "#7c3aed" },
@@ -22,7 +22,7 @@ export const AGENT_COLORS: Record<string, AgentCreatureColors> = {
 
 export const AGENT_BRAND_COLOR: Record<string, string> = {
   "claude-code": "#f97316",
-  codex:         "#22c55e",
+  codex:         "#f8fafc",
   "qwen-code":   "#3b82f6",
   "gemini-cli":  "#06b6d4",
   "kimi-k1":     "#a855f7",

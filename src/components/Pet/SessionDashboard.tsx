@@ -16,7 +16,7 @@ interface Session {
 
 const CLIENT_COLORS: Record<string, string> = {
   "claude-code": "bg-orange-500",
-  codex: "bg-green-500",
+  codex: "bg-zinc-100 ring-1 ring-white/40",
   "qwen-code": "bg-blue-500",
   "gemini-cli": "bg-cyan-500",
   "kimi-k1": "bg-purple-500",
@@ -105,6 +105,7 @@ export function SessionDashboard({ visible }: SessionDashboardProps) {
 
 function SessionRow({ session: s }: { session: Session }) {
   const clientColor = CLIENT_COLORS[s.client_type] ?? "bg-slate-500";
+  const clientTextColor = s.client_type === "codex" ? "text-slate-950" : "text-white";
   const clientLabel = CLIENT_LABELS[s.client_type] ?? s.client_type;
   const statusDot = STATUS_DOTS[s.status] ?? "bg-slate-500";
 
@@ -117,7 +118,7 @@ function SessionRow({ session: s }: { session: Session }) {
       {/* Top row: client badge + project + time */}
       <div className="flex items-center gap-2 mb-1">
         <span
-          className={`${clientColor} text-[9px] font-bold text-white px-1.5 py-0.5 rounded-sm uppercase`}
+          className={`${clientColor} ${clientTextColor} text-[9px] font-bold px-1.5 py-0.5 rounded-sm uppercase`}
         >
           {clientLabel}
         </span>

@@ -40,7 +40,7 @@ const CLIENT_LABELS: Record<string, string> = {
 
 const CLIENT_COLORS: Record<string, string> = {
   "claude-code": "bg-orange-500",
-  codex: "bg-green-500",
+  codex: "bg-zinc-100 ring-1 ring-white/40",
   "qwen-code": "bg-blue-500",
   "gemini-cli": "bg-cyan-500",
   "kimi-k1": "bg-purple-500",
@@ -225,18 +225,21 @@ export function StatsPanel() {
           <div className="space-y-2">
             {Object.entries(stats.sessions_by_client)
               .sort(([, a], [, b]) => b - a)
-              .map(([client, count]) => (
+              .map(([client, count]) => {
+                const clientTextColor = client === "codex" ? "text-slate-950" : "text-white";
+
+                return (
                 <div key={client} className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <span
-                      className={`${CLIENT_COLORS[client] ?? "bg-slate-500"} text-[8px] font-bold text-white px-1.5 py-0.5 rounded-sm uppercase`}
+                      className={`${CLIENT_COLORS[client] ?? "bg-slate-500"} ${clientTextColor} text-[8px] font-bold px-1.5 py-0.5 rounded-sm uppercase`}
                     >
                       {CLIENT_LABELS[client] ?? client}
                     </span>
                   </div>
                   <span className="kawaii-badge">{count}</span>
                 </div>
-              ))}
+              )})}
           </div>
         </section>
       )}
