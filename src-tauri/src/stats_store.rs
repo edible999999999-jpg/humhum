@@ -2,11 +2,14 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::io::BufRead;
 use std::path::PathBuf;
+use std::time::{Duration, SystemTime};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SessionStats {
     pub session_id: String,
     pub client_type: String,
+    #[serde(default)]
+    pub transcript_path: String,
     pub model: String,
     pub input_tokens: u64,
     pub output_tokens: u64,
@@ -105,7 +108,11 @@ pub struct StatsStore {
 impl StatsStore {
     pub fn new(file_path: PathBuf) -> Self {
         let data = Self::load_from_disk(&file_path);
-        Self { data, file_path }
+        let mut store = Self { data, file_path };
+        if let Err(e) = store.backfill_recent_transcripts() {
+            log::warn!("[Stats] Backfill failed: {}", e);
+        }
+        store
     }
 
     fn load_from_disk(path: &PathBuf) -> StatsData {
@@ -126,10 +133,64 @@ impl StatsStore {
         let tmp = self.file_path.with_extension("json.tmp");
         let content = serde_json::to_string_pretty(&self.data)
             .map_err(|e| format!("Failed to serialize stats: {}", e))?;
-        std::fs::write(&tmp, content)
-            .map_err(|e| format!("Failed to write stats: {}", e))?;
+        std::fs::write(&tmp, content).map_err(|e| format!("Failed to write stats: {}", e))?;
         std::fs::rename(&tmp, &self.file_path)
             .map_err(|e| format!("Failed to rename stats file: {}", e))?;
+        Ok(())
+    }
+
+    fn backfill_recent_transcripts(&mut self) -> Result<(), String> {
+        let Some(home) = dirs::home_dir() else {
+            return Ok(());
+        };
+
+        let roots = [
+            (home.join(".codex").join("sessions"), "codex"),
+            (home.join(".claude").join("projects"), "claude-code"),
+        ];
+        let cutoff = SystemTime::now()
+            .checked_sub(Duration::from_secs(30 * 24 * 60 * 60))
+            .unwrap_or(SystemTime::UNIX_EPOCH);
+        let mut changed = false;
+
+        for (root, client_type) in roots {
+            if !root.exists() {
+                continue;
+            }
+
+            for path in collect_jsonl_files(&root) {
+                let transcript_path = path.to_string_lossy().to_string();
+                if self.data.processed_transcripts.contains(&transcript_path) {
+                    continue;
+                }
+
+                let modified = path
+                    .metadata()
+                    .and_then(|m| m.modified())
+                    .unwrap_or(SystemTime::UNIX_EPOCH);
+                if modified < cutoff {
+                    continue;
+                }
+
+                if let Some(stats) = parse_transcript(&transcript_path, "", client_type) {
+                    self.data.sessions.retain(|s| {
+                        !(s.transcript_path == transcript_path
+                            || (s.session_id == stats.session_id
+                                && s.client_type == stats.client_type))
+                    });
+                    self.data.sessions.push(stats);
+                    self.data.processed_transcripts.insert(transcript_path);
+                    changed = true;
+                }
+            }
+        }
+
+        if changed {
+            self.rebuild_daily_buckets();
+            self.prune_old_data();
+            self.save()?;
+        }
+
         Ok(())
     }
 
@@ -139,16 +200,16 @@ impl StatsStore {
         session_id: &str,
         client_type: &str,
     ) -> Result<(), String> {
-        if self.data.processed_transcripts.contains(transcript_path) {
-            return Ok(());
-        }
-
         if let Some(stats) = parse_transcript(transcript_path, session_id, client_type) {
-            self.update_daily_bucket(&stats);
+            self.data.sessions.retain(|s| {
+                !(s.transcript_path == transcript_path
+                    || (s.session_id == session_id && s.client_type == client_type))
+            });
             self.data.sessions.push(stats);
             self.data
                 .processed_transcripts
                 .insert(transcript_path.to_string());
+            self.rebuild_daily_buckets();
             self.prune_old_data();
             self.save()?;
         }
@@ -156,25 +217,36 @@ impl StatsStore {
     }
 
     fn update_daily_bucket(&mut self, stats: &SessionStats) {
-        let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        let day = stats
+            .timestamp
+            .get(0..10)
+            .filter(|s| s.len() == 10)
+            .unwrap_or_else(|| "");
+        let bucket_date = if day.is_empty() {
+            chrono::Utc::now().format("%Y-%m-%d").to_string()
+        } else {
+            day.to_string()
+        };
         let cost = calculate_cost(stats);
 
-        if let Some(bucket) = self.data.daily_buckets.iter_mut().find(|b| b.date == today) {
+        if let Some(bucket) = self
+            .data
+            .daily_buckets
+            .iter_mut()
+            .find(|b| b.date == bucket_date)
+        {
             bucket.total_tokens += stats.input_tokens + stats.output_tokens;
             bucket.input_tokens += stats.input_tokens;
             bucket.output_tokens += stats.output_tokens;
             bucket.tool_calls += stats.tool_calls;
             bucket.session_count += 1;
             bucket.estimated_cost_usd += cost;
-            *bucket
-                .clients
-                .entry(stats.client_type.clone())
-                .or_insert(0) += 1;
+            *bucket.clients.entry(stats.client_type.clone()).or_insert(0) += 1;
         } else {
             let mut clients = HashMap::new();
             clients.insert(stats.client_type.clone(), 1);
             self.data.daily_buckets.push(DailyBucket {
-                date: today,
+                date: bucket_date,
                 total_tokens: stats.input_tokens + stats.output_tokens,
                 input_tokens: stats.input_tokens,
                 output_tokens: stats.output_tokens,
@@ -184,6 +256,15 @@ impl StatsStore {
                 clients,
             });
         }
+    }
+
+    fn rebuild_daily_buckets(&mut self) {
+        let sessions = self.data.sessions.clone();
+        self.data.daily_buckets.clear();
+        for stats in sessions {
+            self.update_daily_bucket(&stats);
+        }
+        self.data.daily_buckets.sort_by(|a, b| a.date.cmp(&b.date));
     }
 
     fn prune_old_data(&mut self) {
@@ -228,8 +309,7 @@ impl StatsStore {
         let mut cost_30d = 0.0f64;
 
         // 24h window for active agents
-        let active_cutoff = (chrono::Utc::now() - chrono::Duration::hours(24))
-            .to_rfc3339();
+        let active_cutoff = (chrono::Utc::now() - chrono::Duration::hours(24)).to_rfc3339();
         let mut active_clients: HashSet<String> = HashSet::new();
 
         for s in &self.data.sessions {
@@ -282,6 +362,23 @@ impl StatsStore {
     }
 }
 
+fn collect_jsonl_files(root: &std::path::Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return files;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            files.extend(collect_jsonl_files(&path));
+        } else if path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
+            files.push(path);
+        }
+    }
+    files
+}
+
 fn parse_transcript(
     transcript_path: &str,
     session_id: &str,
@@ -309,6 +406,10 @@ fn parse_transcript(
     let mut tool_calls = 0u64;
     let mut tool_set: HashSet<String> = HashSet::new();
     let mut model = String::new();
+    let mut effective_session_id = session_id.to_string();
+    let mut codex_input_tokens: Option<u64> = None;
+    let mut codex_output_tokens: Option<u64> = None;
+    let mut codex_cache_read_tokens: Option<u64> = None;
 
     for line in reader.lines() {
         let line = match line {
@@ -326,14 +427,46 @@ fn parse_transcript(
 
         let entry_type = val.get("type").and_then(|v| v.as_str()).unwrap_or("");
 
+        if entry_type == "session_meta" {
+            if let Some(payload) = val.get("payload") {
+                if effective_session_id.is_empty() {
+                    effective_session_id = payload
+                        .get("session_id")
+                        .or_else(|| payload.get("id"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                }
+                if let Some(m) = payload.get("model").and_then(|v| v.as_str()) {
+                    model = m.to_string();
+                } else if let Some(provider) =
+                    payload.get("model_provider").and_then(|v| v.as_str())
+                {
+                    model = provider.to_string();
+                }
+            }
+        }
+
         if entry_type == "assistant" {
+            if effective_session_id.is_empty() {
+                effective_session_id = val
+                    .get("sessionId")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+            }
+
             if let Some(msg) = val.get("message") {
                 // Extract usage
                 if let Some(usage) = msg.get("usage") {
-                    input_tokens +=
-                        usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                    output_tokens +=
-                        usage.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                    input_tokens += usage
+                        .get("input_tokens")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    output_tokens += usage
+                        .get("output_tokens")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
                     cache_creation += usage
                         .get("cache_creation_input_tokens")
                         .and_then(|v| v.as_u64())
@@ -362,6 +495,38 @@ fn parse_transcript(
                 }
             }
         }
+
+        if entry_type == "event_msg" || entry_type == "response_item" {
+            if let Some(payload) = val.get("payload") {
+                if payload.get("type").and_then(|v| v.as_str()) == Some("token_count") {
+                    if let Some(usage) =
+                        payload.get("info").and_then(|v| v.get("total_token_usage"))
+                    {
+                        codex_input_tokens = usage.get("input_tokens").and_then(|v| v.as_u64());
+                        codex_output_tokens = usage.get("output_tokens").and_then(|v| v.as_u64());
+                        codex_cache_read_tokens =
+                            usage.get("cached_input_tokens").and_then(|v| v.as_u64());
+                    }
+                }
+
+                if payload.get("type").and_then(|v| v.as_str()) == Some("function_call") {
+                    tool_calls += 1;
+                    if let Some(name) = payload.get("name").and_then(|v| v.as_str()) {
+                        tool_set.insert(name.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some(v) = codex_input_tokens {
+        input_tokens = v;
+    }
+    if let Some(v) = codex_output_tokens {
+        output_tokens = v;
+    }
+    if let Some(v) = codex_cache_read_tokens {
+        cache_read = v;
     }
 
     if input_tokens == 0 && output_tokens == 0 {
@@ -372,8 +537,9 @@ fn parse_transcript(
     tool_names.sort();
 
     Some(SessionStats {
-        session_id: session_id.to_string(),
+        session_id: effective_session_id,
         client_type: client_type.to_string(),
+        transcript_path: transcript_path.to_string(),
         model,
         input_tokens,
         output_tokens,
@@ -383,4 +549,84 @@ fn parse_transcript(
         tool_names,
         timestamp: chrono::Utc::now().to_rfc3339(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    fn write_temp_jsonl(name: &str, body: &str) -> String {
+        let path = std::env::temp_dir().join(format!(
+            "humhum-stats-{}-{}.jsonl",
+            name,
+            uuid::Uuid::new_v4()
+        ));
+        let mut file = std::fs::File::create(&path).unwrap();
+        file.write_all(body.as_bytes()).unwrap();
+        path.to_string_lossy().to_string()
+    }
+
+    #[test]
+    fn parses_claude_usage_from_assistant_messages() {
+        let path = write_temp_jsonl(
+            "claude",
+            r#"{"type":"assistant","message":{"model":"claude-sonnet","usage":{"input_tokens":10,"output_tokens":3,"cache_creation_input_tokens":5,"cache_read_input_tokens":7},"content":[{"type":"tool_use","name":"Bash"}]}}"#,
+        );
+
+        let stats = parse_transcript(&path, "s1", "claude-code").unwrap();
+        assert_eq!(stats.input_tokens, 10);
+        assert_eq!(stats.output_tokens, 3);
+        assert_eq!(stats.cache_creation_tokens, 5);
+        assert_eq!(stats.cache_read_tokens, 7);
+        assert_eq!(stats.tool_calls, 1);
+        assert_eq!(stats.tool_names, vec!["Bash"]);
+    }
+
+    #[test]
+    fn parses_codex_cumulative_token_count_events() {
+        let path = write_temp_jsonl(
+            "codex",
+            r#"{"type":"session_meta","payload":{"session_id":"s2","model_provider":"openai"}}
+{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":20,"output_tokens":5,"reasoning_output_tokens":1,"total_tokens":105},"last_token_usage":{"input_tokens":100,"cached_input_tokens":20,"output_tokens":5,"total_tokens":105}}}}
+{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":180,"cached_input_tokens":40,"output_tokens":9,"reasoning_output_tokens":2,"total_tokens":189},"last_token_usage":{"input_tokens":80,"cached_input_tokens":20,"output_tokens":4,"total_tokens":84}}}}
+{"type":"response_item","payload":{"type":"function_call","name":"exec_command"}}"#,
+        );
+
+        let stats = parse_transcript(&path, "s2", "codex").unwrap();
+        assert_eq!(stats.input_tokens, 180);
+        assert_eq!(stats.output_tokens, 9);
+        assert_eq!(stats.cache_read_tokens, 40);
+        assert_eq!(stats.tool_calls, 1);
+        assert_eq!(stats.tool_names, vec!["exec_command"]);
+        assert_eq!(stats.model, "openai");
+    }
+
+    #[test]
+    fn record_session_end_updates_existing_session_without_double_counting() {
+        let stats_path =
+            std::env::temp_dir().join(format!("humhum-stats-store-{}.json", uuid::Uuid::new_v4()));
+        let transcript = write_temp_jsonl(
+            "upsert",
+            r#"{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":10,"cached_input_tokens":3,"output_tokens":2,"total_tokens":12}}}}"#,
+        );
+
+        let mut store = StatsStore {
+            data: StatsData::default(),
+            file_path: stats_path,
+        };
+        store
+            .record_session_end(&transcript, "s3", "codex")
+            .unwrap();
+        store
+            .record_session_end(&transcript, "s3", "codex")
+            .unwrap();
+
+        let aggregated = store.get_aggregated_stats();
+        assert_eq!(aggregated.total_sessions, 1);
+        assert_eq!(aggregated.total_input_tokens, 10);
+        assert_eq!(aggregated.total_output_tokens, 2);
+        assert_eq!(aggregated.daily_buckets.len(), 1);
+        assert_eq!(aggregated.daily_buckets[0].session_count, 1);
+    }
 }
