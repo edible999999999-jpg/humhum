@@ -4,6 +4,14 @@
 
 [中文文档](./README.zh-CN.md)
 
+<p align="center">
+  <a href="https://github.com/edible999999999-jpg/humhum/releases/download/v0.1.0/HumHum_0.1.0_aarch64.dmg"><strong>Download for macOS</strong></a>
+  ·
+  <a href="https://github.com/edible999999999-jpg/humhum/releases">Latest Release</a>
+</p>
+
+<p align="center"><em>macOS Apple Silicon build available now. Windows and Linux are on the roadmap.</em></p>
+
 An open-source desktop companion app featuring **Hum**, a translucent jellyfish (Turritopsis dohrnii — the only creature on Earth that can reverse aging). Hum monitors events from multiple AI coding assistants and narrates them as a podcast-style voice broadcast, so you never have to switch windows just to check what your AI is doing.
 
 <p align="center"><img src="docs/hum-preview.png" alt="HumHum Preview" width="280" /></p>
@@ -44,6 +52,8 @@ Each connected assistant appears as a tiny deep-sea creature inside Hum's transl
 - System deps for Tauri: see [Tauri Prerequisites](https://v2.tauri.app/start/prerequisites/)
 
 ### Install & Run
+
+Download the latest macOS build from [GitHub Releases](https://github.com/edible999999999-jpg/humhum/releases), or run from source:
 
 ```bash
 # Clone

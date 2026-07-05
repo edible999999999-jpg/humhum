@@ -4,6 +4,14 @@
 
 **Developer Podcast Pet** — 开发者的播客桌宠
 
+<p align="center">
+  <a href="https://github.com/edible999999999-jpg/humhum/releases/download/v0.1.0/HumHum_0.1.0_aarch64.dmg"><strong>下载 macOS 版</strong></a>
+  ·
+  <a href="https://github.com/edible999999999-jpg/humhum/releases">最新 Release</a>
+</p>
+
+<p align="center"><em>当前提供 macOS Apple Silicon 安装包，Windows / Linux 在路线图中。</em></p>
+
 一个开源的桌面伴侣应用，以"会哼唱的水母" **Hum** 为形象，监听多种 AI 编程助手（Claude Code、Codex、Qwen Code、Gemini CLI、Kimi K1、QoderWork）的任务事件，将其转化为播客风格的语音播报，并支持语音指令和键盘快捷键交互。
 
 <p align="center"><em>灯塔水母 Turritopsis dohrnii — 地球上唯一能"返老还童"的生物</em></p>
@@ -103,6 +111,8 @@ FPS: 20 idle / 30 active / 60 drag · powerPreference: low-power
 - 系统依赖 (Tauri): 见 [Tauri Prerequisites](https://v2.tauri.app/start/prerequisites/)
 
 ### 安装
+
+可直接从 [GitHub Releases](https://github.com/edible999999999-jpg/humhum/releases) 下载最新 macOS 安装包，或从源码运行：
 
 ```bash
 # 1. 克隆项目
