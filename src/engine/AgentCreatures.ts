@@ -20,6 +20,7 @@ export function drawAbsorbedAgents(
   R: number,
   sz: number,
   time: number,
+  icons: Record<string, CanvasImageSource> = {},
 ) {
   if (agents.length === 0) return;
 
@@ -40,12 +41,17 @@ export function drawAbsorbedAgents(
     const offsetY = Math.cos(phase * 0.7) * dy;
 
     ctx.save();
-    ctx.globalAlpha = 0.35;
     ctx.translate(offsetX, offsetY);
 
-    if (sz >= 80) {
+    const icon = icons[agent.id];
+    if (sz >= 80 && icon) {
+      ctx.globalAlpha = 0.58;
+      drawLogoBubble(ctx, icon, ax, ay, creatureS * 1.7, agent.color);
+    } else if (sz >= 80) {
+      ctx.globalAlpha = 0.35;
       drawCreature(ctx, agent.id, ax, ay, creatureS * 2, agent.color);
     } else {
+      ctx.globalAlpha = 0.35;
       ctx.fillStyle = hexToRgba(agent.color, 0.5);
       ctx.beginPath();
       ctx.arc(ax, ay, creatureS, 0, Math.PI * 2);
@@ -54,6 +60,64 @@ export function drawAbsorbedAgents(
 
     ctx.restore();
   });
+}
+
+function drawLogoBubble(
+  ctx: OffscreenCanvasRenderingContext2D,
+  image: CanvasImageSource,
+  x: number,
+  y: number,
+  s: number,
+  color: string,
+) {
+  const r = s * 0.5;
+  const iconSize = s * 0.58;
+
+  ctx.save();
+  ctx.shadowColor = hexToRgba(color, 0.4);
+  ctx.shadowBlur = r * 0.55;
+  ctx.fillStyle = hexToRgba(color, 0.2);
+  ctx.beginPath();
+  ctx.arc(x, y, r * 1.08, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  ctx.save();
+  const glass = ctx.createRadialGradient(x - r * 0.28, y - r * 0.35, r * 0.1, x, y, r);
+  glass.addColorStop(0, "rgba(255,255,255,0.58)");
+  glass.addColorStop(0.5, "rgba(255,255,255,0.2)");
+  glass.addColorStop(1, "rgba(255,255,255,0.08)");
+  ctx.fillStyle = glass;
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(x, y, r * 0.78, 0, Math.PI * 2);
+  ctx.clip();
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(image, x - iconSize / 2, y - iconSize / 2, iconSize, iconSize);
+  ctx.restore();
+
+  ctx.strokeStyle = "rgba(255,255,255,0.5)";
+  ctx.lineWidth = Math.max(1, r * 0.08);
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.strokeStyle = hexToRgba(color, 0.42);
+  ctx.lineWidth = Math.max(1, r * 0.035);
+  ctx.beginPath();
+  ctx.arc(x, y, r * 1.08, Math.PI * 0.12, Math.PI * 1.42);
+  ctx.stroke();
+
+  ctx.fillStyle = "rgba(255,255,255,0.62)";
+  ctx.beginPath();
+  ctx.ellipse(x - r * 0.26, y - r * 0.34, r * 0.17, r * 0.08, -0.45, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
 }
 
 function drawCreature(

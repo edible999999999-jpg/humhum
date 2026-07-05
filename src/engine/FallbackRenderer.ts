@@ -10,6 +10,7 @@ export class FallbackRenderer {
   private state: PetState = "idle";
   private agents: ActiveAgent[] = [];
   private spriteImage: CanvasImageSource | null = null;
+  private agentIcons: Record<string, CanvasImageSource> = {};
 
   constructor(size: number, dpr: number) {
     this.sz = size;
@@ -26,6 +27,10 @@ export class FallbackRenderer {
 
   setAgents(agents: ActiveAgent[]) {
     this.agents = agents;
+  }
+
+  setAgentIcons(icons: Record<string, CanvasImageSource>) {
+    this.agentIcons = icons;
   }
 
   setSpriteImage(image: CanvasImageSource | null) {
@@ -75,7 +80,7 @@ export class FallbackRenderer {
       this.drawMouth(ctx, cx, dcy + R * 0.28, C);
       this.drawStatusDot(ctx, cx, dcy, R, C);
 
-      drawAbsorbedAgents(ctx, this.agents, cx, dcy, R, sz, this.time);
+      drawAbsorbedAgents(ctx, this.agents, cx, dcy, R, sz, this.time, this.agentIcons);
     }
 
     ctx.restore();
@@ -118,7 +123,7 @@ export class FallbackRenderer {
 
     this.drawSpriteStateOverlay(ctx, cx, dcy, R, C);
     this.drawStatusDot(ctx, cx, dcy, R, C);
-    drawAbsorbedAgents(ctx, this.agents, cx, dcy, R, sz, this.time);
+    drawAbsorbedAgents(ctx, this.agents, cx, dcy, R, sz, this.time, this.agentIcons);
   }
 
   private drawSpriteStateOverlay(

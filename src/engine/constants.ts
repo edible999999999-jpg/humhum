@@ -29,6 +29,15 @@ export const AGENT_BRAND_COLOR: Record<string, string> = {
   qoderwork:     "#4ade80",
 };
 
+export const AGENT_ICON_SRC: Record<string, string> = {
+  "claude-code": "/agents/claude-code.png",
+  codex:         "/agents/codex.svg",
+  "qwen-code":   "/agents/qwen-code.png",
+  "gemini-cli":  "/agents/gemini-cli.png",
+  "kimi-k1":     "/agents/kimi-k1.png",
+  qoderwork:     "/agents/qoderwork.png",
+};
+
 export const BABY_THRESHOLD = 4;
 
 export const FPS: FpsTarget = {

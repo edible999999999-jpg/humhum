@@ -1,6 +1,6 @@
 import { useRef, useEffect } from "react";
 import { FallbackRenderer } from "@/engine/FallbackRenderer";
-import { FPS, AGENT_BRAND_COLOR } from "@/engine/constants";
+import { FPS, AGENT_BRAND_COLOR, AGENT_ICON_SRC } from "@/engine/constants";
 import type { PetState } from "@/types";
 import type { ActiveAgent } from "@/engine/types";
 
@@ -18,6 +18,7 @@ export function PetCanvas({ state, size = 140, activeClients = [] }: PetCanvasPr
   const rafRef = useRef<number>(0);
   const stateRef = useRef<PetState>(state);
   const agentsRef = useRef<ActiveAgent[]>([]);
+  const agentIconsRef = useRef<Record<string, HTMLImageElement>>({});
 
   stateRef.current = state;
 
@@ -45,6 +46,17 @@ export function PetCanvas({ state, size = 140, activeClients = [] }: PetCanvasPr
     };
     sprite.src = HUMI_SPRITE_SRC;
 
+    const agentIconImages = Object.entries(AGENT_ICON_SRC).map(([id, src]) => {
+      const image = new Image();
+      image.decoding = "async";
+      image.onload = () => {
+        agentIconsRef.current = { ...agentIconsRef.current, [id]: image };
+        renderer.setAgentIcons(agentIconsRef.current);
+      };
+      image.src = src;
+      return image;
+    });
+
     let lastTime = performance.now();
 
     function loop(now: number) {
@@ -67,6 +79,9 @@ export function PetCanvas({ state, size = 140, activeClients = [] }: PetCanvasPr
       cancelAnimationFrame(rafRef.current);
       sprite.onload = null;
       sprite.onerror = null;
+      agentIconImages.forEach((image) => {
+        image.onload = null;
+      });
       rendererRef.current = null;
     };
   }, [size]);
