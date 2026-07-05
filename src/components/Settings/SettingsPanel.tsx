@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { AppConfig } from "@/types";
-import { PetMascot } from "../Pet/PetMascot";
+import { PetCanvas } from "../Pet/PetCanvas";
 import { VOICE_PRESETS, DEFAULT_VOICE } from "./voicePresets";
 import { StatsPanel } from "./StatsPanel";
 
@@ -87,7 +87,7 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
     return (
       <div className="w-full h-full flex items-center justify-center settings-panel">
         <div className="flex flex-col items-center gap-3">
-          <PetMascot state="processing" size={48} />
+          <PetCanvas state="processing" size={48} />
           <p className="text-white/40 text-xs animate-pulse">加载中...</p>
         </div>
       </div>
@@ -102,7 +102,7 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
       {/* Header */}
       <header data-tauri-drag-region className="flex items-center gap-3 px-5 py-4 border-b border-white/[0.06]">
         <div className="kawaii-avatar-ring">
-          <PetMascot state="idle" size={32} />
+          <PetCanvas state="idle" size={32} />
         </div>
         <div>
           <h1 className="text-base font-bold text-white/90 tracking-wide">HumHum</h1>

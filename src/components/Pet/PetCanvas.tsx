@@ -4,6 +4,8 @@ import { FPS, AGENT_BRAND_COLOR } from "@/engine/constants";
 import type { PetState } from "@/types";
 import type { ActiveAgent } from "@/engine/types";
 
+const HUMI_SPRITE_SRC = "/mascots/humi-sprite-v1.png";
+
 interface PetCanvasProps {
   state: PetState;
   size?: number;
@@ -33,6 +35,16 @@ export function PetCanvas({ state, size = 140, activeClients = [] }: PetCanvasPr
     const renderer = new FallbackRenderer(size, dpr);
     rendererRef.current = renderer;
 
+    const sprite = new Image();
+    sprite.decoding = "async";
+    sprite.onload = () => {
+      renderer.setSpriteImage(sprite);
+    };
+    sprite.onerror = () => {
+      renderer.setSpriteImage(null);
+    };
+    sprite.src = HUMI_SPRITE_SRC;
+
     let lastTime = performance.now();
 
     function loop(now: number) {
@@ -53,6 +65,8 @@ export function PetCanvas({ state, size = 140, activeClients = [] }: PetCanvasPr
 
     return () => {
       cancelAnimationFrame(rafRef.current);
+      sprite.onload = null;
+      sprite.onerror = null;
       rendererRef.current = null;
     };
   }, [size]);
