@@ -12,7 +12,7 @@ export function Bubble({ state, text }: BubbleProps) {
 
   return (
     <div
-      className={`mb-2 px-4 py-2 bg-slate-900 border border-white/10 rounded-2xl rounded-bl-sm text-center shadow-xl transition-all duration-300 ${
+      className={`mb-2 px-4 py-2 bg-slate-900 border border-white/10 rounded-2xl rounded-bl-sm text-center shadow-md transition-all duration-300 ${
         isLongText ? "max-w-[300px]" : "max-w-[200px]"
       }`}
     >

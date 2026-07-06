@@ -47,12 +47,12 @@ body {
 }
 
 .scrollbar-thin::-webkit-scrollbar-thumb {
-  background: rgba(168, 139, 250, 0.2);
+  background: rgba(148, 239, 244, 0.12);
   border-radius: 2px;
 }
 
 .scrollbar-thin::-webkit-scrollbar-thumb:hover {
-  background: rgba(168, 139, 250, 0.4);
+  background: rgba(148, 239, 244, 0.25);
 }
 
 @keyframes toast-in {
@@ -64,53 +64,58 @@ body {
   animation: toast-in 0.25s ease-out;
 }
 
-/* ===== Kawaii Design System ===== */
+/* ===== Bioluminescent Design System ===== */
+/* Deep-sea aesthetic inspired by Resend — glow tokens, translucent borders, atmospheric depth */
 
 .settings-panel {
-  background: linear-gradient(165deg, rgba(15, 15, 30, 0.98) 0%, rgba(25, 20, 45, 0.98) 50%, rgba(20, 15, 35, 0.98) 100%);
+  background: linear-gradient(165deg, #090b14 0%, #0d0f1a 50%, #0a0c16 100%);
+  border-radius: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.045);
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
 }
 
 /* -- Card -- */
 .kawaii-card {
   padding: 16px;
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  backdrop-filter: blur(8px);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 255, 255, 0.045);
+  backdrop-filter: blur(12px);
   transition: border-color 0.3s, box-shadow 0.3s;
 }
 
 .kawaii-card:hover {
-  border-color: rgba(168, 139, 250, 0.15);
-  box-shadow: 0 0 20px rgba(139, 92, 246, 0.04);
+  border-color: rgba(148, 239, 244, 0.1);
+  box-shadow: 0 0 28px rgba(148, 239, 244, 0.025);
 }
 
 /* -- Input -- */
 .kawaii-input {
   width: 100%;
   padding: 10px 14px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.045);
+  border-radius: 14px;
   font-size: 13px;
-  color: white;
+  color: rgba(255, 255, 255, 0.88);
   transition: all 0.25s ease;
   outline: none;
 }
 
 .kawaii-input::placeholder {
-  color: rgba(255, 255, 255, 0.25);
+  color: rgba(255, 255, 255, 0.2);
 }
 
 .kawaii-input:focus {
-  border-color: rgba(168, 139, 250, 0.5);
-  box-shadow: 0 0 0 3px rgba(168, 139, 250, 0.08), 0 0 12px rgba(168, 139, 250, 0.06);
-  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(148, 239, 244, 0.4);
+  box-shadow: 0 0 0 3px rgba(148, 239, 244, 0.06), 0 0 16px rgba(148, 239, 244, 0.04);
+  background: rgba(255, 255, 255, 0.05);
 }
 
 .kawaii-input:hover:not(:focus) {
-  border-color: rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.045);
 }
 
 /* -- Select -- */
@@ -118,7 +123,7 @@ body {
   -webkit-appearance: none;
   appearance: none;
   cursor: pointer;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M3 5l3 3 3-3' stroke='%23a78bfa' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M3 5l3 3 3-3' stroke='%2394eff4' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 12px center;
   padding-right: 36px;
@@ -129,7 +134,7 @@ body {
   display: block;
   font-size: 11px;
   font-weight: 500;
-  color: rgba(255, 255, 255, 0.5);
+  color: rgba(255, 255, 255, 0.4);
   margin-bottom: 6px;
   letter-spacing: 0.3px;
 }
@@ -137,10 +142,10 @@ body {
 /* -- Badge -- */
 .kawaii-badge {
   display: inline-block;
-  padding: 1px 8px;
-  border-radius: 8px;
-  background: rgba(168, 139, 250, 0.15);
-  color: rgba(196, 181, 253, 0.9);
+  padding: 2px 8px;
+  border-radius: 9999px;
+  background: rgba(148, 239, 244, 0.1);
+  color: rgba(148, 239, 244, 0.85);
   font-size: 11px;
   font-weight: 600;
   font-family: "SF Mono", "Fira Code", monospace;
@@ -148,11 +153,11 @@ body {
 
 /* -- Chip (provider selector) -- */
 .kawaii-chip {
-  padding: 8px 12px;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  color: rgba(255, 255, 255, 0.6);
+  padding: 8px 14px;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.5);
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
@@ -160,16 +165,16 @@ body {
 }
 
 .kawaii-chip:hover {
-  background: rgba(168, 139, 250, 0.08);
-  border-color: rgba(168, 139, 250, 0.2);
-  color: rgba(255, 255, 255, 0.8);
+  background: rgba(148, 239, 244, 0.06);
+  border-color: rgba(148, 239, 244, 0.15);
+  color: rgba(255, 255, 255, 0.75);
 }
 
 .kawaii-chip.active {
-  background: rgba(168, 139, 250, 0.15);
-  border-color: rgba(168, 139, 250, 0.4);
-  color: rgba(196, 181, 253, 1);
-  box-shadow: 0 0 12px rgba(139, 92, 246, 0.1);
+  background: rgba(148, 239, 244, 0.1);
+  border-color: rgba(148, 239, 244, 0.3);
+  color: rgba(148, 239, 244, 0.95);
+  box-shadow: 0 0 16px rgba(148, 239, 244, 0.08);
 }
 
 /* -- Slider -- */
@@ -178,29 +183,29 @@ body {
   appearance: none;
   height: 4px;
   border-radius: 2px;
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.06);
   outline: none;
   transition: background 0.2s;
 }
 
 .kawaii-slider:hover {
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .kawaii-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #a78bfa, #818cf8);
+  background: radial-gradient(circle at 40% 35%, #c4f5f8, #5ee0e8);
   cursor: pointer;
-  box-shadow: 0 0 8px rgba(167, 139, 250, 0.4), 0 2px 4px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 0 10px rgba(148, 239, 244, 0.5);
   transition: transform 0.2s, box-shadow 0.2s;
 }
 
 .kawaii-slider::-webkit-slider-thumb:hover {
-  transform: scale(1.15);
-  box-shadow: 0 0 14px rgba(167, 139, 250, 0.6), 0 2px 6px rgba(0, 0, 0, 0.3);
+  transform: scale(1.2);
+  box-shadow: 0 0 16px rgba(148, 239, 244, 0.7);
 }
 
 .kawaii-slider:active::-webkit-slider-thumb {
@@ -210,12 +215,12 @@ body {
 /* -- Toggle button (hook connect) -- */
 .kawaii-toggle-btn {
   padding: 4px 12px;
-  border-radius: 8px;
+  border-radius: 9999px;
   font-size: 11px;
   font-weight: 500;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.04);
-  color: rgba(255, 255, 255, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(255, 255, 255, 0.45);
   cursor: pointer;
   transition: all 0.25s ease;
   min-width: 56px;
@@ -223,25 +228,25 @@ body {
 }
 
 .kawaii-toggle-btn:hover {
-  background: rgba(168, 139, 250, 0.1);
-  border-color: rgba(168, 139, 250, 0.3);
-  color: rgba(196, 181, 253, 0.9);
+  background: rgba(148, 239, 244, 0.07);
+  border-color: rgba(148, 239, 244, 0.2);
+  color: rgba(148, 239, 244, 0.85);
 }
 
 .kawaii-toggle-btn.connected {
-  background: rgba(52, 211, 153, 0.1);
-  border-color: rgba(52, 211, 153, 0.25);
+  background: rgba(52, 211, 153, 0.08);
+  border-color: rgba(52, 211, 153, 0.2);
   color: rgba(110, 231, 183, 0.9);
 }
 
 .kawaii-toggle-btn.connected:hover {
-  background: rgba(239, 68, 68, 0.1);
-  border-color: rgba(239, 68, 68, 0.25);
+  background: rgba(239, 68, 68, 0.08);
+  border-color: rgba(239, 68, 68, 0.2);
   color: rgba(252, 165, 165, 0.9);
 }
 
 .kawaii-toggle-btn:disabled {
-  opacity: 0.4;
+  opacity: 0.35;
   cursor: not-allowed;
 }
 
@@ -870,19 +875,19 @@ html[data-page="intro"] #root {
   width: 26px;
   height: 26px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(255, 255, 255, 0.03);
   border: 1px solid rgba(255, 255, 255, 0.06);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: rgba(255, 255, 255, 0.3);
+  color: rgba(255, 255, 255, 0.25);
   cursor: pointer;
   transition: all 0.2s;
 }
 
 .kawaii-close-btn:hover {
-  background: rgba(239, 68, 68, 0.1);
-  border-color: rgba(239, 68, 68, 0.3);
+  background: rgba(239, 68, 68, 0.08);
+  border-color: rgba(239, 68, 68, 0.2);
   color: rgba(252, 165, 165, 0.8);
   transform: scale(1.05);
 }
@@ -892,27 +897,27 @@ html[data-page="intro"] #root {
   width: 36px;
   height: 36px;
   border-radius: 50%;
-  background: linear-gradient(135deg, rgba(99, 102, 241, 0.2), rgba(168, 85, 247, 0.2));
-  border: 1px solid rgba(168, 139, 250, 0.2);
+  background: radial-gradient(circle at 40% 35%, rgba(148, 239, 244, 0.12), rgba(94, 224, 232, 0.05));
+  border: 1px solid rgba(148, 239, 244, 0.15);
   display: flex;
   align-items: center;
   justify-content: center;
+  box-shadow: 0 0 12px rgba(148, 239, 244, 0.06);
 }
 
 /* -- Save button -- */
 .kawaii-save-btn {
   width: 100%;
-  padding: 12px;
-  border-radius: 14px;
-  background: linear-gradient(135deg, #6366f1, #8b5cf6, #a855f7);
-  color: white;
+  padding: 11px;
+  border-radius: 9999px;
+  background: linear-gradient(135deg, rgba(148, 239, 244, 0.15), rgba(94, 224, 232, 0.1));
+  color: rgba(148, 239, 244, 0.95);
   font-size: 13px;
   font-weight: 600;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.3px;
   cursor: pointer;
-  border: none;
+  border: 1px solid rgba(148, 239, 244, 0.2);
   transition: all 0.3s ease;
-  box-shadow: 0 4px 16px rgba(99, 102, 241, 0.25), 0 0 0 0 rgba(139, 92, 246, 0);
   position: relative;
   overflow: hidden;
 }
@@ -921,14 +926,15 @@ html[data-page="intro"] #root {
   content: "";
   position: absolute;
   inset: 0;
-  background: linear-gradient(135deg, transparent 30%, rgba(255, 255, 255, 0.1) 50%, transparent 70%);
+  background: linear-gradient(135deg, transparent 30%, rgba(148, 239, 244, 0.08) 50%, transparent 70%);
   transform: translateX(-100%);
   transition: transform 0.6s ease;
 }
 
 .kawaii-save-btn:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 6px 20px rgba(99, 102, 241, 0.35), 0 0 30px rgba(139, 92, 246, 0.1);
+  background: linear-gradient(135deg, rgba(148, 239, 244, 0.2), rgba(94, 224, 232, 0.15));
+  border-color: rgba(148, 239, 244, 0.35);
+  box-shadow: 0 0 24px rgba(148, 239, 244, 0.1);
 }
 
 .kawaii-save-btn:hover::before {
@@ -936,24 +942,22 @@ html[data-page="intro"] #root {
 }
 
 .kawaii-save-btn:active {
-  transform: translateY(0);
-  box-shadow: 0 2px 10px rgba(99, 102, 241, 0.2);
+  box-shadow: 0 0 12px rgba(148, 239, 244, 0.06);
 }
 
 .kawaii-save-btn:disabled {
-  opacity: 0.6;
+  opacity: 0.4;
   cursor: not-allowed;
-  transform: none;
-  box-shadow: 0 4px 16px rgba(99, 102, 241, 0.15);
+  box-shadow: none;
 }
 
 /* -- Tab navigation -- */
 .kawaii-tab {
   padding: 6px 16px;
-  border-radius: 8px;
+  border-radius: 9999px;
   font-size: 12px;
   font-weight: 500;
-  color: rgba(255, 255, 255, 0.4);
+  color: rgba(255, 255, 255, 0.35);
   background: transparent;
   border: 1px solid transparent;
   cursor: pointer;
@@ -961,49 +965,64 @@ html[data-page="intro"] #root {
 }
 
 .kawaii-tab:hover {
-  color: rgba(255, 255, 255, 0.6);
-  background: rgba(255, 255, 255, 0.03);
+  color: rgba(255, 255, 255, 0.55);
+  background: rgba(255, 255, 255, 0.025);
 }
 
 .kawaii-tab.active {
-  color: rgba(196, 181, 253, 1);
-  background: rgba(168, 139, 250, 0.12);
-  border-color: rgba(168, 139, 250, 0.25);
+  color: rgba(148, 239, 244, 0.95);
+  background: rgba(148, 239, 244, 0.08);
+  border-color: rgba(148, 239, 244, 0.18);
 }
 
 /* -- Stat card -- */
 .kawaii-stat-card {
-  padding: 12px;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  backdrop-filter: blur(8px);
-  transition: border-color 0.3s;
+  padding: 14px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(12px);
+  transition: border-color 0.3s, box-shadow 0.3s;
+  position: relative;
+  overflow: hidden;
+}
+
+.kawaii-stat-card::before {
+  content: "";
+  position: absolute;
+  top: -50%;
+  right: -50%;
+  width: 100%;
+  height: 100%;
+  background: radial-gradient(circle, var(--glow-color, rgba(148, 239, 244, 0.04)), transparent 70%);
+  pointer-events: none;
 }
 
 .kawaii-stat-card:hover {
-  border-color: rgba(168, 139, 250, 0.15);
+  border-color: rgba(148, 239, 244, 0.08);
+  box-shadow: 0 0 24px rgba(148, 239, 244, 0.025);
 }
 
 .kawaii-stat-value {
   font-size: 22px;
   font-weight: 700;
-  color: rgba(255, 255, 255, 0.9);
+  color: rgba(255, 255, 255, 0.88);
   font-family: "SF Mono", "Fira Code", monospace;
   line-height: 1.2;
 }
 
 .kawaii-stat-label {
   font-size: 10px;
-  color: rgba(255, 255, 255, 0.35);
+  color: rgba(255, 255, 255, 0.3);
   letter-spacing: 0.5px;
+  text-transform: uppercase;
 }
 
 /* -- Progress bar -- */
 .kawaii-progress-bar {
   height: 6px;
-  border-radius: 3px;
-  background: rgba(255, 255, 255, 0.06);
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.04);
   overflow: hidden;
   display: flex;
 }
@@ -1021,16 +1040,16 @@ html[data-page="intro"] #root {
   justify-content: center;
   gap: 6px;
   padding: 8px;
-  border-radius: 10px;
+  border-radius: 16px;
   background: transparent;
-  border: 1px dashed rgba(255, 255, 255, 0.06);
+  border: 1px dashed rgba(255, 255, 255, 0.04);
   cursor: pointer;
   transition: all 0.25s;
 }
 
 .kawaii-expand-btn:hover {
-  background: rgba(255, 255, 255, 0.02);
-  border-color: rgba(168, 139, 250, 0.15);
+  background: rgba(255, 255, 255, 0.015);
+  border-color: rgba(148, 239, 244, 0.1);
 }
 
 /* -- Collapsible -- */
@@ -1059,20 +1078,17 @@ html[data-page="intro"] #root {
 
 /* -- Option styling -- */
 option {
-  background: #1a1a2e;
-  color: white;
+  background: #0d0f1a;
+  color: rgba(255, 255, 255, 0.85);
 }
 
-/* ===== Confirm Card (Ping Island 级别) ===== */
+/* ===== Confirm Card — Bioluminescent Toast ===== */
 
 .confirm-card {
-  background: linear-gradient(165deg, rgba(20, 18, 35, 0.97) 0%, rgba(30, 25, 50, 0.97) 100%);
-  border: 1px solid rgba(251, 191, 36, 0.25);
-  border-radius: 16px;
-  box-shadow:
-    0 8px 32px rgba(0, 0, 0, 0.5),
-    0 0 0 1px rgba(251, 191, 36, 0.1),
-    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  background: rgba(9, 11, 20, 0.98);
+  border: 1px solid rgba(251, 191, 36, 0.12);
+  border-radius: 22px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
   overflow: hidden;
 }
 
@@ -1092,36 +1108,37 @@ option {
 .confirm-card-icon {
   width: 24px;
   height: 24px;
-  border-radius: 6px;
-  background: rgba(251, 191, 36, 0.15);
+  border-radius: 50%;
+  background: rgba(251, 191, 36, 0.1);
   display: flex;
   align-items: center;
   justify-content: center;
   color: #fbbf24;
+  box-shadow: 0 0 10px rgba(251, 191, 36, 0.12);
 }
 
 .confirm-tag {
   padding: 2px 8px;
-  border-radius: 6px;
+  border-radius: 9999px;
   font-size: 10px;
   font-weight: 600;
 }
 
 .confirm-tag-time {
-  background: rgba(255, 255, 255, 0.06);
-  color: rgba(255, 255, 255, 0.45);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.35);
 }
 
 .confirm-tag-client {
-  background: rgba(249, 115, 22, 0.15);
-  color: #fb923c;
+  background: rgba(249, 115, 22, 0.1);
+  color: rgba(251, 146, 60, 0.9);
 }
 
 .confirm-detail-box {
-  padding: 8px 10px;
-  background: rgba(0, 0, 0, 0.3);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 8px;
+  padding: 8px 12px;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.035);
+  border-radius: 14px;
   max-height: 100px;
   overflow-y: auto;
 }
@@ -1129,8 +1146,8 @@ option {
 .confirm-btn {
   flex: 1;
   padding: 8px 12px;
-  border-radius: 10px;
-  font-size: 13px;
+  border-radius: 9999px;
+  font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s ease;
@@ -1139,36 +1156,36 @@ option {
 }
 
 .confirm-btn-deny {
-  background: rgba(239, 68, 68, 0.12);
-  border-color: rgba(239, 68, 68, 0.25);
-  color: #f87171;
+  background: rgba(239, 68, 68, 0.08);
+  border-color: rgba(239, 68, 68, 0.15);
+  color: rgba(248, 113, 113, 0.9);
 }
 
 .confirm-btn-deny:hover {
-  background: rgba(239, 68, 68, 0.25);
-  box-shadow: 0 0 12px rgba(239, 68, 68, 0.15);
+  background: rgba(239, 68, 68, 0.15);
+  box-shadow: 0 0 16px rgba(239, 68, 68, 0.1);
 }
 
 .confirm-btn-always {
-  background: rgba(139, 92, 246, 0.12);
-  border-color: rgba(139, 92, 246, 0.25);
-  color: #a78bfa;
+  background: rgba(148, 239, 244, 0.06);
+  border-color: rgba(148, 239, 244, 0.15);
+  color: rgba(148, 239, 244, 0.9);
 }
 
 .confirm-btn-always:hover {
-  background: rgba(139, 92, 246, 0.25);
-  box-shadow: 0 0 12px rgba(139, 92, 246, 0.15);
+  background: rgba(148, 239, 244, 0.12);
+  box-shadow: 0 0 16px rgba(148, 239, 244, 0.08);
 }
 
 .confirm-btn-allow {
-  background: rgba(52, 211, 153, 0.12);
-  border-color: rgba(52, 211, 153, 0.25);
-  color: #34d399;
+  background: rgba(52, 211, 153, 0.08);
+  border-color: rgba(52, 211, 153, 0.15);
+  color: rgba(52, 211, 153, 0.9);
 }
 
 .confirm-btn-allow:hover {
-  background: rgba(52, 211, 153, 0.25);
-  box-shadow: 0 0 12px rgba(52, 211, 153, 0.15);
+  background: rgba(52, 211, 153, 0.15);
+  box-shadow: 0 0 16px rgba(52, 211, 153, 0.1);
 }
 
 .confirm-btn:active {
@@ -1177,12 +1194,13 @@ option {
 
 .confirm-kbd {
   display: inline-block;
-  padding: 1px 4px;
-  border-radius: 3px;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   font-family: "SF Mono", monospace;
   font-size: 9px;
+  color: rgba(255, 255, 255, 0.4);
 }
 
 /* ===== Jet Propulsion Bubbles ===== */

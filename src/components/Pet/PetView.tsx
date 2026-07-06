@@ -17,6 +17,8 @@ import { useVoiceCommand } from "../../hooks/useVoiceCommand";
 import { useKeyboardShortcuts } from "../../hooks/useKeyboardShortcuts";
 import { useAudioQueue } from "../../hooks/useAudioQueue";
 import { getPipeline } from "../../lib/bootstrap";
+import { t } from "../../lib/i18n";
+import { setLanguage } from "../../lib/i18n";
 import type { PipelineState } from "../../lib/pipeline";
 import type { AppConfig, HookEvent, VoiceCommand, TranscriptEntry } from "../../types";
 
@@ -33,7 +35,7 @@ const PIPELINE_TO_PET: Record<PipelineState, string> = {
 };
 
 const COMPACT_HEIGHT = 210;
-const OVERLAY_HEIGHT = 420;
+const OVERLAY_HEIGHT = 460;
 const PERMISSION_HEIGHT = 650;
 
 const appWindow = getCurrentWindow();
@@ -59,7 +61,10 @@ export function PetView() {
   const configRef = useRef<AppConfig | null>(null);
 
   useEffect(() => {
-    invoke<AppConfig>("get_config").then((cfg) => { configRef.current = cfg; }).catch(console.error);
+    invoke<AppConfig>("get_config").then((cfg) => {
+      configRef.current = cfg;
+      setLanguage(cfg.ui.language as "zh" | "en");
+    }).catch(console.error);
   }, []);
 
   const pendingPermission = permissionQueue[0] ?? null;
@@ -75,6 +80,7 @@ export function PetView() {
         const unique = [...new Set(sessions.map((s) => s.client_type))];
         setActiveClients(unique);
         configRef.current = cfg;
+        setLanguage(cfg.ui.language as "zh" | "en");
       } catch {
         // ignore
       }
@@ -251,8 +257,8 @@ export function PetView() {
         setQuestionEvent(latestEvent);
         setPetState("waiting");
         invoke("send_notification", {
-          title: "需要选择",
-          body: "等待你选择选项",
+          title: t("petview.needsChoice"),
+          body: t("petview.waitingChoice"),
         });
         setTimeout(() => setQuestionEvent(null), 60000);
         if (pipeline) {
@@ -280,17 +286,17 @@ export function PetView() {
 
       let detail = "";
       if (toolName === "Bash" && toolInput.command) {
-        detail = `\n命令: ${(toolInput.command as string).slice(0, 120)}`;
+        detail = `\n${t("petview.command")}: ${(toolInput.command as string).slice(0, 120)}`;
       } else if (
         (toolName === "Write" || toolName === "Edit" || toolName === "Read") &&
         toolInput.file_path
       ) {
-        detail = `\n文件: ${(toolInput.file_path as string).split("/").pop()}`;
+        detail = `\n${t("petview.file")}: ${(toolInput.file_path as string).split("/").pop()}`;
       }
 
       invoke("send_notification", {
-        title: `${toolName} 需要确认`,
-        body: `Claude Code 请求执行 ${toolName}${detail}`,
+        title: t("petview.needsApproval", { tool: toolName }),
+        body: `${t("petview.requestExec", { client: latestEvent.client_type || "Agent", tool: toolName })}${detail}`,
       });
 
       if (pipeline) {
@@ -311,7 +317,7 @@ export function PetView() {
       }
     } else if (eventName === "Notification") {
       playSound("processingStarted");
-      const notifText = (payload.message as string) ?? "收到通知";
+      const notifText = (payload.message as string) ?? t("petview.gotNotification");
       setNotification({
         id: latestEvent.id,
         text: notifText,
@@ -334,12 +340,12 @@ export function PetView() {
         setQuestionEvent(latestEvent);
         setPetState("waiting");
         invoke("send_notification", {
-          title: "需要选择",
-          body: "Claude Code 在等你选择选项",
+          title: t("petview.needsChoice"),
+          body: t("petview.ccWaitingChoice"),
         });
         setTimeout(() => setQuestionEvent(null), 60000);
       } else {
-        const action = eventName === "PreToolUse" ? "正在使用" : "已完成";
+        const action = eventName === "PreToolUse" ? t("petview.using") : t("petview.done");
         invoke("send_notification", {
           title: toolName,
           body: `${latestEvent.client_type} ${action} ${toolName}`,
@@ -403,8 +409,14 @@ export function PetView() {
     hoverTimer.current = setTimeout(() => setShowDashboard(false), 200);
   }, []);
 
+  const handleDashboardEnter = useCallback(() => {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    setShowDashboard(true);
+  }, []);
+
   const handleDashboardLeave = useCallback(() => {
-    setShowDashboard(false);
+    if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    hoverTimer.current = setTimeout(() => setShowDashboard(false), 200);
   }, []);
 
   const bubbleText =
@@ -414,16 +426,20 @@ export function PetView() {
 
   const hasOverlay = !!pendingPermission || !!notification || !!questionEvent;
 
+  // Ensure cursor events are never ignored at the OS level
+  useEffect(() => {
+    appWindow.setIgnoreCursorEvents(false).catch(() => {});
+  }, []);
+
   return (
     <div
-      className="w-full h-full flex flex-col items-center justify-end pb-6 select-none"
-      onContextMenu={handleContextMenu}
+      className="w-full h-full flex flex-col items-center justify-end pb-6 select-none pointer-events-none"
     >
       {/* Session dashboard — hover popup */}
       {showDashboard && !hasOverlay && (
         <div
-          className="w-64 mb-2"
-          onMouseEnter={() => setShowDashboard(true)}
+          className="w-64 pb-2 pointer-events-auto"
+          onMouseEnter={handleDashboardEnter}
           onMouseLeave={handleDashboardLeave}
         >
           <SessionDashboard visible={showDashboard} />
@@ -432,7 +448,7 @@ export function PetView() {
 
       {/* Completion panel */}
       {completionEvent && !pendingPermission && (
-        <div className="w-64 mb-3">
+        <div className="w-64 mb-3 pointer-events-auto">
           <CompletionPanel
             event={completionEvent}
             onDismiss={() => setCompletionEvent(null)}
@@ -442,7 +458,7 @@ export function PetView() {
 
       {/* Notification toast */}
       {notification && !pendingPermission && !completionEvent && (
-        <div className="w-64 mb-3">
+        <div className="w-64 mb-3 pointer-events-auto">
           <NotificationToast
             entry={notification}
             onDismiss={() => setNotification(null)}
@@ -452,7 +468,7 @@ export function PetView() {
 
       {/* AskUserQuestion — show options, type selection into terminal */}
       {questionEvent && !pendingPermission && windowReady && (
-        <div className="w-72 mb-3">
+        <div className="w-72 mb-3 pointer-events-auto">
           <QuestionToast
             event={questionEvent}
             onDismiss={() => { setQuestionEvent(null); setPetState("idle"); }}
@@ -462,15 +478,15 @@ export function PetView() {
 
       {/* Permission confirmation — wait for window expansion */}
       {pendingPermission && windowReady && (
-        <div className="w-72 mb-3">
+        <div className="w-72 mb-3 pointer-events-auto">
           <ConfirmToast
             event={pendingPermission}
             onConfirm={handleConfirm}
             onDismiss={handleDismiss}
           />
           {queueLength > 1 && (
-            <div className="text-center mt-1.5 text-[10px] text-white/40">
-              +{queueLength - 1} 个待确认
+            <div className="text-center mt-1.5 text-[10px] text-white/40 pointer-events-auto">
+              {t("petview.pending", { n: queueLength - 1 })}
             </div>
           )}
         </div>
@@ -481,7 +497,7 @@ export function PetView() {
 
       {/* Pet body — draggable, hover → dashboard, right-click → settings */}
       <div
-        className="relative cursor-grab active:cursor-grabbing"
+        className="relative cursor-grab active:cursor-grabbing pointer-events-auto"
         onMouseDown={handleMouseDown}
         onMouseUp={handleMouseUp}
         onMouseEnter={handlePetEnter}
@@ -539,8 +555,6 @@ function getBubbleText(state: string): string {
       return "!";
     case "listening":
       return "...";
-    case "completed":
-      return "嘿嘿~";
     default:
       return "";
   }

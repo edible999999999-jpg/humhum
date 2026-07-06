@@ -33,11 +33,12 @@
         "width": 420,
         "height": 620,
         "decorations": false,
-        "transparent": false,
+        "transparent": true,
         "skipTaskbar": false,
         "resizable": true,
         "focus": true,
         "visible": false,
+        "shadow": false,
         "url": "index.html"
       }
     ],

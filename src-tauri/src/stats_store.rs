@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io::BufRead;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
@@ -26,6 +26,10 @@ pub struct DailyBucket {
     pub total_tokens: u64,
     pub input_tokens: u64,
     pub output_tokens: u64,
+    #[serde(default)]
+    pub cache_creation_tokens: u64,
+    #[serde(default)]
+    pub cache_read_tokens: u64,
     pub tool_calls: u64,
     pub session_count: u64,
     pub estimated_cost_usd: f64,
@@ -223,11 +227,13 @@ impl StatsStore {
             .filter(|s| s.len() == 10)
             .unwrap_or_else(|| "");
         let bucket_date = if day.is_empty() {
-            chrono::Utc::now().format("%Y-%m-%d").to_string()
+            chrono::Local::now().format("%Y-%m-%d").to_string()
         } else {
             day.to_string()
         };
         let cost = calculate_cost(stats);
+        let all_tokens = stats.input_tokens + stats.output_tokens
+            + stats.cache_creation_tokens + stats.cache_read_tokens;
 
         if let Some(bucket) = self
             .data
@@ -235,9 +241,11 @@ impl StatsStore {
             .iter_mut()
             .find(|b| b.date == bucket_date)
         {
-            bucket.total_tokens += stats.input_tokens + stats.output_tokens;
+            bucket.total_tokens += all_tokens;
             bucket.input_tokens += stats.input_tokens;
             bucket.output_tokens += stats.output_tokens;
+            bucket.cache_creation_tokens += stats.cache_creation_tokens;
+            bucket.cache_read_tokens += stats.cache_read_tokens;
             bucket.tool_calls += stats.tool_calls;
             bucket.session_count += 1;
             bucket.estimated_cost_usd += cost;
@@ -247,9 +255,11 @@ impl StatsStore {
             clients.insert(stats.client_type.clone(), 1);
             self.data.daily_buckets.push(DailyBucket {
                 date: bucket_date,
-                total_tokens: stats.input_tokens + stats.output_tokens,
+                total_tokens: all_tokens,
                 input_tokens: stats.input_tokens,
                 output_tokens: stats.output_tokens,
+                cache_creation_tokens: stats.cache_creation_tokens,
+                cache_read_tokens: stats.cache_read_tokens,
                 tool_calls: stats.tool_calls,
                 session_count: 1,
                 estimated_cost_usd: cost,
@@ -268,31 +278,25 @@ impl StatsStore {
     }
 
     fn prune_old_data(&mut self) {
-        let cutoff = chrono::Utc::now() - chrono::Duration::days(30);
+        let cutoff = chrono::Local::now() - chrono::Duration::days(30);
         let cutoff_str = cutoff.format("%Y-%m-%d").to_string();
 
         self.data.daily_buckets.retain(|b| b.date >= cutoff_str);
         self.data.sessions.retain(|s| s.timestamp >= cutoff_str);
 
         if self.data.processed_transcripts.len() > 500 {
-            let half = self.data.processed_transcripts.len() / 2;
-            let keep: HashSet<String> = self
-                .data
-                .processed_transcripts
-                .iter()
-                .skip(half)
-                .cloned()
-                .collect();
-            self.data.processed_transcripts = keep;
+            let sorted: BTreeSet<String> = self.data.processed_transcripts.iter().cloned().collect();
+            let keep_count = sorted.len() / 2;
+            self.data.processed_transcripts = sorted.into_iter().skip(keep_count).collect();
         }
     }
 
     pub fn get_aggregated_stats(&self) -> AggregatedStats {
-        let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
-        let d7 = (chrono::Utc::now() - chrono::Duration::days(7))
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        let d7 = (chrono::Local::now() - chrono::Duration::days(7))
             .format("%Y-%m-%d")
             .to_string();
-        let d30 = (chrono::Utc::now() - chrono::Duration::days(30))
+        let d30 = (chrono::Local::now() - chrono::Duration::days(30))
             .format("%Y-%m-%d")
             .to_string();
 
@@ -308,8 +312,7 @@ impl StatsStore {
         let mut cost_7d = 0.0f64;
         let mut cost_30d = 0.0f64;
 
-        // 24h window for active agents
-        let active_cutoff = (chrono::Utc::now() - chrono::Duration::hours(24)).to_rfc3339();
+        let active_cutoff = (chrono::Local::now() - chrono::Duration::hours(24)).to_rfc3339();
         let mut active_clients: HashSet<String> = HashSet::new();
 
         for s in &self.data.sessions {
@@ -344,7 +347,7 @@ impl StatsStore {
         tool_names.sort();
 
         AggregatedStats {
-            total_tokens: total_in + total_out,
+            total_tokens: total_in + total_out + total_cache_create + total_cache_read,
             total_input_tokens: total_in,
             total_output_tokens: total_out,
             total_cache_creation_tokens: total_cache_create,
@@ -399,17 +402,27 @@ fn parse_transcript(
     };
 
     let reader = std::io::BufReader::new(file);
-    let mut input_tokens = 0u64;
-    let mut output_tokens = 0u64;
-    let mut cache_creation = 0u64;
-    let mut cache_read = 0u64;
-    let mut tool_calls = 0u64;
     let mut tool_set: HashSet<String> = HashSet::new();
+    let mut tool_use_ids: HashSet<String> = HashSet::new();
+    let mut codex_tool_calls = 0u64;
     let mut model = String::new();
     let mut effective_session_id = session_id.to_string();
     let mut codex_input_tokens: Option<u64> = None;
     let mut codex_output_tokens: Option<u64> = None;
     let mut codex_cache_read_tokens: Option<u64> = None;
+    let mut first_message_timestamp: Option<String> = None;
+
+    // Claude Code transcripts log each assistant message multiple times
+    // (streaming intermediate states). Deduplicate by message.id,
+    // keeping only the last (most complete) usage for each message.
+    struct MsgUsage {
+        input: u64,
+        output: u64,
+        cache_create: u64,
+        cache_read: u64,
+    }
+    let mut msg_usages: HashMap<String, MsgUsage> = HashMap::new();
+    let mut anonymous_msg_counter = 0u64;
 
     for line in reader.lines() {
         let line = match line {
@@ -426,6 +439,15 @@ fn parse_transcript(
         };
 
         let entry_type = val.get("type").and_then(|v| v.as_str()).unwrap_or("");
+
+        // Extract timestamp from the first entry that has one
+        if first_message_timestamp.is_none() {
+            if let Some(ts) = val.get("timestamp").and_then(|v| v.as_str()) {
+                if !ts.is_empty() {
+                    first_message_timestamp = Some(ts.to_string());
+                }
+            }
+        }
 
         if entry_type == "session_meta" {
             if let Some(payload) = val.get("payload") {
@@ -457,24 +479,25 @@ fn parse_transcript(
             }
 
             if let Some(msg) = val.get("message") {
-                // Extract usage
+                // Use message.id to deduplicate; fall back to a unique counter
+                let msg_id = msg
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| {
+                        anonymous_msg_counter += 1;
+                        format!("__anon_{}", anonymous_msg_counter)
+                    });
+
                 if let Some(usage) = msg.get("usage") {
-                    input_tokens += usage
-                        .get("input_tokens")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0);
-                    output_tokens += usage
-                        .get("output_tokens")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0);
-                    cache_creation += usage
-                        .get("cache_creation_input_tokens")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0);
-                    cache_read += usage
-                        .get("cache_read_input_tokens")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0);
+                    let u = MsgUsage {
+                        input: usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+                        output: usage.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+                        cache_create: usage.get("cache_creation_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+                        cache_read: usage.get("cache_read_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+                    };
+                    // Overwrite: later entries for the same message have the final usage
+                    msg_usages.insert(msg_id.clone(), u);
                 }
 
                 // Extract model
@@ -482,11 +505,16 @@ fn parse_transcript(
                     model = m.to_string();
                 }
 
-                // Count tool uses
                 if let Some(content) = msg.get("content").and_then(|v| v.as_array()) {
                     for item in content {
                         if item.get("type").and_then(|v| v.as_str()) == Some("tool_use") {
-                            tool_calls += 1;
+                            let tool_id = item.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                            let dedup_key = if tool_id.is_empty() {
+                                format!("{}_{}", msg_id, item.get("name").and_then(|v| v.as_str()).unwrap_or(""))
+                            } else {
+                                tool_id.to_string()
+                            };
+                            tool_use_ids.insert(dedup_key);
                             if let Some(name) = item.get("name").and_then(|v| v.as_str()) {
                                 tool_set.insert(name.to_string());
                             }
@@ -510,7 +538,7 @@ fn parse_transcript(
                 }
 
                 if payload.get("type").and_then(|v| v.as_str()) == Some("function_call") {
-                    tool_calls += 1;
+                    codex_tool_calls += 1;
                     if let Some(name) = payload.get("name").and_then(|v| v.as_str()) {
                         tool_set.insert(name.to_string());
                     }
@@ -519,6 +547,14 @@ fn parse_transcript(
         }
     }
 
+    // Sum deduplicated message usages
+    let (mut input_tokens, mut output_tokens, mut cache_creation, mut cache_read) =
+        msg_usages.values().fold((0u64, 0u64, 0u64, 0u64), |acc, u| {
+            (acc.0 + u.input, acc.1 + u.output, acc.2 + u.cache_create, acc.3 + u.cache_read)
+        });
+    let mut tool_calls = tool_use_ids.len() as u64;
+
+    // Codex uses cumulative token_count events instead of per-message usage
     if let Some(v) = codex_input_tokens {
         input_tokens = v;
     }
@@ -528,6 +564,9 @@ fn parse_transcript(
     if let Some(v) = codex_cache_read_tokens {
         cache_read = v;
     }
+    if codex_tool_calls > 0 {
+        tool_calls = codex_tool_calls;
+    }
 
     if input_tokens == 0 && output_tokens == 0 {
         return None;
@@ -535,6 +574,20 @@ fn parse_transcript(
 
     let mut tool_names: Vec<String> = tool_set.into_iter().collect();
     tool_names.sort();
+
+    // Prefer timestamp from inside the transcript (first message),
+    // fall back to file modification time, then current time
+    let timestamp = first_message_timestamp
+        .unwrap_or_else(|| {
+            path.metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .map(|t| {
+                    let dt: chrono::DateTime<chrono::Local> = t.into();
+                    dt.to_rfc3339()
+                })
+                .unwrap_or_else(|| chrono::Local::now().to_rfc3339())
+        });
 
     Some(SessionStats {
         session_id: effective_session_id,
@@ -547,7 +600,7 @@ fn parse_transcript(
         cache_read_tokens: cache_read,
         tool_calls,
         tool_names,
-        timestamp: chrono::Utc::now().to_rfc3339(),
+        timestamp,
     })
 }
 
@@ -571,7 +624,7 @@ mod tests {
     fn parses_claude_usage_from_assistant_messages() {
         let path = write_temp_jsonl(
             "claude",
-            r#"{"type":"assistant","message":{"model":"claude-sonnet","usage":{"input_tokens":10,"output_tokens":3,"cache_creation_input_tokens":5,"cache_read_input_tokens":7},"content":[{"type":"tool_use","name":"Bash"}]}}"#,
+            r#"{"type":"assistant","message":{"id":"msg_01","model":"claude-sonnet","usage":{"input_tokens":10,"output_tokens":3,"cache_creation_input_tokens":5,"cache_read_input_tokens":7},"content":[{"type":"tool_use","id":"tu_01","name":"Bash"}]}}"#,
         );
 
         let stats = parse_transcript(&path, "s1", "claude-code").unwrap();
@@ -581,6 +634,32 @@ mod tests {
         assert_eq!(stats.cache_read_tokens, 7);
         assert_eq!(stats.tool_calls, 1);
         assert_eq!(stats.tool_names, vec!["Bash"]);
+    }
+
+    #[test]
+    fn deduplicates_streaming_assistant_messages() {
+        // Claude Code logs each assistant message multiple times during streaming.
+        // Only the last occurrence (with final usage) should be counted.
+        let path = write_temp_jsonl(
+            "dedup",
+            &[
+                r#"{"type":"assistant","message":{"id":"msg_01","model":"claude-sonnet","usage":{"input_tokens":100,"output_tokens":5,"cache_creation_input_tokens":0,"cache_read_input_tokens":50},"content":[]}}"#,
+                r#"{"type":"assistant","message":{"id":"msg_01","model":"claude-sonnet","usage":{"input_tokens":100,"output_tokens":20,"cache_creation_input_tokens":0,"cache_read_input_tokens":50},"content":[{"type":"tool_use","id":"tu_01","name":"Read"}]}}"#,
+                r#"{"type":"assistant","message":{"id":"msg_01","model":"claude-sonnet","usage":{"input_tokens":100,"output_tokens":35,"cache_creation_input_tokens":0,"cache_read_input_tokens":50},"content":[{"type":"tool_use","id":"tu_01","name":"Read"},{"type":"tool_use","id":"tu_02","name":"Bash"}]}}"#,
+                r#"{"type":"assistant","message":{"id":"msg_02","model":"claude-sonnet","usage":{"input_tokens":200,"output_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":80},"content":[{"type":"tool_use","id":"tu_03","name":"Bash"}]}}"#,
+            ]
+            .join("\n"),
+        );
+
+        let stats = parse_transcript(&path, "s1", "claude-code").unwrap();
+        // msg_01 final: 100 input, 35 output, 50 cache_read
+        // msg_02 final: 200 input, 10 output, 80 cache_read
+        assert_eq!(stats.input_tokens, 300);
+        assert_eq!(stats.output_tokens, 45);
+        assert_eq!(stats.cache_read_tokens, 130);
+        // 3 unique tool_use ids: tu_01, tu_02, tu_03
+        assert_eq!(stats.tool_calls, 3);
+        assert_eq!(stats.tool_names, vec!["Bash", "Read"]);
     }
 
     #[test]

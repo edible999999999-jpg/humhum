@@ -1,18 +1,10 @@
+import { t } from "@/lib/i18n";
 import type { HookEvent } from "@/types";
 
 interface CompletionPanelProps {
   event: HookEvent;
   onDismiss: () => void;
 }
-
-const CLIENT_TINTS: Record<string, string> = {
-  "claude-code": "border-l-orange-400",
-  codex: "border-l-white",
-  "qwen-code": "border-l-blue-400",
-  "gemini-cli": "border-l-cyan-400",
-  "kimi-k1": "border-l-purple-400",
-  qoderwork: "border-l-rose-400",
-};
 
 const CLIENT_LABELS: Record<string, string> = {
   "claude-code": "Claude",
@@ -27,57 +19,55 @@ export function CompletionPanel({ event, onDismiss }: CompletionPanelProps) {
   const payload = event.payload as Record<string, unknown>;
   const clientType = event.client_type ?? "claude-code";
   const clientLabel = CLIENT_LABELS[clientType] ?? clientType;
-  const tintClass = CLIENT_TINTS[clientType] ?? "border-l-slate-400";
 
   const message = (payload.message as string) ?? null;
   const eventName = event.hook_event_name;
 
-  const statusLabel =
-    eventName === "TaskCompleted" ? "完成" :
-    eventName === "Stop" ? "结束" : "通知";
+  const isCompleted = eventName === "TaskCompleted";
+  const statusLabel = isCompleted
+    ? t("completion.completed")
+    : eventName === "Stop"
+      ? t("completion.stopped")
+      : t("completion.notification");
 
-  const statusColor =
-    eventName === "TaskCompleted" ? "text-emerald-400" :
-    eventName === "Stop" ? "text-slate-400" : "text-blue-400";
+  const accent = isCompleted
+    ? { border: "rgba(52, 211, 153, 0.12)", glow: "rgba(52, 211, 153, 0.03)", icon: "rgba(52, 211, 153, 0.8)", bg: "rgba(52, 211, 153, 0.08)" }
+    : { border: "rgba(148, 239, 244, 0.12)", glow: "rgba(148, 239, 244, 0.03)", icon: "rgba(148, 239, 244, 0.8)", bg: "rgba(148, 239, 244, 0.08)" };
 
   return (
     <div
-      className={`
-        toast-enter
-        bg-slate-900/95 backdrop-blur-xl rounded-xl
-        border border-white/10 border-l-2 ${tintClass}
-        shadow-2xl overflow-hidden
-      `}
+      className="confirm-card toast-enter pointer-events-auto"
+      style={{ borderColor: accent.border, boxShadow: `0 2px 8px rgba(0,0,0,0.3)` }}
     >
-      {/* Header: client + status */}
-      <div className="px-3 py-2 border-b border-white/5 flex items-center justify-between">
+      {/* Header */}
+      <div className="flex items-center justify-between px-3 pt-2.5 pb-1.5">
         <div className="flex items-center gap-2">
-          <span className="text-[11px] font-semibold text-white/70">
-            {clientLabel}
-          </span>
-          <span className={`text-[10px] font-bold ${statusColor}`}>
-            {statusLabel}
-          </span>
+          <div
+            className="w-5 h-5 rounded-full flex items-center justify-center"
+            style={{ background: accent.bg, color: accent.icon }}
+          >
+            {isCompleted ? (
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+            ) : (
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <rect x="9" y="9" width="6" height="6" rx="1" />
+              </svg>
+            )}
+          </div>
+          <span className="text-white/80 font-semibold text-[13px]">{statusLabel}</span>
+          <span className="confirm-tag confirm-tag-client">{clientLabel}</span>
         </div>
-        <button
-          onClick={onDismiss}
-          className="text-white/30 hover:text-white text-xs transition-colors"
-        >
-          ×
-        </button>
+        <button onClick={onDismiss} className="text-white/20 hover:text-white/50 text-xs transition-colors leading-none">✕</button>
       </div>
 
       {/* Content */}
-      <div className="px-3 py-2.5">
-        {message ? (
-          <p className="text-[11px] text-white/80 leading-relaxed line-clamp-4">
-            {message}
-          </p>
-        ) : (
-          <p className="text-[11px] text-white/50 italic">
-            {clientLabel} 会话{statusLabel}
-          </p>
-        )}
+      <div className="px-3 pb-2.5">
+        <p className="text-[12px] text-white/55 leading-snug line-clamp-3">
+          {message || t("completion.fallback", { client: clientLabel, status: statusLabel })}
+        </p>
       </div>
     </div>
   );

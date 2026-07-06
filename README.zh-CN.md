@@ -1,5 +1,9 @@
 # HumHum
 
+[![CI](https://github.com/edible999999999-jpg/humhum/actions/workflows/ci.yml/badge.svg)](https://github.com/edible999999999-jpg/humhum/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![GitHub release](https://img.shields.io/github/v/release/edible999999999-jpg/humhum)](https://github.com/edible999999999-jpg/humhum/releases)
+
 [English](./README.md)
 
 **Developer Podcast Pet** — 开发者的播客桌宠

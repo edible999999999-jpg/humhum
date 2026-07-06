@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { AppConfig } from "@/types";
+import { setLanguage } from "./i18n";
 import { EdgeTTSProvider } from "./tts/edge-tts";
 import { OpenAITTSProvider } from "./tts/openai-tts";
 import { ElevenLabsProvider } from "./tts/elevenlabs";
@@ -41,6 +42,7 @@ export async function initBootstrap(): Promise<void> {
   initialized = true;
 
   const config = (await invoke("get_config")) as AppConfig;
+  setLanguage(config.ui.language as "zh" | "en");
 
   // --- TTS Providers ---
   const edgeTts = new EdgeTTSProvider(config.tts.edge_bridge_url);

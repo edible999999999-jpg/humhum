@@ -1,5 +1,6 @@
 import { Suspense, lazy, useState, useEffect } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { ErrorBoundary } from "./components/common/ErrorBoundary";
 import { IntroPage } from "./components/Intro/IntroPage";
 import { initBootstrap } from "./lib/bootstrap";
 
@@ -31,11 +32,11 @@ export default function App() {
     return <IntroPage />;
   }
 
-  if (windowLabel === "settings") {
-    return <SettingsWindow />;
-  }
-
-  return <PetWindow />;
+  return (
+    <ErrorBoundary>
+      {windowLabel === "settings" ? <SettingsWindow /> : <PetWindow />}
+    </ErrorBoundary>
+  );
 }
 
 // ===== Pet Window (main) =====

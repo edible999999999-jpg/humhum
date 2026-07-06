@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { useTranslation } from "@/lib/i18n/react";
 
 interface DailyBucket {
   date: string;
@@ -39,12 +40,12 @@ const CLIENT_LABELS: Record<string, string> = {
 };
 
 const CLIENT_COLORS: Record<string, string> = {
-  "claude-code": "bg-orange-500",
-  codex: "bg-zinc-100 ring-1 ring-white/40",
-  "qwen-code": "bg-blue-500",
-  "gemini-cli": "bg-cyan-500",
-  "kimi-k1": "bg-purple-500",
-  qoderwork: "bg-green-400",
+  "claude-code": "bg-orange-500/80",
+  codex: "bg-emerald-500/80",
+  "qwen-code": "bg-blue-500/80",
+  "gemini-cli": "bg-cyan-400/80",
+  "kimi-k1": "bg-purple-500/80",
+  qoderwork: "bg-rose-400/80",
 };
 
 function formatTokens(n: number): string {
@@ -61,6 +62,7 @@ function formatCost(usd: number): string {
 }
 
 export function StatsPanel() {
+  const { t } = useTranslation();
   const [stats, setStats] = useState<AggregatedStats | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -80,7 +82,7 @@ export function StatsPanel() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
-        <span className="text-white/30 text-xs">加载统计数据...</span>
+        <span className="text-white/30 text-xs">{t("stats.loading")}</span>
       </div>
     );
   }
@@ -88,7 +90,7 @@ export function StatsPanel() {
   if (!stats) {
     return (
       <div className="flex items-center justify-center py-12">
-        <span className="text-white/30 text-xs">无法加载统计数据</span>
+        <span className="text-white/30 text-xs">{t("stats.loadFailed")}</span>
       </div>
     );
   }
@@ -102,9 +104,9 @@ export function StatsPanel() {
           <line x1="18" y1="20" x2="18" y2="10" /><line x1="12" y1="20" x2="12" y2="4" /><line x1="6" y1="20" x2="6" y2="14" />
         </svg>
         <p className="text-white/40 text-xs text-center leading-relaxed">
-          暂无统计数据<br />
+          {t("stats.noData")}<br />
           <span className="text-white/25">
-            使用 AI 编程助手后，统计数据将自动记录
+            {t("stats.noDataHint")}
           </span>
         </p>
       </div>
@@ -122,98 +124,96 @@ export function StatsPanel() {
     <div className="space-y-3">
       {/* Section title */}
       <div className="mb-1">
-        <h2 className="text-sm font-semibold text-white/85">统计</h2>
-        <p className="text-[10px] text-white/30 mt-0.5">
-          查看 Agent、Token、工具调用与活跃概览
+        <h2 className="text-[13px] font-semibold text-white/75">{t("stats.title")}</h2>
+        <p className="text-[10px] text-white/25 mt-0.5">
+          {t("stats.subtitle")}
         </p>
       </div>
 
       {/* 2x2 Stat Cards */}
       <div className="grid grid-cols-2 gap-2">
         <StatCard
-          label="Token 消耗"
+          label={t("stats.tokenUsage")}
           value={formatTokens(stats.total_tokens)}
-          subtitle={`输入 ${formatTokens(stats.total_input_tokens)} / 输出 ${formatTokens(stats.total_output_tokens)}`}
+          subtitle={t("stats.tokenBreakdown", { input: formatTokens(stats.total_input_tokens), output: formatTokens(stats.total_output_tokens) })}
           sparkData={tokenSpark}
-          color="rgba(251, 191, 36, 0.6)"
-          fillColor="rgba(251, 191, 36, 0.08)"
-          iconColor="text-amber-400/80"
-          icon="⬡"
+          color="rgba(148, 239, 244, 0.6)"
+          fillColor="rgba(148, 239, 244, 0.06)"
+          glowColor="rgba(148, 239, 244, 0.04)"
         />
         <StatCard
-          label="活跃 Agent"
+          label={t("stats.activeAgents")}
           value={String(stats.active_agents)}
-          subtitle="本周期出现的客户端类型"
+          subtitle={t("stats.agentSubtitle")}
           sparkData={sessionSpark}
-          color="rgba(96, 165, 250, 0.6)"
-          fillColor="rgba(96, 165, 250, 0.08)"
-          iconColor="text-blue-400/80"
-          icon="◉"
+          color="rgba(94, 224, 232, 0.5)"
+          fillColor="rgba(94, 224, 232, 0.06)"
+          glowColor="rgba(94, 224, 232, 0.04)"
         />
         <StatCard
-          label="工具调用"
+          label={t("stats.toolCalls")}
           value={formatTokens(stats.total_tool_calls)}
-          subtitle="去重后的工具调用次数"
+          subtitle={t("stats.toolSubtitle")}
           sparkData={toolSpark}
-          color="rgba(251, 191, 36, 0.6)"
-          fillColor="rgba(251, 191, 36, 0.08)"
-          iconColor="text-amber-400/80"
-          icon="⚙"
+          color="rgba(255, 214, 158, 0.5)"
+          fillColor="rgba(255, 214, 158, 0.06)"
+          glowColor="rgba(255, 214, 158, 0.04)"
         />
         <StatCard
-          label="会话数"
+          label={t("stats.sessions")}
           value={String(stats.total_sessions)}
-          subtitle={`按 agent 类型去重后的会话`}
+          subtitle={t("stats.sessionSubtitle")}
           sparkData={sessionSpark}
-          color="rgba(52, 211, 153, 0.6)"
-          fillColor="rgba(52, 211, 153, 0.08)"
-          iconColor="text-emerald-400/80"
-          icon="◬"
+          color="rgba(52, 211, 153, 0.5)"
+          fillColor="rgba(52, 211, 153, 0.06)"
+          glowColor="rgba(52, 211, 153, 0.04)"
         />
       </div>
 
       {/* Cost Estimation */}
       <section className="kawaii-card">
-        <h3 className="text-xs font-semibold text-white/70 mb-3">Token 费用预估</h3>
+        <h3 className="text-[11px] font-semibold text-white/50 mb-3 uppercase tracking-wider">{t("stats.costTitle")}</h3>
         <div className="grid grid-cols-3 gap-3">
-          <CostItem label="今日" cost={stats.cost_today_usd} />
-          <CostItem label="7 天" cost={stats.cost_7d_usd} />
-          <CostItem label="30 天" cost={stats.cost_30d_usd} />
+          <CostItem label={t("stats.today")} cost={stats.cost_today_usd} />
+          <CostItem label={t("stats.days7")} cost={stats.cost_7d_usd} />
+          <CostItem label={t("stats.days30")} cost={stats.cost_30d_usd} />
         </div>
       </section>
 
       {/* Token Breakdown */}
       <section className="kawaii-card">
-        <h3 className="text-xs font-semibold text-white/70 mb-3">Token 分布</h3>
+        <h3 className="text-[11px] font-semibold text-white/50 mb-3 uppercase tracking-wider">{t("stats.tokenDist")}</h3>
         <div className="kawaii-progress-bar mb-2">
           <div
             className="kawaii-progress-segment"
             style={{
               width: `${inputPct}%`,
-              background: "rgba(99, 102, 241, 0.7)",
+              background: "rgba(148, 239, 244, 0.5)",
+              borderRadius: "3px 0 0 3px",
             }}
           />
           <div
             className="kawaii-progress-segment"
             style={{
               width: `${outputPct}%`,
-              background: "rgba(168, 139, 250, 0.7)",
+              background: "rgba(255, 214, 158, 0.45)",
+              borderRadius: "0 3px 3px 0",
             }}
           />
         </div>
-        <div className="flex justify-between text-[10px] text-white/40">
+        <div className="flex justify-between text-[10px] text-white/35">
           <span>
-            <span className="inline-block w-2 h-2 rounded-sm mr-1" style={{ background: "rgba(99, 102, 241, 0.7)" }} />
-            输入 {inputPct.toFixed(0)}%
+            <span className="inline-block w-1.5 h-1.5 rounded-full mr-1" style={{ background: "rgba(148, 239, 244, 0.6)" }} />
+            {t("stats.input")} {inputPct.toFixed(0)}%
           </span>
           <span>
-            <span className="inline-block w-2 h-2 rounded-sm mr-1" style={{ background: "rgba(168, 139, 250, 0.7)" }} />
-            输出 {outputPct.toFixed(0)}%
+            <span className="inline-block w-1.5 h-1.5 rounded-full mr-1" style={{ background: "rgba(255, 214, 158, 0.6)" }} />
+            {t("stats.output")} {outputPct.toFixed(0)}%
           </span>
         </div>
         {stats.total_cache_creation_tokens + stats.total_cache_read_tokens > 0 && (
-          <div className="mt-2 text-[10px] text-white/25">
-            缓存写入 {formatTokens(stats.total_cache_creation_tokens)} / 缓存读取 {formatTokens(stats.total_cache_read_tokens)}
+          <div className="mt-2 text-[10px] text-white/20">
+            {t("stats.cacheWrite")} {formatTokens(stats.total_cache_creation_tokens)} · {t("stats.cacheRead")} {formatTokens(stats.total_cache_read_tokens)}
           </div>
         )}
       </section>
@@ -221,25 +221,23 @@ export function StatsPanel() {
       {/* Sessions by Client */}
       {Object.keys(stats.sessions_by_client).length > 0 && (
         <section className="kawaii-card">
-          <h3 className="text-xs font-semibold text-white/70 mb-3">Agent 分布</h3>
+          <h3 className="text-[11px] font-semibold text-white/50 mb-3 uppercase tracking-wider">{t("stats.agentDist")}</h3>
           <div className="space-y-2">
             {Object.entries(stats.sessions_by_client)
               .sort(([, a], [, b]) => b - a)
-              .map(([client, count]) => {
-                const clientTextColor = client === "codex" ? "text-slate-950" : "text-white";
-
-                return (
+              .map(([client, count]) => (
                 <div key={client} className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <span
-                      className={`${CLIENT_COLORS[client] ?? "bg-slate-500"} ${clientTextColor} text-[8px] font-bold px-1.5 py-0.5 rounded-sm uppercase`}
-                    >
+                      className={`w-1.5 h-1.5 rounded-full ${CLIENT_COLORS[client] ?? "bg-slate-500"}`}
+                    />
+                    <span className="text-[12px] text-white/60">
                       {CLIENT_LABELS[client] ?? client}
                     </span>
                   </div>
                   <span className="kawaii-badge">{count}</span>
                 </div>
-              )})}
+              ))}
           </div>
         </section>
       )}
@@ -247,7 +245,7 @@ export function StatsPanel() {
       {/* Tool Names */}
       {stats.unique_tool_names.length > 0 && (
         <section className="kawaii-card">
-          <h3 className="text-xs font-semibold text-white/70 mb-3">使用的工具</h3>
+          <h3 className="text-[11px] font-semibold text-white/50 mb-3 uppercase tracking-wider">{t("stats.toolsUsed")}</h3>
           <div className="flex flex-wrap gap-1.5">
             {stats.unique_tool_names.map((name) => (
               <span key={name} className="kawaii-badge text-[10px]">
@@ -268,8 +266,7 @@ function StatCard({
   sparkData,
   color,
   fillColor,
-  iconColor,
-  icon,
+  glowColor,
 }: {
   label: string;
   value: string;
@@ -277,17 +274,13 @@ function StatCard({
   sparkData: number[];
   color: string;
   fillColor: string;
-  iconColor: string;
-  icon: string;
+  glowColor: string;
 }) {
   return (
-    <div className="kawaii-stat-card">
-      <div className="flex items-center gap-1.5 mb-1">
-        <span className={`text-sm ${iconColor}`}>{icon}</span>
-        <span className="kawaii-stat-label">{label}</span>
-      </div>
-      <div className="kawaii-stat-value">{value}</div>
-      <div className="text-[9px] text-white/25 mt-0.5 leading-tight">{subtitle}</div>
+    <div className="kawaii-stat-card" style={{ "--glow-color": glowColor } as React.CSSProperties}>
+      <span className="kawaii-stat-label">{label}</span>
+      <div className="kawaii-stat-value mt-1">{value}</div>
+      <div className="text-[9px] text-white/20 mt-0.5 leading-tight">{subtitle}</div>
       {sparkData.length >= 2 && (
         <Sparkline data={sparkData} color={color} fillColor={fillColor} />
       )}
@@ -298,8 +291,8 @@ function StatCard({
 function CostItem({ label, cost }: { label: string; cost: number }) {
   return (
     <div className="text-center">
-      <div className="text-[10px] text-white/35 mb-1">{label}</div>
-      <div className="text-lg font-bold text-white/85 font-mono">
+      <div className="text-[10px] text-white/30 mb-1">{label}</div>
+      <div className="text-lg font-bold text-white/80 font-mono">
         {formatCost(cost)}
       </div>
     </div>

@@ -105,7 +105,7 @@ pub fn run() {
 }
 
 #[cfg(target_os = "macos")]
-fn reassert_window_level(window: &tauri::WebviewWindow) {
+pub(crate) fn reassert_window_level(window: &tauri::WebviewWindow) {
     use cocoa::base::id;
     use objc::{msg_send, sel, sel_impl};
 
@@ -199,7 +199,7 @@ fn apply_macos_transparency(window: &tauri::WebviewWindow) {
 }
 
 #[cfg(target_os = "macos")]
-fn move_to_skylight_space(ns_window: cocoa::base::id) {
+pub(crate) fn move_to_skylight_space(ns_window: cocoa::base::id) {
     use cocoa::base::id;
     use objc::{class, msg_send, sel, sel_impl};
     use std::ffi::CString;

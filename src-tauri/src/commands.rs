@@ -166,7 +166,7 @@ pub async fn uninstall_hooks() -> Result<String, String> {
     let mut settings: Value =
         serde_json::from_str(&content).unwrap_or(serde_json::json!({}));
 
-    // Remove HumHum hook events
+    // Remove only HumHum hook entries, preserve other tools' hooks
     if let Some(hooks) = settings.get_mut("hooks").and_then(|h| h.as_object_mut()) {
         let events = [
             "PermissionRequest",
@@ -175,7 +175,23 @@ pub async fn uninstall_hooks() -> Result<String, String> {
             "Notification",
         ];
         for event in &events {
-            hooks.remove(*event);
+            if let Some(arr) = hooks.get_mut(*event).and_then(|v| v.as_array_mut()) {
+                arr.retain(|group| {
+                    let is_humhum = group.get("hooks")
+                        .and_then(|h| h.as_array())
+                        .map(|hs| hs.iter().any(|h| {
+                            h.get("command")
+                                .and_then(|c| c.as_str())
+                                .map(|c| c.contains("humhum"))
+                                .unwrap_or(false)
+                        }))
+                        .unwrap_or(false);
+                    !is_humhum
+                });
+                if arr.is_empty() {
+                    hooks.remove(*event);
+                }
+            }
         }
     }
 
@@ -214,23 +230,71 @@ pub async fn toggle_settings(app: tauri::AppHandle) -> Result<(), String> {
                 }
             }
 
+            let _ = win.set_shadow(false);
+
             win.show().map_err(|e| format!("Failed to show: {}", e))?;
             win.set_focus().map_err(|e| format!("Failed to focus: {}", e))?;
 
-            // Set window level AFTER show/focus so Tauri can't reset it
+            // Set window level & transparency AFTER show/focus so Tauri can't reset it
             #[cfg(target_os = "macos")]
             {
-                use cocoa::base::id;
+                use cocoa::appkit::{NSColor, NSWindow};
+                use cocoa::base::{id, nil};
                 use objc::{msg_send, sel, sel_impl};
                 if let Ok(ns_win) = win.ns_window() {
                     let ns_win = ns_win as id;
                     let ns_win_ptr = ns_win as usize;
                     dispatch::Queue::main().exec_async(move || unsafe {
                         let ns_win = ns_win_ptr as id;
-                        // Same collection behavior as main window
+
+                        // Transparent background so CSS rounded corners show through
+                        let clear_color: id = NSColor::clearColor(nil);
+                        ns_win.setBackgroundColor_(clear_color);
+                        ns_win.setOpaque_(false);
+                        ns_win.setHasShadow_(false);
+
+                        // Disable WKWebView background
+                        let content_view: id = ns_win.contentView();
+                        fn clear_webview_bg(view: cocoa::base::id) {
+                            unsafe {
+                                let class_name: cocoa::base::id = msg_send![view, className];
+                                let bytes: *const std::os::raw::c_char = msg_send![class_name, UTF8String];
+                                let class_str = std::ffi::CStr::from_ptr(bytes).to_str().unwrap_or("");
+                                if class_str.contains("WKWebView") || class_str.contains("WebViewer") {
+                                    let _: () = msg_send![view, setValue: false forKey: "drawsBackground"];
+                                    let _: () = msg_send![view, setValue: false forKey: "opaque"];
+                                }
+                                let subviews: cocoa::base::id = msg_send![view, subviews];
+                                let count: usize = msg_send![subviews, count];
+                                for i in 0..count {
+                                    let subview: cocoa::base::id = msg_send![subviews, objectAtIndex: i];
+                                    clear_webview_bg(subview);
+                                }
+                            }
+                        }
+                        clear_webview_bg(content_view);
+
+                        // canJoinAllSpaces(1) | stationary(16) | ignoresCycle(64) | fullScreenAuxiliary(256) | fullScreenDisallowsTiling(4096)
                         let _: () = msg_send![ns_win, setCollectionBehavior: 4433_u64];
-                        let _: () = msg_send![ns_win, setLevel: 1501_i64];
+                        let _: () = msg_send![ns_win, setLevel: 1500_i64];
                         let _: () = msg_send![ns_win, setHidesOnDeactivate: false];
+                        let _: () = msg_send![ns_win, setCanHide: false];
+                        let _: () = msg_send![ns_win, setAnimationBehavior: 2_i64];
+                    });
+
+                    // Move to SkyLight stationary space so it floats above fullscreen apps
+                    crate::move_to_skylight_space(ns_win);
+
+                    // Periodically re-assert window level while visible
+                    let win_clone = win.clone();
+                    std::thread::spawn(move || {
+                        loop {
+                            std::thread::sleep(std::time::Duration::from_secs(3));
+                            if !win_clone.is_visible().unwrap_or(false) {
+                                break;
+                            }
+                            crate::reassert_window_level(&win_clone);
+                        }
                     });
                 }
             }
@@ -262,7 +326,7 @@ pub async fn get_active_sessions(
     store: State<'_, Arc<std::sync::Mutex<SessionStore>>>,
 ) -> Result<Value, String> {
     let store = store.lock().map_err(|e| format!("Lock error: {}", e))?;
-    let sessions = store.get_all_sessions();
+    let sessions = store.get_active_sessions();
     serde_json::to_value(sessions).map_err(|e| format!("Serialize error: {}", e))
 }
 
@@ -498,7 +562,23 @@ fn uninstall_json_hooks(config_path: &std::path::Path, events: &[&str]) -> Resul
 
     if let Some(hooks) = settings.get_mut("hooks").and_then(|h| h.as_object_mut()) {
         for event in events {
-            hooks.remove(*event);
+            if let Some(arr) = hooks.get_mut(*event).and_then(|v| v.as_array_mut()) {
+                arr.retain(|group| {
+                    let is_humhum = group.get("hooks")
+                        .and_then(|h| h.as_array())
+                        .map(|hs| hs.iter().any(|h| {
+                            h.get("command")
+                                .and_then(|c| c.as_str())
+                                .map(|c| c.contains("humhum"))
+                                .unwrap_or(false)
+                        }))
+                        .unwrap_or(false);
+                    !is_humhum
+                });
+                if arr.is_empty() {
+                    hooks.remove(*event);
+                }
+            }
         }
     }
 
@@ -592,7 +672,7 @@ pub async fn proxy_post(url: String, headers: Value, body: String) -> Result<Str
         .map_err(|e| format!("Read body failed: {}", e))?;
 
     if status >= 400 {
-        return Err(format!("HTTP {}: {}", status, &text[..text.len().min(200)]));
+        return Err(format!("HTTP {}: {}", status, &text[..text.floor_char_boundary(200)]));
     }
 
     Ok(text)
@@ -623,7 +703,7 @@ pub async fn proxy_post_binary(url: String, headers: Value, body: String) -> Res
     let status = response.status().as_u16();
     if status >= 400 {
         let text = response.text().await.unwrap_or_default();
-        return Err(format!("HTTP {}: {}", status, &text[..text.len().min(200)]));
+        return Err(format!("HTTP {}: {}", status, &text[..text.floor_char_boundary(200)]));
     }
 
     let bytes = response

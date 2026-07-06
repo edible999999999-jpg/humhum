@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { t } from "@/lib/i18n";
 import type { HookEvent } from "@/types";
 
 interface ConfirmToastProps {
@@ -95,24 +96,24 @@ export function ConfirmToast({ event, onConfirm, onDismiss }: ConfirmToastProps)
       {/* Header */}
       <div className="flex items-center justify-between px-3 pt-2.5 pb-1.5">
         <div className="flex items-center gap-2">
-          <div className="w-5 h-5 rounded flex items-center justify-center bg-amber-400/15 text-amber-400">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <div className="w-5 h-5 rounded-full flex items-center justify-center bg-amber-400/10 text-amber-400/80">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <path d="M12 9v4M12 17h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
             </svg>
           </div>
-          <span className="text-white/90 font-semibold text-[13px]">请求批准</span>
+          <span className="text-white/80 font-semibold text-[13px]">{t("confirm.title")}</span>
           <span className="confirm-tag confirm-tag-time">{timeLabel}</span>
           <span className="confirm-tag confirm-tag-client">{event.client_type || "CC"}</span>
         </div>
-        <button onClick={onDismiss} className="text-white/30 hover:text-white/60 text-xs transition-colors leading-none">✕</button>
+        <button onClick={onDismiss} className="text-white/20 hover:text-white/50 text-xs transition-colors leading-none">✕</button>
       </div>
 
       {/* Tool info */}
       <div className="px-3 pb-2">
-        <div className="text-amber-400 font-bold text-[13px] mb-1">{toolName}</div>
+        <div className="text-amber-400/80 font-bold text-[13px] mb-1">{toolName}</div>
         {detail && (
           <div className="confirm-detail-box" style={{ maxHeight: 72 }}>
-            <code className="text-[11px] text-white/70 leading-snug break-all whitespace-pre-wrap">
+            <code className="text-[11px] text-white/55 leading-snug break-all whitespace-pre-wrap">
               {detail}
             </code>
           </div>
@@ -122,37 +123,37 @@ export function ConfirmToast({ event, onConfirm, onDismiss }: ConfirmToastProps)
       {/* Status feedback */}
       {status !== "idle" && (
         <div className={`px-3 pb-1.5 text-[10px] font-semibold ${
-          status === "sending" ? "text-amber-300" :
-          status === "sent" ? "text-green-400" : "text-red-400"
+          status === "sending" ? "text-amber-300/80" :
+          status === "sent" ? "text-emerald-400/80" : "text-red-400/80"
         }`}>
-          {status === "sending" && "发送中..."}
-          {status === "sent" && "已发送!"}
+          {status === "sending" && t("confirm.sending")}
+          {status === "sent" && t("confirm.sent")}
           {status === "error" && errorMsg}
         </div>
       )}
 
       {/* Action buttons */}
-      <div className="flex gap-1.5 px-3 pb-2">
+      <div className="flex gap-1.5 px-3 pb-2.5">
         <button
           onClick={() => handleClick("deny")}
           disabled={status === "sending" || status === "sent"}
           className="confirm-btn confirm-btn-deny text-xs py-1.5"
         >
-          拒绝 <kbd className="confirm-kbd ml-1">N</kbd>
+          {t("confirm.deny")} <kbd className="confirm-kbd ml-1">N</kbd>
         </button>
         <button
           onClick={() => handleClick("allowAlways")}
           disabled={status === "sending" || status === "sent"}
           className="confirm-btn confirm-btn-always text-xs py-1.5"
         >
-          始终 <kbd className="confirm-kbd ml-1">A</kbd>
+          {t("confirm.always")} <kbd className="confirm-kbd ml-1">A</kbd>
         </button>
         <button
           onClick={() => handleClick("allow")}
           disabled={status === "sending" || status === "sent"}
           className="confirm-btn confirm-btn-allow text-xs py-1.5"
         >
-          允许 <kbd className="confirm-kbd ml-1">Y</kbd>
+          {t("confirm.allow")} <kbd className="confirm-kbd ml-1">Y</kbd>
         </button>
       </div>
     </div>

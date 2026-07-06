@@ -15,12 +15,12 @@ interface Session {
 }
 
 const CLIENT_COLORS: Record<string, string> = {
-  "claude-code": "bg-orange-500",
-  codex: "bg-zinc-100 ring-1 ring-white/40",
-  "qwen-code": "bg-blue-500",
-  "gemini-cli": "bg-cyan-500",
-  "kimi-k1": "bg-purple-500",
-  qoderwork: "bg-green-400",
+  "claude-code": "bg-orange-500/80",
+  codex: "bg-emerald-500/80",
+  "qwen-code": "bg-blue-500/80",
+  "gemini-cli": "bg-cyan-400/80",
+  "kimi-k1": "bg-purple-500/80",
+  qoderwork: "bg-rose-400/80",
 };
 
 const CLIENT_LABELS: Record<string, string> = {
@@ -73,23 +73,25 @@ export function SessionDashboard({ visible }: SessionDashboardProps) {
   if (!visible) return null;
 
   return (
-    <div className="w-full rounded-xl bg-slate-900 border border-white/10 shadow-2xl overflow-hidden">
+    <div className="w-full rounded-[22px] border border-white/[0.045] overflow-hidden" style={{ background: "rgba(9, 11, 20, 0.98)", boxShadow: "0 2px 8px rgba(0, 0, 0, 0.3)" }}>
       {/* Header */}
-      <div className="px-3 py-2 border-b border-white/5 flex items-center justify-between">
-        <span className="text-[11px] font-semibold text-white/60 uppercase tracking-wider">
+      <div className="px-3 py-2 border-b border-white/[0.04] flex items-center justify-between">
+        <span className="text-[10px] font-semibold text-white/40 uppercase tracking-wider">
           Sessions
         </span>
-        <span className="text-[10px] text-white/30">
-          {sessions.length > 0 ? `${sessions.length} active` : ""}
-        </span>
+        {sessions.length > 0 && (
+          <span className="kawaii-badge text-[9px]">
+            {sessions.length}
+          </span>
+        )}
       </div>
 
       {/* Session list */}
       <div className="max-h-[220px] overflow-y-auto scrollbar-thin">
         {sessions.length === 0 ? (
           <div className="px-3 py-4 text-center">
-            <p className="text-[11px] text-white/30">No active sessions</p>
-            <p className="text-[10px] text-white/20 mt-1">
+            <p className="text-[11px] text-white/25">No active sessions</p>
+            <p className="text-[10px] text-white/15 mt-1">
               Run Claude Code or other AI tools
             </p>
           </div>
@@ -104,8 +106,7 @@ export function SessionDashboard({ visible }: SessionDashboardProps) {
 }
 
 function SessionRow({ session: s }: { session: Session }) {
-  const clientColor = CLIENT_COLORS[s.client_type] ?? "bg-slate-500";
-  const clientTextColor = s.client_type === "codex" ? "text-slate-950" : "text-white";
+  const clientColor = CLIENT_COLORS[s.client_type] ?? "bg-slate-500/80";
   const clientLabel = CLIENT_LABELS[s.client_type] ?? s.client_type;
   const statusDot = STATUS_DOTS[s.status] ?? "bg-slate-500";
 
@@ -114,20 +115,19 @@ function SessionRow({ session: s }: { session: Session }) {
     (s.last_tool_name ? `Using ${s.last_tool_name}` : null);
 
   return (
-    <div className="px-3 py-2.5 border-b border-white/5 last:border-b-0 hover:bg-white/5 transition-colors">
-      {/* Top row: client badge + project + time */}
+    <div className="px-3 py-2.5 border-b border-white/[0.03] last:border-b-0 hover:bg-white/[0.02] transition-colors">
+      {/* Top row: client dot + project + time */}
       <div className="flex items-center gap-2 mb-1">
-        <span
-          className={`${clientColor} ${clientTextColor} text-[9px] font-bold px-1.5 py-0.5 rounded-sm uppercase`}
-        >
+        <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${clientColor}`} />
+        <span className="text-[11px] text-white/50 flex-shrink-0">
           {clientLabel}
         </span>
-        <span className="text-[11px] font-medium text-white/80 truncate flex-1">
+        <span className="text-[11px] font-medium text-white/70 truncate flex-1">
           {s.project_name ?? "Unknown"}
         </span>
-        <div className="flex items-center gap-1.5">
-          <div className={`w-1.5 h-1.5 rounded-full ${statusDot}`} />
-          <span className="text-[10px] text-white/30">
+        <div className="flex items-center gap-1.5 flex-shrink-0">
+          <div className={`w-1 h-1 rounded-full ${statusDot}`} />
+          <span className="text-[10px] text-white/25">
             {timeAgo(s.last_event_at)}
           </span>
         </div>
@@ -135,7 +135,7 @@ function SessionRow({ session: s }: { session: Session }) {
 
       {/* Bottom row: last message */}
       {displayMessage && (
-        <p className="text-[10px] text-white/40 truncate pl-0.5">
+        <p className="text-[10px] text-white/30 truncate pl-3.5">
           {displayMessage}
         </p>
       )}

@@ -3,6 +3,8 @@ name = "humhum"
 version = "0.1.0"
 description = "HumHum - Desktop jellyfish companion for AI coding assistants"
 authors = ["HumHum Contributors"]
+license = "MIT"
+repository = "https://github.com/edible999999999-jpg/humhum"
 edition = "2021"
 
 [lib]

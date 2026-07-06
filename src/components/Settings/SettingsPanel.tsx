@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { AppConfig } from "@/types";
+import { useTranslation } from "@/lib/i18n/react";
+import { setLanguage } from "@/lib/i18n";
 import { PetCanvas } from "../Pet/PetCanvas";
 import { VOICE_PRESETS, DEFAULT_VOICE } from "./voicePresets";
 import { StatsPanel } from "./StatsPanel";
@@ -12,6 +14,7 @@ interface SettingsPanelProps {
 const LANG_TO_STT: Record<string, string> = { zh: "zh-CN", en: "en-US" };
 
 export function SettingsPanel({ onClose }: SettingsPanelProps) {
+  const { t } = useTranslation();
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -31,6 +34,7 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
           invoke<Array<{ id: string; name: string }>>("get_supported_clients"),
         ]);
         setConfig(cfg as AppConfig);
+        setLanguage((cfg as AppConfig).ui.language as "zh" | "en");
         setHookStatus(status as Record<string, boolean>);
         setClients(clientList as Array<{ id: string; name: string }>);
       } catch (e) {
@@ -47,10 +51,10 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
     setMessage(null);
     try {
       await invoke("save_config", { newConfig: config });
-      setMessage({ type: "success", text: "已保存 ~" });
+      setMessage({ type: "success", text: t("settings.saved") });
       setTimeout(() => setMessage(null), 3000);
     } catch (e) {
-      setMessage({ type: "error", text: `保存失败: ${e}` });
+      setMessage({ type: "error", text: t("settings.saveFailed", { e: String(e) }) });
     } finally {
       setSaving(false);
     }
@@ -75,7 +79,7 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
           setHookStatus((p) => ({ ...p, [clientId]: true }));
         }
       } catch (e) {
-        setMessage({ type: "error", text: `Hook 操作失败: ${e}` });
+        setMessage({ type: "error", text: t("settings.hookFailed", { e: String(e) }) });
       } finally {
         setHookLoading((p) => ({ ...p, [clientId]: false }));
       }
@@ -88,7 +92,7 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
       <div className="w-full h-full flex items-center justify-center settings-panel">
         <div className="flex flex-col items-center gap-3">
           <PetCanvas state="processing" size={48} />
-          <p className="text-white/40 text-xs animate-pulse">加载中...</p>
+          <p className="text-white/40 text-xs animate-pulse">{t("settings.loading")}</p>
         </div>
       </div>
     );
@@ -100,13 +104,13 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
   return (
     <div className="w-full h-full flex flex-col settings-panel">
       {/* Header */}
-      <header data-tauri-drag-region className="flex items-center gap-3 px-5 py-4 border-b border-white/[0.06]">
+      <header data-tauri-drag-region className="flex items-center gap-3 px-5 py-4 border-b border-white/[0.04]">
         <div className="kawaii-avatar-ring">
           <PetCanvas state="idle" size={32} />
         </div>
         <div>
-          <h1 className="text-base font-bold text-white/90 tracking-wide">HumHum</h1>
-          <p className="text-[10px] text-white/35 -mt-0.5">你的 AI 编程伴侣</p>
+          <h1 className="text-[15px] font-bold text-white/85 tracking-wide">{t("settings.title")}</h1>
+          <p className="text-[10px] text-white/25 -mt-0.5">{t("settings.subtitle")}</p>
         </div>
         <div className="flex-1" />
         <button
@@ -121,18 +125,18 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
       </header>
 
       {/* Tab Navigation */}
-      <div className="flex px-5 pt-3 pb-0 gap-1">
+      <div className="flex px-5 pt-3 pb-0 gap-1.5">
         <button
           onClick={() => setActiveTab("settings")}
           className={`kawaii-tab ${activeTab === "settings" ? "active" : ""}`}
         >
-          设置
+          {t("settings.tabSettings")}
         </button>
         <button
           onClick={() => setActiveTab("stats")}
           className={`kawaii-tab ${activeTab === "stats" ? "active" : ""}`}
         >
-          统计
+          {t("settings.tabStats")}
         </button>
       </div>
 
@@ -147,7 +151,7 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
       {activeTab === "settings" && <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4 scrollbar-thin">
 
         {/* Voice — the star section */}
-        <KawaiiCard icon="~" title="音色选择" subtitle="让伴侣的声音更适合你">
+        <KawaiiCard icon="~" title={t("settings.voiceTitle")} subtitle={t("settings.voiceSubtitle")}>
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-2">
               {(["edge", "openai", "elevenlabs"] as const).map((p) => (
@@ -162,7 +166,7 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
                   }}
                   className={`kawaii-chip ${config.tts.provider === p ? "active" : ""}`}
                 >
-                  {p === "edge" && "Edge (免费)"}
+                  {p === "edge" && t("settings.edgeFree")}
                   {p === "openai" && "OpenAI"}
                   {p === "elevenlabs" && "ElevenLabs"}
                 </button>
@@ -170,7 +174,7 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
             </div>
 
             <div>
-              <label className="kawaii-label">音色</label>
+              <label className="kawaii-label">{t("settings.voiceLabel")}</label>
               {voiceOptions.length > 0 ? (
                 <select
                   value={config.tts.voice}
@@ -200,7 +204,7 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
 
             <div>
               <label className="kawaii-label">
-                语速
+                {t("settings.speed")}
                 <span className="kawaii-badge ml-2">{config.tts.speed.toFixed(1)}x</span>
               </label>
               <input
@@ -224,27 +228,27 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
         {/* Connections */}
         <KawaiiCard
           icon="~"
-          title="连接"
-          subtitle={`${connectedCount} 个助手已连接`}
+          title={t("settings.connectionsTitle")}
+          subtitle={t("settings.connectedCount", { n: connectedCount })}
         >
-          <div className="space-y-0 divide-y divide-white/[0.04]">
+          <div className="space-y-0">
             {clients.map((client) => {
               const installed = hookStatus[client.id] ?? false;
               const isLoading = hookLoading[client.id] ?? false;
               return (
                 <div
                   key={client.id}
-                  className="flex items-center justify-between py-2.5 first:pt-0 last:pb-0"
+                  className="flex items-center justify-between py-2.5 first:pt-0 last:pb-0 border-b border-white/[0.03] last:border-b-0"
                 >
                   <div className="flex items-center gap-2.5">
                     <div
-                      className={`w-2 h-2 rounded-full transition-all duration-300 ${
+                      className={`w-1.5 h-1.5 rounded-full transition-all duration-300 ${
                         installed
-                          ? "bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.5)]"
-                          : "bg-white/15"
+                          ? "bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.4)]"
+                          : "bg-white/10"
                       }`}
                     />
-                    <span className="text-sm text-white/75">{client.name}</span>
+                    <span className="text-[13px] text-white/65">{client.name}</span>
                   </div>
                   <button
                     onClick={() => handleHookToggle(client.id, installed)}
@@ -254,9 +258,9 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
                     {isLoading ? (
                       <span className="inline-block w-3 h-3 border border-current border-t-transparent rounded-full animate-spin" />
                     ) : installed ? (
-                      "已连接"
+                      t("settings.connected")
                     ) : (
-                      "连接"
+                      t("settings.connect")
                     )}
                   </button>
                 </div>
@@ -266,9 +270,9 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
         </KawaiiCard>
 
         {/* Rage mode — auto confirm */}
-        <KawaiiCard icon="~" title="狂暴模式" subtitle="自动确认所有权限请求">
+        <KawaiiCard icon="~" title={t("settings.rageTitle")} subtitle={t("settings.rageSubtitle")}>
           <div className="flex items-center justify-between">
-            <span className="text-xs text-white/60">开启后，Hum 自动批准所有权限请求</span>
+            <span className="text-xs text-white/60">{t("settings.rageDesc")}</span>
             <button
               onClick={() =>
                 updateConfig((c) => ({
@@ -278,13 +282,13 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
               }
               className={`kawaii-toggle-btn ${config.ui.auto_confirm ? "connected" : ""}`}
             >
-              {config.ui.auto_confirm ? "已开启" : "关闭"}
+              {config.ui.auto_confirm ? t("settings.rageOn") : t("settings.rageOff")}
             </button>
           </div>
         </KawaiiCard>
 
         {/* API Key — compact */}
-        <KawaiiCard icon="~" title="密钥" subtitle="BYOK，数据不离开本地">
+        <KawaiiCard icon="~" title={t("settings.keysTitle")} subtitle={t("settings.keysSubtitle")}>
           <div className="space-y-3">
             <div>
               <label className="kawaii-label">OpenAI API Key</label>
@@ -297,12 +301,12 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
                     api_keys: { ...c.api_keys, openai: e.target.value || undefined },
                   }))
                 }
-                placeholder="sk-... (TTS / 摘要 / Whisper)"
+                placeholder={t("settings.openaiPlaceholder")}
                 className="kawaii-input"
               />
             </div>
             <div>
-              <label className="kawaii-label">ElevenLabs (可选)</label>
+              <label className="kawaii-label">{t("settings.elevenOptional")}</label>
               <input
                 type="password"
                 value={config.api_keys.elevenlabs ?? ""}
@@ -312,7 +316,7 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
                     api_keys: { ...c.api_keys, elevenlabs: e.target.value || undefined },
                   }))
                 }
-                placeholder="高级音质引擎"
+                placeholder={t("settings.elevenPlaceholder")}
                 className="kawaii-input"
               />
             </div>
@@ -326,7 +330,7 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
             className="kawaii-expand-btn"
           >
             <span className="text-white/40 text-xs">
-              {showAdvanced ? "收起高级选项" : "展开高级选项"}
+              {showAdvanced ? t("settings.collapseAdvanced") : t("settings.expandAdvanced")}
             </span>
             <span
               className={`text-white/30 text-[10px] transition-transform duration-300 ${
@@ -341,11 +345,12 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
             <div className="kawaii-card mt-3 space-y-3">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="kawaii-label">语言</label>
+                  <label className="kawaii-label">{t("settings.language")}</label>
                   <select
                     value={config.ui.language}
                     onChange={(e) => {
                       const lang = e.target.value as "zh" | "en";
+                      setLanguage(lang);
                       updateConfig((c) => ({
                         ...c,
                         ui: { ...c.ui, language: lang },
@@ -359,7 +364,7 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
                   </select>
                 </div>
                 <div>
-                  <label className="kawaii-label">STT 引擎</label>
+                  <label className="kawaii-label">{t("settings.sttEngine")}</label>
                   <select
                     value={config.stt.provider}
                     onChange={(e) =>
@@ -373,7 +378,7 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
                     }
                     className="kawaii-input kawaii-select"
                   >
-                    <option value="web-speech">Web Speech (免费)</option>
+                    <option value="web-speech">{t("settings.webSpeechFree")}</option>
                     <option value="whisper">Whisper</option>
                   </select>
                 </div>
@@ -394,7 +399,7 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
                 />
               </div>
               <div>
-                <label className="kawaii-label">摘要模型</label>
+                <label className="kawaii-label">{t("settings.summaryModel")}</label>
                 <input
                   type="text"
                   value={config.summarizer.model}
@@ -424,7 +429,7 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
                 />
               </div>
               <div>
-                <label className="kawaii-label">Hook 端口</label>
+                <label className="kawaii-label">{t("settings.hookPort")}</label>
                 <input
                   type="number"
                   value={config.hook_port}
@@ -445,10 +450,10 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
       {/* Message toast */}
       {activeTab === "settings" && message && (
         <div
-          className={`mx-5 mb-2 px-4 py-2.5 rounded-2xl text-xs text-center transition-all animate-bounce-in ${
+          className={`mx-5 mb-2 px-4 py-2 rounded-full text-xs text-center transition-all animate-bounce-in ${
             message.type === "success"
-              ? "bg-emerald-500/10 text-emerald-300 border border-emerald-500/20"
-              : "bg-red-500/10 text-red-300 border border-red-500/20"
+              ? "bg-emerald-500/8 text-emerald-400/90 border border-emerald-500/15"
+              : "bg-red-500/8 text-red-400/90 border border-red-500/15"
           }`}
         >
           {message.text}
@@ -457,19 +462,19 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
 
       {/* Save button */}
       {activeTab === "settings" && (
-        <div className="px-5 py-4 border-t border-white/[0.04]">
+        <div className="px-5 py-4 border-t border-white/[0.03]">
           <button
             onClick={handleSave}
             disabled={saving}
             className="kawaii-save-btn"
           >
             {saving ? (
-              <span className="flex items-center gap-2">
-                <span className="inline-block w-3.5 h-3.5 border-2 border-white/60 border-t-transparent rounded-full animate-spin" />
-                保存中
+              <span className="flex items-center justify-center gap-2">
+                <span className="inline-block w-3.5 h-3.5 border-2 border-current/60 border-t-transparent rounded-full animate-spin" />
+                {t("settings.saving")}
               </span>
             ) : (
-              "保存设置"
+              t("settings.save")
             )}
           </button>
         </div>
@@ -494,9 +499,9 @@ function KawaiiCard({
   return (
     <section className="kawaii-card">
       <div className="flex items-center gap-2 mb-3">
-        <h2 className="text-sm font-semibold text-white/85">{title}</h2>
+        <h2 className="text-[13px] font-semibold text-white/75">{title}</h2>
         {subtitle && (
-          <span className="text-[10px] text-white/30 ml-auto">{subtitle}</span>
+          <span className="text-[10px] text-white/25 ml-auto">{subtitle}</span>
         )}
       </div>
       {children}
