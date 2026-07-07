@@ -729,7 +729,7 @@ pub async fn get_stats(
     serde_json::to_value(stats).map_err(|e| format!("Serialize error: {}", e))
 }
 
-/// Toggle QoderWork auto-allow daemon
+/// Toggle QoderWork auto-allow hook
 #[tauri::command]
 pub async fn toggle_qoderwork_auto_allow(
     config: State<'_, Arc<std::sync::Mutex<AppConfig>>>,
@@ -743,22 +743,22 @@ pub async fn toggle_qoderwork_auto_allow(
         config.save()?;
     }
 
-    // Start or stop the daemon
+    // Add or remove the PermissionRequest hook in QoderWork's settings.json
     let auto_allow = auto_allow.lock().map_err(|e| format!("Lock error: {}", e))?;
     if enabled {
-        auto_allow.start()?;
+        auto_allow.enable()?;
     } else {
-        auto_allow.stop()?;
+        auto_allow.disable()?;
     }
 
     Ok(())
 }
 
-/// Get QoderWork auto-allow daemon status
+/// Get QoderWork auto-allow hook status
 #[tauri::command]
 pub async fn get_qoderwork_auto_allow_status(
     auto_allow: State<'_, Arc<std::sync::Mutex<crate::qoder_auto_allow::QoderAutoAllow>>>,
 ) -> Result<bool, String> {
     let auto_allow = auto_allow.lock().map_err(|e| format!("Lock error: {}", e))?;
-    Ok(auto_allow.is_running())
+    Ok(auto_allow.is_enabled())
 }

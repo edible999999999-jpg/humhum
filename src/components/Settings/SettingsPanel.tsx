@@ -283,10 +283,10 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
           </div>
         </KawaiiCard>
 
-        {/* QoderWork auto-allow */}
-        <KawaiiCard icon="~" title="QoderWork 狂暴模式" subtitle="CDP 自动点击权限弹窗">
+        {/* QoderWork auto-allow via native hook */}
+        <KawaiiCard icon="~" title="QoderWork 狂暴模式" subtitle="Native Hook 自动放行">
           <div className="flex items-center justify-between">
-            <span className="text-xs text-white/60">通过 CDP 注入自动点击"允许"按钮</span>
+            <span className="text-xs text-white/60">通过 PermissionRequest hook 自动批准</span>
             <button
               onClick={async () => {
                 const next = !config.ui.qoderwork_auto_allow;

@@ -50,11 +50,11 @@ pub fn run() {
             let qoderwork_auto_allow_enabled = config.ui.qoderwork_auto_allow;
             app.manage(Arc::new(std::sync::Mutex::new(config)));
 
-            // QoderWork auto-allow sidecar
+            // QoderWork auto-allow via native hook (PermissionRequest hook in settings.json)
             let auto_allow = qoder_auto_allow::QoderAutoAllow::new();
             if qoderwork_auto_allow_enabled {
-                if let Err(e) = auto_allow.start() {
-                    log::warn!("Failed to start QoderWork auto-allow: {}", e);
+                if let Err(e) = auto_allow.enable() {
+                    log::warn!("Failed to enable QoderWork auto-allow hook: {}", e);
                 }
             }
             app.manage(Arc::new(std::sync::Mutex::new(auto_allow)));
@@ -79,8 +79,8 @@ pub fn run() {
             });
 
             // Start QoderWork session log watcher
-            // Emits informational log events only — no confirmation dialogs.
-            // QoderWork handles its own permission UI; humhum auto-allow sidecar clicks via CDP.
+            // Reads session logs and emits informational events to humhum frontend.
+            // Permission auto-allow is handled by QoderWork's native PermissionRequest hook.
             qoder_log_watcher::start_watcher(app_handle.clone());
 
             // Build system tray menu
