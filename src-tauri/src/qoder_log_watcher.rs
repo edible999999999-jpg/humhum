@@ -197,6 +197,11 @@ fn process_log_line(line: &str, app_handle: &tauri::AppHandle, processed: &mut H
         //   { "tool_name": "...", "args": { ... } }
         // permission.requested = needs user confirmation (Bash, Write, etc.)
         // tool.requested = tool invocation (AskUserQuestion, etc.)
+        //
+        // NOTE: We emit all events as PreToolUse (informational log) instead of
+        // PermissionRequest. QoderWork handles its own permission dialogs internally,
+        // and humhum's auto-allow sidecar clicks them via CDP. No need for humhum
+        // to show confirmation UI — just display activity in the transcript.
         "permission.requested" | "tool.requested" => {
             let tool_name = value
                 .get("data")
@@ -214,13 +219,9 @@ fn process_log_line(line: &str, app_handle: &tauri::AppHandle, processed: &mut H
                     value.get("data").cloned().unwrap_or(serde_json::json!({}))
                 });
 
-            // AskUserQuestion → emit as PermissionRequest (frontend routes to QuestionToast)
-            // Other tool.requested events without permission semantics → emit as PreToolUse
-            let hook_event_name = if event_type == "permission.requested" || tool_name == "AskUserQuestion" {
-                "PermissionRequest"
-            } else {
-                "PreToolUse"
-            };
+            // All events emitted as PreToolUse — informational log only,
+            // no confirmation dialog in humhum UI
+            let hook_event_name = "PreToolUse";
 
             let event = HookEvent {
                 id: uuid::Uuid::new_v4().to_string(),
@@ -245,9 +246,6 @@ fn process_log_line(line: &str, app_handle: &tauri::AppHandle, processed: &mut H
             log::info!("QoderWork {}: {} (from {})", hook_event_name, tool_name, event_type);
             event_bus::emit_hook_event(app_handle, &event);
             update_session(app_handle, &event);
-            if hook_event_name == "PermissionRequest" {
-                event_bus::emit_status_change(app_handle, "waiting-confirmation");
-            }
         }
 
         "session.phase.finished" => {

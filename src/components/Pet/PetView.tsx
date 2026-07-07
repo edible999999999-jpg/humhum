@@ -327,6 +327,9 @@ export function PetView() {
         setTimeout(() => setPetState("idle"), 3000);
       }
     } else if (eventName === "PreToolUse" || eventName === "PostToolUse") {
+      // Skip notifications for auto-allow events — they show in dashboard only
+      if (latestEvent.client_type === "qoderwork-auto-allow") return;
+
       const toolName = (payload.tool_name as string) ?? "";
 
       if (eventName === "PreToolUse" && toolName === "AskUserQuestion") {

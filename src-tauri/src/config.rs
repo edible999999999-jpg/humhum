@@ -67,6 +67,8 @@ pub struct UiConfig {
     /// Language: "zh" | "en"
     pub language: String,
     pub auto_confirm: bool,
+    /// Auto-allow QoderWork permission dialogs via CDP sidecar
+    pub qoderwork_auto_allow: bool,
 }
 
 impl Default for UiConfig {
@@ -75,6 +77,7 @@ impl Default for UiConfig {
             position: "bottom-right".to_string(),
             language: "zh".to_string(),
             auto_confirm: false,
+            qoderwork_auto_allow: false,
         }
     }
 }

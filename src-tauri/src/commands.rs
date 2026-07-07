@@ -498,7 +498,24 @@ fn uninstall_json_hooks(config_path: &std::path::Path, events: &[&str]) -> Resul
 
     if let Some(hooks) = settings.get_mut("hooks").and_then(|h| h.as_object_mut()) {
         for event in events {
-            hooks.remove(*event);
+            if let Some(arr) = hooks.get_mut(*event).and_then(|v| v.as_array_mut()) {
+                // Remove only humhum-specific hook groups, preserve others
+                arr.retain(|group| {
+                    !group.get("hooks")
+                        .and_then(|h| h.as_array())
+                        .map(|hs| hs.iter().any(|h| {
+                            h.get("command")
+                                .and_then(|c| c.as_str())
+                                .map(|c| c.contains("humhum"))
+                                .unwrap_or(false)
+                        }))
+                        .unwrap_or(false)
+                });
+                // Remove the event key entirely if no hooks remain
+                if arr.is_empty() {
+                    hooks.remove(*event);
+                }
+            }
         }
     }
 
@@ -710,4 +727,38 @@ pub async fn get_stats(
     let store = store.lock().map_err(|e| format!("Lock error: {}", e))?;
     let stats = store.get_aggregated_stats();
     serde_json::to_value(stats).map_err(|e| format!("Serialize error: {}", e))
+}
+
+/// Toggle QoderWork auto-allow daemon
+#[tauri::command]
+pub async fn toggle_qoderwork_auto_allow(
+    config: State<'_, Arc<std::sync::Mutex<AppConfig>>>,
+    auto_allow: State<'_, Arc<std::sync::Mutex<crate::qoder_auto_allow::QoderAutoAllow>>>,
+    enabled: bool,
+) -> Result<(), String> {
+    // Update config
+    {
+        let mut config = config.lock().map_err(|e| format!("Lock error: {}", e))?;
+        config.ui.qoderwork_auto_allow = enabled;
+        config.save()?;
+    }
+
+    // Start or stop the daemon
+    let auto_allow = auto_allow.lock().map_err(|e| format!("Lock error: {}", e))?;
+    if enabled {
+        auto_allow.start()?;
+    } else {
+        auto_allow.stop()?;
+    }
+
+    Ok(())
+}
+
+/// Get QoderWork auto-allow daemon status
+#[tauri::command]
+pub async fn get_qoderwork_auto_allow_status(
+    auto_allow: State<'_, Arc<std::sync::Mutex<crate::qoder_auto_allow::QoderAutoAllow>>>,
+) -> Result<bool, String> {
+    let auto_allow = auto_allow.lock().map_err(|e| format!("Lock error: {}", e))?;
+    Ok(auto_allow.is_running())
 }

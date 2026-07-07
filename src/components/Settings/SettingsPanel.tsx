@@ -283,6 +283,30 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
           </div>
         </KawaiiCard>
 
+        {/* QoderWork auto-allow */}
+        <KawaiiCard icon="~" title="QoderWork 狂暴模式" subtitle="CDP 自动点击权限弹窗">
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-white/60">通过 CDP 注入自动点击"允许"按钮</span>
+            <button
+              onClick={async () => {
+                const next = !config.ui.qoderwork_auto_allow;
+                updateConfig((c) => ({
+                  ...c,
+                  ui: { ...c.ui, qoderwork_auto_allow: next },
+                }));
+                try {
+                  await invoke("toggle_qoderwork_auto_allow", { enabled: next });
+                } catch (e) {
+                  console.error("Failed to toggle QoderWork auto-allow:", e);
+                }
+              }}
+              className={`kawaii-toggle-btn ${config.ui.qoderwork_auto_allow ? "connected" : ""}`}
+            >
+              {config.ui.qoderwork_auto_allow ? "已开启" : "关闭"}
+            </button>
+          </div>
+        </KawaiiCard>
+
         {/* API Key — compact */}
         <KawaiiCard icon="~" title="密钥" subtitle="BYOK，数据不离开本地">
           <div className="space-y-3">

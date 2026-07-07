@@ -44,6 +44,7 @@ impl SessionStore {
         }).or_else(|| {
             match event.client_type.as_str() {
                 "qoderwork" => Some("QoderWork".to_string()),
+                "qoderwork-auto-allow" => Some("狂暴模式".to_string()),
                 _ => None,
             }
         });
