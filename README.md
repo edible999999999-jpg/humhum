@@ -1,10 +1,9 @@
-# HumHum
+# HUMHUM
 
-[![CI](https://github.com/edible999999999-jpg/humhum/actions/workflows/ci.yml/badge.svg)](https://github.com/edible999999999-jpg/humhum/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![GitHub release](https://img.shields.io/github/v/release/edible999999999-jpg/humhum)](https://github.com/edible999999999-jpg/humhum/releases)
 
-**Your AI Coding Companion as a Desktop Pet**
+**Let every Agent work around you** — a personal Agent hub for daily life
 
 [中文文档](./README.zh-CN.md)
 
@@ -16,35 +15,59 @@
 
 <p align="center"><em>macOS Apple Silicon build available now. Windows and Linux are on the roadmap.</em></p>
 
-An open-source desktop companion app featuring **Hum**, a translucent jellyfish (Turritopsis dohrnii — the only creature on Earth that can reverse aging). Hum monitors events from multiple AI coding assistants and narrates them as a podcast-style voice broadcast, so you never have to switch windows just to check what your AI is doing.
+---
 
-<p align="center"><img src="docs/hum-preview.png" alt="HumHum Preview" width="280" /></p>
+As Agents multiply, what's really missing isn't another Agent — it's a center that belongs to *you*.
 
-## Why HumHum?
+General-purpose Agents made thinking more efficient, and specialized Agents made work more efficient. But your personal life is still scattered across apps, messages, health and diet logs, preferences, and memories. HUMHUM aims to be **the Agent hub for your personal life**: it connects different Agents through a single personal knowledge base, turning the preferences, records, tasks, messages, and life data spread across your phone, computer, and cloud into long-term, reusable personal context.
 
-When you're coding with Claude Code, Codex, or other AI assistants, you constantly switch back to read their output or click "Allow". HumHum turns these events into spoken audio — you just say "confirm" or "reject" without touching the keyboard.
+> The goal isn't to make you manage every Agent — it's to let every Agent work around you.
 
-**Key Features:**
+HUMHUM records and manages sessions across multiple Agents via hooks, extracts your preferences and session memory, understands the line between your work and life, and distills a reusable personal profile into a knowledge base.
 
-- **Voice broadcast** — AI task completions narrated as audio summaries
-- **Voice + keyboard confirmation** — Permission requests described aloud; respond by voice, hotkey, or button
-- **Multi-client support** — Monitors 6 AI coding assistants simultaneously
-- **Rage mode** — Auto-approve all permission requests (for the fearless)
-- **Session dashboard** — Hover over Hum to see all active sessions
-- **Stats panel** — Token usage, cost estimates, tool call analytics
+## Why the immortal jellyfish
 
-## Supported AI Assistants
+HUMHUM's character is inspired by *Turritopsis dohrnii*, the immortal jellyfish — a creature believed to be able to revert to a younger state within its life cycle. We borrow that image because HUMHUM wants to help you restore the order in your life that apps, messages, tasks, and Agents have quietly worn away. The jellyfish also has many tentacles, which makes it a natural "connector": linking phone, computer, and cloud tools; linking messages, memory, health, diet, and workflows; and linking general and specialized Agents alike.
 
-| Assistant | Creature Inside Hum | Color |
-|-----------|-------------------|-------|
-| Claude Code | Fire Shrimp | Orange |
-| Codex | Cloud Puff | Green |
-| Qwen Code | Blue Seahorse | Blue |
-| Gemini CLI | Crystal Starfish | Cyan |
-| Kimi K1 | Moon Jelly | Purple |
-| QoderWork | Coral Polyp | Rose |
+In an age full of Agents, what you lack isn't just efficiency — it's the emotional value of being understood, accompanied, and gently caught when you're overwhelmed. So HUMHUM isn't a cold robot, nor an automation tool rushing to decide for you. It's more like a quiet, soft, dependable little jellyfish: helping you untangle things when you're flooded with information, and helping you keep your own center while many Agents work in parallel.
 
-Each connected assistant appears as a tiny deep-sea creature inside Hum's translucent body.
+## Four roles
+
+HUMHUM centers on a hub window (the HUMHUM Hub), organized around four modules.
+
+### 🪼 Humi — presence and companionship
+
+Humi is the warm personal interpreter and the product's default entry point. It quietly learns from your local Agent activity and answers you in plain language rather than handing you a terminal report. Its default surface is a conversation box, not a config form.
+
+Humi reads local Agent assets (Codex / Claude / Qoder / Pi and project traces) and translates those signals into your profile, current work direction, common skills, preferences, memory suggestions, and gentle next steps. Humi can also voice-summarize what your Agents have done and automatically configure hooks for Claude / Codex / Qoder — so you can confirm the state of your loop workflow without breaking focus. Raw scan details stay behind a "Details" disclosure, never the first thing you see.
+
+### 📚 Hype — a universal Agent knowledge base
+
+Hype manages your personal Agent knowledge base. It isn't another Agent; it's a personal knowledge index that consolidates configuration scattered across phone, computer, and cloud Agents — not just base config, but your preferences, common skills, Agent rules, soul/personality files, memory index, and the hot/cold memory that different Agents form while handling tasks.
+
+This foundation helps different Agents understand you more accurately: how you like things phrased, which workflows you rely on, what should be remembered long-term, and what's only temporary context. Hype is an organizer, but its UI isn't a file manager first — it tells you what the knowledge base *means* and what's missing. Today it can scan Skill / Agent / Soul / Memory / Rule / Config assets, maintain preferences, detect CLAUDE.md / .cursorrules / AGENTS.md rules, and index an Obsidian vault.
+
+### 💬 Hush — organizing your social signals, from your point of view
+
+Hush organizes personal, social, work, and family messages from your perspective. It bridges sources like DingTalk, WeChat, X, and Meta, reorganizing messages into relationship tiers you can actually parse: family, friends, work, interests, and daily signals.
+
+Hush **doesn't speak for you** — it helps you see who genuinely needs a response. A parent's message gets a timely nudge and summary; the warm words in a family group aren't buried under work chatter; the day's most important AI updates on X can be distilled into a light summary. When you want to reply, Hush suggests a warm phrasing — but whether and how to reply is always your call. Local message bridges are read-only by default and require your approval.
+
+> It's not an auto-social tool. It's a personal message helper that guards the warmth of your relationships.
+
+### 🛰️ Hexa — a session-state recorder for parallel Agents
+
+Hexa is your Agent supervisor. It doesn't try to re-orchestrate all your Agents; it helps you see each Agent's progress, conversations awaiting confirmation, strong outputs, and where things are drifting. When multiple Agents work on engineering tasks at once, Hexa records what they did well and flags where they're going off track. It turns complex Agent collaboration from a black box into a process you can understand, control, and review — a caring little steward for parallel work and life.
+
+## Desktop pet
+
+HUMHUM already ships part of its desktop-pet form (the first version was built after the hackathon began, to bring the ideas to life). Humi appears on your desktop as a translucent immortal jellyfish that can voice-summarize what your Agents have done, help you confirm their status at a glance, and auto-configure hooks for Claude / Codex / Qoder. The pet layer is the project's earliest and most mature capability:
+
+- **Voice broadcast** — turns Agent events into natural-language narration so you know what's happening without switching windows
+- **Voice / keyboard confirmation** — permission prompts are described aloud; respond by voice, hotkey, or button
+- **Multi-client monitoring** — connects Claude Code, Codex, Qwen Code, Gemini CLI, Kimi K1, and QoderWork
+- **Rage mode** — auto-approve everything so Agents never wait on you
+- **Session dashboard / stats panel** — hover to see active sessions, and view token usage and cost estimates
 
 ## Quick Start
 
@@ -52,7 +75,7 @@ Each connected assistant appears as a tiny deep-sea creature inside Hum's transl
 
 - [Node.js](https://nodejs.org/) 18+
 - [Rust](https://rustup.rs/) 1.70+
-- Python 3 + `edge-tts` (free TTS)
+- Python 3 + `edge-tts` (optional, for free voice broadcast)
 - System deps for Tauri: see [Tauri Prerequisites](https://v2.tauri.app/start/prerequisites/)
 
 ### Install & Run
@@ -60,17 +83,17 @@ Each connected assistant appears as a tiny deep-sea creature inside Hum's transl
 Download the latest macOS build from [GitHub Releases](https://github.com/edible999999999-jpg/humhum/releases), or run from source:
 
 ```bash
-# Clone
+# 1. Clone
 git clone https://github.com/edible999999999-jpg/humhum.git
 cd humhum
 
-# Install dependencies
+# 2. Install dependencies
 npm install
 
-# Dev mode (compiles Rust + starts Vite)
+# 3. Dev mode (compiles Rust + starts Vite)
 npm run tauri dev
 
-# (Optional) Free TTS voice bridge
+# 4. (Optional) free TTS voice bridge
 pip3 install edge-tts aiohttp
 python3 scripts/edge-tts-bridge.py &
 ```
@@ -82,133 +105,73 @@ npm run tauri build
 # Output in src-tauri/target/release/bundle/
 ```
 
-### Connect Your AI Assistant
+### Open the Hub and connect your Agents
 
-After HumHum starts, right-click the pet → Settings → Connections → click "Connect" next to your assistant. Hooks are installed automatically.
+After launch, open the **Hub** from the system tray menu or by right-clicking the pet, then enter the four modules: Humi / Hype / Hush / Hexa. Connect your AI coding assistants from Settings or the Humi page and hooks install automatically:
 
-## Architecture
+- **Claude Code** — writes/merges into `~/.claude/settings.json`
+- **Codex / Qwen Code / Gemini CLI / Kimi K1** — configured via a unified client registry (JSON / TOML)
+- **QoderWork** — watches `~/.qoderwork/logs/sessions/` session logs
 
-```
-AI Assistant Hooks (Claude Code / Codex / Qwen Code / ...)
-       │
-       ▼
-  Hook Script ──→ HumHum Server :31275 (Rust/Hyper)
-       │                    │
-       ▼                    ▼
-  EventBus             StatsStore (token/cost tracking)
-       │
-       ▼
-  LLM Summarizer ──→ Sentence Splitter
-                           │
-                           ▼
-                      TTS Engine (pluggable)
-                           │
-                           ▼
-                      Audio Queue ──→ Hum Jellyfish (PixiJS + Canvas2D)
-                                          │
-                                          ▼
-                                     STT Engine (voice commands)
-```
+## Data & privacy
 
-**Tech Stack:** Tauri v2 + React 18 + TypeScript + TailwindCSS + PixiJS v8 + Rust
+HUMHUM is local-first — the data on your own machine is its advantage. All durable data is persisted under `~/.humhum/`:
 
-## Interactions
+- `config.json` — app configuration (hook port, BYOK keys, TTS/STT, language)
+- `knowledge.json` — Hype's knowledge base (preferences, rules, assets, Obsidian index)
+- `stats.json` — token and cost statistics
+- `hush-inbox.json` — Hush's local message inbox (up to 500 messages)
+- `local-agent-memory.md` — Humi's local Agent memory
 
-| Action | Effect |
-|--------|--------|
-| Double-click | Focus terminal window |
-| Right-click | Open settings panel |
-| Hover | Show session dashboard |
-| Drag | Jet-propulsion movement with bubble particles |
+Privacy shows up in behavior: HUMHUM does not read private chats or sensitive stores without an explicit action from you; local message bridges are read-only by default; and while raw scan results remain available for debugging, **the interpreted summary is the default product surface**.
 
-### Keyboard Shortcuts (during permission prompts)
+## Tech stack
 
-| Key | Action |
-|-----|--------|
-| Y / Enter | Allow |
-| A | Always Allow |
-| N / Esc | Deny |
-| Space | Pause/resume broadcast |
+The frontend is React 18 + TypeScript + Vite, with the desktop pet rendered via PixiJS v8 (2D) and Three.js (3D Humi); the desktop shell is Tauri v2 (Rust). The Rust backend provides a local hook server (Hyper, :31275), knowledge-base storage, session and stats stores, the Hush inbox, and watchers/parsers for Claude / Codex / Qoder / Wukong sessions. The voice pipeline supports Edge TTS / OpenAI / ElevenLabs and Web Speech / Whisper, with summarization over any OpenAI-compatible API (BYOK).
 
-### Voice Commands
+Key code locations: Tauri commands are registered in `src-tauri/src/lib.rs`; local knowledge logic lives in `src-tauri/src/knowledge_store.rs`; Humi's local Agent interpretation is in `src-tauri/src/commands.rs`; Hush message storage is in `src-tauri/src/hush_store.rs`; and the Hub UI modules live in `src/components/Hub/`.
 
-| Command | Trigger words | Action |
-|---------|--------------|--------|
-| Confirm | "confirm" / "yes" / "确认" | Approve permission |
-| Reject | "reject" / "no" / "拒绝" | Deny permission |
-| Skip | "skip" / "next" / "跳过" | Skip current broadcast |
-| Pause | "pause" / "暂停" | Pause playback |
-| Resume | "resume" / "继续" | Resume playback |
-
-## TTS Options
-
-| Provider | Cost | Notes |
-|----------|------|-------|
-| Edge TTS | Free | Microsoft Edge voices via local bridge (default) |
-| OpenAI TTS | $15/M chars | tts-1 model, natural sounding |
-| ElevenLabs | Pay-per-use | Best quality, voice cloning |
-
-## Contributing
-
-We'd love your help! HumHum is a young project with lots of room to grow.
-
-### Good First Contributions
-
-- **Add a new AI assistant adapter** — Implement a `ClientProfile` in `src-tauri/src/client_registry.rs`
-- **Add a new TTS/STT provider** — Implement the interface in `src/types/index.ts`, register in `src/lib/bootstrap.ts`
-- **Design new creature animations** — Add a `draw*` function in `src/engine/AgentCreatures.ts`
-- **Improve the rendering engine** — Current: Canvas2D procedural → Goal: Rive .riv animations
-- **Add i18n support** — Translate UI text to more languages
-- **Write tests** — No test suite yet, everything is welcome
-- **Platform support** — Currently macOS-focused, Windows/Linux need love
-
-### How to Contribute
-
-1. Fork this repo
-2. Create a branch (`git checkout -b feature/my-feature`)
-3. Make your changes
-4. Run `npm run tauri dev` to verify
-5. Commit (`git commit -m 'feat: add my feature'`)
-6. Push (`git push origin feature/my-feature`)
-7. Open a Pull Request
-
-### Project Structure
+## Project structure
 
 ```
-src/                  # React frontend
-  components/         # UI components (Pet, Settings, Overlay)
-  engine/             # PixiJS rendering engine
-  lib/                # Voice pipeline, TTS/STT, audio
-  hooks/              # React hooks
-  types/              # TypeScript interfaces
-src-tauri/src/        # Rust backend
-  hook_server.rs      # HTTP server receiving hook events
-  commands.rs         # Tauri IPC commands
-  config.rs           # App configuration
-  session_store.rs    # Active session tracking
-  client_registry.rs  # AI assistant profiles
-hooks/                # Shell scripts for hook installation
-scripts/              # Edge TTS bridge
+src/                    # React frontend
+  components/
+    Hub/                # The four hub modules (Humi / Hype / Hush / Hexa)
+    Pet/                # Desktop jellyfish (PixiJS + Three.js)
+    Overlay/            # Permission confirm / notification / completion
+    Settings/           # Settings, stats, memory panels
+  engine/               # PixiJS / Canvas2D rendering engine
+  lib/                  # Voice pipeline, TTS/STT, summarizer, i18n
+  hooks/                # React hooks (useHexaData, etc.)
+src-tauri/src/          # Rust backend
+  lib.rs                # App bootstrap + Tauri command registration
+  commands.rs           # IPC commands (hook auto-config, Humi kernel)
+  knowledge_store.rs    # Hype knowledge base persistence
+  hush_store.rs         # Hush message inbox
+  hook_server.rs        # Local HTTP server :31275
+  client_registry.rs    # AI assistant client profiles
+docs/                   # Design & vision docs
+scripts/                # Edge TTS bridge, etc.
 ```
-
-## Spreading the Word
-
-If you find HumHum useful, here's how you can help it grow:
-
-- **Star this repo** to show support
-- **Share on Twitter/X** with `#HumHum` — tell people about your setup
-- **Write a blog post** or make a video about your workflow with HumHum
-- **Post on Hacker News, Reddit (r/programming, r/ClaudeAI), or V2EX**
-- **Tell your friends** who use AI coding tools
 
 ## Roadmap
 
-- [ ] Windows & Linux support
-- [ ] Pre-built binaries / Homebrew tap
-- [ ] Rive animation engine (replace Canvas2D)
-- [ ] Plugin system for custom event handlers
-- [ ] Collaborative mode (share session status with team)
-- [ ] More TTS voices and languages
+- [ ] Remote approval and status from your phone (scan to connect, no app to install)
+- [ ] Cross-device preference and context sync
+- [ ] Real Hush message bridges (currently read-only import + demo contacts)
+- [ ] Smart permission policies (learning your approval habits)
+- [ ] More Agent integrations and an open hook-protocol standard
+- [ ] Full Windows / Linux support
+
+## Contributing
+
+HUMHUM is open source and we'd love your help. When adding a feature, ask yourself: "Does this help the user feel more understood and in control?" If the answer is only "it exposes more data," redesign it.
+
+1. Fork this repo
+2. Create a branch (`git checkout -b feature/my-feature`)
+3. Commit your changes (`git commit -m 'feat: add my feature'`)
+4. Run `npm run tauri dev` to verify
+5. Push and open a Pull Request
 
 ## License
 
@@ -216,6 +179,4 @@ If you find HumHum useful, here's how you can help it grow:
 
 ---
 
-<p align="center">
-  <em>Built with 🪼 by the HumHum community</em>
-</p>
+<p align="center"><em>HUMHUM — a personal Agent hub built around you. When you're flooded with information, it helps you slowly untangle it. 🪼</em></p>

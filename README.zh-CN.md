@@ -1,12 +1,11 @@
-# HumHum
+# HUMHUM
 
-[![CI](https://github.com/edible999999999-jpg/humhum/actions/workflows/ci.yml/badge.svg)](https://github.com/edible999999999-jpg/humhum/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![GitHub release](https://img.shields.io/github/v/release/edible999999999-jpg/humhum)](https://github.com/edible999999999-jpg/humhum/releases)
 
 [English](./README.md)
 
-**Developer Podcast Pet** — 开发者的播客桌宠
+**让所有 Agent 围绕你工作** —— 个人生活的 Agent 中枢
 
 <p align="center">
   <a href="https://github.com/edible999999999-jpg/humhum/releases/download/v0.1.0/HumHum_0.1.0_aarch64.dmg"><strong>下载 macOS 版</strong></a>
@@ -16,94 +15,59 @@
 
 <p align="center"><em>当前提供 macOS Apple Silicon 安装包，Windows / Linux 在路线图中。</em></p>
 
-一个开源的桌面伴侣应用，以"会哼唱的水母" **Hum** 为形象，监听多种 AI 编程助手（Claude Code、Codex、Qwen Code、Gemini CLI、Kimi K1、QoderWork）的任务事件，将其转化为播客风格的语音播报，并支持语音指令和键盘快捷键交互。
+---
 
-<p align="center"><em>灯塔水母 Turritopsis dohrnii — 地球上唯一能"返老还童"的生物</em></p>
+当 Agent 越来越多，真正缺少的不是又一个 Agent，而是一个属于你自己的中心。
 
-## 为什么需要 HumHum？
+通用 Agent 提升了思考效率，专项 Agent 提升了工作效率，但你的个人生活仍然散落在 App、消息、健康与饮食记录、偏好和记忆里。HUMHUM 想做的，是**个人生活的 Agent 中枢**：通过一套个人知识库连接不同 Agent，把你手机、电脑、云端里的偏好、记录、任务、消息和生活数据，整理成长期可用的个人上下文。
 
-当你用 Claude Code 或 Codex 做开发时，经常需要切回去看它的输出或者点击确认。HumHum 把这些信息变成语音"播客"直接讲给你听，你只需要动动嘴说"确认"或"拒绝"就行了。
+> 不是让你去管理每一个 Agent，而是让所有 Agent 围绕你工作。
 
-**核心场景：**
+HUMHUM 通过多 Agent Hooks 记录并管理会话，提取你的偏好与会话记忆，理解你的工作与生活边界，把个人画像沉淀为可复用的知识库。
 
-- **任务完成播报** — AI 助手完成任务后，语音播报摘要
-- **语音确认** — 需要权限确认时，语音描述 + 三按钮（拒绝/始终允许/允许）
-- **多客户端支持** — 同时监听 6 种 AI 编程助手，统一管理
-- **会话仪表盘** — 悬停桌宠查看所有活跃会话状态
-- **统计面板** — Token 消耗、费用预估、Agent 活跃度、工具调用统计
+## 为什么是灯塔水母
 
-## Hum 水母设计
+HUMHUM 的角色灵感来自灯塔水母（*Turritopsis dohrnii*）。它被认为拥有"返老还童"的特性，能在生命周期中回到更年轻的状态——我们借这个意象，是想帮你把被 App、消息、任务和 Agent 消耗掉的生活秩序重新理回来。水母也有很多触须，天然适合作为"连接者"：连接手机端、电脑端、云端工具，连接消息、记忆、健康、饮食、工作流，也连接不同的通用 Agent 与专项 Agent。
 
-Hum 是一只半透明的灯塔水母，拥有 8 种情绪状态、动态触手和丰富的表情动画。
+在 Agent 遍地的时代，你缺的不只是效率，也缺一种被理解、被陪伴、被温柔接住的情绪价值。所以 HUMHUM 不是一个冷冰冰的机器人，也不是急着替你做决定的自动化工具，它更像一只安静、柔软、可靠的小水母：在你被信息淹没时帮你慢慢理清，在多个 Agent 各自工作时帮你守住属于自己的中心。
 
-### 吸收态 Agent
+## 四个角色
 
-每个连接的 AI 编程助手在 Hum 体内表现为一只独特的小型深海生物：
+HUMHUM 以中枢窗口（HUMHUM Hub）为核心，围绕四个模块组织你的个人 Agent 生活。
 
-| Agent | 吸收态生物 | 品牌色 |
-|-------|----------|--------|
-| Claude Code | 火虾 Fire Shrimp | 🟠 橙色 |
-| Codex | 云团 Cloud Puff | 🟢 绿色 |
-| Qwen Code | 蓝海马 Blue Seahorse | 🔵 蓝色 |
-| Gemini CLI | 水晶海星 Crystal Starfish | 🔷 青色 |
-| Kimi K1 | 月亮水母 Moon Jelly | 🟣 紫色 |
-| QoderWork | 珊瑚虫 Coral Polyp | 🔴 玫红 |
+### 🪼 Humi —— 入口与陪伴
 
-### 幼体模式（灯塔水母的秘密）
+Humi 是温暖的个人解读者，也是产品的默认入口。它静静地从你本地的 Agent 活动中学习，用大白话回答你，而不是甩给你一份终端报告。它的默认界面是一个对话框，不是一张配置表。
 
-灯塔水母在压力下会逆转回幼体形态。当 Hum 管理 **≥4 个活跃会话** 时，工作压力触发"返老还童"——等比缩小至 65%，越忙越小越努力。
+Humi 会读取本地的 Agent 资产（Codex / Claude / Qoder / Pi 以及项目痕迹），把这些信号翻译成：你的用户画像、当前工作方向、常用技能、偏好，以及记忆建议和温和的下一步。Humi 也能语音汇总 Agent 完成了哪些内容，并自动配置 Claude / Codex / Qoder 的 Hooks——你不用分心，就能确认 Loop 工作流的状态。原始扫描细节收在"详情"里，不会成为你第一眼看到的东西。
 
-### 喷水推进拖拽
+### 📚 Hype —— 通用 Agent 知识底座
 
-拖拽桌宠时，Hum 通过收缩伞盖喷水移动，伴随气泡尾迹粒子效果。
+Hype 管理你的个人 Agent 知识库。它不是又一个 Agent，而是个人知识索引助手，把分散在手机端、电脑端和云端 Agent 中的个人配置统一沉淀下来：不只是基础配置，还有你的偏好、常用 Skill、Agent Rules、Soul 设定、Memory 索引，以及不同 Agent 处理任务时形成的冷热记忆。
 
-### 状态与表情
+这套底座帮不同 Agent 更准确地理解你：知道你喜欢怎样的表达方式、常用哪些工作流、哪些信息需要长期记住、哪些只是临时上下文。Hype 是组织者，但界面不会先是一个文件管理器——它先告诉你知识库意味着什么、还缺什么。当前支持扫描 Skill / Agent / Soul / Memory / Rule / Config 资产、维护偏好、识别 CLAUDE.md / .cursorrules / AGENTS.md 规则，并可索引 Obsidian 笔记库。
 
-| 状态 | 伞盖 | 触手 | 表情 | 配色 |
-|------|------|------|------|------|
-| idle | 光滑圆顶 + 呼吸脉冲 | 自由飘荡 | 眨眼微笑 | 靛蓝 |
-| processing | 微收 + 内部闪烁 | 编织聚拢 | 专注小眼 | 蓝色 |
-| speaking | 脉冲收缩 + 声波 | 喇叭形扩音 | 张嘴说话 | 紫色 |
-| waiting | 收缩凹陷 | 缩头卷曲 | 惊讶圆嘴 | 琥珀 |
-| listening | 歪头侧耳 | 安静飘浮 | 微笑 | 翠绿 |
-| completed | 炸毛绽放 | 烟花展开 | 得意弧眼 | 翠绿 |
-| error | 歪斜 | 打结纠缠 | 螺旋X眼 | 粉色 |
+### 💬 Hush —— 站在个人角度梳理社交信息
 
-## 架构
+Hush 从你的视角整理个人、社交、工作与家庭的消息。它联通钉钉、微信、X、Meta 等不同来源，把消息重新组织成你能理解的关系层级：家人、朋友、工作、兴趣与每日重要信息。
 
-```
-AI 编程助手 Hooks (Claude Code / Codex / Qwen Code / ...)
-       │
-       ▼
-  Hook Script ──→ HumHum Server :31275 (Rust/Hyper)
-       │                    │
-       ▼                    ▼
-  EventBus             StatsStore (Token/费用统计)
-       │
-       ▼
-  LLM Summarizer (流式 SSE) ──→ Sentence Splitter
-                                      │
-                                      ▼
-                                 TTS Engine (可插拔)
-                                      │
-                                      ▼
-                                 Audio Queue ──→ Hum 水母 (PixiJS + Canvas2D)
-                                                      │
-                                                      ▼
-                                                 STT Engine (语音指令)
-```
+Hush **不替你说话**，只帮你看见真正该回应的人：父母的消息被及时提醒和总结，快乐大家群里的暖心话不被工作消息淹没，X 上最重要的每日 AI 动态也可以整理成一份轻量摘要。当你需要回应时，Hush 给出一个温柔的句式建议，但最终是否回复、如何回复，始终由你决定。本地消息桥接默认只读，且必须经你授权。
 
-**技术栈：** Tauri v2 + React 18 + TypeScript + TailwindCSS + PixiJS v8 + Rust
+> 它不是自动社交工具，而是帮你守住关系温度的个人消息助手。
 
-### 渲染引擎
+### 🛰️ Hexa —— 并行 Agent 的会话状态记录器
 
-```
-PixiJS v8 透明 WebGL Canvas (backgroundAlpha:0)
-  → FallbackRenderer Canvas2D 程序化水母绘制
-    → HumSprite OffscreenCanvas 纹理上传
-      → 未来: Rive .riv 角色动画
-FPS: 20 idle / 30 active / 60 drag · powerPreference: low-power
-```
+Hexa 是你的 Agent 监工。它不负责重新编排所有 Agent，而是帮你看清每个 Agent 的工作进度、待确认会话、优秀产出和跑偏之处。当多个 Agent 同时处理工程任务时，Hexa 记录它们做得好的地方，也提醒你哪些地方正在偏离。它让复杂的 Agent 协作不再是黑盒，而是一个你看得懂、管得住、能复盘的过程——并行工作生活的贴心小管家。
+
+## 桌宠形态
+
+HUMHUM 已实现桌宠部分形态（初版在黑客松开始后搭建，便于点子呈现）。Humi 以一只半透明的灯塔水母出现在桌面上，可以语音汇总 Agent 完成了哪些内容，帮你随时确认 Agent 状态，并自动配置 Claude / Codex / Qoder 的 Hooks。桌宠层已较为成熟，是项目最早的一层能力：
+
+- **语音播报** —— 把 Agent 事件变成自然语言播报，不用切窗口就知道发生了什么
+- **语音 / 键盘确认** —— 需要权限确认时语音描述，你可用语音、快捷键或按钮回应
+- **多客户端监听** —— 同时接入 Claude Code、Codex、Qwen Code、Gemini CLI、Kimi K1、QoderWork
+- **狂暴模式** —— 全自动确认，Agent 不再等你
+- **会话仪表盘 / 统计面板** —— 悬停查看活跃会话，查看 Token 用量与费用预估
 
 ## 快速开始
 
@@ -111,10 +75,10 @@ FPS: 20 idle / 30 active / 60 drag · powerPreference: low-power
 
 - [Node.js](https://nodejs.org/) 18+
 - [Rust](https://rustup.rs/) 1.70+
-- Python 3 + `edge-tts` (免费 TTS)
-- 系统依赖 (Tauri): 见 [Tauri Prerequisites](https://v2.tauri.app/start/prerequisites/)
+- Python 3 + `edge-tts`（可选，免费语音播报）
+- 系统依赖（Tauri）：见 [Tauri Prerequisites](https://v2.tauri.app/start/prerequisites/)
 
-### 安装
+### 安装与运行
 
 可直接从 [GitHub Releases](https://github.com/edible999999999-jpg/humhum/releases) 下载最新 macOS 安装包，或从源码运行：
 
@@ -129,7 +93,7 @@ npm install
 # 3. 开发模式启动（自动编译 Rust + 启动 Vite）
 npm run tauri dev
 
-# 4.（可选）安装 Edge TTS Bridge（免费语音播报）
+# 4.（可选）启动 Edge TTS Bridge，用于免费语音播报
 pip3 install edge-tts aiohttp
 python3 scripts/edge-tts-bridge.py &
 ```
@@ -141,150 +105,78 @@ npm run tauri build
 # 产物在 src-tauri/target/release/bundle/
 ```
 
-### 连接 AI 编程助手
+### 打开中枢并接入 Agent
 
-HumHum 启动后，右键桌宠打开 Settings，在"连接"区域点击对应助手的"连接"按钮即可自动安装 hooks。
+启动后，从系统托盘菜单或桌宠右键打开 **Hub（中枢）**，即可进入 Humi / Hype / Hush / Hexa 四个模块。在设置或 Humi 页里连接 AI 编程助手，Hooks 会自动安装：
 
-支持的客户端：
-- **Claude Code** — 自动配置 `~/.claude/settings.json`
-- **Codex** — 自动配置 Codex hooks
-- **Qwen Code** — 自动配置 Qwen Code hooks
-- **Gemini CLI** — 自动配置 Gemini CLI hooks
-- **Kimi K1** — 自动配置 Kimi K1 hooks
-- **QoderWork** — 自动监听 `~/.qoderwork/logs/sessions/` JSONL 日志
+- **Claude Code** —— 自动写入 / 合并 `~/.claude/settings.json`
+- **Codex / Qwen Code / Gemini CLI / Kimi K1** —— 通过统一的客户端注册表自动配置（支持 JSON / TOML）
+- **QoderWork** —— 自动监听 `~/.qoderwork/logs/sessions/` 会话日志
 
-### 配置 API
+## 数据与隐私
 
-HumHum 采用 BYOK (Bring Your Own Key) 模式。在 Settings 面板的"密钥"区域填入 API Key。
+HUMHUM 坚持本地优先，用户自己机器上的数据就是它的优势。所有长期数据持久化在 `~/.humhum/` 目录下：
 
-高级选项中可配置：
-- **Summarizer API Base** — 支持任意 OpenAI 兼容 API
-- **Summarizer 模型** — 默认 gpt-4o-mini
-- **Edge TTS Bridge URL** — 默认 http://localhost:5050
+- `config.json` —— 应用配置（Hook 端口、BYOK 密钥、TTS/STT、语言等）
+- `knowledge.json` —— Hype 的知识库（偏好、规则、资产、Obsidian 索引）
+- `stats.json` —— Token 与费用统计
+- `hush-inbox.json` —— Hush 的本地消息收件箱（最多保留 500 条）
+- `local-agent-memory.md` —— Humi 的本地 Agent 记忆
 
-## 统计面板
+隐私体现在行为上：不在未经你明确操作的情况下读取私密聊天或敏感数据；本地消息桥接默认只读；扫描结果保留用于调试，但**解读后的摘要才是默认呈现的产品界面**。
 
-Settings → 统计 tab 查看：
+## 技术栈
 
-- **Token 消耗** — 总量 / 输入 / 输出 / 缓存读写
-- **费用预估** — 今日 / 7 天 / 30 天 (基于模型定价自动计算)
-- **活跃 Agent** — 按客户端类型分布
-- **工具调用** — 去重后的工具名称和次数
-- **Sparkline 趋势图** — 每日变化可视化
+前端使用 React 18 + TypeScript + Vite，桌宠渲染基于 PixiJS v8（2D）与 Three.js（3D Humi）；桌面外壳是 Tauri v2（Rust）。后端 Rust 侧提供本地 Hook 服务（Hyper，:31275）、知识库存储、会话与统计存储、Hush 收件箱，以及对 Claude / Codex / Qoder / Wukong 会话的监听与解析。语音链路支持 Edge TTS / OpenAI / ElevenLabs 与 Web Speech / Whisper，摘要走任意 OpenAI 兼容 API（BYOK）。
 
-统计数据来自 Claude Code 的 JSONL transcript 文件，支持 Opus / Sonnet / Haiku 模型的精准费用计算。持久化在 `~/.humhum/stats.json`，保留 30 天。
+关键代码位置：Tauri 命令注册在 `src-tauri/src/lib.rs`；本地知识逻辑在 `src-tauri/src/knowledge_store.rs`；Humi 本地 Agent 解读在 `src-tauri/src/commands.rs`；Hush 消息存储在 `src-tauri/src/hush_store.rs`；中枢 UI 模块在 `src/components/Hub/`。
 
-## 交互方式
+## 项目结构
 
-### 桌宠交互
-
-| 操作 | 动作 |
-|------|------|
-| 双击 | 聚焦终端窗口 |
-| 右键 | 打开设置面板 |
-| 悬停 | 显示会话仪表盘 |
-| 拖拽 | 喷水推进移动桌宠 |
-
-### 键盘快捷键（确认模式下）
-
-| 按键 | 动作 |
-|------|------|
-| Y / Enter | 允许 |
-| A | 始终允许 |
-| N / Esc | 拒绝 |
-| Space | 暂停/恢复播报 |
-
-### 语音指令
-
-| 指令 | 触发词 | 动作 |
-|------|--------|------|
-| 确认 | "确认" / "好的" / "confirm" / "yes" | 批准权限请求 |
-| 拒绝 | "拒绝" / "不行" / "reject" / "no" | 拒绝权限请求 |
-| 跳过 | "跳过" / "下一个" / "skip" | 跳过当前播报 |
-| 暂停 | "暂停" / "pause" | 暂停播放 |
-| 继续 | "继续" / "resume" | 恢复播放 |
-
-## 语音方案
-
-### TTS (文字转语音)
-
-| 方案 | 成本 | 说明 |
-|------|------|------|
-| Edge TTS | 免费 | 微软 Edge 的 TTS，通过本地 Bridge 服务，默认 |
-| OpenAI TTS | $15/M chars | tts-1 模型，自然流畅 |
-| ElevenLabs | 按量付费 | 最佳品质，支持声音克隆 |
-
-### STT (语音转文字)
-
-| 方案 | 成本 | 说明 |
-|------|------|------|
-| Web Speech API | 免费 | WebView 原生支持，默认 |
-| OpenAI Whisper | $0.006/min | 高精度 |
-
-## Edge TTS Bridge
-
-免费 TTS 方案需要一个本地 Python 服务作为桥接：
-
-```bash
-# 安装
-pip3 install edge-tts aiohttp
-
-# 启动（默认端口 5050）
-python3 scripts/edge-tts-bridge.py
-
-# 自定义端口
-python3 scripts/edge-tts-bridge.py 6060
+```
+src/                    # React 前端
+  components/
+    Hub/                # 中枢四模块 (Humi / Hype / Hush / Hexa)
+    Pet/                # 桌宠水母 (PixiJS + Three.js)
+    Overlay/            # 权限确认 / 通知 / 完成面板
+    Settings/          # 设置、统计、记忆面板
+  engine/               # PixiJS / Canvas2D 渲染引擎
+  lib/                  # 语音链路、TTS/STT、摘要、i18n
+  hooks/                # React hooks (useHexaData 等)
+src-tauri/src/          # Rust 后端
+  lib.rs                # 应用启动 + Tauri 命令注册
+  commands.rs           # IPC 命令实现 (含 Hooks 自动配置、Humi kernel)
+  knowledge_store.rs    # Hype 知识库持久化
+  hush_store.rs         # Hush 消息收件箱
+  hook_server.rs        # 本地 HTTP 服务 :31275
+  client_registry.rs    # AI 助手客户端注册表
+docs/                   # 设计与展望文档
+scripts/                # Edge TTS bridge 等
 ```
 
-提供 OpenAI 兼容的 `/v1/audio/speech` 端点，返回 MP3 音频。
+## 路线图
 
-## 开发
-
-```bash
-npm install           # 安装依赖
-npm run tauri dev     # 开发模式（Vite + Rust）
-npm run tauri build   # 生产构建
-npm run build         # 仅前端构建
-```
-
-手动模拟事件（测试用）：
-```bash
-# 通知事件
-curl -X POST http://localhost:31275/event \
-  -H "Content-Type: application/json" \
-  -d '{"hook_event_name":"Notification","session_id":"test","payload":{"message":"Hello!"}}'
-
-# 任务完成
-curl -X POST http://localhost:31275/event \
-  -H "Content-Type: application/json" \
-  -d '{"hook_event_name":"TaskCompleted","session_id":"test","payload":{}}'
-```
-
-### 添加新的 AI 编程助手
-
-在 `src-tauri/src/client_registry.rs` 的 `CLIENTS` 数组追加 `ClientProfile`，指定配置格式（JSON/TOML）和路径。`install_hooks_for_client` / `uninstall_hooks_for_client` 已支持两种格式。
-
-### 添加新的 Agent 吸收态生物
-
-在 `src/engine/AgentCreatures.ts` 中添加新的 `draw*` 函数，并在 `drawCreature()` 的 switch 中注册。在 `src/engine/constants.ts` 中添加对应的颜色定义。
+- [ ] 手机远程审批与状态查看（扫码连接，无需装 App）
+- [ ] 跨设备偏好与上下文同步
+- [ ] Hush 真实消息桥接（当前为只读导入 + 演示联系人）
+- [ ] 智能权限策略（学习你的审批习惯）
+- [ ] 更多 Agent 接入与开放 Hook 协议标准
+- [ ] Windows / Linux 完整支持
 
 ## 贡献
 
-欢迎共建！
+HUMHUM 是开源项目，欢迎共建。新增功能时不妨先问自己一句："这是否让用户更被理解、更有掌控感？"如果答案只是"它暴露了更多数据"，那就该重新设计。
 
 1. Fork 本仓库
-2. 创建分支 (`git checkout -b feature/my-feature`)
-3. 提交代码 (`git commit -m 'feat: add my feature'`)
-4. 推送分支 (`git push origin feature/my-feature`)
-5. 创建 Pull Request
-
-### 好的首次贡献
-
-- 添加新的 AI 编程助手适配（实现 `ClientProfile`）
-- 添加新的 TTS/STT provider（实现 `TTSProvider`/`STTProvider` 接口）
-- 设计新的吸收态 Agent 生物
-- 翻译 UI 文本到其他语言
+2. 创建分支（`git checkout -b feature/my-feature`）
+3. 提交代码（`git commit -m 'feat: add my feature'`）
+4. 运行 `npm run tauri dev` 验证
+5. 推送分支并创建 Pull Request
 
 ## License
 
 [MIT](LICENSE)
+
+---
+
+<p align="center"><em>HUMHUM —— 面向用户的个人 Agent 中枢。在你被信息淹没时，帮你慢慢理清。🪼</em></p>
