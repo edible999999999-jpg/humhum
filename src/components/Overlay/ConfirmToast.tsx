@@ -101,11 +101,11 @@ export function ConfirmToast({ event, onConfirm, onDismiss }: ConfirmToastProps)
               <path d="M12 9v4M12 17h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
             </svg>
           </div>
-          <span className="text-white/80 font-semibold text-[13px]">{t("confirm.title")}</span>
+          <span className="font-semibold text-[13px]" style={{ color: "#334155" }}>{t("confirm.title")}</span>
           <span className="confirm-tag confirm-tag-time">{timeLabel}</span>
           <span className="confirm-tag confirm-tag-client">{event.client_type || "CC"}</span>
         </div>
-        <button onClick={onDismiss} className="text-white/20 hover:text-white/50 text-xs transition-colors leading-none">✕</button>
+        <button onClick={onDismiss} className="text-xs transition-colors leading-none" style={{ color: "#94a3b8" }}>✕</button>
       </div>
 
       {/* Tool info */}
@@ -113,7 +113,7 @@ export function ConfirmToast({ event, onConfirm, onDismiss }: ConfirmToastProps)
         <div className="text-amber-400/80 font-bold text-[13px] mb-1">{toolName}</div>
         {detail && (
           <div className="confirm-detail-box" style={{ maxHeight: 72 }}>
-            <code className="text-[11px] text-white/55 leading-snug break-all whitespace-pre-wrap">
+            <code className="text-[11px] leading-snug break-all whitespace-pre-wrap" style={{ color: "#64748b" }}>
               {detail}
             </code>
           </div>

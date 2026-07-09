@@ -37,6 +37,8 @@ const PIPELINE_TO_PET: Record<PipelineState, string> = {
 const COMPACT_HEIGHT = 210;
 const OVERLAY_HEIGHT = 460;
 const PERMISSION_HEIGHT = 650;
+const CONTEXT_MENU_WIDTH = 148;
+const CONTEXT_MENU_HEIGHT = 104;
 
 const appWindow = getCurrentWindow();
 
@@ -140,7 +142,7 @@ export function PetView() {
   const currentWindowHeight = useRef(COMPACT_HEIGHT);
   const resizeLock = useRef(false);
 
-  const hasActiveOverlay = showDashboard || !!notification || !!completionEvent || !!questionEvent;
+  const hasActiveOverlay = showDashboard || !!notification || !!completionEvent || !!questionEvent || !!contextMenu;
   const targetHeight = pendingPermission || questionEvent
     ? PERMISSION_HEIGHT
     : hasActiveOverlay
@@ -397,9 +399,11 @@ export function PetView() {
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    const x = Math.min(Math.max(e.clientX - 88, 8), 132);
-    const y = Math.min(Math.max(e.clientY - 102, 8), 132);
-    setContextMenu({ x, y });
+    setShowDashboard(false);
+    setContextMenu({
+      x: (140 - CONTEXT_MENU_WIDTH) / 2,
+      y: -(CONTEXT_MENU_HEIGHT + 8),
+    });
   }, []);
 
   const handleOpenHub = useCallback(() => {
@@ -506,7 +510,7 @@ export function PetView() {
             onDismiss={handleDismiss}
           />
           {queueLength > 1 && (
-            <div className="text-center mt-1.5 text-[10px] text-white/40 pointer-events-auto">
+            <div className="text-center mt-1.5 text-[10px] pointer-events-auto" style={{ color: "#64748b" }}>
               {t("petview.pending", { n: queueLength - 1 })}
             </div>
           )}

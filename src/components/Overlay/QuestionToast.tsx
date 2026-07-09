@@ -58,7 +58,7 @@ export function QuestionToast({ event, onDismiss }: QuestionToastProps) {
   };
 
   return (
-    <div className="confirm-card toast-enter pointer-events-auto" style={{ borderColor: "rgba(148, 239, 244, 0.12)", boxShadow: "0 2px 8px rgba(0,0,0,0.3)" }}>
+    <div className="confirm-card toast-enter pointer-events-auto" style={{ borderColor: "rgba(116,143,165,0.16)", boxShadow: "0 18px 44px rgba(90,115,150,0.18)" }}>
       {/* Header */}
       <div className="flex items-center justify-between px-3 pt-2.5 pb-1.5">
         <div className="flex items-center gap-2">
@@ -68,15 +68,15 @@ export function QuestionToast({ event, onDismiss }: QuestionToastProps) {
               <path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3M12 17h.01" />
             </svg>
           </div>
-          <span className="text-white/80 font-semibold text-[13px]">{t("question.title")}</span>
+          <span className="font-semibold text-[13px]" style={{ color: "#334155" }}>{t("question.title")}</span>
           <span className="confirm-tag confirm-tag-client">{event.client_type || "CC"}</span>
         </div>
-        <button onClick={handleDismissWithoutAnswer} className="text-white/20 hover:text-white/50 text-xs transition-colors leading-none">✕</button>
+        <button onClick={handleDismissWithoutAnswer} className="text-xs transition-colors leading-none" style={{ color: "#94a3b8" }}>✕</button>
       </div>
 
       {/* Question */}
       <div className="px-3 pb-2">
-        <div className="text-white/65 text-[12px] leading-snug">{questionText}</div>
+        <div className="text-[12px] leading-snug" style={{ color: "#334155" }}>{questionText}</div>
       </div>
 
       {/* Options */}
@@ -85,11 +85,16 @@ export function QuestionToast({ event, onDismiss }: QuestionToastProps) {
           <button
             key={i}
             onClick={() => handleSelect(i, opt.label)}
-            className="w-full text-left px-3.5 py-2 rounded-2xl border transition-all text-[12px] bg-white/[0.02] border-white/[0.04] text-white/60 hover:bg-[rgba(148,239,244,0.06)] hover:border-[rgba(148,239,244,0.12)] hover:text-white/85 active:scale-[0.97]"
+            className="w-full text-left px-3.5 py-2 rounded-2xl border transition-all text-[12px] active:scale-[0.97]"
+            style={{
+              background: "rgba(255,255,255,0.66)",
+              borderColor: "rgba(116,143,165,0.14)",
+              color: "#334155",
+            }}
           >
             <span className="font-semibold">{i + 1}. {opt.label}</span>
             {opt.description && (
-              <span className="block text-[10px] text-white/30 mt-0.5 leading-snug">{opt.description}</span>
+              <span className="block text-[10px] mt-0.5 leading-snug" style={{ color: "#64748b" }}>{opt.description}</span>
             )}
           </button>
         ))}

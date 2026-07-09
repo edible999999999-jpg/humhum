@@ -67,12 +67,12 @@ body {
 .pet-context-menu {
   position: absolute;
   z-index: 80;
-  width: 128px;
+  width: 148px;
   padding: 6px;
-  border-radius: 12px;
-  background: rgba(8, 11, 20, 0.9);
-  border: 1px solid rgba(148, 239, 244, 0.22);
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.34), 0 0 18px rgba(148, 239, 244, 0.08);
+  border-radius: 18px;
+  background: rgba(255, 250, 247, 0.96);
+  border: 1px solid rgba(116, 143, 165, 0.18);
+  box-shadow: 0 18px 44px rgba(90, 115, 150, 0.22);
   backdrop-filter: blur(16px);
   animation: toast-in 0.16s ease-out;
 }
@@ -83,17 +83,17 @@ body {
   gap: 1px;
   padding: 8px 9px;
   border: 0;
-  border-radius: 8px;
+  border-radius: 13px;
   background: transparent;
-  color: rgba(255, 255, 255, 0.84);
+  color: #334155;
   text-align: left;
   cursor: pointer;
   transition: background 0.18s ease, color 0.18s ease;
 }
 
 .pet-context-menu button:hover {
-  background: rgba(148, 239, 244, 0.12);
-  color: rgba(148, 239, 244, 0.98);
+  background: linear-gradient(135deg, #f0ecff, #eaf7ff);
+  color: #6d6ade;
 }
 
 .pet-context-menu span {
@@ -106,61 +106,66 @@ body {
   font-size: 9px;
   font-weight: 600;
   line-height: 1.2;
-  color: rgba(255, 255, 255, 0.36);
+  color: #94a3b8;
 }
 
-/* ===== Bioluminescent Design System ===== */
-/* Deep-sea aesthetic inspired by Resend — glow tokens, translucent borders, atmospheric depth */
+/* ===== Humi Soft Companion Design System ===== */
+/* Warm paper, pale glass, and quiet color tokens aligned with docs/design.md. */
 
 .settings-panel {
-  background: linear-gradient(165deg, #090b14 0%, #0d0f1a 50%, #0a0c16 100%);
+  background:
+    radial-gradient(circle at 18% 12%, rgba(234, 247, 255, 0.9), transparent 34%),
+    radial-gradient(circle at 88% 20%, rgba(238, 232, 255, 0.84), transparent 32%),
+    linear-gradient(165deg, #fffaf7 0%, #f7fbff 54%, #eef9f5 100%);
   border-radius: 24px;
-  border: 1px solid rgba(255, 255, 255, 0.045);
-  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6);
+  border: 1px solid rgba(116, 143, 165, 0.16);
+  box-shadow: 0 20px 60px rgba(90, 115, 150, 0.2);
   overflow: hidden;
+  color: #263241;
 }
 
 /* -- Card -- */
 .kawaii-card {
   padding: 16px;
   border-radius: 22px;
-  background: rgba(255, 255, 255, 0.025);
-  border: 1px solid rgba(255, 255, 255, 0.045);
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(116, 143, 165, 0.12);
   backdrop-filter: blur(12px);
   transition: border-color 0.3s, box-shadow 0.3s;
+  box-shadow: 0 14px 34px rgba(90, 115, 150, 0.1);
 }
 
 .kawaii-card:hover {
-  border-color: rgba(148, 239, 244, 0.1);
-  box-shadow: 0 0 28px rgba(148, 239, 244, 0.025);
+  border-color: rgba(141, 125, 223, 0.16);
+  box-shadow: 0 16px 38px rgba(90, 115, 150, 0.14);
 }
 
 /* -- Input -- */
 .kawaii-input {
   width: 100%;
   padding: 10px 14px;
-  background: rgba(255, 255, 255, 0.035);
-  border: 1px solid rgba(255, 255, 255, 0.045);
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(116, 143, 165, 0.14);
   border-radius: 14px;
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.88);
+  color: #263241;
   transition: all 0.25s ease;
   outline: none;
 }
 
 .kawaii-input::placeholder {
-  color: rgba(255, 255, 255, 0.2);
+  color: #94a3b8;
 }
 
 .kawaii-input:focus {
-  border-color: rgba(148, 239, 244, 0.4);
-  box-shadow: 0 0 0 3px rgba(148, 239, 244, 0.06), 0 0 16px rgba(148, 239, 244, 0.04);
-  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(141, 125, 223, 0.28);
+  box-shadow: 0 0 0 3px rgba(238, 232, 255, 0.72);
+  background: rgba(255, 255, 255, 0.9);
 }
 
 .kawaii-input:hover:not(:focus) {
-  border-color: rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.045);
+  border-color: rgba(116, 143, 165, 0.2);
+  background: rgba(255, 255, 255, 0.82);
 }
 
 /* -- Select -- */
@@ -179,7 +184,7 @@ body {
   display: block;
   font-size: 11px;
   font-weight: 500;
-  color: rgba(255, 255, 255, 0.4);
+  color: #64748b;
   margin-bottom: 6px;
   letter-spacing: 0.3px;
 }
@@ -200,9 +205,9 @@ body {
 .kawaii-chip {
   padding: 8px 14px;
   border-radius: 9999px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  color: rgba(255, 255, 255, 0.5);
+  background: rgba(255, 255, 255, 0.62);
+  border: 1px solid rgba(116, 143, 165, 0.14);
+  color: #64748b;
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
@@ -210,16 +215,16 @@ body {
 }
 
 .kawaii-chip:hover {
-  background: rgba(148, 239, 244, 0.06);
-  border-color: rgba(148, 239, 244, 0.15);
-  color: rgba(255, 255, 255, 0.75);
+  background: #f0ecff;
+  border-color: rgba(141, 125, 223, 0.2);
+  color: #5b5bd6;
 }
 
 .kawaii-chip.active {
-  background: rgba(148, 239, 244, 0.1);
-  border-color: rgba(148, 239, 244, 0.3);
-  color: rgba(148, 239, 244, 0.95);
-  box-shadow: 0 0 16px rgba(148, 239, 244, 0.08);
+  background: linear-gradient(135deg, #f0ecff, #eaf7ff);
+  border-color: rgba(141, 125, 223, 0.24);
+  color: #5b5bd6;
+  box-shadow: 0 10px 24px rgba(90, 115, 150, 0.1);
 }
 
 /* -- Slider -- */
@@ -228,13 +233,13 @@ body {
   appearance: none;
   height: 4px;
   border-radius: 2px;
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(116, 143, 165, 0.14);
   outline: none;
   transition: background 0.2s;
 }
 
 .kawaii-slider:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(116, 143, 165, 0.2);
 }
 
 .kawaii-slider::-webkit-slider-thumb {
@@ -263,9 +268,9 @@ body {
   border-radius: 9999px;
   font-size: 11px;
   font-weight: 500;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  background: rgba(255, 255, 255, 0.03);
-  color: rgba(255, 255, 255, 0.45);
+  border: 1px solid rgba(116, 143, 165, 0.14);
+  background: rgba(255, 255, 255, 0.62);
+  color: #64748b;
   cursor: pointer;
   transition: all 0.25s ease;
   min-width: 56px;
@@ -273,9 +278,9 @@ body {
 }
 
 .kawaii-toggle-btn:hover {
-  background: rgba(148, 239, 244, 0.07);
-  border-color: rgba(148, 239, 244, 0.2);
-  color: rgba(148, 239, 244, 0.85);
+  background: #eaf7ff;
+  border-color: rgba(99, 189, 209, 0.24);
+  color: #2b8295;
 }
 
 .kawaii-toggle-btn.connected {
@@ -955,13 +960,13 @@ html[data-page="intro"] #root {
   width: 100%;
   padding: 11px;
   border-radius: 9999px;
-  background: linear-gradient(135deg, rgba(148, 239, 244, 0.15), rgba(94, 224, 232, 0.1));
-  color: rgba(148, 239, 244, 0.95);
+  background: linear-gradient(135deg, #eaf7ff, #f0ecff);
+  color: #5b5bd6;
   font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.3px;
   cursor: pointer;
-  border: 1px solid rgba(148, 239, 244, 0.2);
+  border: 1px solid rgba(116, 143, 165, 0.18);
   transition: all 0.3s ease;
   position: relative;
   overflow: hidden;
@@ -977,9 +982,9 @@ html[data-page="intro"] #root {
 }
 
 .kawaii-save-btn:hover {
-  background: linear-gradient(135deg, rgba(148, 239, 244, 0.2), rgba(94, 224, 232, 0.15));
-  border-color: rgba(148, 239, 244, 0.35);
-  box-shadow: 0 0 24px rgba(148, 239, 244, 0.1);
+  background: linear-gradient(135deg, #dff8ef, #eee8ff);
+  border-color: rgba(141, 125, 223, 0.24);
+  box-shadow: 0 12px 28px rgba(90, 115, 150, 0.12);
 }
 
 .kawaii-save-btn:hover::before {
@@ -1002,30 +1007,32 @@ html[data-page="intro"] #root {
   border-radius: 9999px;
   font-size: 12px;
   font-weight: 500;
-  color: rgba(255, 255, 255, 0.35);
-  background: transparent;
-  border: 1px solid transparent;
+  color: #64748b;
+  background: rgba(255, 255, 255, 0.58);
+  border: 1px solid rgba(116, 143, 165, 0.12);
   cursor: pointer;
   transition: all 0.25s ease;
 }
 
 .kawaii-tab:hover {
-  color: rgba(255, 255, 255, 0.55);
-  background: rgba(255, 255, 255, 0.025);
+  color: #5b5bd6;
+  background: rgba(255, 255, 255, 0.82);
+  border-color: rgba(141, 125, 223, 0.16);
 }
 
 .kawaii-tab.active {
-  color: rgba(148, 239, 244, 0.95);
-  background: rgba(148, 239, 244, 0.08);
-  border-color: rgba(148, 239, 244, 0.18);
+  color: #5b5bd6;
+  background: linear-gradient(135deg, #f0ecff, #eaf7ff);
+  border-color: rgba(141, 125, 223, 0.22);
+  box-shadow: 0 10px 24px rgba(90, 115, 150, 0.1);
 }
 
 /* -- Stat card -- */
 .kawaii-stat-card {
   padding: 14px;
   border-radius: 20px;
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid rgba(255, 255, 255, 0.04);
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(116, 143, 165, 0.12);
   backdrop-filter: blur(12px);
   transition: border-color 0.3s, box-shadow 0.3s;
   position: relative;
@@ -1044,21 +1051,21 @@ html[data-page="intro"] #root {
 }
 
 .kawaii-stat-card:hover {
-  border-color: rgba(148, 239, 244, 0.08);
-  box-shadow: 0 0 24px rgba(148, 239, 244, 0.025);
+  border-color: rgba(141, 125, 223, 0.16);
+  box-shadow: 0 14px 30px rgba(90, 115, 150, 0.12);
 }
 
 .kawaii-stat-value {
   font-size: 22px;
   font-weight: 700;
-  color: rgba(255, 255, 255, 0.88);
+  color: #334155;
   font-family: "SF Mono", "Fira Code", monospace;
   line-height: 1.2;
 }
 
 .kawaii-stat-label {
   font-size: 10px;
-  color: rgba(255, 255, 255, 0.3);
+  color: #94a3b8;
   letter-spacing: 0.5px;
   text-transform: uppercase;
 }
@@ -1067,7 +1074,7 @@ html[data-page="intro"] #root {
 .kawaii-progress-bar {
   height: 6px;
   border-radius: 9999px;
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(116, 143, 165, 0.12);
   overflow: hidden;
   display: flex;
 }
@@ -1087,14 +1094,14 @@ html[data-page="intro"] #root {
   padding: 8px;
   border-radius: 16px;
   background: transparent;
-  border: 1px dashed rgba(255, 255, 255, 0.04);
+  border: 1px dashed rgba(116, 143, 165, 0.14);
   cursor: pointer;
   transition: all 0.25s;
 }
 
 .kawaii-expand-btn:hover {
-  background: rgba(255, 255, 255, 0.015);
-  border-color: rgba(148, 239, 244, 0.1);
+  background: rgba(255, 255, 255, 0.58);
+  border-color: rgba(141, 125, 223, 0.16);
 }
 
 /* -- Collapsible -- */
@@ -1123,18 +1130,19 @@ html[data-page="intro"] #root {
 
 /* -- Option styling -- */
 option {
-  background: #0d0f1a;
-  color: rgba(255, 255, 255, 0.85);
+  background: #fffaf7;
+  color: #263241;
 }
 
 /* ===== Confirm Card — Bioluminescent Toast ===== */
 
 .confirm-card {
-  background: rgba(9, 11, 20, 0.98);
-  border: 1px solid rgba(251, 191, 36, 0.12);
+  background: rgba(255, 250, 247, 0.96);
+  border: 1px solid rgba(116, 143, 165, 0.16);
   border-radius: 22px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 18px 44px rgba(90, 115, 150, 0.2);
   overflow: hidden;
+  color: #263241;
 }
 
 .confirm-card-header {
@@ -1170,8 +1178,8 @@ option {
 }
 
 .confirm-tag-time {
-  background: rgba(255, 255, 255, 0.04);
-  color: rgba(255, 255, 255, 0.35);
+  background: rgba(116, 143, 165, 0.1);
+  color: #64748b;
 }
 
 .confirm-tag-client {
@@ -1181,8 +1189,8 @@ option {
 
 .confirm-detail-box {
   padding: 8px 12px;
-  background: rgba(0, 0, 0, 0.2);
-  border: 1px solid rgba(255, 255, 255, 0.035);
+  background: rgba(255, 255, 255, 0.62);
+  border: 1px solid rgba(116, 143, 165, 0.12);
   border-radius: 14px;
   max-height: 100px;
   overflow-y: auto;
@@ -1241,11 +1249,55 @@ option {
   display: inline-block;
   padding: 1px 5px;
   border-radius: 4px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(116, 143, 165, 0.14);
+  color: #64748b;
   font-family: "SF Mono", monospace;
   font-size: 9px;
-  color: rgba(255, 255, 255, 0.4);
+}
+
+.settings-panel [class*="text-white/85"],
+.settings-panel [class*="text-white/80"],
+.settings-panel [class*="text-white/75"],
+.settings-panel [class*="text-white/70"],
+.settings-panel [class*="text-white/65"],
+.settings-panel [class*="text-white/60"],
+.settings-panel [class*="text-white/55"],
+.settings-panel [class*="text-white/50"] {
+  color: #334155 !important;
+}
+
+.settings-panel [class*="text-white/45"],
+.settings-panel [class*="text-white/40"],
+.settings-panel [class*="text-white/35"],
+.settings-panel [class*="text-white/30"],
+.settings-panel [class*="text-white/25"],
+.settings-panel [class*="text-white/20"],
+.settings-panel [class*="text-white/15"] {
+  color: #64748b !important;
+}
+
+.settings-panel [class*="border-white/"] {
+  border-color: rgba(116, 143, 165, 0.14) !important;
+}
+
+.settings-panel [class*="bg-white/["] {
+  background-color: rgba(255, 255, 255, 0.66) !important;
+}
+
+.hub-panel [style*="color: rgba(255, 255, 255"],
+.hub-panel [style*="color: rgba(255,255,255"] {
+  color: #64748b !important;
+}
+
+.hub-panel [style*="background: rgba(0, 0, 0"],
+.hub-panel [style*="background: rgba(0,0,0"] {
+  background: rgba(255, 255, 255, 0.68) !important;
+}
+
+.hub-panel [style*="border: 1px solid rgba(255, 255, 255"],
+.hub-panel [style*="border: 1px solid rgba(255,255,255"] {
+  border-color: rgba(116, 143, 165, 0.14) !important;
 }
 
 /* ===== Jet Propulsion Bubbles ===== */

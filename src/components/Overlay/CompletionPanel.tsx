@@ -38,7 +38,7 @@ export function CompletionPanel({ event, onDismiss }: CompletionPanelProps) {
   return (
     <div
       className="confirm-card toast-enter pointer-events-auto"
-      style={{ borderColor: accent.border, boxShadow: `0 2px 8px rgba(0,0,0,0.3)` }}
+      style={{ borderColor: accent.border, boxShadow: "0 18px 44px rgba(90,115,150,0.18)" }}
     >
       {/* Header */}
       <div className="flex items-center justify-between px-3 pt-2.5 pb-1.5">
@@ -58,15 +58,15 @@ export function CompletionPanel({ event, onDismiss }: CompletionPanelProps) {
               </svg>
             )}
           </div>
-          <span className="text-white/80 font-semibold text-[13px]">{statusLabel}</span>
+          <span className="font-semibold text-[13px]" style={{ color: "#334155" }}>{statusLabel}</span>
           <span className="confirm-tag confirm-tag-client">{clientLabel}</span>
         </div>
-        <button onClick={onDismiss} className="text-white/20 hover:text-white/50 text-xs transition-colors leading-none">✕</button>
+        <button onClick={onDismiss} className="text-xs transition-colors leading-none" style={{ color: "#94a3b8" }}>✕</button>
       </div>
 
       {/* Content */}
       <div className="px-3 pb-2.5">
-        <p className="text-[12px] text-white/55 leading-snug line-clamp-3">
+        <p className="text-[12px] leading-snug line-clamp-3" style={{ color: "#64748b" }}>
           {message || t("completion.fallback", { client: clientLabel, status: statusLabel })}
         </p>
       </div>

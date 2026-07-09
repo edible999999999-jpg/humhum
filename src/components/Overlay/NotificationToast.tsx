@@ -9,7 +9,7 @@ export function NotificationToast({ entry, onDismiss }: NotificationToastProps) 
   return (
     <div
       className="confirm-card toast-enter pointer-events-auto"
-      style={{ borderColor: "rgba(148, 239, 244, 0.12)", boxShadow: "0 2px 8px rgba(0,0,0,0.3)" }}
+      style={{ borderColor: "rgba(116,143,165,0.16)", boxShadow: "0 18px 44px rgba(90,115,150,0.18)" }}
     >
       {/* Header */}
       <div className="flex items-center justify-between px-3 pt-2.5 pb-1.5">
@@ -21,14 +21,14 @@ export function NotificationToast({ entry, onDismiss }: NotificationToastProps) 
               <line x1="12" y1="8" x2="12.01" y2="8" />
             </svg>
           </div>
-          <span className="text-white/80 font-semibold text-[13px]">{entry.timestamp.toLocaleTimeString()}</span>
+          <span className="font-semibold text-[13px]" style={{ color: "#334155" }}>{entry.timestamp.toLocaleTimeString()}</span>
         </div>
-        <button onClick={onDismiss} className="text-white/20 hover:text-white/50 text-xs transition-colors leading-none">✕</button>
+        <button onClick={onDismiss} className="text-xs transition-colors leading-none" style={{ color: "#94a3b8" }}>✕</button>
       </div>
 
       {/* Content */}
       <div className="px-3 pb-2.5">
-        <p className="text-[12px] text-white/55 leading-snug truncate">{entry.text}</p>
+        <p className="text-[12px] leading-snug truncate" style={{ color: "#64748b" }}>{entry.text}</p>
       </div>
     </div>
   );
