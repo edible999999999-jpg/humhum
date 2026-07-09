@@ -2320,16 +2320,31 @@ fn collect_top_tools_from_stats(stats_store: &StatsStore) -> Vec<LocalUsageInsig
 
 fn collect_top_skill_assets(assets: &[AgentAsset]) -> Vec<LocalUsageInsight> {
     let mut counts: BTreeMap<String, (u64, String, String)> = BTreeMap::new();
-    for asset in assets
-        .iter()
-        .filter(|asset| asset.asset_type == "skill" && is_primary_skill_asset(asset))
-    {
+    for asset in assets.iter().filter(|asset| {
+        asset.asset_type == "skill"
+            && is_primary_skill_asset(asset)
+            && !is_generic_skill_signal(&asset.name)
+    }) {
         let entry = counts.entry(asset.name.clone()).or_insert((
             0,
             asset.agent_id.clone(),
             asset.file_path.clone(),
         ));
         entry.0 += 1;
+    }
+
+    if counts.is_empty() {
+        for asset in assets
+            .iter()
+            .filter(|asset| asset.asset_type == "skill" && is_primary_skill_asset(asset))
+        {
+            let entry = counts.entry(asset.name.clone()).or_insert((
+                0,
+                asset.agent_id.clone(),
+                asset.file_path.clone(),
+            ));
+            entry.0 += 1;
+        }
     }
 
     let mut items = counts
@@ -2894,4 +2909,113 @@ fn emit_local_kernel_event(
     }
 
     event_bus::emit_hook_event(app_handle, &event);
+}
+
+#[cfg(test)]
+mod humi_agent_kernel_tests {
+    use super::*;
+
+    fn asset(
+        asset_type: &str,
+        agent_id: &str,
+        name: &str,
+        relative_path: &str,
+        content: &str,
+    ) -> AgentAsset {
+        AgentAsset {
+            id: format!("{}:{}:{}", agent_id, asset_type, relative_path),
+            asset_type: asset_type.to_string(),
+            agent_id: agent_id.to_string(),
+            name: name.to_string(),
+            file_path: format!("/tmp/humhum/{}", relative_path),
+            relative_path: relative_path.to_string(),
+            source: "test".to_string(),
+            content: content.to_string(),
+            tags: Vec::new(),
+            modified_at: None,
+        }
+    }
+
+    #[test]
+    fn top_skill_assets_prioritize_real_skill_over_generic_files() {
+        let assets = vec![
+            asset(
+                "skill",
+                "codex",
+                "access",
+                "access/SKILL.md",
+                "generic access helper",
+            ),
+            asset(
+                "skill",
+                "codex",
+                "configuration",
+                "configuration/SKILL.md",
+                "generic configuration helper",
+            ),
+            asset(
+                "skill",
+                "codex",
+                "github:yeet",
+                "github/yeet/SKILL.md",
+                "Publish local changes to GitHub safely.",
+            ),
+        ];
+
+        let top_skills = collect_top_skill_assets(&assets);
+
+        assert_eq!(
+            top_skills.first().map(|item| item.name.as_str()),
+            Some("github:yeet")
+        );
+        assert!(!top_skills.iter().any(|item| item.name == "access"));
+    }
+
+    #[test]
+    fn humi_reply_uses_filtered_skill_profile_instead_of_builtin_tools() {
+        let top_skills = vec![LocalUsageInsight {
+            name: "github:yeet".to_string(),
+            count: 1,
+            source: "codex".to_string(),
+            detail: "/tmp/humhum/github/yeet/SKILL.md".to_string(),
+        }];
+        let operational_tools = vec![
+            LocalUsageInsight {
+                name: "Bash".to_string(),
+                count: 47,
+                source: "claude-code".to_string(),
+                detail: "Observed in local transcripts".to_string(),
+            },
+            LocalUsageInsight {
+                name: "Read".to_string(),
+                count: 42,
+                source: "claude-code".to_string(),
+                detail: "Observed in local transcripts".to_string(),
+            },
+        ];
+        let context = HumiContextPacket {
+            question: "现在技能用得最多的是啥？".to_string(),
+            observed_workflows: vec!["工程实现和发布流很明显".to_string()],
+            user_preference_candidates: vec!["少展示原始配置，多给结论和下一步。".to_string()],
+            memory_candidates: vec!["把常用技能、表达偏好、易错点沉淀成个人长期记忆。".to_string()],
+            risk_notes: Vec::new(),
+            context_sources: Vec::new(),
+            evidence_notes: Vec::new(),
+        };
+
+        let reply = build_humi_agent_reply(
+            "现在技能用得最多的是啥？",
+            &context,
+            &top_skills,
+            &[],
+            &operational_tools,
+        );
+
+        assert!(reply.message.contains("github:yeet"));
+        assert!(reply
+            .steps
+            .iter()
+            .any(|step| step.content.contains("内置操作")));
+        assert!(!reply.message.contains("Bash 是当前最常用技能"));
+    }
 }

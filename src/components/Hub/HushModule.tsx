@@ -197,7 +197,7 @@ export function HushModule() {
               fontWeight: 700,
             }}
           >
-            Prototype data
+            Local-first bridge
           </span>
         </div>
         <p className="hub-module-desc">
@@ -227,21 +227,7 @@ export function HushModule() {
           {connectorError}
         </div>
       )}
-      <div
-        style={{
-          marginBottom: 14,
-          padding: 12,
-          borderRadius: 14,
-          background: "rgba(251,191,36,0.045)",
-          border: "1px solid rgba(251,191,36,0.14)",
-          color: "rgba(255,255,255,0.62)",
-          fontSize: 11,
-          lineHeight: 1.55,
-        }}
-      >
-        Hush should use the local Mac advantage: first find Ali Ding data sources, then build a user-approved read-only bridge.
-        It should help you understand family, friend, work, and daily signal messages. It should not secretly reply for you.
-      </div>
+      <HushTruthPanel connectors={connectors} inbox={inbox} />
 
       <DingTalkSourcePanel
         report={dingTalkReport}
@@ -437,6 +423,70 @@ export function HushModule() {
               <div className="hub-empty-desc">{t("hub.hush.emptyDesc")}</div>
             </div>
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function HushTruthPanel({
+  connectors,
+  inbox,
+}: {
+  connectors: HushConnectorStatus[];
+  inbox: HushInboxSummary | null;
+}) {
+  const dingTalk = connectors.find((connector) => connector.id === "dingtalk");
+  const state = dingTalk?.bridge_ready
+    ? "Connected"
+    : dingTalk?.installed
+      ? "App found, messages not indexed"
+      : "Not connected";
+  const detail = dingTalk?.bridge_ready
+    ? "Hush can summarize approved local messages."
+    : dingTalk?.installed
+      ? "Opening DingTalk is not enough. Scan local sources, then choose a read-only export/log path for HUMHUM to index."
+      : "Install or log into Ali Ding first, then let Hush search for local storage candidates.";
+
+  return (
+    <div
+      style={{
+        marginBottom: 14,
+        padding: 14,
+        borderRadius: 18,
+        background: "linear-gradient(135deg, rgba(255,255,255,0.9), rgba(232,248,247,0.82))",
+        border: "1px solid rgba(116,143,165,0.14)",
+        boxShadow: "0 12px 34px rgba(90,115,150,0.1)",
+        color: "#334155",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 12, color: "#6d6ade", fontWeight: 900, marginBottom: 4 }}>
+            Hush connection truth
+          </div>
+          <div style={{ fontSize: 18, color: "#263241", fontWeight: 900, lineHeight: 1.2 }}>
+            {state}
+          </div>
+          <div style={{ marginTop: 6, fontSize: 12, color: "#64748b", lineHeight: 1.55 }}>
+            {detail}
+          </div>
+        </div>
+        <div
+          style={{
+            minWidth: 124,
+            padding: 10,
+            borderRadius: 15,
+            background: "rgba(255,255,255,0.7)",
+            border: "1px solid rgba(116,143,165,0.12)",
+          }}
+        >
+          <div style={{ fontSize: 9, color: "#94a3b8", fontWeight: 850, textTransform: "uppercase" }}>
+            approved inbox
+          </div>
+          <div style={{ marginTop: 4, fontSize: 22, color: "#334155", fontWeight: 900 }}>
+            {inbox?.total ?? 0}
+          </div>
         </div>
       </div>
     </div>

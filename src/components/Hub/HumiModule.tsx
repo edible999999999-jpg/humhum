@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, type CSSProperties } from "react";
+import { useState, useEffect, useCallback, useRef, type CSSProperties } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { PetCanvas } from "../Pet/PetCanvas";
 import { useTranslation } from "../../lib/i18n/react";
@@ -142,6 +142,7 @@ export function HumiModule() {
   const [localKernelResult, setLocalKernelResult] = useState<LocalAgentKernelResult | null>(null);
   const [agentKernelStatus, setAgentKernelStatus] = useState<AgentKernelStatus | null>(null);
   const [showDetails, setShowDetails] = useState(false);
+  const autoScanStarted = useRef(false);
   const [kernelPrompt, setKernelPrompt] = useState(
     "现在技能用得最多的是啥？"
   );
@@ -252,6 +253,12 @@ export function HumiModule() {
     }
   }, [fetchSessions, kernelCwd, kernelPrompt, kernelRoots]);
 
+  useEffect(() => {
+    if (autoScanStarted.current) return;
+    autoScanStarted.current = true;
+    void runLocalKernel();
+  }, [runLocalKernel]);
+
   const sendPiTask = useCallback(async () => {
     if (!kernelSession) return;
     setKernelLoading(true);
@@ -308,6 +315,13 @@ export function HumiModule() {
         <h2 className="hub-module-title">{t("hub.humi.title")}</h2>
         <p className="hub-module-desc">{t("hub.humi.desc")}</p>
       </div>
+
+      <QuietSignalsStrip
+        assets={localKernelResult?.asset_count ?? 0}
+        skillCount={localKernelResult?.type_counts.skill ?? 0}
+        agentCount={localKernelResult?.agent_counts ? Object.keys(localKernelResult.agent_counts).length : 0}
+        connectedClients={connectedClients}
+      />
 
       {/* Ask Humi */}
       <div
@@ -554,18 +568,6 @@ export function HumiModule() {
           </div>
         )}
 
-        {kernelSession && (
-          <div style={{ marginTop: 10, fontSize: 10, color: "rgba(255,255,255,0.42)", lineHeight: 1.7 }}>
-            <span style={{ color: "#94eff4", fontWeight: 800 }}>{kernelSession.state}</span>
-            {" · "}
-            {kernelSession.session_id.slice(0, 18)}
-            {" · messages "}
-            {kernelSession.message_count}
-            {kernelSession.last_event_type ? ` · ${kernelSession.last_event_type}` : ""}
-            {kernelSession.last_error ? ` · ${kernelSession.last_error}` : ""}
-          </div>
-        )}
-
         {kernelMessage && (
           <div style={{ marginTop: 10, fontSize: 10, color: "#fca5a5", lineHeight: 1.5 }}>
             {kernelMessage}
@@ -573,14 +575,111 @@ export function HumiModule() {
         )}
       </div>
 
-      {/* Connected agents */}
+      {showDetails && (
+        <RuntimeDetails
+          sessions={sessions}
+          hooksStatus={hooksStatus}
+          kernelSession={kernelSession}
+          hookTitle={t("hub.humi.hookStatus")}
+          liveTitle={t("hub.humi.liveSessions")}
+          emptyTitle={t("hub.humi.emptyTitle")}
+          emptyDesc={t("hub.humi.emptyDesc")}
+          noHooks={t("hub.humi.noHooks")}
+        />
+      )}
+    </div>
+  );
+}
+
+function QuietSignalsStrip({
+  assets,
+  skillCount,
+  agentCount,
+  connectedClients,
+}: {
+  assets: number;
+  skillCount: number;
+  agentCount: number;
+  connectedClients: string[];
+}) {
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+        gap: 10,
+        marginBottom: 14,
+      }}
+    >
+      <QuietSignal label="quiet assets" value={assets ? `${assets}` : "indexing"} />
+      <QuietSignal label="skill signals" value={skillCount ? `${skillCount}` : "warming up"} />
+      <QuietSignal label="agent sources" value={agentCount ? `${agentCount}` : "listening"} />
+      <QuietSignal label="live hooks" value={connectedClients.length ? connectedClients.join(", ") : "none yet"} />
+    </div>
+  );
+}
+
+function QuietSignal({ label, value }: { label: string; value: string }) {
+  return (
+    <div
+      style={{
+        padding: 11,
+        borderRadius: 16,
+        background: "rgba(255,255,255,0.72)",
+        border: "1px solid rgba(116,143,165,0.12)",
+        boxShadow: "0 10px 28px rgba(90,115,150,0.08)",
+      }}
+    >
+      <div style={{ fontSize: 9, color: "#94a3b8", fontWeight: 850, textTransform: "uppercase" }}>
+        {label}
+      </div>
+      <div style={{ marginTop: 4, fontSize: 13, color: "#334155", fontWeight: 850, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function RuntimeDetails({
+  sessions,
+  hooksStatus,
+  kernelSession,
+  hookTitle,
+  liveTitle,
+  emptyTitle,
+  emptyDesc,
+  noHooks,
+}: {
+  sessions: ActiveSession[];
+  hooksStatus: HooksStatus;
+  kernelSession: PiSessionStatus | null;
+  hookTitle: string;
+  liveTitle: string;
+  emptyTitle: string;
+  emptyDesc: string;
+  noHooks: string;
+}) {
+  return (
+    <div style={{ marginTop: 16 }}>
+      {kernelSession && (
+        <div style={{ marginBottom: 12, fontSize: 10, color: "#64748b", lineHeight: 1.7 }}>
+          <span style={{ color: "#6d6ade", fontWeight: 850 }}>{kernelSession.state}</span>
+          {" · "}
+          {kernelSession.session_id.slice(0, 18)}
+          {" · messages "}
+          {kernelSession.message_count}
+          {kernelSession.last_event_type ? ` · ${kernelSession.last_event_type}` : ""}
+          {kernelSession.last_error ? ` · ${kernelSession.last_error}` : ""}
+        </div>
+      )}
+
       <div style={{ marginBottom: 16 }}>
-        <div style={{ fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.3)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>
-          {t("hub.humi.hookStatus")}
+        <div style={{ fontSize: 11, fontWeight: 800, color: "#7b8798", textTransform: "uppercase", marginBottom: 8 }}>
+          {hookTitle}
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
           {Object.entries(hooksStatus).length === 0 ? (
-            <div className="hub-empty-inline">{t("hub.humi.noHooks")}</div>
+            <div className="hub-empty-inline">{noHooks}</div>
           ) : (
             Object.entries(hooksStatus).map(([clientId, connected]) => (
               <span
@@ -588,20 +687,24 @@ export function HumiModule() {
                 style={{
                   padding: "4px 10px",
                   borderRadius: 9999,
-                  border: `1px solid ${connected ? "rgba(52,211,153,0.2)" : "rgba(255,255,255,0.06)"}`,
-                  background: connected ? "rgba(52,211,153,0.06)" : "rgba(255,255,255,0.02)",
-                  color: connected ? "rgba(110,231,183,0.9)" : "rgba(255,255,255,0.3)",
+                  border: `1px solid ${connected ? "rgba(52,211,153,0.2)" : "rgba(116,143,165,0.12)"}`,
+                  background: connected ? "rgba(223,248,239,0.78)" : "rgba(255,255,255,0.62)",
+                  color: connected ? "#15803d" : "#94a3b8",
                   fontSize: 11,
-                  fontWeight: 600,
+                  fontWeight: 700,
                   display: "flex",
                   alignItems: "center",
                   gap: 4,
                 }}
               >
-                <span style={{
-                  width: 6, height: 6, borderRadius: "50%",
-                  background: connected ? "#34d399" : "rgba(255,255,255,0.15)",
-                }} />
+                <span
+                  style={{
+                    width: 6,
+                    height: 6,
+                    borderRadius: "50%",
+                    background: connected ? "#34d399" : "#cbd5e1",
+                  }}
+                />
                 {clientId}
               </span>
             ))
@@ -609,15 +712,14 @@ export function HumiModule() {
         </div>
       </div>
 
-      {/* Active sessions */}
       <div>
-        <div style={{ fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.3)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>
-          {t("hub.humi.liveSessions")}
+        <div style={{ fontSize: 11, fontWeight: 800, color: "#7b8798", textTransform: "uppercase", marginBottom: 8 }}>
+          {liveTitle}
         </div>
         {sessions.length === 0 ? (
           <div className="hub-empty-state">
-            <div className="hub-empty-title">{t("hub.humi.emptyTitle")}</div>
-            <div className="hub-empty-desc">{t("hub.humi.emptyDesc")}</div>
+            <div className="hub-empty-title">{emptyTitle}</div>
+            <div className="hub-empty-desc">{emptyDesc}</div>
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -626,35 +728,34 @@ export function HumiModule() {
                 key={s.session_id}
                 style={{
                   padding: "8px 12px",
-                  borderRadius: 10,
-                  background: "rgba(255,255,255,0.02)",
-                  border: "1px solid rgba(255,255,255,0.04)",
+                  borderRadius: 12,
+                  background: "rgba(255,255,255,0.72)",
+                  border: "1px solid rgba(116,143,165,0.12)",
                   display: "flex",
                   alignItems: "center",
                   gap: 8,
                   fontSize: 12,
                 }}
               >
-                <span style={{
-                  width: 6, height: 6, borderRadius: "50%",
-                  background: s.status === "active" ? "#34d399" : "#fbbf24",
-                  boxShadow: s.status === "active" ? "0 0 6px #34d399" : "none",
-                }} />
-                <span style={{ color: "rgba(255,255,255,0.7)", fontWeight: 500 }}>
+                <span
+                  style={{
+                    width: 6,
+                    height: 6,
+                    borderRadius: "50%",
+                    background: s.status === "active" ? "#34d399" : "#fbbf24",
+                  }}
+                />
+                <span style={{ color: "#334155", fontWeight: 700 }}>
                   {s.project_name || s.session_id.slice(0, 8)}
                 </span>
-                <span style={{ color: "rgba(255,255,255,0.25)", fontSize: 10 }}>
-                  {s.client_type}
-                </span>
+                <span style={{ color: "#94a3b8", fontSize: 10 }}>{s.client_type}</span>
                 <div style={{ flex: 1 }} />
                 {s.last_tool_name && (
-                  <span style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", fontFamily: "monospace" }}>
+                  <span style={{ fontSize: 10, color: "#94a3b8", fontFamily: "monospace" }}>
                     {s.last_tool_name}
                   </span>
                 )}
-                <span style={{ fontSize: 10, color: "rgba(255,255,255,0.2)" }}>
-                  {s.event_count}
-                </span>
+                <span style={{ fontSize: 10, color: "#94a3b8" }}>{s.event_count}</span>
               </div>
             ))}
           </div>

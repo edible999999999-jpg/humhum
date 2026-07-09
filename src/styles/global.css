@@ -1271,12 +1271,15 @@ option {
   height: 100vh;
   display: flex;
   flex-direction: column;
-  background: linear-gradient(165deg, #090b14 0%, #0d0f1a 50%, #0a0c16 100%);
+  background:
+    radial-gradient(circle at 14% 8%, rgba(218, 241, 255, 0.95), transparent 30%),
+    radial-gradient(circle at 86% 14%, rgba(241, 229, 255, 0.9), transparent 34%),
+    linear-gradient(165deg, #fffaf7 0%, #f4fbff 48%, #f6f1ff 100%);
   border-radius: 16px;
-  border: 1px solid rgba(255, 255, 255, 0.045);
-  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6);
+  border: 1px solid rgba(116, 143, 165, 0.16);
+  box-shadow: 0 18px 54px rgba(90, 115, 150, 0.2);
   overflow: hidden;
-  color: rgba(255, 255, 255, 0.88);
+  color: #263241;
   font-size: 13px;
 }
 
@@ -1286,7 +1289,7 @@ option {
   justify-content: space-between;
   min-height: 52px;
   padding: 0 14px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid rgba(116, 143, 165, 0.12);
   cursor: grab;
   flex-shrink: 0;
   -webkit-user-select: none;
@@ -1307,13 +1310,13 @@ option {
 .hub-title {
   font-size: 13px;
   font-weight: 700;
-  color: rgba(255, 255, 255, 0.82);
+  color: #334155;
   letter-spacing: 0;
 }
 
 .hub-subtitle {
   font-size: 10px;
-  color: rgba(148, 239, 244, 0.48);
+  color: #8d7ddf;
   letter-spacing: 0;
 }
 
@@ -1321,9 +1324,9 @@ option {
   width: 24px;
   height: 24px;
   border-radius: 50%;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  background: rgba(255, 255, 255, 0.03);
-  color: rgba(255, 255, 255, 0.25);
+  border: 1px solid rgba(116, 143, 165, 0.14);
+  background: rgba(255, 255, 255, 0.62);
+  color: #94a3b8;
   font-size: 11px;
   cursor: pointer;
   display: flex;
@@ -1351,7 +1354,7 @@ option {
   align-items: center;
   gap: 4px;
   padding: 12px 0;
-  border-right: 1px solid rgba(255, 255, 255, 0.04);
+  border-right: 1px solid rgba(116, 143, 165, 0.12);
   flex-shrink: 0;
 }
 
@@ -1370,13 +1373,14 @@ option {
 }
 
 .hub-sidebar-item:hover {
-  background: rgba(255, 255, 255, 0.03);
-  border-color: rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.52);
+  border-color: rgba(116, 143, 165, 0.12);
 }
 
 .hub-sidebar-item.active {
-  background: rgba(148, 239, 244, 0.08);
-  border-color: rgba(148, 239, 244, 0.18);
+  background: rgba(255, 255, 255, 0.72);
+  border-color: rgba(141, 125, 223, 0.2);
+  box-shadow: 0 10px 28px rgba(90, 115, 150, 0.1);
 }
 
 .hub-sidebar-icon {
@@ -1385,8 +1389,8 @@ option {
   display: inline-grid;
   place-items: center;
   border-radius: 9px;
-  background: rgba(255, 255, 255, 0.035);
-  color: rgba(255, 255, 255, 0.58);
+  background: rgba(255, 255, 255, 0.68);
+  color: #64748b;
   font-size: 11px;
   font-weight: 850;
   line-height: 1;
@@ -1395,18 +1399,18 @@ option {
 .hub-sidebar-label {
   font-size: 9px;
   font-weight: 600;
-  color: rgba(255, 255, 255, 0.35);
+  color: #94a3b8;
   letter-spacing: 0.2px;
 }
 
 .hub-sidebar-item.active .hub-sidebar-label {
-  color: rgba(148, 239, 244, 0.9);
+  color: #6d6ade;
 }
 
 .hub-sidebar-item.active .hub-sidebar-icon {
-  background: rgba(148, 239, 244, 0.12);
-  color: rgba(148, 239, 244, 0.95);
-  box-shadow: 0 0 18px rgba(148, 239, 244, 0.08);
+  background: linear-gradient(135deg, #f0ecff, #eaf7ff);
+  color: #6d6ade;
+  box-shadow: 0 0 18px rgba(141, 125, 223, 0.12);
 }
 
 .hub-content {
@@ -1427,7 +1431,7 @@ option {
 .hub-module-kicker {
   display: block;
   margin-bottom: 6px;
-  color: rgba(148, 239, 244, 0.58);
+  color: #8d7ddf;
   font-size: 11px;
   font-weight: 750;
   letter-spacing: 0;
@@ -1437,13 +1441,13 @@ option {
   margin: 0 0 8px;
   font-size: 20px;
   font-weight: 700;
-  color: rgba(255, 255, 255, 0.88);
+  color: #263241;
 }
 
 .hub-module-desc {
   margin: 0;
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.4);
+  color: #64748b;
   line-height: 1.5;
 }
 
@@ -1451,28 +1455,28 @@ option {
   padding: 22px;
   text-align: center;
   border-radius: 16px;
-  background: rgba(255, 255, 255, 0.015);
-  border: 1px dashed rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.62);
+  border: 1px dashed rgba(116, 143, 165, 0.18);
 }
 
 .hub-empty-title {
   font-size: 13px;
   font-weight: 700;
-  color: rgba(255, 255, 255, 0.45);
+  color: #64748b;
 }
 
 .hub-empty-desc {
   margin-top: 5px;
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.24);
+  color: #94a3b8;
   line-height: 1.45;
 }
 
 .hub-empty-inline {
   padding: 6px 10px;
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.02);
-  color: rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.62);
+  color: #94a3b8;
   font-size: 11px;
 }
 
