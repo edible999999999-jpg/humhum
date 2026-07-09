@@ -1,12 +1,15 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import {
-  CONTACTS,
-  MESSAGE_SUMMARIES,
-  PLATFORM_ICONS,
-  type Contact,
-} from "./hush-mock-data";
 import { useTranslation } from "../../lib/i18n/react";
+
+const PLATFORM_ICONS: Record<string, string> = {
+  wechat: "💬",
+  dingtalk: "🔷",
+  feishu: "🪶",
+  telegram: "✈️",
+  x: "𝕏",
+  facetime: "📱",
+};
 
 const TIER_LABEL_KEYS: Record<string, string> = {
   family: "hub.hush.tier.family",
@@ -44,6 +47,17 @@ interface HushInboxSummary {
   unread_priority: number;
   by_tier: Record<string, number>;
   by_platform: Record<string, number>;
+  messages: HushInboxMessage[];
+}
+
+interface DerivedContact {
+  id: string;
+  name: string;
+  tier: string;
+  platforms: string[];
+  lastMessage: string;
+  lastMessageTime: string;
+  importance: number;
   messages: HushInboxMessage[];
 }
 
@@ -166,10 +180,43 @@ export function HushModule() {
     }
   }, [dingTalkImportPath, fetchInbox]);
 
+  const contacts = useMemo<DerivedContact[]>(() => {
+    const messages = inbox?.messages ?? [];
+    const map = new Map<string, DerivedContact>();
+    for (const message of messages) {
+      const key = `${message.platform}:${message.sender}`;
+      const existing = map.get(key);
+      if (existing) {
+        existing.messages.push(message);
+        if (message.received_at > existing.lastMessageTime) {
+          existing.lastMessage = message.text;
+          existing.lastMessageTime = message.received_at;
+        }
+        existing.importance = Math.max(existing.importance, message.importance);
+        if (!existing.platforms.includes(message.platform)) {
+          existing.platforms.push(message.platform);
+        }
+      } else {
+        map.set(key, {
+          id: key,
+          name: message.sender,
+          tier: TIER_ORDER.includes(message.tier) ? message.tier : "work",
+          platforms: [message.platform],
+          lastMessage: message.text,
+          lastMessageTime: message.received_at,
+          importance: message.importance,
+          messages: [message],
+        });
+      }
+    }
+    return Array.from(map.values()).sort(
+      (a, b) => b.importance - a.importance || b.lastMessageTime.localeCompare(a.lastMessageTime),
+    );
+  }, [inbox]);
+
   const selectedContact = selectedId
-    ? CONTACTS.find((c) => c.id === selectedId) ?? null
+    ? contacts.find((c) => c.id === selectedId) ?? null
     : null;
-  const selectedSummary = selectedId ? MESSAGE_SUMMARIES[selectedId] : null;
 
   const toggleTier = (tier: string) => {
     setCollapsedTiers((prev) => {
@@ -242,189 +289,186 @@ export function HushModule() {
 
       <LiveInboxPanel inbox={inbox} onRefresh={fetchInbox} onClear={clearInbox} />
 
-      <div style={{ display: "grid", gridTemplateColumns: "220px 1fr", gap: 12, minHeight: 400 }}>
-        {/* Contact list */}
+      {contacts.length === 0 ? (
         <div
           style={{
-            borderRadius: 14,
-            background: "rgba(255,255,255,0.015)",
-            border: "1px solid rgba(255,255,255,0.04)",
-            overflowY: "auto",
-            maxHeight: 500,
+            padding: 36,
+            textAlign: "center",
+            borderRadius: 16,
+            background: "rgba(255,255,255,0.62)",
+            border: "1px dashed rgba(116,143,165,0.18)",
           }}
-          className="scrollbar-thin"
         >
-          {TIER_ORDER.map((tier) => {
-            const contacts = CONTACTS.filter((c) => c.tier === tier);
-            const collapsed = collapsedTiers.has(tier);
+          <div className="hub-empty-title">{t("hub.hush.emptyTitle")}</div>
+          <div className="hub-empty-desc" style={{ maxWidth: 380, margin: "6px auto 0" }}>
+            {t("hub.hush.emptyDesc")}
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "220px 1fr", gap: 12, minHeight: 400 }}>
+          {/* Contact list (real, aggregated from inbox) */}
+          <div
+            style={{
+              borderRadius: 14,
+              background: "rgba(255,255,255,0.55)",
+              border: "1px solid rgba(116,143,165,0.14)",
+              overflowY: "auto",
+              maxHeight: 500,
+            }}
+            className="scrollbar-thin"
+          >
+            {TIER_ORDER.map((tier) => {
+              const tierContacts = contacts.filter((c) => c.tier === tier);
+              if (tierContacts.length === 0) return null;
+              const collapsed = collapsedTiers.has(tier);
 
-            return (
-              <div key={tier}>
-                <div
-                  onClick={() => toggleTier(tier)}
-                  style={{
-                    padding: "8px 12px",
-                    fontSize: 11,
-                    fontWeight: 700,
-                    color: "rgba(255,255,255,0.35)",
-                    cursor: "pointer",
-                    borderBottom: "1px solid rgba(255,255,255,0.03)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    position: "sticky",
-                    top: 0,
-                    background: "rgba(13,15,26,0.95)",
-                    backdropFilter: "blur(8px)",
-                    zIndex: 1,
-                  }}
-                >
-                  <span>{t(TIER_LABEL_KEYS[tier] ?? "hub.hush.tier.work")}</span>
-                  <span style={{ fontSize: 10, color: "rgba(255,255,255,0.2)" }}>
-                    {contacts.length} {collapsed ? "▸" : "▾"}
-                  </span>
+              return (
+                <div key={tier}>
+                  <div
+                    onClick={() => toggleTier(tier)}
+                    style={{
+                      padding: "8px 12px",
+                      fontSize: 11,
+                      fontWeight: 700,
+                      color: "#64748b",
+                      cursor: "pointer",
+                      borderBottom: "1px solid rgba(116,143,165,0.1)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      position: "sticky",
+                      top: 0,
+                      background: "rgba(247,251,255,0.92)",
+                      backdropFilter: "blur(8px)",
+                      zIndex: 1,
+                    }}
+                  >
+                    <span>{t(TIER_LABEL_KEYS[tier] ?? "hub.hush.tier.work")}</span>
+                    <span style={{ fontSize: 10, color: "#94a3b8" }}>
+                      {tierContacts.length} {collapsed ? "▸" : "▾"}
+                    </span>
+                  </div>
+
+                  {!collapsed &&
+                    tierContacts.map((contact) => (
+                      <ContactRow
+                        key={contact.id}
+                        contact={contact}
+                        selected={selectedId === contact.id}
+                        onClick={() => setSelectedId(contact.id)}
+                      />
+                    ))}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Detail panel */}
+          <div
+            style={{
+              borderRadius: 14,
+              background: "rgba(255,255,255,0.55)",
+              border: "1px solid rgba(116,143,165,0.14)",
+              padding: 16,
+              overflowY: "auto",
+              maxHeight: 500,
+            }}
+            className="scrollbar-thin"
+          >
+            {selectedContact ? (
+              <div className="animate-bounce-in">
+                {/* Contact header */}
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+                  <div>
+                    <div style={{ fontSize: 15, fontWeight: 700, color: "#263241" }}>
+                      {selectedContact.name}
+                    </div>
+                    <div style={{ display: "flex", gap: 4, marginTop: 2, alignItems: "center" }}>
+                      {selectedContact.platforms.map((p) => (
+                        <span key={p} style={{ fontSize: 12 }} title={p}>
+                          {PLATFORM_ICONS[p] || p}
+                        </span>
+                      ))}
+                      <span style={{ fontSize: 10, color: "#94a3b8", marginLeft: 4 }}>
+                        {selectedContact.tier} · P{selectedContact.importance}
+                      </span>
+                    </div>
+                  </div>
                 </div>
 
-                {!collapsed &&
-                  contacts.map((contact) => (
-                    <ContactRow
-                      key={contact.id}
-                      contact={contact}
-                      selected={selectedId === contact.id}
-                      onClick={() => setSelectedId(contact.id)}
-                    />
-                  ))}
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Detail panel */}
-        <div
-          style={{
-            borderRadius: 14,
-            background: "rgba(255,255,255,0.015)",
-            border: "1px solid rgba(255,255,255,0.04)",
-            padding: 16,
-            overflowY: "auto",
-            maxHeight: 500,
-          }}
-          className="scrollbar-thin"
-        >
-          {selectedContact && selectedSummary ? (
-            <div className="animate-bounce-in">
-              {/* Contact header */}
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
-                <span style={{ fontSize: 28 }}>{selectedContact.avatar}</span>
-                <div>
-                  <div style={{ fontSize: 15, fontWeight: 700, color: "rgba(255,255,255,0.85)" }}>
-                    {selectedContact.name}
+                {/* Messages */}
+                <div style={{ marginBottom: 16 }}>
+                  <div style={{ fontSize: 10, fontWeight: 600, color: "#94a3b8", marginBottom: 8, textTransform: "uppercase" }}>
+                    {t("hub.hush.messages")}
                   </div>
-                  <div style={{ display: "flex", gap: 4, marginTop: 2 }}>
-                    {selectedContact.platforms.map((p) => (
-                      <span key={p} style={{ fontSize: 12 }} title={p}>
-                        {PLATFORM_ICONS[p] || p}
-                      </span>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {selectedContact.messages.map((msg) => (
+                      <div
+                        key={msg.id}
+                        style={{
+                          padding: "8px 10px",
+                          borderRadius: 10,
+                          background: "rgba(255,255,255,0.7)",
+                          border: "1px solid rgba(116,143,165,0.12)",
+                        }}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 3 }}>
+                          <span style={{ fontSize: 11, fontWeight: 600, color: "#475569" }}>
+                            {msg.sender}
+                          </span>
+                          <span style={{ fontSize: 9, color: "#94a3b8" }}>
+                            {PLATFORM_ICONS[msg.platform] || msg.platform}
+                            {msg.chat ? ` · ${msg.chat}` : ""}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: 12, color: "#334155", lineHeight: 1.5 }}>
+                          {msg.text}
+                        </div>
+                      </div>
                     ))}
                   </div>
                 </div>
-              </div>
 
-              {/* AI Summary */}
-              <div
-                style={{
-                  padding: 12,
-                  borderRadius: 12,
-                  background: "rgba(148,239,244,0.04)",
-                  border: "1px solid rgba(148,239,244,0.1)",
-                  marginBottom: 16,
-                }}
-              >
-                <div style={{ fontSize: 10, fontWeight: 600, color: "rgba(148,239,244,0.6)", marginBottom: 4, textTransform: "uppercase" }}>
-                  {t("hub.hush.aiSummary")}
-                </div>
-                <div style={{ fontSize: 13, color: "rgba(255,255,255,0.7)", lineHeight: 1.6 }}>
-                  {selectedSummary.summary}
-                </div>
-              </div>
-
-              {/* Messages */}
-              <div style={{ marginBottom: 16 }}>
-                <div style={{ fontSize: 10, fontWeight: 600, color: "rgba(255,255,255,0.25)", marginBottom: 8, textTransform: "uppercase" }}>
-                  {t("hub.hush.messages")}
-                </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                  {selectedSummary.messages.map((msg, i) => (
-                    <div
-                      key={i}
-                      style={{
-                        padding: "8px 10px",
-                        borderRadius: 10,
-                        background: "rgba(255,255,255,0.025)",
-                        border: "1px solid rgba(255,255,255,0.03)",
-                      }}
-                    >
-                      <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 3 }}>
-                        <span style={{ fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.5)" }}>
-                          {msg.from}
-                        </span>
-                        <span style={{ fontSize: 9, color: "rgba(255,255,255,0.2)" }}>
-                          {PLATFORM_ICONS[msg.platform]} {msg.time}
-                        </span>
+                {/* Suggested replies (from backend, latest message) */}
+                {(() => {
+                  const withReply = [...selectedContact.messages]
+                    .reverse()
+                    .find((m) => m.suggested_reply);
+                  if (!withReply?.suggested_reply) return null;
+                  return (
+                    <div>
+                      <div style={{ fontSize: 10, fontWeight: 600, color: "#94a3b8", marginBottom: 8, textTransform: "uppercase" }}>
+                        {t("hub.hush.suggestedReplies")}
                       </div>
-                      <div style={{ fontSize: 12, color: "rgba(255,255,255,0.65)" }}>
-                        {msg.text}
-                      </div>
+                      <button
+                        style={{
+                          width: "100%",
+                          padding: "8px 12px",
+                          borderRadius: 10,
+                          background: "rgba(148,239,244,0.12)",
+                          border: "1px solid rgba(116,143,165,0.16)",
+                          color: "#0f6d78",
+                          fontSize: 12,
+                          textAlign: "left",
+                          cursor: "pointer",
+                          transition: "all 0.2s",
+                        }}
+                      >
+                        {withReply.suggested_reply}
+                      </button>
                     </div>
-                  ))}
-                </div>
+                  );
+                })()}
               </div>
-
-              {/* Suggested replies */}
-              <div>
-                <div style={{ fontSize: 10, fontWeight: 600, color: "rgba(255,255,255,0.25)", marginBottom: 8, textTransform: "uppercase" }}>
-                  {t("hub.hush.suggestedReplies")}
-                </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                  {selectedSummary.suggestedReplies.map((reply, i) => (
-                    <button
-                      key={i}
-                      style={{
-                        padding: "8px 12px",
-                        borderRadius: 10,
-                        background: "rgba(148,239,244,0.04)",
-                        border: "1px solid rgba(148,239,244,0.1)",
-                        color: "rgba(148,239,244,0.8)",
-                        fontSize: 12,
-                        textAlign: "left",
-                        cursor: "pointer",
-                        transition: "all 0.2s",
-                      }}
-                    >
-                      {reply}
-                    </button>
-                  ))}
-                </div>
+            ) : (
+              <div style={{ padding: 40, textAlign: "center" }}>
+                <div className="hub-empty-title">{t("hub.hush.selectContactTitle")}</div>
+                <div className="hub-empty-desc">{t("hub.hush.selectContactDesc")}</div>
               </div>
-            </div>
-          ) : selectedContact ? (
-            <div style={{ padding: 32, textAlign: "center" }}>
-              <div style={{ fontSize: 28, marginBottom: 8 }}>{selectedContact.avatar}</div>
-              <div style={{ fontSize: 14, fontWeight: 600, color: "rgba(255,255,255,0.5)" }}>
-                {selectedContact.name}
-              </div>
-              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.2)", marginTop: 4 }}>
-                {t("hub.hush.noSummary")}
-              </div>
-            </div>
-          ) : (
-            <div style={{ padding: 40, textAlign: "center" }}>
-              <div className="hub-empty-title">{t("hub.hush.emptyTitle")}</div>
-              <div className="hub-empty-desc">{t("hub.hush.emptyDesc")}</div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -822,11 +866,12 @@ function ContactRow({
   selected,
   onClick,
 }: {
-  contact: Contact;
+  contact: DerivedContact;
   selected: boolean;
   onClick: () => void;
 }) {
-  const hasSummary = !!MESSAGE_SUMMARIES[contact.id];
+  const isPriority = contact.importance >= 4;
+  const timeLabel = formatTime(contact.lastMessageTime);
 
   return (
     <div
@@ -837,41 +882,46 @@ function ContactRow({
         display: "flex",
         alignItems: "center",
         gap: 8,
-        background: selected ? "rgba(148,239,244,0.06)" : "transparent",
-        borderLeft: selected ? "2px solid rgba(148,239,244,0.5)" : "2px solid transparent",
+        background: selected ? "rgba(148,239,244,0.14)" : "transparent",
+        borderLeft: selected ? "2px solid rgba(52,178,190,0.6)" : "2px solid transparent",
         transition: "all 0.15s",
       }}
     >
-      <span style={{ fontSize: 16 }}>{contact.avatar}</span>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <span style={{ fontSize: 12, fontWeight: 600, color: "rgba(255,255,255,0.7)" }}>
+          <span style={{ fontSize: 12, fontWeight: 600, color: "#334155" }}>
             {contact.name}
           </span>
-          {hasSummary && (
+          {isPriority && (
             <span style={{
-              width: 5, height: 5, borderRadius: "50%", background: "#94eff4",
-              boxShadow: "0 0 4px #94eff4",
+              width: 5, height: 5, borderRadius: "50%", background: "#f59e0b",
+              boxShadow: "0 0 4px rgba(245,158,11,0.6)",
             }} />
           )}
         </div>
         <div style={{
-          fontSize: 10, color: "rgba(255,255,255,0.25)",
+          fontSize: 10, color: "#94a3b8",
           overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
         }}>
           {contact.lastMessage}
         </div>
       </div>
       <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
-        <span style={{ fontSize: 9, color: "rgba(255,255,255,0.2)" }}>
-          {contact.lastMessageTime}
+        <span style={{ fontSize: 9, color: "#94a3b8" }}>
+          {timeLabel}
         </span>
         <div style={{ display: "flex", gap: 2 }}>
           {contact.platforms.map((p) => (
-            <span key={p} style={{ fontSize: 8 }}>{PLATFORM_ICONS[p]}</span>
+            <span key={p} style={{ fontSize: 8 }}>{PLATFORM_ICONS[p] || p}</span>
           ))}
         </div>
       </div>
     </div>
   );
+}
+
+function formatTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
