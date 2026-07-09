@@ -729,36 +729,278 @@ pub async fn get_stats(
     serde_json::to_value(stats).map_err(|e| format!("Serialize error: {}", e))
 }
 
-/// Toggle QoderWork auto-allow hook
+// ============================================================
+// Qoder IDE Auto-Allow (Rage Mode)
+// ============================================================
+
+const QODER_AUTO_ALLOW_SCRIPT: &str = r#"#!/bin/bash
+# Qoder IDE Auto-Allow Permission Hook — managed by HumHum
+# Supports both PreToolUse and PermissionRequest events
+set -euo pipefail
+trap 'exit 0' ERR
+read -r PAYLOAD 2>/dev/null || true
+HOOK_EVENT="$(echo "$PAYLOAD" 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('hook_event_name',''))" 2>/dev/null || true)"
+if [ "$HOOK_EVENT" = "PreToolUse" ] || [ "$HOOK_EVENT" = "PermissionRequest" ]; then
+    echo '{"hookSpecificOutput":{"permissionDecision":"allow","continueWithPrompt":false}}'
+fi
+exit 0
+"#;
+
+/// Enable or disable Qoder IDE auto-allow (rage mode)
+#[tauri::command]
+pub async fn toggle_qoder_auto_allow(
+    config: State<'_, Arc<std::sync::Mutex<AppConfig>>>,
+    enable: bool,
+) -> Result<bool, String> {
+    let home = dirs::home_dir().ok_or("Cannot determine home directory")?;
+    let settings_path = home.join(".qoder").join("settings.json");
+
+    if enable {
+        // 1. Write auto-allow hook script
+        let hook_dir = home.join(".qoder").join("hooks");
+        std::fs::create_dir_all(&hook_dir)
+            .map_err(|e| format!("Failed to create hooks dir: {}", e))?;
+        let hook_script = hook_dir.join("auto-allow-permission.sh");
+        std::fs::write(&hook_script, QODER_AUTO_ALLOW_SCRIPT)
+            .map_err(|e| format!("Failed to write hook script: {}", e))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&hook_script)
+                .map_err(|e| format!("Failed to stat: {}", e))?
+                .permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&hook_script, perms)
+                .map_err(|e| format!("Failed to chmod: {}", e))?;
+        }
+
+        // 2. Add PreToolUse + PermissionRequest hooks to ~/.qoder/settings.json
+        let mut settings: Value = if settings_path.exists() {
+            let content = std::fs::read_to_string(&settings_path)
+                .map_err(|e| format!("Failed to read settings: {}", e))?;
+            serde_json::from_str(&content).unwrap_or(serde_json::json!({}))
+        } else {
+            serde_json::json!({})
+        };
+
+        let hook_entry = serde_json::json!({
+            "matcher": "*",
+            "hooks": [{"type": "command", "command": "~/.qoder/hooks/auto-allow-permission.sh", "timeout": 5}]
+        });
+
+        let hooks = settings
+            .as_object_mut()
+            .map(|obj| obj.entry("hooks"))
+            .and_then(|e| e.or_insert_with(|| serde_json::json!({})).as_object_mut());
+
+        if let Some(hooks_obj) = hooks {
+            // Append to existing array or create new one
+            let upsert_hook = |obj: &mut serde_json::Map<String, Value>, key: &str, entry: &Value| {
+                if let Some(existing) = obj.get_mut(key).and_then(|v| v.as_array_mut()) {
+                    existing.push(entry.clone());
+                } else {
+                    obj.insert(key.to_string(), serde_json::json!([entry]));
+                }
+            };
+            upsert_hook(hooks_obj, "PermissionRequest", &hook_entry);
+            upsert_hook(hooks_obj, "PreToolUse", &hook_entry);
+        }
+
+        let content = serde_json::to_string_pretty(&settings)
+            .map_err(|e| format!("Serialize error: {}", e))?;
+        std::fs::write(&settings_path, content)
+            .map_err(|e| format!("Write error: {}", e))?;
+
+        // 3. Persist to humhum config
+        {
+            let mut cfg = config.lock().map_err(|e| format!("Lock error: {}", e))?;
+            cfg.qoder_auto_allow = true;
+            cfg.save()?;
+        }
+
+        log::info!("[QoderRage] Enabled — PreToolUse + PermissionRequest auto-allow installed");
+        Ok(true)
+    } else {
+        // Disable: remove PermissionRequest + PreToolUse from ~/.qoder/settings.json
+        if settings_path.exists() {
+            let content = std::fs::read_to_string(&settings_path)
+                .map_err(|e| format!("Failed to read: {}", e))?;
+            let mut settings: Value =
+                serde_json::from_str(&content).unwrap_or(serde_json::json!({}));
+            if let Some(hooks) = settings
+                .as_object_mut()
+                .and_then(|obj| obj.get_mut("hooks"))
+                .and_then(|v| v.as_object_mut())
+            {
+                hooks.remove("PermissionRequest");
+                hooks.remove("PreToolUse");
+            }
+            let content = serde_json::to_string_pretty(&settings)
+                .map_err(|e| format!("Serialize error: {}", e))?;
+            std::fs::write(&settings_path, content)
+                .map_err(|e| format!("Write error: {}", e))?;
+        }
+
+        // Persist to humhum config
+        {
+            let mut cfg = config.lock().map_err(|e| format!("Lock error: {}", e))?;
+            cfg.qoder_auto_allow = false;
+            cfg.save()?;
+        }
+
+        log::info!("[QoderRage] Disabled — PreToolUse + PermissionRequest hooks removed");
+        Ok(false)
+    }
+}
+
+/// Check if Qoder IDE auto-allow is enabled
+#[tauri::command]
+pub async fn get_qoder_auto_allow_status() -> Result<bool, String> {
+    let home = dirs::home_dir().ok_or("Cannot determine home directory")?;
+    let settings_path = home.join(".qoder").join("settings.json");
+    if !settings_path.exists() {
+        return Ok(false);
+    }
+    let content = std::fs::read_to_string(&settings_path)
+        .map_err(|e| format!("Failed to read: {}", e))?;
+    let settings: Value =
+        serde_json::from_str(&content).unwrap_or(serde_json::json!({}));
+    Ok(settings
+        .get("hooks")
+        .and_then(|h| h.get("PreToolUse"))
+        .is_some())
+}
+
+// ============================================================
+// QoderWork Auto-Allow (Rage Mode)
+// ============================================================
+
+const QODERWORK_AUTO_ALLOW_SCRIPT: &str = r#"#!/bin/bash
+# QoderWork Auto-Allow Permission Hook — managed by HumHum
+set -euo pipefail
+trap 'exit 0' ERR
+read -r PAYLOAD 2>/dev/null || true
+HOOK_EVENT="$(echo "$PAYLOAD" 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('hook_event_name',''))" 2>/dev/null || true)"
+if [ "$HOOK_EVENT" = "PermissionRequest" ]; then
+    echo '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}'
+fi
+exit 0
+"#;
+
+/// Enable or disable QoderWork auto-allow (rage mode)
 #[tauri::command]
 pub async fn toggle_qoderwork_auto_allow(
     config: State<'_, Arc<std::sync::Mutex<AppConfig>>>,
-    auto_allow: State<'_, Arc<std::sync::Mutex<crate::qoder_auto_allow::QoderAutoAllow>>>,
-    enabled: bool,
-) -> Result<(), String> {
-    // Update config
-    {
-        let mut config = config.lock().map_err(|e| format!("Lock error: {}", e))?;
-        config.ui.qoderwork_auto_allow = enabled;
-        config.save()?;
-    }
+    enable: bool,
+) -> Result<bool, String> {
+    let home = dirs::home_dir().ok_or("Cannot determine home directory")?;
+    let settings_path = home.join(".qoderwork").join("settings.json");
 
-    // Add or remove the PermissionRequest hook in QoderWork's settings.json
-    let auto_allow = auto_allow.lock().map_err(|e| format!("Lock error: {}", e))?;
-    if enabled {
-        auto_allow.enable()?;
+    if enable {
+        // 1. Write auto-allow hook script
+        let hook_dir = home.join(".qoderwork").join("hooks");
+        std::fs::create_dir_all(&hook_dir)
+            .map_err(|e| format!("Failed to create hooks dir: {}", e))?;
+        let hook_script = hook_dir.join("auto-allow-permission.sh");
+        std::fs::write(&hook_script, QODERWORK_AUTO_ALLOW_SCRIPT)
+            .map_err(|e| format!("Failed to write hook script: {}", e))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&hook_script)
+                .map_err(|e| format!("Failed to stat: {}", e))?
+                .permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&hook_script, perms)
+                .map_err(|e| format!("Failed to chmod: {}", e))?;
+        }
+
+        // 2. Add PermissionRequest hook to ~/.qoderwork/settings.json
+        let mut settings: Value = if settings_path.exists() {
+            let content = std::fs::read_to_string(&settings_path)
+                .map_err(|e| format!("Failed to read settings: {}", e))?;
+            serde_json::from_str(&content).unwrap_or(serde_json::json!({}))
+        } else {
+            serde_json::json!({})
+        };
+
+        let hook_entry = serde_json::json!({
+            "matcher": "*",
+            "hooks": [{"type": "command", "command": "~/.qoderwork/hooks/auto-allow-permission.sh", "timeout": 5}]
+        });
+
+        let hooks = settings
+            .as_object_mut()
+            .map(|obj| obj.entry("hooks"))
+            .and_then(|e| e.or_insert_with(|| serde_json::json!({})).as_object_mut());
+
+        if let Some(hooks_obj) = hooks {
+            if !hooks_obj.contains_key("PermissionRequest") {
+                hooks_obj.insert(
+                    "PermissionRequest".to_string(),
+                    serde_json::json!([hook_entry]),
+                );
+            }
+        }
+
+        let content = serde_json::to_string_pretty(&settings)
+            .map_err(|e| format!("Serialize error: {}", e))?;
+        std::fs::write(&settings_path, content)
+            .map_err(|e| format!("Write error: {}", e))?;
+
+        // 3. Persist to humhum config
+        {
+            let mut cfg = config.lock().map_err(|e| format!("Lock error: {}", e))?;
+            cfg.qoderwork_auto_allow = true;
+            cfg.save()?;
+        }
+
+        log::info!("[QoderWorkRage] Enabled — PermissionRequest auto-allow installed");
+        Ok(true)
     } else {
-        auto_allow.disable()?;
-    }
+        if settings_path.exists() {
+            let content = std::fs::read_to_string(&settings_path)
+                .map_err(|e| format!("Failed to read: {}", e))?;
+            let mut settings: Value =
+                serde_json::from_str(&content).unwrap_or(serde_json::json!({}));
+            if let Some(hooks) = settings
+                .as_object_mut()
+                .and_then(|obj| obj.get_mut("hooks"))
+                .and_then(|v| v.as_object_mut())
+            {
+                hooks.remove("PermissionRequest");
+            }
+            let content = serde_json::to_string_pretty(&settings)
+                .map_err(|e| format!("Serialize error: {}", e))?;
+            std::fs::write(&settings_path, content)
+                .map_err(|e| format!("Write error: {}", e))?;
+        }
 
-    Ok(())
+        {
+            let mut cfg = config.lock().map_err(|e| format!("Lock error: {}", e))?;
+            cfg.qoderwork_auto_allow = false;
+            cfg.save()?;
+        }
+
+        log::info!("[QoderWorkRage] Disabled — PermissionRequest hook removed");
+        Ok(false)
+    }
 }
 
-/// Get QoderWork auto-allow hook status
+/// Check if QoderWork auto-allow is enabled
 #[tauri::command]
-pub async fn get_qoderwork_auto_allow_status(
-    auto_allow: State<'_, Arc<std::sync::Mutex<crate::qoder_auto_allow::QoderAutoAllow>>>,
-) -> Result<bool, String> {
-    let auto_allow = auto_allow.lock().map_err(|e| format!("Lock error: {}", e))?;
-    Ok(auto_allow.is_enabled())
+pub async fn get_qoderwork_auto_allow_status() -> Result<bool, String> {
+    let home = dirs::home_dir().ok_or("Cannot determine home directory")?;
+    let settings_path = home.join(".qoderwork").join("settings.json");
+    if !settings_path.exists() {
+        return Ok(false);
+    }
+    let content = std::fs::read_to_string(&settings_path)
+        .map_err(|e| format!("Failed to read: {}", e))?;
+    let settings: Value =
+        serde_json::from_str(&content).unwrap_or(serde_json::json!({}));
+    Ok(settings
+        .get("hooks")
+        .and_then(|h| h.get("PermissionRequest"))
+        .is_some())
 }

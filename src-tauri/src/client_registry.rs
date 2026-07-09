@@ -52,6 +52,20 @@ pub const CLIENTS: &[ClientProfile] = &[
         config_path: ".kimi/config.toml",
         hook_events: &["PermissionRequest", "Stop", "TaskCompleted"],
     },
+    ClientProfile {
+        id: "qoder",
+        name: "Qoder IDE",
+        config_format: ConfigFormat::Json,
+        config_path: ".qoder/settings.json",
+        hook_events: &["PreToolUse", "PostToolUse", "Stop", "Notification", "SessionStart"],
+    },
+    ClientProfile {
+        id: "qoderwork",
+        name: "QoderWork",
+        config_format: ConfigFormat::Json,
+        config_path: ".qoderwork/settings.json",
+        hook_events: &["PreToolUse", "PostToolUse", "Stop", "Notification", "SessionStart"],
+    },
 ];
 
 pub fn get_client(id: &str) -> Option<&'static ClientProfile> {

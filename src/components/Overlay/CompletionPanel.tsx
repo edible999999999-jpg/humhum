@@ -11,6 +11,7 @@ const CLIENT_TINTS: Record<string, string> = {
   "qwen-code": "border-l-blue-400",
   "gemini-cli": "border-l-cyan-400",
   "kimi-k1": "border-l-purple-400",
+  qoder: "border-l-indigo-400",
   qoderwork: "border-l-rose-400",
 };
 
@@ -20,7 +21,8 @@ const CLIENT_LABELS: Record<string, string> = {
   "qwen-code": "Qwen",
   "gemini-cli": "Gemini",
   "kimi-k1": "Kimi",
-  qoderwork: "Qoder",
+  qoder: "Qoder IDE",
+  qoderwork: "QoderWork",
 };
 
 export function CompletionPanel({ event, onDismiss }: CompletionPanelProps) {

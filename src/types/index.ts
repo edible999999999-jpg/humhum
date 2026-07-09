@@ -168,8 +168,9 @@ export interface AppConfig {
     position: "bottom-right" | "bottom-left" | "top-right" | "top-left";
     language: "zh" | "en";
     auto_confirm?: boolean;
-    qoderwork_auto_allow?: boolean;
   };
+  qoder_auto_allow?: boolean;
+  qoderwork_auto_allow?: boolean;
 }
 
 // --- UI Events ---

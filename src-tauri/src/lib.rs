@@ -3,7 +3,6 @@ mod commands;
 mod config;
 mod event_bus;
 mod hook_server;
-mod qoder_auto_allow;
 mod qoder_log_watcher;
 mod session_store;
 mod stats_store;
@@ -47,17 +46,7 @@ pub fn run() {
 
             // Load configuration
             let config = config::AppConfig::load(&app_handle);
-            let qoderwork_auto_allow_enabled = config.ui.qoderwork_auto_allow;
             app.manage(Arc::new(std::sync::Mutex::new(config)));
-
-            // QoderWork auto-allow via native hook (PermissionRequest hook in settings.json)
-            let auto_allow = qoder_auto_allow::QoderAutoAllow::new();
-            if qoderwork_auto_allow_enabled {
-                if let Err(e) = auto_allow.enable() {
-                    log::warn!("Failed to enable QoderWork auto-allow hook: {}", e);
-                }
-            }
-            app.manage(Arc::new(std::sync::Mutex::new(auto_allow)));
 
             // Session store
             let session_store = session_store::SessionStore::new();
@@ -80,7 +69,6 @@ pub fn run() {
 
             // Start QoderWork session log watcher
             // Reads session logs and emits informational events to humhum frontend.
-            // Permission auto-allow is handled by QoderWork's native PermissionRequest hook.
             qoder_log_watcher::start_watcher(app_handle.clone());
 
             // Build system tray menu
@@ -112,6 +100,8 @@ pub fn run() {
             commands::stop_audio,
             commands::get_stats,
             commands::type_in_terminal,
+            commands::toggle_qoder_auto_allow,
+            commands::get_qoder_auto_allow_status,
             commands::toggle_qoderwork_auto_allow,
             commands::get_qoderwork_auto_allow_status,
         ])

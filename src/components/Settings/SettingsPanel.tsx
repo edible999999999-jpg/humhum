@@ -21,6 +21,10 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [clients, setClients] = useState<Array<{ id: string; name: string }>>([]);
   const [activeTab, setActiveTab] = useState<"settings" | "stats">("settings");
+  const [qoderAutoAllow, setQoderAutoAllow] = useState(false);
+  const [qoderAutoAllowLoading, setQoderAutoAllowLoading] = useState(false);
+  const [qoderworkAutoAllow, setQoderworkAutoAllow] = useState(false);
+  const [qoderworkAutoAllowLoading, setQoderworkAutoAllowLoading] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -33,6 +37,20 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
         setConfig(cfg as AppConfig);
         setHookStatus(status as Record<string, boolean>);
         setClients(clientList as Array<{ id: string; name: string }>);
+        // Qoder IDE auto-allow status
+        try {
+          const qoderStatus = await invoke<boolean>("get_qoder_auto_allow_status");
+          setQoderAutoAllow(qoderStatus);
+        } catch {
+          setQoderAutoAllow(false);
+        }
+        // QoderWork auto-allow status
+        try {
+          const qwStatus = await invoke<boolean>("get_qoderwork_auto_allow_status");
+          setQoderworkAutoAllow(qwStatus);
+        } catch {
+          setQoderworkAutoAllow(false);
+        }
       } catch (e) {
         console.error("Failed to load settings:", e);
       } finally {
@@ -82,6 +100,34 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
     },
     []
   );
+
+  const handleQoderAutoAllowToggle = useCallback(async () => {
+    setQoderAutoAllowLoading(true);
+    try {
+      const enabled = await invoke<boolean>("toggle_qoder_auto_allow", { enable: !qoderAutoAllow });
+      setQoderAutoAllow(enabled);
+      setMessage({ type: "success", text: enabled ? "Qoder IDE 狂暴模式已开启" : "Qoder IDE 狂暴模式已关闭" });
+      setTimeout(() => setMessage(null), 3000);
+    } catch (e) {
+      setMessage({ type: "error", text: `操作失败: ${e}` });
+    } finally {
+      setQoderAutoAllowLoading(false);
+    }
+  }, [qoderAutoAllow]);
+
+  const handleQoderworkAutoAllowToggle = useCallback(async () => {
+    setQoderworkAutoAllowLoading(true);
+    try {
+      const enabled = await invoke<boolean>("toggle_qoderwork_auto_allow", { enable: !qoderworkAutoAllow });
+      setQoderworkAutoAllow(enabled);
+      setMessage({ type: "success", text: enabled ? "QoderWork 狂暴模式已开启" : "QoderWork 狂暴模式已关闭" });
+      setTimeout(() => setMessage(null), 3000);
+    } catch (e) {
+      setMessage({ type: "error", text: `操作失败: ${e}` });
+    } finally {
+      setQoderworkAutoAllowLoading(false);
+    }
+  }, [qoderworkAutoAllow]);
 
   if (loading || !config) {
     return (
@@ -283,26 +329,42 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
           </div>
         </KawaiiCard>
 
-        {/* QoderWork auto-allow via native hook */}
-        <KawaiiCard icon="~" title="QoderWork 狂暴模式" subtitle="Native Hook 自动放行">
+        {/* Qoder IDE Rage Mode */}
+        <KawaiiCard icon="~" title="Qoder IDE 狂暴模式" subtitle="自动放行权限请求（沙箱/终端）">
           <div className="flex items-center justify-between">
-            <span className="text-xs text-white/60">通过 PermissionRequest hook 自动批准</span>
+            <span className="text-xs text-white/60">开启后，Qoder IDE 的权限确认弹窗不再弹出</span>
             <button
-              onClick={async () => {
-                const next = !config.ui.qoderwork_auto_allow;
-                updateConfig((c) => ({
-                  ...c,
-                  ui: { ...c.ui, qoderwork_auto_allow: next },
-                }));
-                try {
-                  await invoke("toggle_qoderwork_auto_allow", { enabled: next });
-                } catch (e) {
-                  console.error("Failed to toggle QoderWork auto-allow:", e);
-                }
-              }}
-              className={`kawaii-toggle-btn ${config.ui.qoderwork_auto_allow ? "connected" : ""}`}
+              onClick={handleQoderAutoAllowToggle}
+              disabled={qoderAutoAllowLoading}
+              className={`kawaii-toggle-btn ${qoderAutoAllow ? "connected" : ""}`}
             >
-              {config.ui.qoderwork_auto_allow ? "已开启" : "关闭"}
+              {qoderAutoAllowLoading ? (
+                <span className="inline-block w-3 h-3 border border-current border-t-transparent rounded-full animate-spin" />
+              ) : qoderAutoAllow ? (
+                "已开启"
+              ) : (
+                "关闭"
+              )}
+            </button>
+          </div>
+        </KawaiiCard>
+
+        {/* QoderWork Rage Mode */}
+        <KawaiiCard icon="~" title="QoderWork 狂暴模式" subtitle="Native Hook 自动放行权限请求">
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-white/60">开启后，QoderWork 权限请求不再弹窗</span>
+            <button
+              onClick={handleQoderworkAutoAllowToggle}
+              disabled={qoderworkAutoAllowLoading}
+              className={`kawaii-toggle-btn ${qoderworkAutoAllow ? "connected" : ""}`}
+            >
+              {qoderworkAutoAllowLoading ? (
+                <span className="inline-block w-3 h-3 border border-current border-t-transparent rounded-full animate-spin" />
+              ) : qoderworkAutoAllow ? (
+                "已开启"
+              ) : (
+                "关闭"
+              )}
             </button>
           </div>
         </KawaiiCard>

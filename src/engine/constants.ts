@@ -17,6 +17,7 @@ export const AGENT_COLORS: Record<string, AgentCreatureColors> = {
   "qwen-code":   { light: "#93c5fd", med: "#3b82f6", dark: "#1d4ed8" },
   "gemini-cli":  { light: "#22d3ee", med: "#06b6d4", dark: "#0891b2" },
   "kimi-k1":     { light: "#d8b4fe", med: "#a855f7", dark: "#7c3aed" },
+  qoder:         { light: "#a5b4fc", med: "#6366f1", dark: "#4338ca" },
   qoderwork:     { light: "#86efac", med: "#4ade80", dark: "#16a34a" },
 };
 
@@ -26,6 +27,7 @@ export const AGENT_BRAND_COLOR: Record<string, string> = {
   "qwen-code":   "#3b82f6",
   "gemini-cli":  "#06b6d4",
   "kimi-k1":     "#a855f7",
+  qoder:         "#6366f1",
   qoderwork:     "#4ade80",
 };
 
@@ -35,6 +37,7 @@ export const AGENT_ICON_SRC: Record<string, string> = {
   "qwen-code":   "/agents/qwen-code.png",
   "gemini-cli":  "/agents/gemini-cli.png",
   "kimi-k1":     "/agents/kimi-k1.png",
+  qoder:         "/agents/qoder.png",
   qoderwork:     "/agents/qoderwork.png",
 };
 

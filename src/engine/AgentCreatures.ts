@@ -761,3 +761,107 @@ function drawCoralPolyp(
     ctx.restore();
   });
 }
+
+function drawCrystalGem(
+  ctx: OffscreenCanvasRenderingContext2D,
+  x: number, y: number, r: number, s: number,
+  eR: number, hR: number,
+  c: AgentCreatureColors,
+) {
+  // Diamond-shaped crystal body
+  ctx.save();
+  ctx.fillStyle = hexToRgba(c.med, 0.55);
+  ctx.beginPath();
+  ctx.moveTo(x, y - r * 0.6);
+  ctx.lineTo(x + r * 0.42, y - r * 0.08);
+  ctx.lineTo(x, y + r * 0.5);
+  ctx.lineTo(x - r * 0.42, y - r * 0.08);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+
+  // Inner facets
+  ctx.save();
+  ctx.strokeStyle = hexToRgba(c.light, 0.25);
+  ctx.lineWidth = s * 0.012;
+  ctx.beginPath();
+  ctx.moveTo(x, y - r * 0.6);
+  ctx.lineTo(x, y + r * 0.5);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(x - r * 0.42, y - r * 0.08);
+  ctx.lineTo(x + r * 0.42, y - r * 0.08);
+  ctx.stroke();
+  ctx.restore();
+
+  // Bright top highlight
+  ctx.save();
+  ctx.fillStyle = hexToRgba(c.light, 0.5);
+  ctx.beginPath();
+  ctx.moveTo(x, y - r * 0.6);
+  ctx.lineTo(x + r * 0.18, y - r * 0.2);
+  ctx.lineTo(x - r * 0.18, y - r * 0.2);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+
+  // Glow ring
+  ctx.save();
+  ctx.strokeStyle = hexToRgba(c.light, 0.3);
+  ctx.lineWidth = s * 0.018;
+  ctx.beginPath();
+  ctx.moveTo(x, y - r * 0.62);
+  ctx.lineTo(x + r * 0.45, y - r * 0.1);
+  ctx.lineTo(x, y + r * 0.53);
+  ctx.lineTo(x - r * 0.45, y - r * 0.1);
+  ctx.closePath();
+  ctx.stroke();
+  ctx.restore();
+
+  // Eyes
+  ctx.save();
+  ctx.fillStyle = "rgba(255,255,255,0.9)";
+  ctx.beginPath();
+  ctx.arc(x - r * 0.12, y + r * 0.04, eR * 0.8, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(x + r * 0.12, y + r * 0.04, eR * 0.8, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = hexToRgba(c.dark, 0.65);
+  ctx.beginPath();
+  ctx.arc(x - r * 0.11, y + r * 0.06, eR * 0.35, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(x + r * 0.13, y + r * 0.06, eR * 0.35, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "rgba(255,255,255,0.95)";
+  ctx.beginPath();
+  ctx.arc(x - r * 0.15, y + eR * 0.1, hR * 0.3, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(x + r * 0.08, y + eR * 0.1, hR * 0.3, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  // Smile
+  ctx.save();
+  ctx.strokeStyle = hexToRgba(c.dark, 0.35);
+  ctx.lineWidth = s * 0.014;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(x - r * 0.06, y + r * 0.16);
+  ctx.quadraticCurveTo(x, y + r * 0.22, x + r * 0.06, y + r * 0.16);
+  ctx.stroke();
+  ctx.restore();
+
+  // Sparkle particles
+  ctx.save();
+  ctx.fillStyle = hexToRgba(c.light, 0.5);
+  ctx.beginPath();
+  ctx.arc(x + r * 0.3, y - r * 0.45, hR * 1.2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(x - r * 0.28, y - r * 0.35, hR * 0.8, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
