@@ -96,6 +96,27 @@ interface HumiAgentStep {
   content: string;
 }
 
+interface AgentKernelStatus {
+  version: string;
+  loop_model: AgentKernelStage[];
+  roles: AgentKernelRole[];
+  memory_layers: string[];
+  active_bridges: string[];
+  next_kernel_step: string;
+}
+
+interface AgentKernelStage {
+  phase: string;
+  contract: string;
+}
+
+interface AgentKernelRole {
+  name: string;
+  job: string;
+  reads: string[];
+  writes: string[];
+}
+
 const DEFAULT_KERNEL_ROOTS = [
   "~/.codex/skills",
   "~/.codex/plugins/cache",
@@ -119,6 +140,7 @@ export function HumiModule() {
   const [kernelCwd, setKernelCwd] = useState("/Users/yuxi/Desktop/my_station/devpod-ai-companion");
   const [kernelRoots, setKernelRoots] = useState(DEFAULT_KERNEL_ROOTS);
   const [localKernelResult, setLocalKernelResult] = useState<LocalAgentKernelResult | null>(null);
+  const [agentKernelStatus, setAgentKernelStatus] = useState<AgentKernelStatus | null>(null);
   const [showDetails, setShowDetails] = useState(false);
   const [kernelPrompt, setKernelPrompt] = useState(
     "现在技能用得最多的是啥？"
@@ -149,12 +171,14 @@ export function HumiModule() {
 
   const fetchKernelStatus = useCallback(async () => {
     try {
-      const [pi, qoder] = await Promise.all([
+      const [pi, qoder, kernel] = await Promise.all([
         invoke<PiInstallStatus>("check_pi_installed"),
         invoke<QoderAcpStatus>("check_qoder_acp_support"),
+        invoke<AgentKernelStatus>("get_agent_kernel_status"),
       ]);
       setPiStatus(pi);
       setQoderStatus(qoder);
+      setAgentKernelStatus(kernel);
     } catch (e) {
       setKernelMessage(`Kernel check failed: ${String(e)}`);
     }
@@ -487,6 +511,7 @@ export function HumiModule() {
                 {qoderStatus.hint}
               </div>
             )}
+            {agentKernelStatus && <AgentKernelStatusView status={agentKernelStatus} />}
             {localKernelResult && (
               <div style={{ marginTop: 10 }}>
                 {(localKernelResult.top_tools.length > 0 ||
@@ -723,6 +748,44 @@ function AgentTrace({ steps }: { steps: HumiAgentStep[] }) {
             </div>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function AgentKernelStatusView({ status }: { status: AgentKernelStatus }) {
+  return (
+    <div
+      style={{
+        marginTop: 10,
+        padding: 10,
+        borderRadius: 14,
+        background: "rgba(255,255,255,0.58)",
+        border: "1px solid rgba(116,143,165,0.12)",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+        <div style={{ fontSize: 10, color: "#6d6ade", fontWeight: 900 }}>
+          Local agent kernel
+        </div>
+        <div style={{ marginLeft: "auto", fontSize: 9, color: "#94a3b8", fontFamily: "monospace" }}>
+          {status.version}
+        </div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+        <ContextList
+          title="Loop contract"
+          items={status.loop_model.map((stage) => `${stage.phase}: ${stage.contract}`)}
+        />
+        <ContextList title="Active bridges" items={status.active_bridges} />
+        <ContextList
+          title="Roles"
+          items={status.roles.map((role) => `${role.name}: ${role.job}`)}
+        />
+        <ContextList title="Memory layers" items={status.memory_layers} />
+      </div>
+      <div style={{ marginTop: 8, fontSize: 10, color: "#64748b", lineHeight: 1.45 }}>
+        {status.next_kernel_step}
       </div>
     </div>
   );

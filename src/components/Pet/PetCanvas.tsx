@@ -1,8 +1,12 @@
-import { useRef, useEffect } from "react";
+import { lazy, Suspense, useRef, useEffect, useState, useCallback } from "react";
 import { FallbackRenderer } from "@/engine/FallbackRenderer";
 import { FPS, AGENT_BRAND_COLOR, AGENT_ICON_SRC } from "@/engine/constants";
 import type { PetState } from "@/types";
 import type { ActiveAgent } from "@/engine/types";
+
+const PetModel3D = lazy(() =>
+  import("./PetModel3D").then((module) => ({ default: module.PetModel3D })),
+);
 
 const HUMI_SPRITE_SRC = "/mascots/humi-sprite-v1.png";
 
@@ -10,17 +14,31 @@ interface PetCanvasProps {
   state: PetState;
   size?: number;
   activeClients?: string[];
+  prefer3d?: boolean;
 }
 
-export function PetCanvas({ state, size = 140, activeClients = [] }: PetCanvasProps) {
+export function PetCanvas({ state, size = 140, activeClients = [], prefer3d = true }: PetCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<FallbackRenderer | null>(null);
   const rafRef = useRef<number>(0);
   const stateRef = useRef<PetState>(state);
   const agentsRef = useRef<ActiveAgent[]>([]);
   const agentIconsRef = useRef<Record<string, HTMLImageElement>>({});
+  const [modelReady, setModelReady] = useState(false);
+  const [modelUnavailable, setModelUnavailable] = useState(false);
 
   stateRef.current = state;
+
+  const useModel3d = prefer3d && size >= 72 && !modelUnavailable;
+
+  const handleModelReady = useCallback(() => {
+    setModelReady(true);
+  }, []);
+
+  const handleModelUnavailable = useCallback(() => {
+    setModelReady(false);
+    setModelUnavailable(true);
+  }, []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -94,10 +112,27 @@ export function PetCanvas({ state, size = 140, activeClients = [] }: PetCanvasPr
   }, [activeClients]);
 
   return (
-    <canvas
-      ref={canvasRef}
-      className="select-none pointer-events-none"
+    <div
+      className="relative select-none pointer-events-none"
       style={{ width: size, height: size }}
-    />
+      data-pet-renderer={useModel3d && modelReady ? "3d" : "2d"}
+    >
+      <canvas
+        ref={canvasRef}
+        className="absolute inset-0 select-none pointer-events-none transition-opacity duration-300"
+        style={{ width: size, height: size, opacity: useModel3d && modelReady ? 0 : 1 }}
+      />
+      {useModel3d && (
+        <Suspense fallback={null}>
+          <PetModel3D
+            state={state}
+            size={size}
+            activeClients={activeClients}
+            onReady={handleModelReady}
+            onUnavailable={handleModelUnavailable}
+          />
+        </Suspense>
+      )}
+    </div>
   );
 }

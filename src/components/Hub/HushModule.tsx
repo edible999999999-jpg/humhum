@@ -66,6 +66,16 @@ interface DingTalkLocalSourceReport {
   next_step: string;
 }
 
+interface DingTalkImportReport {
+  source_path: string;
+  scanned_files: number;
+  imported_messages: number;
+  skipped_binary_sources: number;
+  skipped_files: number;
+  errors: string[];
+  summary: string;
+}
+
 export function HushModule() {
   const { t } = useTranslation();
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -73,7 +83,10 @@ export function HushModule() {
   const [connectors, setConnectors] = useState<HushConnectorStatus[]>([]);
   const [inbox, setInbox] = useState<HushInboxSummary | null>(null);
   const [dingTalkReport, setDingTalkReport] = useState<DingTalkLocalSourceReport | null>(null);
+  const [dingTalkImportReport, setDingTalkImportReport] = useState<DingTalkImportReport | null>(null);
+  const [dingTalkImportPath, setDingTalkImportPath] = useState("");
   const [dingTalkLoading, setDingTalkLoading] = useState(false);
+  const [dingTalkImporting, setDingTalkImporting] = useState(false);
   const [connectorError, setConnectorError] = useState<string | null>(null);
   const [openingConnector, setOpeningConnector] = useState<string | null>(null);
 
@@ -136,6 +149,22 @@ export function HushModule() {
       setDingTalkLoading(false);
     }
   }, []);
+
+  const importDingTalk = useCallback(async () => {
+    setDingTalkImporting(true);
+    setConnectorError(null);
+    try {
+      const report = await invoke<DingTalkImportReport>("import_dingtalk_local_source", {
+        path: dingTalkImportPath,
+      });
+      setDingTalkImportReport(report);
+      await fetchInbox();
+    } catch (error) {
+      setConnectorError(String(error));
+    } finally {
+      setDingTalkImporting(false);
+    }
+  }, [dingTalkImportPath, fetchInbox]);
 
   const selectedContact = selectedId
     ? CONTACTS.find((c) => c.id === selectedId) ?? null
@@ -216,8 +245,13 @@ export function HushModule() {
 
       <DingTalkSourcePanel
         report={dingTalkReport}
+        importReport={dingTalkImportReport}
+        importPath={dingTalkImportPath}
         loading={dingTalkLoading}
+        importing={dingTalkImporting}
         onDiagnose={diagnoseDingTalk}
+        onImportPathChange={setDingTalkImportPath}
+        onImport={importDingTalk}
       />
 
       <LiveInboxPanel inbox={inbox} onRefresh={fetchInbox} onClear={clearInbox} />
@@ -411,12 +445,22 @@ export function HushModule() {
 
 function DingTalkSourcePanel({
   report,
+  importReport,
+  importPath,
   loading,
+  importing,
   onDiagnose,
+  onImportPathChange,
+  onImport,
 }: {
   report: DingTalkLocalSourceReport | null;
+  importReport: DingTalkImportReport | null;
+  importPath: string;
   loading: boolean;
+  importing: boolean;
   onDiagnose: () => void;
+  onImportPathChange: (path: string) => void;
+  onImport: () => void;
 }) {
   const visibleCandidates = report?.candidates.filter((candidate) => candidate.exists || candidate.file_count > 0).slice(0, 5) ?? [];
   return (
@@ -458,11 +502,13 @@ function DingTalkSourcePanel({
               {visibleCandidates.map((candidate) => (
                 <div
                   key={candidate.path}
+                  onClick={() => onImportPathChange(candidate.path)}
                   style={{
                     padding: 9,
                     borderRadius: 11,
                     background: "rgba(0,0,0,0.16)",
                     border: `1px solid ${candidate.readable ? "rgba(52,211,153,0.12)" : "rgba(251,191,36,0.12)"}`,
+                    cursor: candidate.readable ? "pointer" : "default",
                   }}
                 >
                   <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -479,6 +525,11 @@ function DingTalkSourcePanel({
                   {candidate.sample_files[0] && (
                     <div style={{ marginTop: 3, fontSize: 9, color: "rgba(148,239,244,0.42)", fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       sample: {candidate.sample_files[0]}
+                    </div>
+                  )}
+                  {candidate.readable && (
+                    <div style={{ marginTop: 5, fontSize: 9, color: "rgba(255,255,255,0.34)" }}>
+                      Click to use this source for a read-only import.
                     </div>
                   )}
                 </div>
@@ -498,6 +549,59 @@ function DingTalkSourcePanel({
           DingTalk is not connected by opening the app. Click scan to find Ali Ding local storage candidates on this Mac.
         </div>
       )}
+
+      <div style={{ marginTop: 10, padding: 10, borderRadius: 12, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)" }}>
+        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.72)", fontWeight: 850, marginBottom: 6 }}>
+          Read-only DingTalk import
+        </div>
+        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.38)", lineHeight: 1.45, marginBottom: 8 }}>
+          Paste a DingTalk export/log/text path, or click a scanned candidate above. Hush reads text-like exports only and skips database/cache files.
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <input
+            value={importPath}
+            onChange={(event) => onImportPathChange(event.target.value)}
+            placeholder="~/Library/.../DingTalk export.jsonl"
+            style={{
+              flex: 1,
+              minWidth: 0,
+              border: "1px solid rgba(255,255,255,0.08)",
+              borderRadius: 999,
+              background: "rgba(0,0,0,0.18)",
+              color: "rgba(255,255,255,0.78)",
+              fontSize: 10,
+              padding: "7px 10px",
+              outline: "none",
+            }}
+          />
+          <button
+            className="kawaii-tab"
+            onClick={onImport}
+            disabled={importing || !importPath.trim()}
+            style={{ fontSize: 10, padding: "6px 10px", opacity: importing || !importPath.trim() ? 0.45 : 1 }}
+          >
+            {importing ? "Importing..." : "Import"}
+          </button>
+        </div>
+        {importReport && (
+          <div style={{ marginTop: 8, padding: 9, borderRadius: 10, background: "rgba(148,239,244,0.035)", border: "1px solid rgba(148,239,244,0.1)" }}>
+            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.68)", lineHeight: 1.5 }}>
+              {importReport.summary}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 6, marginTop: 8 }}>
+              <MiniInboxStat label="files" value={importReport.scanned_files} />
+              <MiniInboxStat label="imported" value={importReport.imported_messages} />
+              <MiniInboxStat label="db skipped" value={importReport.skipped_binary_sources} />
+              <MiniInboxStat label="errors" value={importReport.errors.length} />
+            </div>
+            {importReport.errors[0] && (
+              <div style={{ marginTop: 7, fontSize: 9, color: "rgba(251,113,133,0.82)", lineHeight: 1.45 }}>
+                {importReport.errors.slice(0, 2).join(" · ")}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -1,3 +1,4 @@
+mod agent_kernel;
 mod client_registry;
 mod commands;
 mod config;
@@ -102,12 +103,14 @@ pub fn run() {
             commands::abort_pi_session,
             commands::stop_pi_session,
             commands::check_qoder_acp_support,
+            commands::get_agent_kernel_status,
             commands::run_local_agent_kernel,
             commands::get_hush_connectors,
             commands::open_hush_connector,
             commands::get_hush_inbox,
             commands::clear_hush_inbox,
             commands::diagnose_dingtalk_local_sources,
+            commands::import_dingtalk_local_source,
             commands::install_hooks,
             commands::uninstall_hooks,
             commands::get_events,

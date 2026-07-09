@@ -1,3 +1,4 @@
+use crate::agent_kernel::{self, AgentKernelStatus};
 use crate::client_registry::{self, ConfigFormat};
 use crate::config::AppConfig;
 use crate::event_bus::{self, HookEvent, PermissionDecision};
@@ -16,7 +17,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command as StdCommand;
 use std::sync::Arc;
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 use tokio::process::Command;
 
 const HUMHUM_HOOK_SCRIPT: &str = include_str!("../../hooks/humhum-hook.sh");
@@ -153,6 +154,17 @@ pub struct DingTalkLocalSourceReport {
     pub next_step: String,
 }
 
+#[derive(Debug, Serialize)]
+pub struct DingTalkImportReport {
+    pub source_path: String,
+    pub scanned_files: usize,
+    pub imported_messages: usize,
+    pub skipped_binary_sources: usize,
+    pub skipped_files: usize,
+    pub errors: Vec<String>,
+    pub summary: String,
+}
+
 /// Detect the local Qoder CLI and whether it exposes an ACP-style command.
 #[tauri::command]
 pub async fn check_qoder_acp_support() -> Result<QoderAcpStatus, String> {
@@ -203,6 +215,37 @@ pub async fn check_qoder_acp_support() -> Result<QoderAcpStatus, String> {
             error: Some("Timed out while checking qoder --help".to_string()),
         }),
     }
+}
+
+#[tauri::command]
+pub async fn get_agent_kernel_status(
+    knowledge_store: State<'_, Arc<std::sync::Mutex<KnowledgeStore>>>,
+    hush_store: State<'_, Arc<std::sync::Mutex<HushStore>>>,
+) -> Result<AgentKernelStatus, String> {
+    let knowledge_assets = {
+        let store = knowledge_store
+            .lock()
+            .map_err(|e| format!("Lock error: {}", e))?;
+        store.get_all().preferences.len() + store.get_all().agent_rules.len()
+    };
+    let hush_messages = {
+        let store = hush_store
+            .lock()
+            .map_err(|e| format!("Lock error: {}", e))?;
+        store.summary().total
+    };
+    let pi_available = pi_sidecar::check_installed().await.installed;
+    let qoder_available = check_qoder_acp_support()
+        .await
+        .map(|status| status.installed)
+        .unwrap_or(false);
+
+    Ok(agent_kernel::build_agent_kernel_status(
+        knowledge_assets,
+        hush_messages,
+        pi_available,
+        qoder_available,
+    ))
 }
 
 /// Return local social/work message connectors that Hush can prepare.
@@ -305,6 +348,91 @@ pub async fn clear_hush_inbox(
 ) -> Result<(), String> {
     let mut store = store.lock().map_err(|e| format!("Lock error: {}", e))?;
     store.clear()
+}
+
+#[tauri::command]
+pub async fn import_dingtalk_local_source(
+    app: tauri::AppHandle,
+    store: State<'_, Arc<std::sync::Mutex<HushStore>>>,
+    path: String,
+) -> Result<DingTalkImportReport, String> {
+    let source = expand_home_path(path.trim());
+    if source.as_os_str().is_empty() {
+        return Err("Choose a DingTalk export file or folder first.".to_string());
+    }
+    if !source.exists() {
+        return Err(format!(
+            "DingTalk source does not exist: {}",
+            source.display()
+        ));
+    }
+
+    let files = collect_dingtalk_import_files(&source);
+    let mut scanned_files = 0usize;
+    let mut imported_messages = 0usize;
+    let mut skipped_binary_sources = 0usize;
+    let mut skipped_files = 0usize;
+    let mut errors = Vec::new();
+
+    for file in files {
+        if is_dingtalk_binary_source(&file) {
+            skipped_binary_sources += 1;
+            continue;
+        }
+        if !is_supported_dingtalk_text_source(&file) {
+            skipped_files += 1;
+            continue;
+        }
+        scanned_files += 1;
+        match parse_dingtalk_text_source(&file) {
+            Ok(messages) => {
+                for raw in messages
+                    .into_iter()
+                    .take(200usize.saturating_sub(imported_messages))
+                {
+                    let added = {
+                        let mut store = store.lock().map_err(|e| format!("Lock error: {}", e))?;
+                        store.add_from_value(raw)
+                    };
+                    match added {
+                        Ok(message) => {
+                            imported_messages += 1;
+                            let _ = app.emit("humhum://hush-message", &message);
+                        }
+                        Err(error) => errors.push(format!("{}: {}", file.display(), error)),
+                    }
+                    if imported_messages >= 200 {
+                        break;
+                    }
+                }
+            }
+            Err(error) => errors.push(format!("{}: {}", file.display(), error)),
+        }
+        if imported_messages >= 200 {
+            break;
+        }
+    }
+
+    let summary = if imported_messages > 0 {
+        format!(
+            "Hush imported {} DingTalk messages from {} text/export files. Binary database-like files were detected but not read.",
+            imported_messages, scanned_files
+        )
+    } else if skipped_binary_sources > 0 {
+        "Hush found DingTalk database/cache files, but did not read them. Choose an exported JSON/text/log file, or build a dedicated user-approved database parser next.".to_string()
+    } else {
+        "Hush did not find readable DingTalk message exports in this source yet.".to_string()
+    };
+
+    Ok(DingTalkImportReport {
+        source_path: source.to_string_lossy().to_string(),
+        scanned_files,
+        imported_messages,
+        skipped_binary_sources,
+        skipped_files,
+        errors,
+        summary,
+    })
 }
 
 #[tauri::command]
@@ -542,6 +670,240 @@ fn looks_like_message_source(path: &Path) -> bool {
     ];
     interesting_ext.iter().any(|ext| name.ends_with(ext))
         || interesting_name.iter().any(|part| name.contains(part))
+}
+
+fn expand_home_path(raw: &str) -> PathBuf {
+    if raw == "~" {
+        return dirs::home_dir().unwrap_or_else(|| PathBuf::from(raw));
+    }
+    if let Some(rest) = raw.strip_prefix("~/") {
+        if let Some(home) = dirs::home_dir() {
+            return home.join(rest);
+        }
+    }
+    PathBuf::from(raw)
+}
+
+fn collect_dingtalk_import_files(source: &Path) -> Vec<PathBuf> {
+    if source.is_file() {
+        return vec![source.to_path_buf()];
+    }
+
+    let mut files = Vec::new();
+    let mut queue = VecDeque::from([source.to_path_buf()]);
+    let mut visited_dirs = 0usize;
+    while let Some(dir) = queue.pop_front() {
+        if visited_dirs >= 160 || files.len() >= 120 {
+            break;
+        }
+        visited_dirs += 1;
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten().take(120) {
+            let path = entry.path();
+            if path.is_dir() {
+                let name = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or_default()
+                    .to_lowercase();
+                if !["cache", "caches", "crashpad", "gpu", "webkit"]
+                    .iter()
+                    .any(|skip| name.contains(skip))
+                {
+                    queue.push_back(path);
+                }
+            } else if looks_like_message_source(&path) || is_supported_dingtalk_text_source(&path) {
+                files.push(path);
+                if files.len() >= 120 {
+                    break;
+                }
+            }
+        }
+    }
+    files
+}
+
+fn is_dingtalk_binary_source(path: &Path) -> bool {
+    let lower = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default()
+        .to_lowercase();
+    [".db", ".sqlite", ".sqlite3", ".ldb", ".sst"]
+        .iter()
+        .any(|ext| lower.ends_with(ext))
+}
+
+fn is_supported_dingtalk_text_source(path: &Path) -> bool {
+    let lower = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default()
+        .to_lowercase();
+    [".json", ".jsonl", ".ndjson", ".txt", ".log", ".md"]
+        .iter()
+        .any(|ext| lower.ends_with(ext))
+}
+
+fn parse_dingtalk_text_source(path: &Path) -> Result<Vec<Value>, String> {
+    let metadata = std::fs::metadata(path).map_err(|e| format!("Cannot read metadata: {}", e))?;
+    if metadata.len() > 2_000_000 {
+        return Err("File is larger than 2MB; export a smaller message slice first.".to_string());
+    }
+    let content = std::fs::read_to_string(path).map_err(|e| format!("Cannot read text: {}", e))?;
+    let source_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("DingTalk export");
+    let chat = infer_chat_from_filename(source_name);
+
+    if let Ok(value) = serde_json::from_str::<Value>(&content) {
+        let mut messages = Vec::new();
+        collect_dingtalk_json_messages(&value, &mut messages);
+        if messages.is_empty() && value.is_object() {
+            messages.push(normalize_dingtalk_raw(value, chat.as_deref(), path));
+        }
+        return Ok(messages
+            .into_iter()
+            .map(|item| normalize_dingtalk_raw(item, chat.as_deref(), path))
+            .collect());
+    }
+
+    let mut messages = Vec::new();
+    for line in content.lines().take(800) {
+        let trimmed = line.trim();
+        if trimmed.len() < 2 {
+            continue;
+        }
+        if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+            messages.push(normalize_dingtalk_raw(value, chat.as_deref(), path));
+        } else if let Some(value) = parse_dingtalk_plain_line(trimmed, chat.as_deref(), path) {
+            messages.push(value);
+        }
+        if messages.len() >= 200 {
+            break;
+        }
+    }
+    Ok(messages)
+}
+
+fn collect_dingtalk_json_messages(value: &Value, messages: &mut Vec<Value>) {
+    if messages.len() >= 200 {
+        return;
+    }
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                collect_dingtalk_json_messages(item, messages);
+                if messages.len() >= 200 {
+                    break;
+                }
+            }
+        }
+        Value::Object(map) => {
+            let has_message_shape = [
+                "text",
+                "content",
+                "sender",
+                "senderNick",
+                "conversationTitle",
+            ]
+            .iter()
+            .any(|key| map.contains_key(*key))
+                || value.pointer("/text/content").is_some()
+                || value.pointer("/markdown/text").is_some();
+            if has_message_shape {
+                messages.push(value.clone());
+                return;
+            }
+            for key in ["messages", "items", "data", "list", "records", "result"] {
+                if let Some(child) = map.get(key) {
+                    collect_dingtalk_json_messages(child, messages);
+                    if messages.len() >= 200 {
+                        break;
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn normalize_dingtalk_raw(mut raw: Value, chat: Option<&str>, path: &Path) -> Value {
+    let Some(map) = raw.as_object_mut() else {
+        return serde_json::json!({
+            "platform": "dingtalk",
+            "text": raw.to_string(),
+            "chat": chat,
+            "source": path.to_string_lossy(),
+        });
+    };
+    map.entry("platform".to_string())
+        .or_insert_with(|| Value::String("dingtalk".to_string()));
+    if let Some(chat) = chat {
+        map.entry("chat".to_string())
+            .or_insert_with(|| Value::String(chat.to_string()));
+    }
+    map.entry("source".to_string())
+        .or_insert_with(|| Value::String(path.to_string_lossy().to_string()));
+    raw
+}
+
+fn parse_dingtalk_plain_line(line: &str, chat: Option<&str>, path: &Path) -> Option<Value> {
+    if line.contains("DEBUG")
+        || line.contains("INFO")
+        || line.contains("WARN")
+        || line.contains("ERROR")
+        || line.starts_with('{')
+        || line.starts_with('[')
+    {
+        return None;
+    }
+
+    let mut sender = "Unknown sender".to_string();
+    let mut text = line.to_string();
+    if let Some((left, right)) = line.split_once(':') {
+        if left.chars().count() <= 24 && right.trim().chars().count() >= 2 {
+            sender = left.trim().trim_matches(['[', ']', '【', '】']).to_string();
+            text = right.trim().to_string();
+        }
+    } else {
+        let tab_parts = line.split('\t').map(str::trim).collect::<Vec<_>>();
+        if tab_parts.len() >= 3 {
+            sender = tab_parts[1].to_string();
+            text = tab_parts[2..].join(" ");
+        }
+    }
+
+    if text.chars().count() < 3 {
+        return None;
+    }
+
+    Some(serde_json::json!({
+        "platform": "dingtalk",
+        "sender": sender,
+        "chat": chat,
+        "text": text,
+        "source": path.to_string_lossy(),
+    }))
+}
+
+fn infer_chat_from_filename(name: &str) -> Option<String> {
+    let trimmed = name
+        .trim_end_matches(".jsonl")
+        .trim_end_matches(".ndjson")
+        .trim_end_matches(".json")
+        .trim_end_matches(".txt")
+        .trim_end_matches(".log")
+        .trim_end_matches(".md")
+        .trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 /// Install Claude Code hooks to ~/.claude/settings.json
