@@ -3,10 +3,14 @@ mod commands;
 mod config;
 mod event_bus;
 mod hook_server;
+mod hush_store;
+mod knowledge_store;
+mod pi_sidecar;
 mod qoder_log_watcher;
 mod session_store;
 mod stats_store;
 mod window_focus;
+mod wukong_watcher;
 
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
@@ -35,11 +39,9 @@ pub fn run() {
                 #[cfg(target_os = "macos")]
                 {
                     let win_clone = window.clone();
-                    std::thread::spawn(move || {
-                        loop {
-                            std::thread::sleep(std::time::Duration::from_secs(3));
-                            reassert_window_level(&win_clone);
-                        }
+                    std::thread::spawn(move || loop {
+                        std::thread::sleep(std::time::Duration::from_secs(3));
+                        reassert_window_level(&win_clone);
                     });
                 }
             }
@@ -60,6 +62,17 @@ pub fn run() {
             let stats_store = stats_store::StatsStore::new(stats_path);
             app.manage(Arc::new(std::sync::Mutex::new(stats_store)));
 
+            // Knowledge store (persistent)
+            let knowledge_store = knowledge_store::KnowledgeStore::new();
+            app.manage(Arc::new(std::sync::Mutex::new(knowledge_store)));
+
+            // Hush inbox store (persistent)
+            let hush_store = hush_store::HushStore::new();
+            app.manage(Arc::new(std::sync::Mutex::new(hush_store)));
+
+            // Pi sidecar process registry. Sessions are started only by explicit command.
+            app.manage(Arc::new(pi_sidecar::PiSidecarState::default()));
+
             // Start the hook event server
             let server_handle = app_handle.clone();
             std::thread::spawn(move || {
@@ -70,6 +83,9 @@ pub fn run() {
             // Start QoderWork session log watcher
             qoder_log_watcher::start_watcher(app_handle.clone());
 
+            // Start Wukong r2c database watcher
+            wukong_watcher::start_watcher(app_handle.clone());
+
             // Build system tray menu
             setup_tray(app)?;
 
@@ -79,10 +95,24 @@ pub fn run() {
             commands::get_config,
             commands::save_config,
             commands::get_hook_port,
+            commands::check_pi_installed,
+            commands::start_pi_session,
+            commands::send_pi_prompt,
+            commands::get_pi_session_status,
+            commands::abort_pi_session,
+            commands::stop_pi_session,
+            commands::check_qoder_acp_support,
+            commands::run_local_agent_kernel,
+            commands::get_hush_connectors,
+            commands::open_hush_connector,
+            commands::get_hush_inbox,
+            commands::clear_hush_inbox,
+            commands::diagnose_dingtalk_local_sources,
             commands::install_hooks,
             commands::uninstall_hooks,
             commands::get_events,
             commands::get_active_sessions,
+            commands::get_all_sessions_history,
             commands::get_session,
             commands::respond_to_permission,
             commands::get_supported_clients,
@@ -98,7 +128,18 @@ pub fn run() {
             commands::play_audio,
             commands::stop_audio,
             commands::get_stats,
+            commands::get_agent_stats,
             commands::type_in_terminal,
+            commands::toggle_hub,
+            commands::get_knowledge,
+            commands::save_preference,
+            commands::delete_preference,
+            commands::scan_agent_rules,
+            commands::scan_agent_assets,
+            commands::diagnose_agent_asset_roots,
+            commands::set_obsidian_vault_path,
+            commands::scan_obsidian_vault,
+            commands::query_knowledge,
         ])
         .run(tauri::generate_context!())
         .expect("error while running HumHum");
@@ -241,12 +282,10 @@ pub(crate) fn move_to_skylight_space(ns_window: cocoa::base::id) {
 
         let sls_main_connection_id: SLSMainConnectionIDFn =
             load_fn!("SLSMainConnectionID", SLSMainConnectionIDFn);
-        let sls_space_create: SLSSpaceCreateFn =
-            load_fn!("SLSSpaceCreate", SLSSpaceCreateFn);
+        let sls_space_create: SLSSpaceCreateFn = load_fn!("SLSSpaceCreate", SLSSpaceCreateFn);
         let sls_space_set_absolute_level: SLSSpaceSetAbsoluteLevelFn =
             load_fn!("SLSSpaceSetAbsoluteLevel", SLSSpaceSetAbsoluteLevelFn);
-        let sls_show_spaces: SLSShowSpacesFn =
-            load_fn!("SLSShowSpaces", SLSShowSpacesFn);
+        let sls_show_spaces: SLSShowSpacesFn = load_fn!("SLSShowSpaces", SLSShowSpacesFn);
         let sls_add_windows: SLSAddWindowsToSpacesFn = load_fn!(
             "SLSSpaceAddWindowsAndRemoveFromSpaces",
             SLSAddWindowsToSpacesFn
@@ -288,9 +327,10 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
     let show = MenuItem::with_id(app, "show", "Show HumHum", true, None::<&str>)?;
     let hide = MenuItem::with_id(app, "hide", "Hide HumHum", true, None::<&str>)?;
+    let hub = MenuItem::with_id(app, "hub", "Hub...", true, None::<&str>)?;
     let settings = MenuItem::with_id(app, "settings", "Settings...", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show, &hide, &settings, &quit])?;
+    let menu = Menu::with_items(app, &[&show, &hide, &hub, &settings, &quit])?;
 
     TrayIconBuilder::with_id("humhum-tray")
         .icon(app.default_window_icon().unwrap().clone())
@@ -311,6 +351,9 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 if let Some(win) = app.get_webview_window("main") {
                     let _ = win.hide();
                 }
+            }
+            "hub" => {
+                let _ = tauri::async_runtime::block_on(commands::toggle_hub(app.clone()));
             }
             "settings" => {
                 if let Some(win) = app.get_webview_window("settings") {

@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HumHum — 未来展望</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;600;700&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --deep: #0a0e1a;
+    --ocean: #0d1b2a;
+    --surface: #1b2838;
+    --card: rgba(148, 239, 244, 0.04);
+    --card-border: rgba(148, 239, 244, 0.08);
+    --cyan: #94eff4;
+    --cyan-dim: rgba(148, 239, 244, 0.5);
+    --pink: #f4a0c8;
+    --gold: #f4d794;
+    --green: #a0f4b8;
+    --purple: #c4a0f4;
+    --text: rgba(255, 255, 255, 0.85);
+    --text-dim: rgba(255, 255, 255, 0.5);
+    --text-muted: rgba(255, 255, 255, 0.3);
+  }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    font-family: 'Noto Sans SC', -apple-system, sans-serif;
+    background: var(--deep);
+    color: var(--text);
+    line-height: 1.7;
+    overflow-x: hidden;
+  }
+
+  /* ---- Bubbles background ---- */
+  .bubbles {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    overflow: hidden;
+  }
+  .bubble {
+    position: absolute;
+    bottom: -80px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 30% 30%, rgba(148,239,244,0.12), rgba(148,239,244,0.02));
+    border: 1px solid rgba(148,239,244,0.06);
+    animation: rise linear infinite;
+  }
+  @keyframes rise {
+    0%   { transform: translateY(0) scale(1); opacity: 0.6; }
+    50%  { opacity: 0.3; }
+    100% { transform: translateY(-110vh) scale(0.4); opacity: 0; }
+  }
+
+  /* ---- Jellyfish hero ---- */
+  .jellyfish-hero {
+    position: relative;
+    width: 120px; height: 120px;
+    margin: 0 auto 24px;
+    animation: float 4s ease-in-out infinite;
+  }
+  @keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-12px); }
+  }
+  .jf-bell {
+    width: 80px; height: 56px;
+    margin: 0 auto;
+    background: radial-gradient(ellipse at 50% 40%, rgba(148,239,244,0.35), rgba(148,239,244,0.08));
+    border: 2px solid rgba(148,239,244,0.25);
+    border-radius: 50% 50% 40% 40%;
+    position: relative;
+  }
+  .jf-bell::before, .jf-bell::after {
+    content: '';
+    position: absolute;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--cyan);
+    top: 20px;
+  }
+  .jf-bell::before { left: 22px; }
+  .jf-bell::after  { right: 22px; }
+  .jf-mouth {
+    position: absolute;
+    bottom: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 12px; height: 6px;
+    border-bottom: 2px solid var(--cyan-dim);
+    border-radius: 0 0 50% 50%;
+  }
+  .jf-tentacles {
+    display: flex;
+    justify-content: center;
+    gap: 6px;
+    margin-top: -2px;
+  }
+  .jf-tentacle {
+    width: 2px;
+    height: 28px;
+    background: linear-gradient(to bottom, rgba(148,239,244,0.3), transparent);
+    border-radius: 0 0 2px 2px;
+    animation: sway 3s ease-in-out infinite;
+  }
+  .jf-tentacle:nth-child(2) { height: 34px; animation-delay: 0.3s; }
+  .jf-tentacle:nth-child(3) { height: 22px; animation-delay: 0.6s; }
+  .jf-tentacle:nth-child(4) { height: 30px; animation-delay: 0.9s; }
+  .jf-tentacle:nth-child(5) { height: 26px; animation-delay: 1.2s; }
+  @keyframes sway {
+    0%, 100% { transform: rotate(-3deg); }
+    50% { transform: rotate(3deg); }
+  }
+
+  /* ---- Layout ---- */
+  .container {
+    position: relative;
+    z-index: 1;
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 60px 24px 80px;
+  }
+
+  /* ---- Hero section ---- */
+  .hero {
+    text-align: center;
+    padding: 80px 0 60px;
+  }
+  .hero h1 {
+    font-size: 2.4em;
+    font-weight: 700;
+    background: linear-gradient(135deg, var(--cyan), var(--pink));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 16px;
+    letter-spacing: -0.02em;
+  }
+  .hero .tagline {
+    font-size: 1.15em;
+    color: var(--text-dim);
+    font-weight: 300;
+    max-width: 500px;
+    margin: 0 auto 12px;
+  }
+  .hero .sub {
+    font-size: 0.85em;
+    color: var(--text-muted);
+    font-style: italic;
+  }
+
+  /* ---- Section ---- */
+  section {
+    margin-bottom: 72px;
+  }
+  .section-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.72em;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    padding: 4px 12px;
+    border-radius: 20px;
+    margin-bottom: 12px;
+  }
+  .badge-now    { background: rgba(148,239,244,0.1); color: var(--cyan); border: 1px solid rgba(148,239,244,0.15); }
+  .badge-soon   { background: rgba(160,244,184,0.08); color: var(--green); border: 1px solid rgba(160,244,184,0.12); }
+  .badge-mid    { background: rgba(244,167,148,0.08); color: var(--gold); border: 1px solid rgba(244,167,148,0.12); }
+  .badge-far    { background: rgba(196,160,244,0.08); color: var(--purple); border: 1px solid rgba(196,160,244,0.12); }
+
+  section h2 {
+    font-size: 1.6em;
+    font-weight: 700;
+    margin-bottom: 8px;
+  }
+  section .desc {
+    color: var(--text-dim);
+    font-size: 0.95em;
+    margin-bottom: 28px;
+  }
+
+  /* ---- Cards ---- */
+  .card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 14px;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: 16px;
+    padding: 20px;
+    transition: all 0.25s ease;
+  }
+  .card:hover {
+    border-color: rgba(148,239,244,0.18);
+    background: rgba(148,239,244,0.06);
+    transform: translateY(-2px);
+  }
+  .card-icon {
+    font-size: 1.5em;
+    margin-bottom: 10px;
+  }
+  .card h3 {
+    font-size: 0.95em;
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+  .card p {
+    font-size: 0.82em;
+    color: var(--text-dim);
+    line-height: 1.6;
+  }
+
+  /* ---- Agent badges ---- */
+  .agent-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 16px 0;
+  }
+  .agent-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 0.78em;
+    font-weight: 500;
+    border: 1px solid rgba(255,255,255,0.06);
+    background: rgba(255,255,255,0.03);
+  }
+  .agent-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+  }
+
+  /* ---- Vision diagram ---- */
+  .vision-diagram {
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: 20px;
+    padding: 36px 28px;
+    margin: 28px 0;
+    text-align: center;
+  }
+  .vision-flow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    flex-wrap: wrap;
+  }
+  .flow-col {
+    text-align: center;
+  }
+  .flow-col.agents { text-align: right; }
+  .flow-col.outputs { text-align: left; }
+  .flow-item {
+    font-size: 0.78em;
+    color: var(--text-dim);
+    padding: 3px 0;
+    white-space: nowrap;
+  }
+  .flow-center {
+    width: 140px; height: 140px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(148,239,244,0.12), rgba(148,239,244,0.02));
+    border: 2px solid rgba(148,239,244,0.15);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    animation: float 5s ease-in-out infinite;
+  }
+  .flow-center .emoji { font-size: 2em; margin-bottom: 4px; }
+  .flow-center .label { font-size: 0.8em; font-weight: 600; color: var(--cyan); }
+  .flow-center .sub { font-size: 0.65em; color: var(--text-muted); }
+  .flow-arrow {
+    font-size: 1.4em;
+    color: var(--text-muted);
+  }
+
+  /* ---- Quote block ---- */
+  .quote {
+    border-left: 3px solid var(--cyan);
+    padding: 16px 20px;
+    margin: 24px 0;
+    background: rgba(148,239,244,0.03);
+    border-radius: 0 12px 12px 0;
+    font-size: 1.05em;
+    font-weight: 400;
+    color: var(--cyan-dim);
+  }
+
+  /* ---- Feature list ---- */
+  .feature-list {
+    list-style: none;
+    padding: 0;
+  }
+  .feature-list li {
+    padding: 12px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    font-size: 0.9em;
+  }
+  .feature-list li:last-child { border-bottom: none; }
+  .feature-list .bullet {
+    flex-shrink: 0;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--cyan);
+    margin-top: 8px;
+  }
+  .feature-list strong {
+    color: var(--text);
+  }
+  .feature-list span {
+    color: var(--text-dim);
+  }
+
+  /* ---- Table ---- */
+  .vision-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    font-size: 0.85em;
+  }
+  .vision-table th {
+    text-align: left;
+    padding: 10px 16px;
+    font-weight: 600;
+    color: var(--cyan-dim);
+    border-bottom: 1px solid rgba(148,239,244,0.1);
+    font-size: 0.85em;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .vision-table td {
+    padding: 12px 16px;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+    color: var(--text-dim);
+  }
+  .vision-table td:first-child {
+    color: var(--text);
+    font-weight: 500;
+  }
+
+  /* ---- Tech stack ---- */
+  .tech-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 10px;
+  }
+  .tech-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: 12px;
+    font-size: 0.8em;
+  }
+  .tech-item .icon { font-size: 1.2em; }
+  .tech-item .name { font-weight: 500; }
+  .tech-item .detail { font-size: 0.85em; color: var(--text-muted); }
+
+  /* ---- CTA ---- */
+  .cta {
+    text-align: center;
+    padding: 48px 0;
+  }
+  .cta p {
+    color: var(--text-dim);
+    font-size: 0.9em;
+    margin-bottom: 8px;
+  }
+  .cta .final {
+    font-size: 1.1em;
+    font-weight: 600;
+    color: var(--cyan);
+    margin-top: 20px;
+  }
+
+  /* ---- Divider ---- */
+  .divider {
+    height: 1px;
+    background: linear-gradient(to right, transparent, rgba(148,239,244,0.12), transparent);
+    margin: 48px 0;
+  }
+
+  /* ---- Mobile ---- */
+  @media (max-width: 600px) {
+    .hero h1 { font-size: 1.8em; }
+    .card-grid { grid-template-columns: 1fr; }
+    .vision-flow { flex-direction: column; }
+    .flow-arrow { transform: rotate(90deg); }
+    .flow-col.agents, .flow-col.outputs { text-align: center; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Floating bubbles -->
+<div class="bubbles" id="bubbles"></div>
+
+<div class="container">
+
+  <!-- ====== HERO ====== -->
+  <div class="hero">
+    <div class="jellyfish-hero">
+      <div class="jf-bell"><div class="jf-mouth"></div></div>
+      <div class="jf-tentacles">
+        <div class="jf-tentacle"></div>
+        <div class="jf-tentacle"></div>
+        <div class="jf-tentacle"></div>
+        <div class="jf-tentacle"></div>
+        <div class="jf-tentacle"></div>
+      </div>
+    </div>
+    <h1>HumHum</h1>
+    <p class="tagline">个人端 Agent 指挥家</p>
+    <p class="sub">灯塔水母 · Turritopsis dohrnii · 永生的深海感知者</p>
+  </div>
+
+  <div class="divider"></div>
+
+  <!-- ====== NOW ====== -->
+  <section>
+    <div class="section-badge badge-now">🌊 现在</div>
+    <h2>Hum 已经能做到的事</h2>
+    <p class="desc">一个小小的桌面水母，已经连接了 6 个 AI 编程助手。</p>
+
+    <div class="agent-row">
+      <span class="agent-badge"><span class="agent-dot" style="background:#e8925b"></span>Claude Code</span>
+      <span class="agent-badge"><span class="agent-dot" style="background:#6fcf97"></span>Codex</span>
+      <span class="agent-badge"><span class="agent-dot" style="background:#56b4e9"></span>QoderWork</span>
+      <span class="agent-badge"><span class="agent-dot" style="background:#bb86fc"></span>Qwen Code</span>
+      <span class="agent-badge"><span class="agent-dot" style="background:#4ecdc4"></span>Gemini CLI</span>
+      <span class="agent-badge"><span class="agent-dot" style="background:#ff6b6b"></span>Kimi K1</span>
+    </div>
+
+    <div class="card-grid">
+      <div class="card">
+        <div class="card-icon">🔊</div>
+        <h3>语音播报</h3>
+        <p>Agent 事件变成自然语言播报，不用切窗口就知道发生了什么</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">🎙️</div>
+        <h3>多模态审批</h3>
+        <p>语音说"确认"、键盘按 Y、点击按钮 —— 三种方式批准操作</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">🐙</div>
+        <h3>深海吸收态</h3>
+        <p>每个 Agent 化身一种深海生物，围绕 Hum 旋转共生</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">📊</div>
+        <h3>统计面板</h3>
+        <p>Token 用量、花费、工具调用频率 —— 一目了然</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">⚡</div>
+        <h3>狂暴模式</h3>
+        <p>全自动确认，Agent 全力冲刺不等人</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">❓</div>
+        <h3>问题回答</h3>
+        <p>Agent 提问时弹出选项面板，一键选择回答</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====== PHASE 1 ====== -->
+  <section>
+    <div class="section-badge badge-soon">🐚 近期 · 1-2 个月</div>
+    <h2>即将到来的能力</h2>
+    <p class="desc">让 Hum 的触手伸得更远一点。</p>
+
+    <div class="card-grid">
+      <div class="card">
+        <div class="card-icon">📱</div>
+        <h3>手机远程控制</h3>
+        <p>局域网扫码连接，手机浏览器审批权限、回答问题、查看状态。无需安装任何 App。</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">⚖️</div>
+        <h3>Agent 对比面板</h3>
+        <p>哪个 Agent 最快？最省钱？用了最多工具？一个面板告诉你。</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">🔌</div>
+        <h3>更多 Agent 接入</h3>
+        <p>Cursor · Windsurf · Copilot · Aide · Augment…… 任何支持 hooks 的 AI 工具。</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">🎨</div>
+        <h3>Rive 动画升级</h3>
+        <p>用 Rive 替换 Canvas2D，Hum 的动作更流畅、更有灵魂。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====== PHASE 2 ====== -->
+  <section>
+    <div class="section-badge badge-mid">🧭 中期 · 3-6 个月</div>
+    <h2>个人端 Agent 指挥家</h2>
+    <p class="desc">这是 HumHum 真正想成为的东西。</p>
+
+    <div class="quote">所有应该流转于个人侧的东西，都应该能流转。</div>
+
+    <!-- Vision diagram -->
+    <div class="vision-diagram">
+      <div class="vision-flow">
+        <div class="flow-col agents">
+          <div class="flow-item">Claude Code →</div>
+          <div class="flow-item">Codex →</div>
+          <div class="flow-item">QoderWork →</div>
+          <div class="flow-item">Cursor →</div>
+          <div class="flow-item">Windsurf →</div>
+          <div class="flow-item">...更多 →</div>
+        </div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-center">
+          <div class="emoji">🪼</div>
+          <div class="label">Hum</div>
+          <div class="sub">感知 · 指挥 · 流转</div>
+        </div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-col outputs">
+          <div class="flow-item">→ 💻 桌面宠物</div>
+          <div class="flow-item">→ 📱 手机网页</div>
+          <div class="flow-item">→ ⌚ 手表推送</div>
+          <div class="flow-item">→ 🌐 Web 面板</div>
+          <div class="flow-item">→ 🤖 Bot 通知</div>
+        </div>
+      </div>
+      <p style="margin-top:20px; font-size:0.78em; color:var(--text-muted)">
+        你的偏好、权限、记忆 —— 全部在 Hum 这里汇合，跟着你走，不跟着设备。
+      </p>
+    </div>
+
+    <ul class="feature-list">
+      <li>
+        <div class="bullet"></div>
+        <div><strong>偏好同步</strong> <span>—— 在公司电脑 allowAlways 了一个工具，家里的电脑自动生效</span></div>
+      </li>
+      <li>
+        <div class="bullet"></div>
+        <div><strong>上下文漫游</strong> <span>—— 在手机上浏览电脑端 Agent 的对话摘要，出门也能了解进度</span></div>
+      </li>
+      <li>
+        <div class="bullet"></div>
+        <div><strong>通知聚合</strong> <span>—— 多台电脑、多个 Agent 的通知汇聚到一个入口，不再遗漏</span></div>
+      </li>
+      <li>
+        <div class="bullet"></div>
+        <div><strong>智能权限策略</strong> <span>—— Hum 学习你的审批习惯，自动建议 allow 或 deny</span></div>
+      </li>
+      <li>
+        <div class="bullet"></div>
+        <div><strong>多 Agent 协作编排</strong> <span>—— Hum 作为调度者，分发任务给不同 Agent</span></div>
+      </li>
+    </ul>
+  </section>
+
+  <!-- ====== PHASE 3 ====== -->
+  <section>
+    <div class="section-badge badge-far">🔭 远期 · 6-12 个月</div>
+    <h2>开放生态</h2>
+    <p class="desc">让每个开发者都能拥有自己的 Hum。</p>
+
+    <table class="vision-table">
+      <thead>
+        <tr><th>方向</th><th>目标</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>🧩 插件系统</td><td>自定义事件处理器、TTS/STT 提供商、播报风格</td></tr>
+        <tr><td>📐 Hook 协议标准</td><td>发布开放标准，让任何 AI 工具一行命令接入生态</td></tr>
+        <tr><td>👥 团队模式</td><td>共享 Agent 状态、协作审批、团队仪表盘</td></tr>
+        <tr><td>💬 人格系统</td><td>元气型 · 冷静型 · 毒舌型 —— 不同性格影响播报风格</td></tr>
+        <tr><td>🖥️ 跨平台</td><td>Windows · Linux 完整支持</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <div class="divider"></div>
+
+  <!-- ====== TECH ====== -->
+  <section>
+    <h2 style="font-size:1.2em; margin-bottom:16px;">🏗️ 技术栈</h2>
+    <div class="tech-grid">
+      <div class="tech-item"><span class="icon">⚛️</span><div><div class="name">React 18</div><div class="detail">TypeScript</div></div></div>
+      <div class="tech-item"><span class="icon">🦀</span><div><div class="name">Tauri v2</div><div class="detail">Rust Backend</div></div></div>
+      <div class="tech-item"><span class="icon">🎮</span><div><div class="name">PixiJS v8</div><div class="detail">WebGL 渲染</div></div></div>
+      <div class="tech-item"><span class="icon">🎨</span><div><div class="name">TailwindCSS</div><div class="detail">原子化样式</div></div></div>
+      <div class="tech-item"><span class="icon">🔊</span><div><div class="name">Edge TTS</div><div class="detail">+ OpenAI / 11Labs</div></div></div>
+      <div class="tech-item"><span class="icon">🎙️</span><div><div class="name">Web Speech</div><div class="detail">+ Whisper</div></div></div>
+      <div class="tech-item"><span class="icon">🔗</span><div><div class="name">Hook Protocol</div><div class="detail">stdin → HTTP</div></div></div>
+      <div class="tech-item"><span class="icon">🤖</span><div><div class="name">LLM 摘要</div><div class="detail">BYOK 兼容</div></div></div>
+    </div>
+  </section>
+
+  <div class="divider"></div>
+
+  <!-- ====== CTA ====== -->
+  <div class="cta">
+    <div class="jellyfish-hero" style="transform:scale(0.7)">
+      <div class="jf-bell" style="border-color:rgba(244,160,200,0.3); background:radial-gradient(ellipse at 50% 40%, rgba(244,160,200,0.2), rgba(244,160,200,0.05));">
+        <div class="jf-mouth" style="border-color:rgba(244,160,200,0.4)"></div>
+      </div>
+      <div class="jf-tentacles">
+        <div class="jf-tentacle" style="background:linear-gradient(to bottom, rgba(244,160,200,0.3), transparent)"></div>
+        <div class="jf-tentacle" style="background:linear-gradient(to bottom, rgba(244,160,200,0.3), transparent)"></div>
+        <div class="jf-tentacle" style="background:linear-gradient(to bottom, rgba(244,160,200,0.3), transparent)"></div>
+        <div class="jf-tentacle" style="background:linear-gradient(to bottom, rgba(244,160,200,0.3), transparent)"></div>
+        <div class="jf-tentacle" style="background:linear-gradient(to bottom, rgba(244,160,200,0.3), transparent)"></div>
+      </div>
+    </div>
+    <p>HumHum 是开源项目</p>
+    <p>AI 时代，每个开发者都值得拥有一个贴心的小助手</p>
+    <p class="final">不只是桌面宠物，是你的个人端 Agent 指挥家。</p>
+  </div>
+
+</div>
+
+<script>
+// Generate floating bubbles
+const container = document.getElementById('bubbles');
+for (let i = 0; i < 18; i++) {
+  const b = document.createElement('div');
+  b.className = 'bubble';
+  const size = 10 + Math.random() * 50;
+  b.style.width = size + 'px';
+  b.style.height = size + 'px';
+  b.style.left = Math.random() * 100 + '%';
+  b.style.animationDuration = 12 + Math.random() * 20 + 's';
+  b.style.animationDelay = Math.random() * 15 + 's';
+  container.appendChild(b);
+}
+</script>
+
+</body>
+</html>

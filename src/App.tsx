@@ -10,6 +10,9 @@ const PetView = lazy(() =>
 const SettingsPanel = lazy(() =>
   import("./components/Settings/SettingsPanel").then((mod) => ({ default: mod.SettingsPanel }))
 );
+const HubLayout = lazy(() =>
+  import("./components/Hub/HubLayout").then((mod) => ({ default: mod.HubLayout }))
+);
 
 /**
  * Root App component — detects which window it's in and renders accordingly.
@@ -34,7 +37,13 @@ export default function App() {
 
   return (
     <ErrorBoundary>
-      {windowLabel === "settings" ? <SettingsWindow /> : <PetWindow />}
+      {windowLabel === "hub" ? (
+        <HubWindow />
+      ) : windowLabel === "settings" ? (
+        <SettingsWindow />
+      ) : (
+        <PetWindow />
+      )}
     </ErrorBoundary>
   );
 }
@@ -67,6 +76,16 @@ function PetWindow() {
         <PetView />
       </Suspense>
     </div>
+  );
+}
+
+// ===== Hub Window =====
+
+function HubWindow() {
+  return (
+    <Suspense fallback={null}>
+      <HubLayout />
+    </Suspense>
   );
 }
 

@@ -51,6 +51,7 @@ export function PetView() {
   const completionSpeaking = useRef(false);
   const [questionEvent, setQuestionEvent] = useState<HookEvent | null>(null);
   const [showDashboard, setShowDashboard] = useState(false);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [windowReady, setWindowReady] = useState(false);
   const [activeClients, setActiveClients] = useState<string[]>([]);
   const { bubbles, burst: burstBubbles } = useBubbleTrail();
@@ -253,14 +254,8 @@ export function PetView() {
       const toolInput = (payload.tool_input as Record<string, unknown>) ?? {};
 
       if (toolName === "AskUserQuestion") {
-        playSound("attentionRequired");
-        setQuestionEvent(latestEvent);
-        setPetState("waiting");
-        invoke("send_notification", {
-          title: t("petview.needsChoice"),
-          body: t("petview.waitingChoice"),
-        });
-        setTimeout(() => setQuestionEvent(null), 60000);
+        // PermissionRequest for AskUserQuestion is auto-allowed on server.
+        // The actual question UI is shown when PreToolUse arrives.
         if (pipeline) {
           pipeline.processEvent(latestEvent).catch(console.error);
         }
@@ -343,7 +338,16 @@ export function PetView() {
           title: t("petview.needsChoice"),
           body: t("petview.ccWaitingChoice"),
         });
-        setTimeout(() => setQuestionEvent(null), 60000);
+        const evtRef2 = latestEvent;
+        setTimeout(() => {
+          setQuestionEvent((prev) => {
+            if (prev?.id === evtRef2.id) {
+              invoke("respond_to_permission", { eventId: evtRef2.id, behavior: "allow" }).catch(() => {});
+              return null;
+            }
+            return prev;
+          });
+        }, 60000);
       } else {
         const action = eventName === "PreToolUse" ? t("petview.using") : t("petview.done");
         invoke("send_notification", {
@@ -393,7 +397,20 @@ export function PetView() {
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    console.log("[PetView] Right-click → toggle_settings");
+    const x = Math.min(Math.max(e.clientX - 88, 8), 132);
+    const y = Math.min(Math.max(e.clientY - 102, 8), 132);
+    setContextMenu({ x, y });
+  }, []);
+
+  const handleOpenHub = useCallback(() => {
+    setContextMenu(null);
+    invoke("toggle_hub").catch((err) =>
+      console.error("[PetView] toggle_hub failed:", err),
+    );
+  }, []);
+
+  const handleOpenSettings = useCallback(() => {
+    setContextMenu(null);
     invoke("toggle_settings").catch((err) =>
       console.error("[PetView] toggle_settings failed:", err),
     );
@@ -407,6 +424,7 @@ export function PetView() {
   const handlePetLeave = useCallback(() => {
     if (hoverTimer.current) clearTimeout(hoverTimer.current);
     hoverTimer.current = setTimeout(() => setShowDashboard(false), 200);
+    setTimeout(() => setContextMenu(null), 1200);
   }, []);
 
   const handleDashboardEnter = useCallback(() => {
@@ -471,7 +489,10 @@ export function PetView() {
         <div className="w-72 mb-3 pointer-events-auto">
           <QuestionToast
             event={questionEvent}
-            onDismiss={() => { setQuestionEvent(null); setPetState("idle"); }}
+            onDismiss={() => {
+              setQuestionEvent(null);
+              setPetState("idle");
+            }}
           />
         </div>
       )}
@@ -495,7 +516,7 @@ export function PetView() {
       {/* Bubble */}
       {!showDashboard && <Bubble state={petState} text={bubbleText} />}
 
-      {/* Pet body — draggable, hover → dashboard, right-click → settings */}
+      {/* Pet body — draggable, hover → dashboard, right-click → command menu */}
       <div
         className="relative cursor-grab active:cursor-grabbing pointer-events-auto"
         onMouseDown={handleMouseDown}
@@ -504,6 +525,23 @@ export function PetView() {
         onMouseLeave={handlePetLeave}
         onContextMenu={handleContextMenu}
       >
+        {contextMenu && (
+          <div
+            className="pet-context-menu"
+            style={{ left: contextMenu.x, top: contextMenu.y }}
+            onMouseDown={(e) => e.stopPropagation()}
+            onMouseUp={(e) => e.stopPropagation()}
+          >
+            <button type="button" onClick={handleOpenHub}>
+              <span>Hub</span>
+              <small>Agent center</small>
+            </button>
+            <button type="button" onClick={handleOpenSettings}>
+              <span>Settings</span>
+              <small>Voice & hooks</small>
+            </button>
+          </div>
+        )}
         <PetBody state={petState} activeClients={activeClients} />
         <BubbleParticles bubbles={bubbles} />
       </div>

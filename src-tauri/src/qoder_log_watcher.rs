@@ -3,9 +3,9 @@ use crate::session_store::SessionStore;
 use serde_json::Value;
 use std::collections::HashSet;
 use std::fs;
-use std::sync::Arc;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 const QODER_LOG_DIR: &str = ".qoderwork/logs/sessions";
@@ -72,7 +72,6 @@ fn run_watcher(app_handle: tauri::AppHandle) {
     }
 }
 
-
 /// Find the most recently modified JSONL file in the sessions directory.
 /// Structure: sessions/<workspace>/<session-uuid>/segments/*.jsonl
 fn find_latest_jsonl(log_dir: &Path) -> Option<PathBuf> {
@@ -93,13 +92,17 @@ fn find_latest_jsonl(log_dir: &Path) -> Option<PathBuf> {
     if let Ok(workspace_entries) = fs::read_dir(log_dir) {
         for ws_entry in workspace_entries.flatten() {
             let ws_path = ws_entry.path();
-            if !ws_path.is_dir() { continue; }
+            if !ws_path.is_dir() {
+                continue;
+            }
 
             // Level 2: session UUID dirs inside workspace
             if let Ok(session_entries) = fs::read_dir(&ws_path) {
                 for sess_entry in session_entries.flatten() {
                     let sess_path = sess_entry.path();
-                    if !sess_path.is_dir() { continue; }
+                    if !sess_path.is_dir() {
+                        continue;
+                    }
 
                     // Check segments/ subdirectory
                     let segments_dir = sess_path.join("segments");
@@ -112,7 +115,11 @@ fn find_latest_jsonl(log_dir: &Path) -> Option<PathBuf> {
                     }
 
                     // Also check if this dir itself has segments/ (2-level structure)
-                    if sess_path.file_name().map(|n| n == "segments").unwrap_or(false) {
+                    if sess_path
+                        .file_name()
+                        .map(|n| n == "segments")
+                        .unwrap_or(false)
+                    {
                         if let Ok(seg_entries) = fs::read_dir(&sess_path) {
                             for seg_entry in seg_entries.flatten() {
                                 check_jsonl(&seg_entry.path(), &mut latest);
@@ -132,7 +139,10 @@ fn find_latest_jsonl(log_dir: &Path) -> Option<PathBuf> {
 }
 
 /// Read new lines from a file starting from a given line number
-fn read_new_lines(file_path: &Path, start_line: usize) -> Result<(Vec<String>, usize), std::io::Error> {
+fn read_new_lines(
+    file_path: &Path,
+    start_line: usize,
+) -> Result<(Vec<String>, usize), std::io::Error> {
     let file = fs::File::open(file_path)?;
     let reader = BufReader::new(file);
     let mut lines: Vec<String> = Vec::new();
@@ -176,7 +186,8 @@ fn process_log_line(line: &str, app_handle: &tauri::AppHandle, processed: &mut H
     };
 
     // Generate a unique key for this event to avoid duplicates
-    let event_key = format!("{}-{}", 
+    let event_key = format!(
+        "{}-{}",
         value.get("seq").and_then(|v| v.as_u64()).unwrap_or(0),
         event_type
     );
@@ -193,11 +204,12 @@ fn process_log_line(line: &str, app_handle: &tauri::AppHandle, processed: &mut H
         .to_string();
 
     match event_type {
-        // Both permission.requested and tool.requested share the same data format:
-        //   { "tool_name": "...", "args": { ... } }
-        // permission.requested = needs user confirmation (Bash, Write, etc.)
-        // tool.requested = tool invocation (AskUserQuestion, etc.)
-        "permission.requested" | "tool.requested" => {
+        // Skip permission events — these are handled by hooks (bidirectional)
+        // via hook_server.rs when QoderWork hooks are installed.
+        // The log watcher is one-way and cannot relay responses back.
+        "permission.requested" => {}
+
+        "tool.requested" => {
             let tool_name = value
                 .get("data")
                 .and_then(|d| d.get("tool_name"))
@@ -205,26 +217,15 @@ fn process_log_line(line: &str, app_handle: &tauri::AppHandle, processed: &mut H
                 .unwrap_or("unknown")
                 .to_string();
 
-            // Use data.args as tool_input so questions/options match frontend format
             let tool_input = value
                 .get("data")
                 .and_then(|d| d.get("args"))
                 .cloned()
-                .unwrap_or_else(|| {
-                    value.get("data").cloned().unwrap_or(serde_json::json!({}))
-                });
-
-            // AskUserQuestion → emit as PermissionRequest (frontend routes to QuestionToast)
-            // Other tool.requested events without permission semantics → emit as PreToolUse
-            let hook_event_name = if event_type == "permission.requested" || tool_name == "AskUserQuestion" {
-                "PermissionRequest"
-            } else {
-                "PreToolUse"
-            };
+                .unwrap_or_else(|| value.get("data").cloned().unwrap_or(serde_json::json!({})));
 
             let event = HookEvent {
                 id: uuid::Uuid::new_v4().to_string(),
-                hook_event_name: hook_event_name.to_string(),
+                hook_event_name: "PreToolUse".to_string(),
                 session_id: value
                     .get("turn_id")
                     .and_then(|v| v.as_str())
@@ -242,12 +243,9 @@ fn process_log_line(line: &str, app_handle: &tauri::AppHandle, processed: &mut H
                 timestamp: chrono::Utc::now().to_rfc3339(),
             };
 
-            log::info!("QoderWork {}: {} (from {})", hook_event_name, tool_name, event_type);
+            log::info!("QoderWork PreToolUse: {}", tool_name);
             event_bus::emit_hook_event(app_handle, &event);
             update_session(app_handle, &event);
-            if hook_event_name == "PermissionRequest" {
-                event_bus::emit_status_change(app_handle, "waiting-confirmation");
-            }
         }
 
         "session.phase.finished" => {
@@ -288,7 +286,7 @@ fn process_log_line(line: &str, app_handle: &tauri::AppHandle, processed: &mut H
 
                 log::info!("QoderWork task completed: phase={}", phase);
                 event_bus::emit_hook_event(app_handle, &event);
-            update_session(app_handle, &event);
+                update_session(app_handle, &event);
             } else {
                 log::debug!("QoderWork phase finished (skipped): {}", phase);
             }
@@ -323,7 +321,10 @@ fn process_log_line(line: &str, app_handle: &tauri::AppHandle, processed: &mut H
                 timestamp: chrono::Utc::now().to_rfc3339(),
             };
 
-            log::info!("QoderWork shell started: {}", &command[..command.len().min(50)]);
+            log::info!(
+                "QoderWork shell started: {}",
+                &command[..command.len().min(50)]
+            );
             event_bus::emit_hook_event(app_handle, &event);
             update_session(app_handle, &event);
         }

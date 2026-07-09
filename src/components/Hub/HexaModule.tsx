@@ -1,0 +1,565 @@
+import { useState } from "react";
+import {
+  useHexaData,
+  type HexaSupervisorSession,
+  type HexaMemoryLocation,
+  type HexaSupervisorNote,
+} from "../../hooks/useHexaData";
+
+const CLIENT_COLORS: Record<string, string> = {
+  "claude-code": "#f59e0b",
+  codex: "#22c55e",
+  qoderwork: "#fb7185",
+  "qwen-code": "#8b5cf6",
+  "gemini-cli": "#38bdf8",
+  "kimi-k1": "#f97316",
+  wukong: "#eab308",
+};
+
+const STATUS_COLORS: Record<HexaSupervisorSession["progress_status"], string> = {
+  working: "#22c55e",
+  waiting: "#facc15",
+  looping: "#fb923c",
+  stalled: "#f87171",
+  idle: "#38bdf8",
+  completed: "rgba(255,255,255,0.35)",
+};
+
+function getClientColor(client: string): string {
+  return CLIENT_COLORS[client] || "#94eff4";
+}
+
+function formatDuration(startedAt: string): string {
+  const start = new Date(startedAt).getTime();
+  const diff = Math.max(0, Date.now() - start);
+  const mins = Math.floor(diff / 60000);
+  const hours = Math.floor(mins / 60);
+  if (hours > 0) return `${hours}h ${mins % 60}m`;
+  return `${mins}m`;
+}
+
+function formatTimeAgo(ms: number): string {
+  const secs = Math.max(0, Math.floor(ms / 1000));
+  if (secs < 60) return `${secs}s ago`;
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  return `${hours}h ago`;
+}
+
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return n.toString();
+}
+
+function formatCost(usd: number): string {
+  if (usd >= 1) return `$${usd.toFixed(2)}`;
+  if (usd >= 0.01) return `$${usd.toFixed(3)}`;
+  return `$${usd.toFixed(4)}`;
+}
+
+function StatusPill({ item }: { item: HexaSupervisorSession }) {
+  const color = STATUS_COLORS[item.progress_status];
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "3px 8px",
+        borderRadius: 999,
+        background: `${color}18`,
+        border: `1px solid ${color}40`,
+        color,
+        fontSize: 10,
+        fontWeight: 700,
+        lineHeight: 1,
+        whiteSpace: "nowrap",
+      }}
+    >
+      <span
+        style={{
+          width: 6,
+          height: 6,
+          borderRadius: "50%",
+          background: color,
+          boxShadow: item.progress_status === "working" ? `0 0 8px ${color}` : "none",
+        }}
+      />
+      {item.progress_label}
+    </span>
+  );
+}
+
+function NoteList({ title, notes }: { title: string; notes: HexaSupervisorNote[] }) {
+  return (
+    <div>
+      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.32)", marginBottom: 6, fontWeight: 700 }}>
+        {title}
+      </div>
+      <div style={{ display: "grid", gap: 5 }}>
+        {notes.slice(0, 3).map((note, index) => {
+          const color =
+            note.tone === "good" ? "#22c55e" : note.tone === "watch" ? "#f59e0b" : "rgba(255,255,255,0.36)";
+          return (
+            <div
+              key={`${title}-${index}`}
+              style={{
+                display: "grid",
+                gridTemplateColumns: "6px 1fr",
+                gap: 8,
+                alignItems: "start",
+                color: "rgba(255,255,255,0.58)",
+                fontSize: 11,
+                lineHeight: 1.45,
+              }}
+            >
+              <span style={{ width: 6, height: 6, marginTop: 5, borderRadius: "50%", background: color }} />
+              <span>{note.text}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function MemoryList({ locations }: { locations: HexaMemoryLocation[] }) {
+  return (
+    <div>
+      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.32)", marginBottom: 6, fontWeight: 700 }}>
+        Memory locations
+      </div>
+      <div style={{ display: "grid", gap: 6 }}>
+        {locations.slice(0, 3).map((location) => (
+          <div
+            key={`${location.label}-${location.path}`}
+            style={{
+              padding: "7px 8px",
+              borderRadius: 8,
+              background: "rgba(255,255,255,0.025)",
+              border: "1px solid rgba(255,255,255,0.055)",
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 3 }}>
+              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.68)", fontWeight: 650 }}>
+                {location.label}
+              </span>
+              <span style={{ fontSize: 9, color: location.exists ? "#22c55e" : "rgba(255,255,255,0.28)" }}>
+                {location.exists ? "visible" : "unknown"}
+              </span>
+            </div>
+            <div
+              style={{
+                fontSize: 10,
+                color: "rgba(255,255,255,0.4)",
+                fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+              title={location.path}
+            >
+              {location.path}
+            </div>
+            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.28)", marginTop: 3, lineHeight: 1.35 }}>
+              {location.description}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function StatStrip({ item }: { item: HexaSupervisorSession }) {
+  const stats = item.stats;
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+        gap: 8,
+      }}
+    >
+      {[
+        ["events", item.session.event_count.toString()],
+        ["last seen", formatTimeAgo(item.last_seen_ms)],
+        ["tokens", stats ? formatTokens(stats.total_tokens) : "pending"],
+        ["cost", stats ? formatCost(stats.total_cost_usd) : "pending"],
+      ].map(([label, value]) => (
+        <div
+          key={label}
+          style={{
+            minWidth: 0,
+            padding: "7px 8px",
+            borderRadius: 8,
+            background: "rgba(0,0,0,0.18)",
+            border: "1px solid rgba(255,255,255,0.04)",
+          }}
+        >
+          <div style={{ fontSize: 9, color: "rgba(255,255,255,0.26)", marginBottom: 2 }}>{label}</div>
+          <div
+            style={{
+              fontSize: 12,
+              color: "rgba(255,255,255,0.72)",
+              fontWeight: 700,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {value}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SessionPanel({
+  item,
+  expanded,
+  onToggle,
+}: {
+  item: HexaSupervisorSession;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const color = getClientColor(item.session.client_type);
+  const recentEvents = item.session.event_names.slice(-6);
+
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      style={{
+        width: "100%",
+        textAlign: "left",
+        padding: 0,
+        border: "none",
+        background: "transparent",
+        color: "inherit",
+        cursor: "pointer",
+      }}
+    >
+      <article
+        style={{
+          borderRadius: 8,
+          background: "rgba(255,255,255,0.026)",
+          border: "1px solid rgba(255,255,255,0.07)",
+          borderLeft: `3px solid ${color}`,
+          padding: 14,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 5 }}>
+              <span style={{ fontSize: 10, color, fontWeight: 800 }}>{item.agent_label}</span>
+              <StatusPill item={item} />
+              {item.pending_confirmations > 0 && (
+                <span
+                  style={{
+                    fontSize: 10,
+                    color: "#facc15",
+                    background: "rgba(250,204,21,0.1)",
+                    border: "1px solid rgba(250,204,21,0.22)",
+                    borderRadius: 999,
+                    padding: "3px 8px",
+                    fontWeight: 700,
+                  }}
+                >
+                  pending confirmation
+                </span>
+              )}
+            </div>
+            <h3
+              style={{
+                margin: 0,
+                fontSize: 15,
+                lineHeight: 1.25,
+                color: "rgba(255,255,255,0.88)",
+                overflowWrap: "anywhere",
+              }}
+            >
+              {item.display_name}
+            </h3>
+            <p style={{ margin: "7px 0 0", fontSize: 12, color: "rgba(255,255,255,0.48)", lineHeight: 1.45 }}>
+              {item.progress_detail}
+            </p>
+          </div>
+          <div style={{ textAlign: "right", flex: "0 0 auto", color: "rgba(255,255,255,0.32)", fontSize: 10 }}>
+            <div>{formatDuration(item.session.started_at)}</div>
+            <div style={{ marginTop: 4 }}>loop: {item.loop_status}</div>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 12 }}>
+          <StatStrip item={item} />
+        </div>
+
+        {expanded && (
+          <div
+            style={{
+              marginTop: 12,
+              paddingTop: 12,
+              borderTop: "1px solid rgba(255,255,255,0.06)",
+              display: "grid",
+              gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
+              gap: 14,
+            }}
+          >
+            <div style={{ display: "grid", gap: 14 }}>
+              <MemoryList locations={item.memory_locations} />
+              {item.session.cwd && (
+                <div>
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.32)", marginBottom: 5, fontWeight: 700 }}>
+                    Workspace
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 10,
+                      color: "rgba(255,255,255,0.4)",
+                      fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                      overflowWrap: "anywhere",
+                      lineHeight: 1.4,
+                    }}
+                  >
+                    {item.session.cwd}
+                  </div>
+                </div>
+              )}
+            </div>
+            <div style={{ display: "grid", gap: 14 }}>
+              <NoteList title="Strong outputs" notes={item.strong_outputs} />
+              <NoteList title="Watchouts" notes={item.watchouts} />
+              {recentEvents.length > 0 && (
+                <div>
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.32)", marginBottom: 6, fontWeight: 700 }}>
+                    Event trail
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                    {recentEvents.map((eventName, index) => (
+                      <span
+                        key={`${eventName}-${index}`}
+                        style={{
+                          padding: "2px 6px",
+                          borderRadius: 6,
+                          background: "rgba(255,255,255,0.04)",
+                          color: "rgba(255,255,255,0.42)",
+                          fontSize: 9,
+                          fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                        }}
+                      >
+                        {eventName}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </article>
+    </button>
+  );
+}
+
+function EmptyState() {
+  return (
+    <div
+      style={{
+        padding: 28,
+        borderRadius: 8,
+        background: "rgba(255,255,255,0.018)",
+        border: "1px dashed rgba(255,255,255,0.07)",
+        textAlign: "center",
+      }}
+    >
+      <div style={{ fontSize: 13, color: "rgba(255,255,255,0.48)", fontWeight: 700 }}>
+        暂无 Claude/Codex 会话
+      </div>
+      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.28)", marginTop: 6 }}>
+        启动本地 hook 后，Hexa 会把进度、确认点和 transcript 复盘集中到这里。
+      </div>
+    </div>
+  );
+}
+
+export function HexaModule() {
+  const {
+    activeSupervisorSessions,
+    completedSupervisorSessions,
+    primarySupervisorSessions,
+    compatibleSupervisorSessions,
+    alerts,
+  } = useHexaData();
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  const activePrimary = activeSupervisorSessions.filter((s) => s.priority === "primary");
+  const completedPrimary = completedSupervisorSessions.filter((s) => s.priority === "primary").slice(0, 6);
+  const pendingCount = activeSupervisorSessions.reduce((sum, item) => sum + item.pending_confirmations, 0);
+  const loopCount = activeSupervisorSessions.filter((item) => item.loop_status !== "clear").length;
+
+  return (
+    <div className="hub-module">
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", marginBottom: 16 }}>
+        <div>
+          <h2 className="hub-module-title" style={{ marginBottom: 4 }}>Hexa Supervisor</h2>
+          <p className="hub-module-desc">
+            Claude / Codex 监工台，观察每轮进度、确认点、memory 和复盘信号。
+          </p>
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          <SummaryPill label="active" value={activeSupervisorSessions.length} color="#22c55e" />
+          <SummaryPill label="pending" value={pendingCount} color="#facc15" />
+          <SummaryPill label="watch" value={alerts.length + loopCount} color="#fb923c" />
+        </div>
+      </div>
+
+      <section style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.45fr) minmax(260px, 0.8fr)", gap: 14 }}>
+        <div style={{ display: "grid", gap: 10 }}>
+          <SectionHeader title="Claude Session / Codex Session" count={primarySupervisorSessions.length} />
+          {activePrimary.length === 0 && completedPrimary.length === 0 ? (
+            <EmptyState />
+          ) : (
+            <>
+              {activePrimary.map((item) => (
+                <SessionPanel
+                  key={`active-${item.session.session_id}`}
+                  item={item}
+                  expanded={expandedId === item.session.session_id}
+                  onToggle={() =>
+                    setExpandedId(expandedId === item.session.session_id ? null : item.session.session_id)
+                  }
+                />
+              ))}
+              {completedPrimary.map((item) => (
+                <SessionPanel
+                  key={`completed-${item.session.session_id}`}
+                  item={item}
+                  expanded={expandedId === item.session.session_id}
+                  onToggle={() =>
+                    setExpandedId(expandedId === item.session.session_id ? null : item.session.session_id)
+                  }
+                />
+              ))}
+            </>
+          )}
+        </div>
+
+        <aside style={{ display: "grid", gap: 10, alignContent: "start" }}>
+          <ReviewPanel
+            title="Needs attention"
+            rows={[
+              [`${pendingCount}`, "pending confirmations"],
+              [`${loopCount}`, "loop or stalled sessions"],
+              [`${alerts.length}`, "active alerts"],
+            ]}
+          />
+          <ReviewPanel
+            title="Supervisor model"
+            rows={[
+              ["progress", "working / waiting / stalled / completed"],
+              ["memory", "~/.claude/projects + ~/.codex/sessions"],
+              ["review", "strong outputs + watchouts"],
+            ]}
+          />
+          {compatibleSupervisorSessions.length > 0 && (
+            <div
+              style={{
+                borderRadius: 8,
+                background: "rgba(255,255,255,0.022)",
+                border: "1px solid rgba(255,255,255,0.06)",
+                padding: 12,
+              }}
+            >
+              <SectionHeader title="Compatible agents" count={compatibleSupervisorSessions.length} />
+              <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
+                {compatibleSupervisorSessions.slice(0, 6).map((item) => (
+                  <div key={`compatible-${item.session.session_id}`}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 3 }}>
+                      <span style={{ fontSize: 11, color: "rgba(255,255,255,0.66)", fontWeight: 700 }}>
+                        {item.agent_label}
+                      </span>
+                      <span style={{ fontSize: 10, color: STATUS_COLORS[item.progress_status] }}>
+                        {item.progress_label}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.32)", lineHeight: 1.35 }}>
+                      {item.display_name} · {formatTimeAgo(item.last_seen_ms)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </aside>
+      </section>
+    </div>
+  );
+}
+
+function SectionHeader({ title, count }: { title: string; count: number }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+      <div
+        style={{
+          fontSize: 11,
+          fontWeight: 800,
+          color: "rgba(255,255,255,0.42)",
+          textTransform: "uppercase",
+          letterSpacing: 0.4,
+        }}
+      >
+        {title}
+      </div>
+      <span style={{ color: "rgba(255,255,255,0.28)", fontSize: 11 }}>{count}</span>
+    </div>
+  );
+}
+
+function SummaryPill({ label, value, color }: { label: string; value: number; color: string }) {
+  return (
+    <div
+      style={{
+        minWidth: 72,
+        padding: "7px 9px",
+        borderRadius: 8,
+        background: `${color}12`,
+        border: `1px solid ${color}2f`,
+      }}
+    >
+      <div style={{ color, fontSize: 15, fontWeight: 800, lineHeight: 1 }}>{value}</div>
+      <div style={{ color: "rgba(255,255,255,0.34)", fontSize: 9, marginTop: 3 }}>{label}</div>
+    </div>
+  );
+}
+
+function ReviewPanel({ title, rows }: { title: string; rows: [string, string][] }) {
+  return (
+    <div
+      style={{
+        borderRadius: 8,
+        background: "rgba(255,255,255,0.022)",
+        border: "1px solid rgba(255,255,255,0.06)",
+        padding: 12,
+      }}
+    >
+      <div style={{ fontSize: 12, color: "rgba(255,255,255,0.72)", fontWeight: 800, marginBottom: 9 }}>
+        {title}
+      </div>
+      <div style={{ display: "grid", gap: 7 }}>
+        {rows.map(([value, label]) => (
+          <div key={`${title}-${label}`} style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+            <span style={{ color: "rgba(255,255,255,0.42)", fontSize: 11 }}>{label}</span>
+            <span style={{ color: "rgba(255,255,255,0.76)", fontSize: 11, fontWeight: 750, textAlign: "right" }}>
+              {value}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}

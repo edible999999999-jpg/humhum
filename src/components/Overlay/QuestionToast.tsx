@@ -21,13 +21,40 @@ export function QuestionToast({ event, onDismiss }: QuestionToastProps) {
   const questionText = (firstQ.question as string) ?? t("question.fallback");
   const rawOptions = (firstQ.options as QuestionOption[]) ?? [];
 
+  const hookEventName = (payload.hook_event_name as string) || event.hook_event_name || "";
+  const isHookBlocking = hookEventName === "PermissionRequest" || hookEventName === "PreToolUse";
+
   const handleSelect = (index: number, label: string) => {
     const choice = String(index + 1);
-    console.log(`[QuestionToast] Selected #${choice}: ${label}`);
+    console.log(`[QuestionToast] Selected #${choice}: ${label}, isHookBlocking=${isHookBlocking}`);
+
+    if (isHookBlocking) {
+      const questionKey = questionText || (firstQ.header as string) || "";
+      const answer = {
+        questions: toolInput.questions,
+        answers: { [questionKey]: label },
+      };
+      invoke("respond_to_permission", {
+        eventId: event.id,
+        behavior: "allow",
+        answer,
+      }).then(() => onDismiss()).catch((e) => {
+        console.error("[QuestionToast] respond_to_permission failed:", e);
+        onDismiss();
+      });
+    } else {
+      onDismiss();
+      invoke("type_in_terminal", { text: choice }).catch((e) =>
+        console.error("[QuestionToast] type_in_terminal failed:", e),
+      );
+    }
+  };
+
+  const handleDismissWithoutAnswer = () => {
+    if (isHookBlocking) {
+      invoke("respond_to_permission", { eventId: event.id, behavior: "allow" }).catch(() => {});
+    }
     onDismiss();
-    invoke("type_in_terminal", { text: choice }).catch((e) =>
-      console.error("[QuestionToast] type_in_terminal failed:", e),
-    );
   };
 
   return (
@@ -44,7 +71,7 @@ export function QuestionToast({ event, onDismiss }: QuestionToastProps) {
           <span className="text-white/80 font-semibold text-[13px]">{t("question.title")}</span>
           <span className="confirm-tag confirm-tag-client">{event.client_type || "CC"}</span>
         </div>
-        <button onClick={onDismiss} className="text-white/20 hover:text-white/50 text-xs transition-colors leading-none">✕</button>
+        <button onClick={handleDismissWithoutAnswer} className="text-white/20 hover:text-white/50 text-xs transition-colors leading-none">✕</button>
       </div>
 
       {/* Question */}

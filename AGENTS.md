@@ -1,79 +1,125 @@
 # AGENTS.md
 
-This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
+This file guides AI coding agents working on HUMHUM.
 
-## 项目简介
+## Product Position
 
-HumHum 是一个 Tauri v2 桌面宠物应用，监听多种 AI 编程助手事件（Codex、Codex、Qwen Code、Gemini CLI、Kimi K1 的 hooks 以及 QoderWork 日志），将其转化为播客风格的语音播报，并支持语音指令和键盘快捷键交互。UI 是一个透明的、始终置顶的圆形小窗口。
+HUMHUM is a personal Agent hub for the Agent era.
 
-## 常用命令
+It is not another dashboard, not another generic assistant, and not a tool that asks users to manage every config file themselves. HUMHUM quietly reads local user-owned context, agent files, sessions, skills, memories, rules, app signals, and project traces, then turns that evidence into usable personal knowledge.
+
+The product promise is simple:
+
+> Let every Agent work around the user, while the user stays calm and in control.
+
+## Core Principle
+
+HUMHUM may collect and index technical evidence in the background, but the foreground experience must explain what it means for the user.
+
+Do not expose raw internals by default:
+
+- Do not lead with asset counts, file paths, roots, JSON, YAML, or tool tables.
+- Do not make users read scan diagnostics unless they explicitly open details.
+- Do not treat "found many files" as product value.
+
+Do expose interpreted personal knowledge:
+
+- What kind of work the user seems to be doing.
+- Which skills and workflows they rely on.
+- Which preferences should become durable memory.
+- Which repeated mistakes, risks, or unfinished loops need gentle attention.
+- What the next small useful action should be.
+
+## Product Roles
+
+### Humi
+
+Humi is the warm personal interpreter.
+
+It quietly learns from the user's local agent activity and answers in plain language. Humi should feel like a calm companion who understands the user's rhythm, not a terminal report. Its default surface is a conversation box, not a form.
+
+Humi may use:
+
+- `~/.humhum/knowledge.json`
+- `~/.humhum/stats.json`
+- `~/.humhum/local-agent-memory.md`
+- scanned Codex, Claude, Qoder, Pi, and project assets
+- local session summaries and tool usage
+
+Humi should translate those signals into:
+
+- user profile
+- working direction
+- common skills
+- preferences
+- memory suggestions
+- soft next steps
+
+### Hype
+
+Hype manages the user's personal Agent knowledge base.
+
+It indexes skills, agent rules, YAML configs, memory, soul/personality files, Obsidian notes, and project instructions. Hype is an organizer, but its UI should not be a file manager first. It should show what the knowledge base means and what is missing.
+
+### Hush
+
+Hush organizes personal, social, work, and family messages from the user's point of view.
+
+It should not secretly reply for the user. It helps the user see who matters, what needs attention, and how to reply warmly if they choose. Local message bridges must be user-approved and read-only by default.
+
+### Hexa
+
+Hexa is the user's Agent supervisor.
+
+It does not try to become another multi-agent orchestration framework. It shows what different Agents are doing, which conversations need confirmation, what went well, what drifted, and what should be remembered for future work.
+
+## Design Direction
+
+The UI should match the Humi character: soft, bright, translucent, gentle, and personal.
+
+Preferred qualities:
+
+- warm white, pale blue, soft lavender, mint, and peach
+- roomy conversation surfaces
+- rounded but not childish controls
+- minimal visible metrics
+- gentle cards for "what I noticed", "what I remember", and "next step"
+- debug details hidden behind an explicit disclosure
+
+Avoid:
+
+- dark hacker dashboards
+- dense tables
+- terminal-first UI
+- neon cyberpunk panels
+- exposing raw local paths as primary content
+- making the user configure roots before they can get value
+
+## Technical Boundaries
+
+- Keep local-first behavior. User-owned machine data is the advantage.
+- Keep privacy visible in behavior: do not silently read private chats or sensitive stores without explicit user action.
+- Persist durable HUMHUM data under `~/.humhum/`.
+- Keep scan results available for debugging, but make interpreted summaries the default product surface.
+- Prefer small, focused changes that reinforce the product principle.
+
+## Common Commands
 
 ```bash
-npm install           # 安装依赖
-npm run tauri dev     # 开发模式（同时启动 Vite 前端 + Rust 后端）
-npm run tauri build   # 生产构建
-npm run build         # 仅前端构建（tsc + vite）
+npm install
+npm run tauri dev
+npm run build
+npm run tauri build
 ```
 
-Rust 后端在 `src-tauri/` 目录下，支持标准 `cargo` 命令，但日常开发主要用 `npm run tauri dev`。
+Rust backend commands live in `src-tauri/`. Frontend code lives in `src/`.
 
-## 架构
+## Engineering Notes
 
-### 双进程模型（Tauri v2）
+- Tauri commands are registered in `src-tauri/src/lib.rs`.
+- Local knowledge logic lives in `src-tauri/src/knowledge_store.rs`.
+- Humi local agent interpretation lives in `src-tauri/src/commands.rs`.
+- Hush message storage lives in `src-tauri/src/hush_store.rs`.
+- Hub UI modules live in `src/components/Hub/`.
 
-- **Rust 后端**（`src-tauri/src/`）：在端口 31275 运行本地 HTTP 服务器，管理配置、会话存储、客户端注册表，通过 Tauri 事件系统向前端发送事件。
-- **React 前端**（`src/`）：渲染两个窗口 — `"main"`（透明桌宠浮层）和 `"settings"`（设置面板，含 4 个 tab：General、Voice、Hooks、Sessions）。`App.tsx` 通过 `getCurrentWindow().label` 判断窗口，在 PetWindow 挂载时调用 `initBootstrap()` 初始化全局单例。
-
-### 语音管线（核心数据流）
-
-```
-事件到达 → VoicePipeline.processEvent()
-    → OpenAISummarizer.summarize() (流式 SSE)
-    → SentenceSplitter.feed(token) (逐句切分)
-    → TTS.synthesize(sentence) (Edge/OpenAI/ElevenLabs)
-    → AudioQueue.enqueue(chunk) (顺序播放)
-    → 宠物状态: idle → processing → speaking → idle
-```
-
-初始化入口：`src/lib/bootstrap.ts` — 读取 Rust 配置，注册所有 provider，创建 VoicePipeline 单例。
-
-### 事件来源
-
-1. **Hook Server**（`hook_server.rs`）：POST /event 接收 hook 脚本发来的事件，支持 `?client=xxx` 查询参数识别客户端类型
-2. **QoderWork Watcher**（`qoder_log_watcher.rs`）：轮询 `~/.qoderwork/logs/sessions/` JSONL 文件
-3. 两种来源都产生 `HookEvent` 并更新 `SessionStore`
-
-### PermissionRequest 流程
-
-PermissionRequest 是特殊事件：hook server 保持 HTTP 连接打开（最长 120 秒），通过 `oneshot::channel` 等待用户决策。前端显示 ConfirmToast，支持三种交互方式：
-- UI 按钮（Allow/Deny）
-- 语音指令（"确认"/"拒绝"）
-- 键盘快捷键（Y/Enter 确认，N/Esc 拒绝）
-
-### 多客户端支持
-
-`client_registry.rs` 定义了 5 个客户端的 profile（Codex、Codex、Qwen Code、Gemini CLI、Kimi K1），每个包含配置格式（JSON/TOML）、配置路径、支持的 hook 事件。Settings 面板 Hooks tab 可独立安装/卸载各客户端的 hooks。
-
-### 适配器/Provider 模式
-
-TTS、STT 使用注册表模式（`src/lib/tts/index.ts`、`src/lib/stt/index.ts`）。添加新 provider：实现 `src/types/index.ts` 中的接口，注册到 registry，设为 active。
-
-- **TTS**: Edge（免费，默认，优先使用 localhost:5050 bridge，fallback Web Speech API）、OpenAI、ElevenLabs
-- **STT**: Web Speech API（默认，使用 `webkitSpeechRecognition`）、Whisper
-
-### 会话管理
-
-`session_store.rs` 跟踪活跃会话。每个 HookEvent 携带 `client_type` 字段，SessionStore 按 session_id 聚合事件。前端 `SessionList.tsx` 组件轮询 `get_active_sessions` 显示会话状态。
-
-### 桌宠状态机
-
-定义在 `src/components/Pet/PetStates.ts`。状态流：`idle → processing → speaking → idle`，PermissionRequest 分支到 `waiting → listening`。桌宠交互：单击打开设置，双击跳转终端（`focus_terminal` 通过 osascript 激活终端应用）。
-
-## 关键约定
-
-- 路径别名：`@` 映射到 `src/`（`vite.config.ts` 和 `tsconfig.json`）
-- Tauri 事件前缀：`humhum://`（如 `humhum://hook-event`、`humhum://status-change`）
-- 配置存储：`~/.humhum/config.json`（Rust `config.rs` 读写），默认端口 31275
-- API key 采用 BYOK 模式
-- 主窗口无边框、透明、始终置顶，`lib.rs` 中 macOS 特有 Cocoa/CoreGraphics 代码实现圆形遮罩
-- Tauri capability 权限限制：文件系统访问仅限 `~/.humhum/`、`~/.Codex/`
+When adding a feature, ask: "Does this help the user feel understood and in control?" If the answer is only "it exposes more data", redesign it.

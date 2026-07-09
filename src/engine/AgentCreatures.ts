@@ -152,6 +152,9 @@ function drawCreature(
     case "qoderwork":
       drawCoralPolyp(ctx, x, y, r, s, eR, hR, c);
       break;
+    case "wukong":
+      drawGoldenCloud(ctx, x, y, r, s, eR, hR, c);
+      break;
     default:
       ctx.fillStyle = hexToRgba(color, 0.7);
       ctx.beginPath();
@@ -760,4 +763,52 @@ function drawCoralPolyp(
     }
     ctx.restore();
   });
+}
+
+function drawGoldenCloud(
+  ctx: OffscreenCanvasRenderingContext2D,
+  x: number, y: number, r: number, _s: number,
+  eR: number, _hR: number,
+  c: AgentCreatureColors,
+) {
+  // Cloud body — three overlapping circles
+  ctx.save();
+  ctx.fillStyle = hexToRgba(c.med, 0.5);
+  ctx.beginPath();
+  ctx.arc(x - r * 0.2, y + r * 0.05, r * 0.32, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(x + r * 0.2, y + r * 0.05, r * 0.28, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = hexToRgba(c.light, 0.55);
+  ctx.beginPath();
+  ctx.arc(x, y - r * 0.12, r * 0.35, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  // Inner glow
+  ctx.save();
+  ctx.fillStyle = hexToRgba(c.light, 0.2);
+  ctx.beginPath();
+  ctx.arc(x, y - r * 0.05, r * 0.2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  // Eyes
+  ctx.save();
+  ctx.fillStyle = "rgba(255,255,255,0.85)";
+  ctx.beginPath();
+  ctx.arc(x - r * 0.1, y - r * 0.1, eR * 0.7, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(x + r * 0.1, y - r * 0.1, eR * 0.7, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = hexToRgba(c.dark, 0.7);
+  ctx.beginPath();
+  ctx.arc(x - r * 0.09, y - r * 0.08, eR * 0.25, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(x + r * 0.11, y - r * 0.08, eR * 0.25, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
 }

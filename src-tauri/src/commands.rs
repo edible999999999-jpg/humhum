@@ -1,15 +1,23 @@
 use crate::client_registry::{self, ConfigFormat};
-use crate::window_focus;
 use crate::config::AppConfig;
-use crate::event_bus::PermissionDecision;
+use crate::event_bus::{self, HookEvent, PermissionDecision};
 use crate::hook_server::PendingMap;
-use crate::session_store::SessionStore;
+use crate::hush_store::{HushInboxSummary, HushStore};
+use crate::knowledge_store::{AgentAsset, AgentAssetRootDiagnostic, KnowledgeStore, Preference};
+use crate::pi_sidecar::{self, PiSessionStatus, PiSidecarState, PiStartOptions};
+use crate::session_store::{Session, SessionStatus, SessionStore};
 use crate::stats_store::StatsStore;
+use crate::window_focus;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::{BTreeMap, HashSet, VecDeque};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+use std::process::Command as StdCommand;
 use std::sync::Arc;
 use tauri::{Manager, State};
+use tokio::process::Command;
 
 const HUMHUM_HOOK_SCRIPT: &str = include_str!("../../hooks/humhum-hook.sh");
 
@@ -45,6 +53,497 @@ pub async fn get_hook_port(
     Ok(config.hook_port)
 }
 
+/// Check whether the Pi coding agent CLI is available on PATH.
+#[tauri::command]
+pub async fn check_pi_installed() -> Result<Value, String> {
+    serde_json::to_value(pi_sidecar::check_installed().await)
+        .map_err(|e| format!("Serialize error: {}", e))
+}
+
+/// Start a Pi RPC sidecar session. Pi remains a monitored child process of HumHum.
+#[tauri::command]
+pub async fn start_pi_session(
+    app: tauri::AppHandle,
+    state: State<'_, Arc<PiSidecarState>>,
+    options: PiStartOptions,
+) -> Result<PiSessionStatus, String> {
+    pi_sidecar::start_session(app, state.inner().clone(), options).await
+}
+
+/// Send a user prompt to a running Pi sidecar session.
+#[tauri::command]
+pub async fn send_pi_prompt(
+    state: State<'_, Arc<PiSidecarState>>,
+    session_id: String,
+    message: String,
+) -> Result<(), String> {
+    state.send_prompt(&session_id, message).await
+}
+
+/// Return HumHum's cached view of a Pi sidecar session.
+#[tauri::command]
+pub async fn get_pi_session_status(
+    state: State<'_, Arc<PiSidecarState>>,
+    session_id: String,
+) -> Result<PiSessionStatus, String> {
+    state
+        .status(&session_id)
+        .await
+        .ok_or_else(|| format!("Pi session not found: {}", session_id))
+}
+
+/// Ask Pi to abort the current operation without tearing down the process.
+#[tauri::command]
+pub async fn abort_pi_session(
+    state: State<'_, Arc<PiSidecarState>>,
+    session_id: String,
+) -> Result<(), String> {
+    state.abort(&session_id).await
+}
+
+/// Stop a Pi sidecar session and emit a SessionEnd event for Hexa/HUMHUM.
+#[tauri::command]
+pub async fn stop_pi_session(
+    app: tauri::AppHandle,
+    state: State<'_, Arc<PiSidecarState>>,
+    session_id: String,
+) -> Result<(), String> {
+    state.stop(&app, &session_id).await
+}
+
+#[derive(Debug, Serialize)]
+pub struct QoderAcpStatus {
+    pub installed: bool,
+    pub version: Option<String>,
+    pub acp_supported: bool,
+    pub hint: String,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct HushConnectorStatus {
+    pub id: String,
+    pub name: String,
+    pub installed: bool,
+    pub bridge_ready: bool,
+    pub app_path: Option<String>,
+    pub status: String,
+    pub next_step: String,
+    pub bridge_mode: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LocalSourceCandidate {
+    pub path: String,
+    pub exists: bool,
+    pub kind: String,
+    pub readable: bool,
+    pub file_count: usize,
+    pub sample_files: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DingTalkLocalSourceReport {
+    pub app_detected: bool,
+    pub app_path: Option<String>,
+    pub source_count: usize,
+    pub readable_count: usize,
+    pub candidates: Vec<LocalSourceCandidate>,
+    pub summary: String,
+    pub next_step: String,
+}
+
+/// Detect the local Qoder CLI and whether it exposes an ACP-style command.
+#[tauri::command]
+pub async fn check_qoder_acp_support() -> Result<QoderAcpStatus, String> {
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        Command::new("qoder").arg("--help").output(),
+    )
+    .await;
+
+    match output {
+        Ok(Ok(output)) if output.status.success() => {
+            let help = String::from_utf8_lossy(&output.stdout).to_string();
+            let first_line = help.lines().next().unwrap_or("Qoder").trim().to_string();
+            let help_lower = help.to_lowercase();
+            let acp_supported =
+                help_lower.contains("acp") || help_lower.contains("agent client protocol");
+            Ok(QoderAcpStatus {
+                installed: true,
+                version: Some(first_line),
+                acp_supported,
+                hint: if acp_supported {
+                    "Qoder CLI appears to expose ACP-related options. HUMHUM can add an active ACP bridge next.".to_string()
+                } else {
+                    "Qoder CLI is installed, but this command surface looks like the editor launcher. HUMHUM will keep using the Qoder session watcher until the ACP command is confirmed.".to_string()
+                },
+                error: None,
+            })
+        }
+        Ok(Ok(output)) => Ok(QoderAcpStatus {
+            installed: false,
+            version: None,
+            acp_supported: false,
+            hint: "Qoder CLI did not respond successfully.".to_string(),
+            error: Some(String::from_utf8_lossy(&output.stderr).trim().to_string()),
+        }),
+        Ok(Err(e)) => Ok(QoderAcpStatus {
+            installed: false,
+            version: None,
+            acp_supported: false,
+            hint: "Install Qoder CLI or expose it on PATH before enabling ACP.".to_string(),
+            error: Some(e.to_string()),
+        }),
+        Err(_) => Ok(QoderAcpStatus {
+            installed: false,
+            version: None,
+            acp_supported: false,
+            hint: "Qoder CLI check timed out.".to_string(),
+            error: Some("Timed out while checking qoder --help".to_string()),
+        }),
+    }
+}
+
+/// Return local social/work message connectors that Hush can prepare.
+#[tauri::command]
+pub async fn get_hush_connectors() -> Result<Vec<HushConnectorStatus>, String> {
+    Ok(vec![
+        build_hush_connector(
+            "dingtalk",
+            "DingTalk",
+            &[
+                "/Applications/DingTalk.app",
+                "/Applications/钉钉.app",
+                "/System/Applications/DingTalk.app",
+                "/Users/yuxi/Applications/DingTalk.app",
+                "/Users/yuxi/Applications/钉钉.app",
+            ],
+            &["DingTalk", "钉钉"],
+            "Next: choose a real bridge: DingTalk bot webhook for groups, notification capture, or manual export import.",
+        ),
+        build_hush_connector(
+            "wechat",
+            "WeChat",
+            &[
+                "/Applications/WeChat.app",
+                "/Applications/微信.app",
+                "/System/Applications/WeChat.app",
+                "/Users/yuxi/Applications/WeChat.app",
+                "/Users/yuxi/Applications/微信.app",
+            ],
+            &["WeChat", "微信"],
+            "Next: configure a local export or notification bridge. We do not read private chat databases directly.",
+        ),
+    ])
+}
+
+/// Open the native app for a Hush connector. This is the first step before
+/// adding OCR/export/session bridges for private message sources.
+#[tauri::command]
+pub async fn open_hush_connector(connector_id: String) -> Result<(), String> {
+    let connector = match connector_id.as_str() {
+        "dingtalk" => build_hush_connector(
+            "dingtalk",
+            "DingTalk",
+            &[
+                "/Applications/DingTalk.app",
+                "/Applications/钉钉.app",
+                "/System/Applications/DingTalk.app",
+                "/Users/yuxi/Applications/DingTalk.app",
+                "/Users/yuxi/Applications/钉钉.app",
+            ],
+            &["DingTalk", "钉钉"],
+            "Next: choose a real bridge: DingTalk bot webhook for groups, notification capture, or manual export import.",
+        ),
+        "wechat" => build_hush_connector(
+            "wechat",
+            "WeChat",
+            &[
+                "/Applications/WeChat.app",
+                "/Applications/微信.app",
+                "/System/Applications/WeChat.app",
+                "/Users/yuxi/Applications/WeChat.app",
+                "/Users/yuxi/Applications/微信.app",
+            ],
+            &["WeChat", "微信"],
+            "Next: configure a local export or notification bridge. We do not read private chat databases directly.",
+        ),
+        other => return Err(format!("Unknown Hush connector: {}", other)),
+    };
+
+    let mut command = Command::new("open");
+    if let Some(path) = connector.app_path.as_deref() {
+        command.arg(path);
+    } else {
+        command.arg("-a").arg(&connector.name);
+    }
+
+    let output = command
+        .output()
+        .await
+        .map_err(|e| format!("Failed to open {}: {}", connector.name, e))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    }
+}
+
+#[tauri::command]
+pub async fn get_hush_inbox(
+    store: State<'_, Arc<std::sync::Mutex<HushStore>>>,
+) -> Result<HushInboxSummary, String> {
+    let store = store.lock().map_err(|e| format!("Lock error: {}", e))?;
+    Ok(store.summary())
+}
+
+#[tauri::command]
+pub async fn clear_hush_inbox(
+    store: State<'_, Arc<std::sync::Mutex<HushStore>>>,
+) -> Result<(), String> {
+    let mut store = store.lock().map_err(|e| format!("Lock error: {}", e))?;
+    store.clear()
+}
+
+#[tauri::command]
+pub async fn diagnose_dingtalk_local_sources() -> Result<DingTalkLocalSourceReport, String> {
+    let home = dirs::home_dir().ok_or_else(|| "Cannot determine home directory".to_string())?;
+    let connector = build_hush_connector(
+        "dingtalk",
+        "DingTalk",
+        &[
+            "/Applications/DingTalk.app",
+            "/Applications/钉钉.app",
+            "/System/Applications/DingTalk.app",
+            "/Users/yuxi/Applications/DingTalk.app",
+            "/Users/yuxi/Applications/钉钉.app",
+        ],
+        &["DingTalk", "钉钉"],
+        "Next: inspect local storage shape, then add an explicit user-approved import bridge.",
+    );
+
+    let mut candidates = vec![
+        home.join("Library/Application Support/DingTalk"),
+        home.join("Library/Application Support/钉钉"),
+        home.join("Library/Containers/com.alibaba.DingTalkMac"),
+        home.join("Library/Containers/com.alibaba.DingTalk"),
+        home.join("Library/Group Containers"),
+        home.join("Library/Caches/com.alibaba.DingTalkMac"),
+        home.join("Library/Logs/DingTalk"),
+    ];
+
+    if let Ok(output) = StdCommand::new("mdfind")
+        .arg("kMDItemFSName == '*DingTalk*' || kMDItemFSName == '*钉钉*'")
+        .output()
+    {
+        if output.status.success() {
+            for line in String::from_utf8_lossy(&output.stdout).lines().take(12) {
+                let path = PathBuf::from(line.trim());
+                if !candidates.iter().any(|item| item == &path) {
+                    candidates.push(path);
+                }
+            }
+        }
+    }
+
+    let mut reports = Vec::new();
+    for path in candidates {
+        reports.push(inspect_local_source_candidate(&path));
+    }
+    reports.sort_by(|a, b| {
+        b.exists
+            .cmp(&a.exists)
+            .then(b.readable.cmp(&a.readable))
+            .then(b.file_count.cmp(&a.file_count))
+            .then(a.path.cmp(&b.path))
+    });
+    reports.truncate(12);
+
+    let source_count = reports.iter().filter(|item| item.exists).count();
+    let readable_count = reports.iter().filter(|item| item.readable).count();
+    let summary = if source_count == 0 {
+        "Hush did not find a local Ali Ding storage folder yet. DingTalk may be installed in a sandboxed path, not logged in, or named differently on this Mac.".to_string()
+    } else {
+        format!(
+            "Hush found {} possible Ali Ding local storage locations, {} readable. This is the real starting point for a local message understanding bridge.",
+            source_count, readable_count
+        )
+    };
+
+    Ok(DingTalkLocalSourceReport {
+        app_detected: connector.installed,
+        app_path: connector.app_path,
+        source_count,
+        readable_count,
+        candidates: reports,
+        summary,
+        next_step: "Next we should inspect only metadata and supported export files first, then let the user approve which DingTalk source HUMHUM may index. Hush should summarize relationships and tasks, not secretly reply or scrape without consent.".to_string(),
+    })
+}
+
+fn build_hush_connector(
+    id: &str,
+    name: &str,
+    candidate_paths: &[&str],
+    search_names: &[&str],
+    next_step: &str,
+) -> HushConnectorStatus {
+    let app_path = candidate_paths
+        .iter()
+        .find(|path| std::path::Path::new(path).exists())
+        .map(|path| path.to_string())
+        .or_else(|| find_application_path(search_names));
+    let installed = app_path.is_some();
+
+    HushConnectorStatus {
+        id: id.to_string(),
+        name: name.to_string(),
+        installed,
+        bridge_ready: false,
+        app_path,
+        status: if installed {
+            "Native app detected. HUMHUM can launch it, but message ingestion is not connected yet."
+                .to_string()
+        } else {
+            "Native app was not detected in standard app locations or Spotlight.".to_string()
+        },
+        next_step: next_step.to_string(),
+        bridge_mode: "launch-only".to_string(),
+    }
+}
+
+fn find_application_path(search_names: &[&str]) -> Option<String> {
+    for name in search_names {
+        let query = format!(
+            "kMDItemKind == 'Application' && (kMDItemFSName == '*{}*' || kMDItemDisplayName == '*{}*')",
+            name, name
+        );
+        let Ok(output) = StdCommand::new("mdfind").arg(query).output() else {
+            continue;
+        };
+        if !output.status.success() {
+            continue;
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if let Some(path) = stdout.lines().find(|line| line.ends_with(".app")) {
+            return Some(path.to_string());
+        }
+    }
+    None
+}
+
+fn inspect_local_source_candidate(path: &Path) -> LocalSourceCandidate {
+    let exists = path.exists();
+    let kind = if path.is_dir() {
+        "directory"
+    } else if path.is_file() {
+        "file"
+    } else {
+        "missing"
+    }
+    .to_string();
+
+    if !exists {
+        return LocalSourceCandidate {
+            path: path.to_string_lossy().to_string(),
+            exists,
+            kind,
+            readable: false,
+            file_count: 0,
+            sample_files: Vec::new(),
+        };
+    }
+
+    if path.is_file() {
+        return LocalSourceCandidate {
+            path: path.to_string_lossy().to_string(),
+            exists,
+            kind,
+            readable: std::fs::File::open(path).is_ok(),
+            file_count: 1,
+            sample_files: vec![path.to_string_lossy().to_string()],
+        };
+    }
+
+    let Ok(_read_dir) = std::fs::read_dir(path) else {
+        return LocalSourceCandidate {
+            path: path.to_string_lossy().to_string(),
+            exists,
+            kind,
+            readable: false,
+            file_count: 0,
+            sample_files: Vec::new(),
+        };
+    };
+
+    let mut file_count = 0usize;
+    let mut sample_files = Vec::new();
+    let mut queue = VecDeque::from([path.to_path_buf()]);
+    let mut visited = 0usize;
+    while let Some(dir) = queue.pop_front() {
+        if visited > 180 {
+            break;
+        }
+        visited += 1;
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten().take(80) {
+            let entry_path = entry.path();
+            if entry_path.is_dir() {
+                let name = entry_path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or_default()
+                    .to_lowercase();
+                if !["cache", "caches", "crashpad", "gpu"]
+                    .iter()
+                    .any(|skip| name.contains(skip))
+                {
+                    queue.push_back(entry_path);
+                }
+            } else if looks_like_message_source(&entry_path) {
+                file_count += 1;
+                if sample_files.len() < 8 {
+                    sample_files.push(entry_path.to_string_lossy().to_string());
+                }
+            }
+        }
+    }
+
+    LocalSourceCandidate {
+        path: path.to_string_lossy().to_string(),
+        exists,
+        kind,
+        readable: true,
+        file_count,
+        sample_files,
+    }
+}
+
+fn looks_like_message_source(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    let name = name.to_lowercase();
+    let interesting_ext = [
+        ".db", ".sqlite", ".sqlite3", ".json", ".log", ".ldb", ".sst",
+    ];
+    let interesting_name = [
+        "message",
+        "msg",
+        "conversation",
+        "chat",
+        "session",
+        "ding",
+        "im",
+    ];
+    interesting_ext.iter().any(|ext| name.ends_with(ext))
+        || interesting_name.iter().any(|part| name.contains(part))
+}
+
 /// Install Claude Code hooks to ~/.claude/settings.json
 #[tauri::command]
 pub async fn install_hooks(
@@ -60,7 +559,8 @@ pub async fn install_hooks(
     let settings_path = claude_dir.join("settings.json");
 
     // Ensure .claude directory exists
-    std::fs::create_dir_all(&claude_dir).map_err(|e| format!("Failed to create .claude dir: {}", e))?;
+    std::fs::create_dir_all(&claude_dir)
+        .map_err(|e| format!("Failed to create .claude dir: {}", e))?;
 
     // Read existing settings or create new
     let mut settings: Value = if settings_path.exists() {
@@ -112,14 +612,17 @@ pub async fn install_hooks(
                 if let Some(existing_arr) = merged.get(key).and_then(|v| v.as_array()) {
                     // Check if humhum hook already exists in this event
                     let already_installed = existing_arr.iter().any(|group| {
-                        group.get("hooks")
+                        group
+                            .get("hooks")
                             .and_then(|h| h.as_array())
-                            .map(|hooks| hooks.iter().any(|h| {
-                                h.get("command")
-                                    .and_then(|c| c.as_str())
-                                    .map(|c| c.contains("humhum-hook"))
-                                    .unwrap_or(false)
-                            }))
+                            .map(|hooks| {
+                                hooks.iter().any(|h| {
+                                    h.get("command")
+                                        .and_then(|c| c.as_str())
+                                        .map(|c| c.contains("humhum-hook"))
+                                        .unwrap_or(false)
+                                })
+                            })
                             .unwrap_or(false)
                     });
                     if !already_installed {
@@ -163,28 +666,25 @@ pub async fn uninstall_hooks() -> Result<String, String> {
 
     let content = std::fs::read_to_string(&settings_path)
         .map_err(|e| format!("Failed to read settings: {}", e))?;
-    let mut settings: Value =
-        serde_json::from_str(&content).unwrap_or(serde_json::json!({}));
+    let mut settings: Value = serde_json::from_str(&content).unwrap_or(serde_json::json!({}));
 
     // Remove only HumHum hook entries, preserve other tools' hooks
     if let Some(hooks) = settings.get_mut("hooks").and_then(|h| h.as_object_mut()) {
-        let events = [
-            "PermissionRequest",
-            "Stop",
-            "TaskCompleted",
-            "Notification",
-        ];
+        let events = ["PermissionRequest", "Stop", "TaskCompleted", "Notification"];
         for event in &events {
             if let Some(arr) = hooks.get_mut(*event).and_then(|v| v.as_array_mut()) {
                 arr.retain(|group| {
-                    let is_humhum = group.get("hooks")
+                    let is_humhum = group
+                        .get("hooks")
                         .and_then(|h| h.as_array())
-                        .map(|hs| hs.iter().any(|h| {
-                            h.get("command")
-                                .and_then(|c| c.as_str())
-                                .map(|c| c.contains("humhum"))
-                                .unwrap_or(false)
-                        }))
+                        .map(|hs| {
+                            hs.iter().any(|h| {
+                                h.get("command")
+                                    .and_then(|c| c.as_str())
+                                    .map(|c| c.contains("humhum"))
+                                    .unwrap_or(false)
+                            })
+                        })
                         .unwrap_or(false);
                     !is_humhum
                 });
@@ -197,8 +697,7 @@ pub async fn uninstall_hooks() -> Result<String, String> {
 
     let content = serde_json::to_string_pretty(&settings)
         .map_err(|e| format!("Failed to serialize: {}", e))?;
-    std::fs::write(&settings_path, content)
-        .map_err(|e| format!("Failed to write: {}", e))?;
+    std::fs::write(&settings_path, content).map_err(|e| format!("Failed to write: {}", e))?;
 
     Ok("HumHum hooks removed from Claude Code settings".to_string())
 }
@@ -223,17 +722,17 @@ pub async fn toggle_settings(app: tauri::AppHandle) -> Result<(), String> {
                     let sf = main_win.scale_factor().unwrap_or(1.0);
                     let x = (pos.x as f64 / sf) as i32 - 440;
                     let y = (pos.y as f64 / sf) as i32;
-                    let _ = win.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(
-                        x.max(0) as f64,
-                        y.max(0) as f64,
-                    )));
+                    let _ = win.set_position(tauri::Position::Logical(
+                        tauri::LogicalPosition::new(x.max(0) as f64, y.max(0) as f64),
+                    ));
                 }
             }
 
             let _ = win.set_shadow(false);
 
             win.show().map_err(|e| format!("Failed to show: {}", e))?;
-            win.set_focus().map_err(|e| format!("Failed to focus: {}", e))?;
+            win.set_focus()
+                .map_err(|e| format!("Failed to focus: {}", e))?;
 
             // Set window level & transparency AFTER show/focus so Tauri can't reset it
             #[cfg(target_os = "macos")]
@@ -258,16 +757,22 @@ pub async fn toggle_settings(app: tauri::AppHandle) -> Result<(), String> {
                         fn clear_webview_bg(view: cocoa::base::id) {
                             unsafe {
                                 let class_name: cocoa::base::id = msg_send![view, className];
-                                let bytes: *const std::os::raw::c_char = msg_send![class_name, UTF8String];
-                                let class_str = std::ffi::CStr::from_ptr(bytes).to_str().unwrap_or("");
-                                if class_str.contains("WKWebView") || class_str.contains("WebViewer") {
-                                    let _: () = msg_send![view, setValue: false forKey: "drawsBackground"];
+                                let bytes: *const std::os::raw::c_char =
+                                    msg_send![class_name, UTF8String];
+                                let class_str =
+                                    std::ffi::CStr::from_ptr(bytes).to_str().unwrap_or("");
+                                if class_str.contains("WKWebView")
+                                    || class_str.contains("WebViewer")
+                                {
+                                    let _: () =
+                                        msg_send![view, setValue: false forKey: "drawsBackground"];
                                     let _: () = msg_send![view, setValue: false forKey: "opaque"];
                                 }
                                 let subviews: cocoa::base::id = msg_send![view, subviews];
                                 let count: usize = msg_send![subviews, count];
                                 for i in 0..count {
-                                    let subview: cocoa::base::id = msg_send![subviews, objectAtIndex: i];
+                                    let subview: cocoa::base::id =
+                                        msg_send![subviews, objectAtIndex: i];
                                     clear_webview_bg(subview);
                                 }
                             }
@@ -287,14 +792,72 @@ pub async fn toggle_settings(app: tauri::AppHandle) -> Result<(), String> {
 
                     // Periodically re-assert window level while visible
                     let win_clone = win.clone();
-                    std::thread::spawn(move || {
-                        loop {
-                            std::thread::sleep(std::time::Duration::from_secs(3));
-                            if !win_clone.is_visible().unwrap_or(false) {
-                                break;
-                            }
-                            crate::reassert_window_level(&win_clone);
+                    std::thread::spawn(move || loop {
+                        std::thread::sleep(std::time::Duration::from_secs(3));
+                        if !win_clone.is_visible().unwrap_or(false) {
+                            break;
                         }
+                        crate::reassert_window_level(&win_clone);
+                    });
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Toggle the Hub window
+#[tauri::command]
+pub async fn toggle_hub(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window("hub") {
+        if win.is_visible().unwrap_or(false) {
+            win.hide().map_err(|e| format!("Failed to hide: {}", e))?;
+        } else {
+            let _ = win.set_shadow(false);
+            win.show().map_err(|e| format!("Failed to show: {}", e))?;
+            win.set_focus()
+                .map_err(|e| format!("Failed to focus: {}", e))?;
+
+            #[cfg(target_os = "macos")]
+            {
+                use cocoa::appkit::{NSColor, NSWindow};
+                use cocoa::base::{id, nil};
+                use objc::{msg_send, sel, sel_impl};
+                if let Ok(ns_win) = win.ns_window() {
+                    let ns_win = ns_win as id;
+                    let ns_win_ptr = ns_win as usize;
+                    dispatch::Queue::main().exec_async(move || unsafe {
+                        let ns_win = ns_win_ptr as id;
+                        let clear_color: id = NSColor::clearColor(nil);
+                        ns_win.setBackgroundColor_(clear_color);
+                        ns_win.setOpaque_(false);
+                        ns_win.setHasShadow_(false);
+
+                        let content_view: id = ns_win.contentView();
+                        fn clear_webview_bg(view: cocoa::base::id) {
+                            unsafe {
+                                let class_name: cocoa::base::id = msg_send![view, className];
+                                let bytes: *const std::os::raw::c_char =
+                                    msg_send![class_name, UTF8String];
+                                let class_str =
+                                    std::ffi::CStr::from_ptr(bytes).to_str().unwrap_or("");
+                                if class_str.contains("WKWebView")
+                                    || class_str.contains("WebViewer")
+                                {
+                                    let _: () =
+                                        msg_send![view, setValue: false forKey: "drawsBackground"];
+                                    let _: () = msg_send![view, setValue: false forKey: "opaque"];
+                                }
+                                let subviews: cocoa::base::id = msg_send![view, subviews];
+                                let count: usize = msg_send![subviews, count];
+                                for i in 0..count {
+                                    let subview: cocoa::base::id =
+                                        msg_send![subviews, objectAtIndex: i];
+                                    clear_webview_bg(subview);
+                                }
+                            }
+                        }
+                        clear_webview_bg(content_view);
                     });
                 }
             }
@@ -330,6 +893,24 @@ pub async fn get_active_sessions(
     serde_json::to_value(sessions).map_err(|e| format!("Serialize error: {}", e))
 }
 
+/// Get all sessions including completed (for Hexa module)
+#[tauri::command]
+pub async fn get_all_sessions_history(
+    store: State<'_, Arc<std::sync::Mutex<SessionStore>>>,
+) -> Result<Value, String> {
+    let store = store.lock().map_err(|e| format!("Lock error: {}", e))?;
+    let mut sessions: Vec<Session> = store
+        .get_all_sessions_with_history()
+        .into_iter()
+        .cloned()
+        .collect();
+    drop(store);
+
+    merge_codex_sessions(&mut sessions);
+    sessions.sort_by(|a, b| b.last_event_at.cmp(&a.last_event_at));
+    serde_json::to_value(sessions).map_err(|e| format!("Serialize error: {}", e))
+}
+
 /// Get a specific session by ID
 #[tauri::command]
 pub async fn get_session(
@@ -338,8 +919,220 @@ pub async fn get_session(
 ) -> Result<Value, String> {
     let store = store.lock().map_err(|e| format!("Lock error: {}", e))?;
     match store.get_session(&session_id) {
-        Some(session) => serde_json::to_value(session).map_err(|e| format!("Serialize error: {}", e)),
+        Some(session) => {
+            serde_json::to_value(session).map_err(|e| format!("Serialize error: {}", e))
+        }
         None => Err(format!("Session not found: {}", session_id)),
+    }
+}
+
+fn merge_codex_sessions(sessions: &mut Vec<Session>) {
+    let existing: HashSet<String> = sessions
+        .iter()
+        .map(|session| session.session_id.clone())
+        .collect();
+    let Ok(files) = collect_codex_session_files(80) else {
+        return;
+    };
+
+    for file in files {
+        if let Some(session) = parse_codex_session_file(&file) {
+            if !existing.contains(&session.session_id)
+                && !sessions
+                    .iter()
+                    .any(|item| item.session_id == session.session_id)
+            {
+                sessions.push(session);
+            }
+        }
+    }
+}
+
+fn collect_codex_session_files(limit: usize) -> Result<Vec<PathBuf>, String> {
+    let home = dirs::home_dir().ok_or_else(|| "Cannot determine home directory".to_string())?;
+    let root = home.join(".codex").join("sessions");
+    if !root.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut files = Vec::new();
+    let mut queue = VecDeque::from([root]);
+    while let Some(dir) = queue.pop_front() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                queue.push_back(path);
+            } else if path.extension().and_then(|ext| ext.to_str()) == Some("jsonl") {
+                files.push(path);
+            }
+        }
+    }
+
+    files.sort_by(|a, b| {
+        let a_time = std::fs::metadata(a).and_then(|m| m.modified()).ok();
+        let b_time = std::fs::metadata(b).and_then(|m| m.modified()).ok();
+        b_time.cmp(&a_time)
+    });
+    files.truncate(limit);
+    Ok(files)
+}
+
+fn parse_codex_session_file(path: &Path) -> Option<Session> {
+    let content = std::fs::read_to_string(path).ok()?;
+    let mut session_id = path
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or("codex-session")
+        .to_string();
+    let mut cwd: Option<String> = None;
+    let mut started_at: Option<String> = None;
+    let mut last_event_at: Option<String> = None;
+    let mut last_message: Option<String> = None;
+    let mut recent_tools: Vec<String> = Vec::new();
+    let mut event_names: Vec<String> = Vec::new();
+    let mut event_count = 0_u32;
+
+    for line in content.lines().take(600) {
+        let Ok(value) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        event_count += 1;
+
+        if let Some(timestamp) = value.get("timestamp").and_then(Value::as_str) {
+            if started_at.is_none() {
+                started_at = Some(timestamp.to_string());
+            }
+            last_event_at = Some(timestamp.to_string());
+        }
+
+        let event_type = value
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or("codex_event")
+            .to_string();
+        event_names.push(map_codex_event_name(&event_type).to_string());
+        if event_names.len() > 50 {
+            event_names.remove(0);
+        }
+
+        if event_type == "session_meta" {
+            if let Some(payload) = value.get("payload") {
+                if let Some(id) = payload
+                    .get("session_id")
+                    .or_else(|| payload.get("id"))
+                    .and_then(Value::as_str)
+                {
+                    session_id = id.to_string();
+                }
+                if cwd.is_none() {
+                    cwd = payload
+                        .get("cwd")
+                        .and_then(Value::as_str)
+                        .map(str::to_string);
+                }
+                if started_at.is_none() {
+                    started_at = payload
+                        .get("timestamp")
+                        .and_then(Value::as_str)
+                        .map(str::to_string);
+                }
+            }
+        }
+
+        if let Some(tool_name) = extract_codex_tool_name(&value) {
+            recent_tools.push(tool_name);
+            if recent_tools.len() > 10 {
+                recent_tools.remove(0);
+            }
+        }
+
+        if let Some(message) = extract_codex_message(&value) {
+            last_message = Some(message);
+        }
+    }
+
+    let started_at = started_at.or_else(|| {
+        std::fs::metadata(path)
+            .and_then(|metadata| metadata.modified())
+            .ok()
+            .map(chrono::DateTime::<chrono::Utc>::from)
+            .map(|dt| dt.to_rfc3339())
+    })?;
+    let last_event_at = last_event_at.unwrap_or_else(|| started_at.clone());
+
+    Some(Session {
+        session_id,
+        client_type: "codex".to_string(),
+        cwd: cwd.clone(),
+        project_name: cwd
+            .as_deref()
+            .and_then(|path| path.rsplit('/').next())
+            .map(str::to_string)
+            .or_else(|| Some("Codex Desktop".to_string())),
+        started_at,
+        last_event_at,
+        event_count,
+        status: SessionStatus::Completed,
+        last_hook_message: last_message.or_else(|| {
+            Some(format!(
+                "Imported Codex transcript: {}",
+                path.to_string_lossy()
+            ))
+        }),
+        last_tool_name: recent_tools.last().cloned(),
+        recent_tools,
+        event_names,
+        has_pending_permission: false,
+    })
+}
+
+fn map_codex_event_name(event_type: &str) -> &'static str {
+    match event_type {
+        "session_meta" => "SessionStart",
+        "response_item" => "Notification",
+        "turn_context" => "Notification",
+        _ => "Notification",
+    }
+}
+
+fn extract_codex_tool_name(value: &Value) -> Option<String> {
+    let payload = value.get("payload")?;
+    payload
+        .get("tool_name")
+        .or_else(|| payload.pointer("/tool_name"))
+        .or_else(|| payload.pointer("/name"))
+        .or_else(|| payload.pointer("/item/name"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
+fn extract_codex_message(value: &Value) -> Option<String> {
+    let payload = value.get("payload")?;
+    let content = payload
+        .pointer("/content")
+        .or_else(|| payload.pointer("/item/content"))?;
+    if let Some(text) = content.as_str() {
+        return Some(truncate_display_text(text, 180));
+    }
+    if let Some(items) = content.as_array() {
+        for item in items {
+            if let Some(text) = item.get("text").and_then(Value::as_str) {
+                return Some(truncate_display_text(text, 180));
+            }
+        }
+    }
+    None
+}
+
+fn truncate_display_text(text: &str, limit: usize) -> String {
+    if text.len() <= limit {
+        text.to_string()
+    } else {
+        let end = text.floor_char_boundary(limit);
+        format!("{}...", &text[..end])
     }
 }
 
@@ -350,14 +1143,21 @@ pub async fn respond_to_permission(
     event_id: String,
     behavior: String,
     reason: Option<String>,
+    answer: Option<serde_json::Value>,
 ) -> Result<(), String> {
-    log::info!("[Permission] Responding to {} with behavior={}", event_id, behavior);
+    log::info!(
+        "[Permission] Responding to {} with behavior={} answer={:?}",
+        event_id,
+        behavior,
+        answer
+    );
     let mut map = pending.lock().await;
     if let Some(mut pr) = map.remove(&event_id) {
         if let Some(sender) = pr.sender.take() {
             let decision = PermissionDecision {
                 behavior: behavior.clone(),
                 reason,
+                answer,
             };
             match sender.send(decision) {
                 Ok(_) => {
@@ -365,7 +1165,9 @@ pub async fn respond_to_permission(
                     Ok(())
                 }
                 Err(_) => {
-                    log::error!("[Permission] Receiver dropped — HTTP connection already timed out");
+                    log::error!(
+                        "[Permission] Receiver dropped — HTTP connection already timed out"
+                    );
                     Err("Connection timed out — hook already expired. Try responding faster next time.".to_string())
                 }
             }
@@ -375,7 +1177,10 @@ pub async fn respond_to_permission(
         }
     } else {
         log::warn!("[Permission] No pending request found for {}", event_id);
-        Err(format!("No pending permission request with id: {}", event_id))
+        Err(format!(
+            "No pending permission request with id: {}",
+            event_id
+        ))
     }
 }
 
@@ -416,8 +1221,7 @@ pub async fn install_hooks_for_client(
     let config_path = home.join(profile.config_path);
 
     if let Some(parent) = config_path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create dir: {}", e))?;
+        std::fs::create_dir_all(parent).map_err(|e| format!("Failed to create dir: {}", e))?;
     }
 
     let hook_script = ensure_hook_script_installed(&home)?;
@@ -432,7 +1236,10 @@ pub async fn install_hooks_for_client(
         ConfigFormat::Toml => install_toml_hooks(&config_path, &hook_cmd, profile.hook_events)?,
     }
 
-    Ok(format!("Hooks installed for {} at {:?}", profile.name, config_path))
+    Ok(format!(
+        "Hooks installed for {} at {:?}",
+        profile.name, config_path
+    ))
 }
 
 /// Uninstall hooks for a specific client
@@ -462,8 +1269,8 @@ fn install_json_hooks(
     events: &[&str],
 ) -> Result<(), String> {
     let mut settings: Value = if config_path.exists() {
-        let content = std::fs::read_to_string(config_path)
-            .map_err(|e| format!("Failed to read: {}", e))?;
+        let content =
+            std::fs::read_to_string(config_path).map_err(|e| format!("Failed to read: {}", e))?;
         serde_json::from_str(&content).unwrap_or(serde_json::json!({}))
     } else {
         serde_json::json!({})
@@ -485,7 +1292,7 @@ fn install_json_hooks(
         }
         hooks.insert(
             event.to_string(),
-            serde_json::json!([{ "hooks": [hook_obj] }]),
+            serde_json::json!([{ "matcher": "*", "hooks": [hook_obj] }]),
         );
     }
 
@@ -494,14 +1301,17 @@ fn install_json_hooks(
         for (k, v) in hooks {
             if let Some(existing_arr) = merged.get(&k).and_then(|val| val.as_array()) {
                 let already = existing_arr.iter().any(|group| {
-                    group.get("hooks")
+                    group
+                        .get("hooks")
                         .and_then(|h| h.as_array())
-                        .map(|hs| hs.iter().any(|h| {
-                            h.get("command")
-                                .and_then(|c| c.as_str())
-                                .map(|c| c.contains("humhum"))
-                                .unwrap_or(false)
-                        }))
+                        .map(|hs| {
+                            hs.iter().any(|h| {
+                                h.get("command")
+                                    .and_then(|c| c.as_str())
+                                    .map(|c| c.contains("humhum"))
+                                    .unwrap_or(false)
+                            })
+                        })
                         .unwrap_or(false)
                 });
                 if !already {
@@ -520,18 +1330,16 @@ fn install_json_hooks(
         settings["hooks"] = Value::Object(hooks);
     }
 
-    let content = serde_json::to_string_pretty(&settings)
-        .map_err(|e| format!("Serialize error: {}", e))?;
-    std::fs::write(config_path, content)
-        .map_err(|e| format!("Write error: {}", e))?;
+    let content =
+        serde_json::to_string_pretty(&settings).map_err(|e| format!("Serialize error: {}", e))?;
+    std::fs::write(config_path, content).map_err(|e| format!("Write error: {}", e))?;
 
     Ok(())
 }
 
 fn ensure_hook_script_installed(home: &std::path::Path) -> Result<std::path::PathBuf, String> {
     let hook_dir = home.join(".humhum").join("hooks");
-    std::fs::create_dir_all(&hook_dir)
-        .map_err(|e| format!("Failed to create hook dir: {}", e))?;
+    std::fs::create_dir_all(&hook_dir).map_err(|e| format!("Failed to create hook dir: {}", e))?;
 
     let hook_script = hook_dir.join("humhum-hook.sh");
     std::fs::write(&hook_script, HUMHUM_HOOK_SCRIPT)
@@ -555,23 +1363,25 @@ fn shell_quote(value: &str) -> String {
 }
 
 fn uninstall_json_hooks(config_path: &std::path::Path, events: &[&str]) -> Result<(), String> {
-    let content = std::fs::read_to_string(config_path)
-        .map_err(|e| format!("Failed to read: {}", e))?;
-    let mut settings: Value =
-        serde_json::from_str(&content).unwrap_or(serde_json::json!({}));
+    let content =
+        std::fs::read_to_string(config_path).map_err(|e| format!("Failed to read: {}", e))?;
+    let mut settings: Value = serde_json::from_str(&content).unwrap_or(serde_json::json!({}));
 
     if let Some(hooks) = settings.get_mut("hooks").and_then(|h| h.as_object_mut()) {
         for event in events {
             if let Some(arr) = hooks.get_mut(*event).and_then(|v| v.as_array_mut()) {
                 arr.retain(|group| {
-                    let is_humhum = group.get("hooks")
+                    let is_humhum = group
+                        .get("hooks")
                         .and_then(|h| h.as_array())
-                        .map(|hs| hs.iter().any(|h| {
-                            h.get("command")
-                                .and_then(|c| c.as_str())
-                                .map(|c| c.contains("humhum"))
-                                .unwrap_or(false)
-                        }))
+                        .map(|hs| {
+                            hs.iter().any(|h| {
+                                h.get("command")
+                                    .and_then(|c| c.as_str())
+                                    .map(|c| c.contains("humhum"))
+                                    .unwrap_or(false)
+                            })
+                        })
                         .unwrap_or(false);
                     !is_humhum
                 });
@@ -582,10 +1392,9 @@ fn uninstall_json_hooks(config_path: &std::path::Path, events: &[&str]) -> Resul
         }
     }
 
-    let content = serde_json::to_string_pretty(&settings)
-        .map_err(|e| format!("Serialize error: {}", e))?;
-    std::fs::write(config_path, content)
-        .map_err(|e| format!("Write error: {}", e))?;
+    let content =
+        serde_json::to_string_pretty(&settings).map_err(|e| format!("Serialize error: {}", e))?;
+    std::fs::write(config_path, content).map_err(|e| format!("Write error: {}", e))?;
 
     Ok(())
 }
@@ -596,8 +1405,7 @@ fn install_toml_hooks(
     events: &[&str],
 ) -> Result<(), String> {
     let mut content = if config_path.exists() {
-        std::fs::read_to_string(config_path)
-            .map_err(|e| format!("Failed to read: {}", e))?
+        std::fs::read_to_string(config_path).map_err(|e| format!("Failed to read: {}", e))?
     } else {
         String::new()
     };
@@ -614,23 +1422,21 @@ fn install_toml_hooks(
         }
     }
 
-    std::fs::write(config_path, content)
-        .map_err(|e| format!("Write error: {}", e))?;
+    std::fs::write(config_path, content).map_err(|e| format!("Write error: {}", e))?;
 
     Ok(())
 }
 
 fn uninstall_toml_hooks(config_path: &std::path::Path, events: &[&str]) -> Result<(), String> {
-    let content = std::fs::read_to_string(config_path)
-        .map_err(|e| format!("Failed to read: {}", e))?;
+    let content =
+        std::fs::read_to_string(config_path).map_err(|e| format!("Failed to read: {}", e))?;
 
     let filtered: Vec<&str> = content
         .lines()
         .filter(|line| !events.iter().any(|e| line.starts_with(&format!("{} =", e))))
         .collect();
 
-    std::fs::write(config_path, filtered.join("\n"))
-        .map_err(|e| format!("Write error: {}", e))?;
+    std::fs::write(config_path, filtered.join("\n")).map_err(|e| format!("Write error: {}", e))?;
 
     Ok(())
 }
@@ -672,7 +1478,11 @@ pub async fn proxy_post(url: String, headers: Value, body: String) -> Result<Str
         .map_err(|e| format!("Read body failed: {}", e))?;
 
     if status >= 400 {
-        return Err(format!("HTTP {}: {}", status, &text[..text.floor_char_boundary(200)]));
+        return Err(format!(
+            "HTTP {}: {}",
+            status,
+            &text[..text.floor_char_boundary(200)]
+        ));
     }
 
     Ok(text)
@@ -680,7 +1490,11 @@ pub async fn proxy_post(url: String, headers: Value, body: String) -> Result<Str
 
 /// Proxy HTTP POST request through Rust — returns binary as base64 (for TTS)
 #[tauri::command]
-pub async fn proxy_post_binary(url: String, headers: Value, body: String) -> Result<String, String> {
+pub async fn proxy_post_binary(
+    url: String,
+    headers: Value,
+    body: String,
+) -> Result<String, String> {
     use base64::Engine;
 
     let client = reqwest::Client::new();
@@ -703,7 +1517,11 @@ pub async fn proxy_post_binary(url: String, headers: Value, body: String) -> Res
     let status = response.status().as_u16();
     if status >= 400 {
         let text = response.text().await.unwrap_or_default();
-        return Err(format!("HTTP {}: {}", status, &text[..text.floor_char_boundary(200)]));
+        return Err(format!(
+            "HTTP {}: {}",
+            status,
+            &text[..text.floor_char_boundary(200)]
+        ));
     }
 
     let bytes = response
@@ -741,7 +1559,9 @@ pub async fn play_audio(base64_data: String) -> Result<(), String> {
         .spawn()
         .map_err(|e| format!("afplay spawn failed: {}", e))?;
 
-    let status = child.wait().await
+    let status = child
+        .wait()
+        .await
         .map_err(|e| format!("afplay wait failed: {}", e))?;
 
     let _ = std::fs::remove_file(&path_str);
@@ -790,4 +1610,926 @@ pub async fn get_stats(
     let store = store.lock().map_err(|e| format!("Lock error: {}", e))?;
     let stats = store.get_aggregated_stats();
     serde_json::to_value(stats).map_err(|e| format!("Serialize error: {}", e))
+}
+
+/// Get per-agent usage statistics for comparison
+#[tauri::command]
+pub async fn get_agent_stats(
+    store: State<'_, Arc<std::sync::Mutex<StatsStore>>>,
+) -> Result<Value, String> {
+    let store = store.lock().map_err(|e| format!("Lock error: {}", e))?;
+    let stats = store.get_per_agent_stats();
+    serde_json::to_value(stats).map_err(|e| format!("Serialize error: {}", e))
+}
+
+// ===== Knowledge Base commands =====
+
+#[tauri::command]
+pub async fn get_knowledge(
+    store: State<'_, Arc<std::sync::Mutex<KnowledgeStore>>>,
+) -> Result<Value, String> {
+    let store = store.lock().map_err(|e| format!("Lock error: {}", e))?;
+    serde_json::to_value(store.get_all()).map_err(|e| format!("Serialize error: {}", e))
+}
+
+#[tauri::command]
+pub async fn save_preference(
+    store: State<'_, Arc<std::sync::Mutex<KnowledgeStore>>>,
+    id: String,
+    category: String,
+    content: String,
+    source: String,
+    priority: u8,
+) -> Result<(), String> {
+    let mut store = store.lock().map_err(|e| format!("Lock error: {}", e))?;
+    store.save_preference(Preference {
+        id,
+        category,
+        content,
+        source,
+        priority,
+    });
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn delete_preference(
+    store: State<'_, Arc<std::sync::Mutex<KnowledgeStore>>>,
+    id: String,
+) -> Result<bool, String> {
+    let mut store = store.lock().map_err(|e| format!("Lock error: {}", e))?;
+    Ok(store.delete_preference(&id))
+}
+
+#[tauri::command]
+pub async fn scan_agent_rules(
+    store: State<'_, Arc<std::sync::Mutex<KnowledgeStore>>>,
+) -> Result<Value, String> {
+    let mut store = store.lock().map_err(|e| format!("Lock error: {}", e))?;
+    let found = store.scan_agent_rules();
+    serde_json::to_value(found).map_err(|e| format!("Serialize error: {}", e))
+}
+
+#[tauri::command]
+pub async fn scan_agent_assets(
+    store: State<'_, Arc<std::sync::Mutex<KnowledgeStore>>>,
+    roots: Option<Vec<String>>,
+) -> Result<Value, String> {
+    let mut store = store.lock().map_err(|e| format!("Lock error: {}", e))?;
+    let found = store.scan_agent_assets(roots)?;
+    serde_json::to_value(found).map_err(|e| format!("Serialize error: {}", e))
+}
+
+#[tauri::command]
+pub async fn diagnose_agent_asset_roots(
+    store: State<'_, Arc<std::sync::Mutex<KnowledgeStore>>>,
+    roots: Option<Vec<String>>,
+) -> Result<Vec<AgentAssetRootDiagnostic>, String> {
+    let store = store.lock().map_err(|e| format!("Lock error: {}", e))?;
+    store.diagnose_agent_asset_roots(roots)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LocalAgentKernelOptions {
+    pub prompt: String,
+    pub cwd: Option<String>,
+    pub roots: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LocalAgentKernelResult {
+    pub session_id: String,
+    pub asset_count: usize,
+    pub type_counts: BTreeMap<String, usize>,
+    pub agent_counts: BTreeMap<String, usize>,
+    pub top_tools: Vec<LocalUsageInsight>,
+    pub top_skills: Vec<LocalUsageInsight>,
+    pub agent_knowledge: Vec<LocalUsageInsight>,
+    pub operational_tools: Vec<LocalUsageInsight>,
+    pub suggested_actions: Vec<String>,
+    pub memory_path: String,
+    pub summary: String,
+    pub answer: String,
+    pub agent_reply: HumiAgentReply,
+    pub context_packet: HumiContextPacket,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct LocalUsageInsight {
+    pub name: String,
+    pub count: u64,
+    pub source: String,
+    pub detail: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct HumiContextPacket {
+    pub question: String,
+    pub observed_workflows: Vec<String>,
+    pub user_preference_candidates: Vec<String>,
+    pub memory_candidates: Vec<String>,
+    pub risk_notes: Vec<String>,
+    pub context_sources: Vec<String>,
+    pub evidence_notes: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct HumiAgentReply {
+    pub message: String,
+    pub confidence: String,
+    pub cards: Vec<HumiAgentCard>,
+    pub steps: Vec<HumiAgentStep>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct HumiAgentCard {
+    pub title: String,
+    pub body: String,
+    pub tone: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct HumiAgentStep {
+    pub phase: String,
+    pub title: String,
+    pub content: String,
+}
+
+#[tauri::command]
+pub async fn run_local_agent_kernel(
+    app: tauri::AppHandle,
+    store: State<'_, Arc<std::sync::Mutex<KnowledgeStore>>>,
+    stats_store: State<'_, Arc<std::sync::Mutex<StatsStore>>>,
+    options: LocalAgentKernelOptions,
+) -> Result<LocalAgentKernelResult, String> {
+    let session_id = format!("local-pi-{}", uuid::Uuid::new_v4());
+    let cwd = options.cwd.clone();
+
+    emit_local_kernel_event(
+        &app,
+        &session_id,
+        "SessionStart",
+        serde_json::json!({
+            "source": "local_humhum_kernel",
+            "message": "Local HUMHUM kernel started",
+            "prompt": options.prompt,
+        }),
+        cwd.clone(),
+    );
+
+    let assets = {
+        let mut store = store.lock().map_err(|e| format!("Lock error: {}", e))?;
+        store.scan_agent_assets(options.roots.clone())?
+    };
+
+    let mut type_counts = BTreeMap::new();
+    let mut agent_counts = BTreeMap::new();
+    for asset in &assets {
+        *type_counts.entry(asset.asset_type.clone()).or_insert(0) += 1;
+        *agent_counts.entry(asset.agent_id.clone()).or_insert(0) += 1;
+    }
+
+    let suggested_actions = suggest_local_kernel_actions(&assets, &type_counts, &agent_counts);
+    let top_skills = collect_top_skill_assets(&assets);
+    let operational_tools = {
+        let stats_store = stats_store
+            .lock()
+            .map_err(|e| format!("Lock error: {}", e))?;
+        collect_top_tools_from_stats(&stats_store)
+    };
+    let agent_knowledge = collect_agent_knowledge(&assets);
+    let context_packet = build_humi_context_packet(
+        &options.prompt,
+        &assets,
+        &type_counts,
+        &agent_counts,
+        &operational_tools,
+        &top_skills,
+        &agent_knowledge,
+        &suggested_actions,
+    );
+    let agent_reply = build_humi_agent_reply(
+        &options.prompt,
+        &context_packet,
+        &top_skills,
+        &agent_knowledge,
+        &operational_tools,
+    );
+    let answer = agent_reply.message.clone();
+    let summary = build_local_kernel_summary(&options.prompt, &assets, &type_counts, &agent_counts);
+    let memory_path =
+        write_local_kernel_memory(&session_id, &options, &summary, &suggested_actions)?;
+
+    emit_local_kernel_event(
+        &app,
+        &session_id,
+        "TaskCompleted",
+        serde_json::json!({
+            "source": "local_humhum_kernel",
+            "message": summary,
+            "asset_count": assets.len(),
+            "memory_path": memory_path,
+            "tool_name": "scan_agent_assets",
+            "suggested_actions": suggested_actions,
+        }),
+        cwd,
+    );
+
+    Ok(LocalAgentKernelResult {
+        session_id,
+        asset_count: assets.len(),
+        type_counts,
+        agent_counts,
+        top_tools: operational_tools
+            .iter()
+            .filter(|tool| !is_builtin_operation_tool(&tool.name))
+            .cloned()
+            .collect(),
+        top_skills,
+        agent_knowledge,
+        operational_tools,
+        suggested_actions,
+        memory_path,
+        summary,
+        answer,
+        agent_reply,
+        context_packet,
+    })
+}
+
+#[tauri::command]
+pub async fn set_obsidian_vault_path(
+    store: State<'_, Arc<std::sync::Mutex<KnowledgeStore>>>,
+    path: String,
+) -> Result<(), String> {
+    let mut store = store.lock().map_err(|e| format!("Lock error: {}", e))?;
+    store.set_obsidian_vault_path(path)
+}
+
+#[tauri::command]
+pub async fn scan_obsidian_vault(
+    store: State<'_, Arc<std::sync::Mutex<KnowledgeStore>>>,
+    path: Option<String>,
+) -> Result<Value, String> {
+    let mut store = store.lock().map_err(|e| format!("Lock error: {}", e))?;
+    let found = store.scan_obsidian_vault(path)?;
+    serde_json::to_value(found).map_err(|e| format!("Serialize error: {}", e))
+}
+
+#[tauri::command]
+pub async fn query_knowledge(
+    store: State<'_, Arc<std::sync::Mutex<KnowledgeStore>>>,
+    keyword: String,
+) -> Result<Value, String> {
+    let store = store.lock().map_err(|e| format!("Lock error: {}", e))?;
+    let result = store.query(&keyword);
+    serde_json::to_value(result).map_err(|e| format!("Serialize error: {}", e))
+}
+
+fn suggest_local_kernel_actions(
+    assets: &[AgentAsset],
+    type_counts: &BTreeMap<String, usize>,
+    agent_counts: &BTreeMap<String, usize>,
+) -> Vec<String> {
+    let mut actions = Vec::new();
+
+    if assets.is_empty() {
+        actions.push("No agent assets were found. Add ~/.codex, ~/.claude, ~/.agents, Obsidian, or project skill roots first.".to_string());
+        return actions;
+    }
+
+    for required in ["skill", "agent", "memory", "soul", "rule"] {
+        if !type_counts.contains_key(required) {
+            actions.push(format!(
+                "Add or import {} assets so HUMHUM can build a more complete personal agent base.",
+                required
+            ));
+        }
+    }
+
+    if agent_counts.len() < 2 {
+        actions.push("Only one agent source is indexed. Connect Claude/Codex/Qoder/Pi roots to compare cross-agent context.".to_string());
+    }
+
+    let config_count = type_counts.get("config").copied().unwrap_or(0);
+    let memory_count = type_counts.get("memory").copied().unwrap_or(0);
+    if config_count > 0 && memory_count == 0 {
+        actions.push("Configuration exists, but long-term memory is thin. Create a memory.md layer for durable user preferences.".to_string());
+    }
+
+    if actions.is_empty() {
+        actions.push("The base is healthy. Next step: route new sessions through this index and let Hexa watch progress drift.".to_string());
+    }
+
+    actions.truncate(5);
+    actions
+}
+
+fn collect_top_tools_from_stats(stats_store: &StatsStore) -> Vec<LocalUsageInsight> {
+    let mut counts: BTreeMap<String, u64> = BTreeMap::new();
+    let mut sources: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for agent in stats_store.get_per_agent_stats() {
+        for (tool, count) in agent.top_tools {
+            *counts.entry(tool.clone()).or_insert(0) += count;
+            sources
+                .entry(tool)
+                .or_default()
+                .push(agent.client_type.clone());
+        }
+    }
+    let mut items = counts
+        .into_iter()
+        .map(|(name, count)| {
+            let mut source_list = sources.remove(&name).unwrap_or_default();
+            source_list.sort();
+            source_list.dedup();
+            LocalUsageInsight {
+                name,
+                count,
+                source: source_list.join(", "),
+                detail: "Observed in local Codex/Claude transcripts".to_string(),
+            }
+        })
+        .collect::<Vec<_>>();
+    items.sort_by(|a, b| b.count.cmp(&a.count).then(a.name.cmp(&b.name)));
+    items.truncate(6);
+    items
+}
+
+fn collect_top_skill_assets(assets: &[AgentAsset]) -> Vec<LocalUsageInsight> {
+    let mut counts: BTreeMap<String, (u64, String, String)> = BTreeMap::new();
+    for asset in assets
+        .iter()
+        .filter(|asset| asset.asset_type == "skill" && is_primary_skill_asset(asset))
+    {
+        let entry = counts.entry(asset.name.clone()).or_insert((
+            0,
+            asset.agent_id.clone(),
+            asset.file_path.clone(),
+        ));
+        entry.0 += 1;
+    }
+
+    let mut items = counts
+        .into_iter()
+        .map(|(name, (count, source, detail))| LocalUsageInsight {
+            name,
+            count,
+            source,
+            detail,
+        })
+        .collect::<Vec<_>>();
+    items.sort_by(|a, b| b.count.cmp(&a.count).then(a.name.cmp(&b.name)));
+    items.truncate(6);
+    items
+}
+
+fn collect_agent_knowledge(assets: &[AgentAsset]) -> Vec<LocalUsageInsight> {
+    let mut counts: BTreeMap<String, (u64, Vec<String>)> = BTreeMap::new();
+    for asset in assets.iter().filter(|asset| {
+        matches!(
+            asset.asset_type.as_str(),
+            "agent" | "rule" | "memory" | "soul" | "config"
+        )
+    }) {
+        let entry = counts
+            .entry(asset.agent_id.clone())
+            .or_insert((0, Vec::new()));
+        entry.0 += 1;
+        if entry.1.len() < 3 {
+            entry.1.push(asset.name.clone());
+        }
+    }
+
+    let mut items = counts
+        .into_iter()
+        .map(|(name, (count, samples))| LocalUsageInsight {
+            name,
+            count,
+            source: "agent knowledge base".to_string(),
+            detail: samples.join(", "),
+        })
+        .collect::<Vec<_>>();
+    items.sort_by(|a, b| b.count.cmp(&a.count).then(a.name.cmp(&b.name)));
+    items.truncate(6);
+    items
+}
+
+fn is_primary_skill_asset(asset: &AgentAsset) -> bool {
+    let lower_path = asset.file_path.to_lowercase();
+    lower_path.ends_with("/skill.md") || lower_path.ends_with("\\skill.md")
+}
+
+fn is_builtin_operation_tool(name: &str) -> bool {
+    matches!(
+        name.to_lowercase().as_str(),
+        "bash"
+            | "read"
+            | "edit"
+            | "write"
+            | "multiedit"
+            | "grep"
+            | "glob"
+            | "ls"
+            | "todo_write"
+            | "todowrite"
+            | "webfetch"
+            | "websearch"
+            | "exec_command"
+            | "write_stdin"
+            | "apply_patch"
+            | "view_image"
+            | "update_plan"
+    )
+}
+
+fn is_generic_skill_signal(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    matches!(
+        lower.as_str(),
+        "access"
+            | "auth"
+            | "api"
+            | "configuration"
+            | "config"
+            | "readme"
+            | "gotchas"
+            | "index"
+            | "test"
+            | "tests"
+            | "common"
+            | "default"
+            | "utils"
+    ) || lower.len() < 4
+}
+
+fn format_insight_names(items: &[LocalUsageInsight], limit: usize) -> String {
+    let names = items
+        .iter()
+        .take(limit)
+        .map(|item| item.name.clone())
+        .collect::<Vec<_>>();
+    if names.is_empty() {
+        "还没有足够线索".to_string()
+    } else {
+        names.join("、")
+    }
+}
+
+fn build_humi_agent_reply(
+    prompt: &str,
+    context: &HumiContextPacket,
+    top_skills: &[LocalUsageInsight],
+    agent_knowledge: &[LocalUsageInsight],
+    operational_tools: &[LocalUsageInsight],
+) -> HumiAgentReply {
+    let question = prompt.to_lowercase();
+    let visible_tools = operational_tools
+        .iter()
+        .filter(|tool| !is_builtin_operation_tool(&tool.name))
+        .cloned()
+        .collect::<Vec<_>>();
+    let builtin_count = operational_tools
+        .iter()
+        .filter(|tool| is_builtin_operation_tool(&tool.name))
+        .count();
+    let primary_skill = top_skills.first();
+    let primary_is_generic = primary_skill
+        .map(|skill| is_generic_skill_signal(&skill.name))
+        .unwrap_or(false);
+
+    let confidence = if top_skills.is_empty() {
+        "low"
+    } else if primary_is_generic || visible_tools.is_empty() {
+        "medium"
+    } else {
+        "high"
+    }
+    .to_string();
+
+    let mut steps = vec![
+        HumiAgentStep {
+            phase: "observe".to_string(),
+            title: "先看知识，不先看数量".to_string(),
+            content: format!(
+                "我读取了 Skill 知识库、Agent 规则/记忆/配置，以及本地会话里的工具统计。问题是：{}",
+                if context.question.is_empty() {
+                    "你想让我理解最近的工作方式".to_string()
+                } else {
+                    context.question.clone()
+                }
+            ),
+        },
+        HumiAgentStep {
+            phase: "filter".to_string(),
+            title: "过滤内置工具噪音".to_string(),
+            content: if builtin_count > 0 {
+                "Bash、Read、Edit、Write 这类内置操作只说明你在密集工程落地，不会被当成真实 skill 偏好。".to_string()
+            } else {
+                "当前没有明显的内置工具噪音，继续优先看真实 skill 和 agent 规则。".to_string()
+            },
+        },
+    ];
+
+    let skill_read = if let Some(skill) = primary_skill {
+        if primary_is_generic {
+            format!(
+                "`{}` 是一个过泛的 Skill 文件名，我不会把它直接判断成你最常用的技能；它只能说明知识库里存在一类需要继续读描述和标签的能力线索。",
+                skill.name
+            )
+        } else {
+            format!(
+                "当前最清晰的 Skill 知识线索是 `{}`，来源是 {}。这代表可复用能力覆盖，不等同于真实调用次数。",
+                skill.name, skill.source
+            )
+        }
+    } else {
+        "我还没有读到足够明确的 SKILL.md，所以暂时不能判断你最常用的技能。".to_string()
+    };
+    steps.push(HumiAgentStep {
+        phase: "assess".to_string(),
+        title: "区分 skill 覆盖和真实使用".to_string(),
+        content: skill_read.clone(),
+    });
+
+    let agent_read = if let Some(agent) = agent_knowledge.first() {
+        format!(
+            "Agent 知识库里 `{}` 的规则/记忆/配置线索最多，样本包括：{}。",
+            agent.name,
+            if agent.detail.is_empty() {
+                "暂无样本名".to_string()
+            } else {
+                agent.detail.clone()
+            }
+        )
+    } else {
+        "Agent 规则和长期记忆还不够厚，需要继续沉淀。".to_string()
+    };
+    steps.push(HumiAgentStep {
+        phase: "act".to_string(),
+        title: "把线索变成用户画像".to_string(),
+        content: agent_read,
+    });
+
+    let user_preference = context
+        .user_preference_candidates
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "少展示底层文件，多给可执行结论和温柔下一步。".to_string());
+    let next_memory = context
+        .memory_candidates
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "把常用技能、表达偏好、易错点沉淀成个人长期记忆。".to_string());
+
+    let message = if question.contains("最多")
+        || question.contains("most")
+        || question.contains("top")
+        || question.contains("技能")
+        || question.contains("skill")
+    {
+        if primary_is_generic {
+            let name = primary_skill
+                .map(|skill| skill.name.as_str())
+                .unwrap_or("某个 skill");
+            format!(
+                "这次我不能再简单回答 `{}`。更准确地说：我现在能确认的是，你的本地知识库已经有一批 Skill 描述，但 `{}` 这种名字太泛，不能代表“最常用技能”。我会把 Bash/Read/Edit 这类内置工具排除，只把它们当成工程节奏证据；真正要继续判断的是哪些 SKILL.md 被项目反复引用、哪些规则被会话实际采纳。",
+                name, name
+            )
+        } else if let Some(skill) = primary_skill {
+            format!(
+                "我现在可以比较稳地说：`{}` 是当前最明显的 Skill 知识线索，但这仍然是“知识库覆盖”，不是百分百真实调用次数。你的工作画像更像是：围绕工程实现快速迭代，同时在把可复用 skill、规则和偏好沉淀成自己的 Agent 底座。",
+                skill.name
+            )
+        } else {
+            "我现在还不能判断哪个 skill 用得最多。原因是本地只读到了操作工具和部分 agent 资产，但缺少真实 skill 调用记录。更负责的做法是先建立 skill 索引，再把后续会话里的真实引用写进 HUMHUM 记忆。".to_string()
+        }
+    } else if question.contains("上下文")
+        || question.contains("context")
+        || question.contains("怎么喂")
+    {
+        "现在喂给 Humi 的不是原始文件列表，而是一包整理后的上下文：Skill 知识、Agent 规则/记忆、非内置工具信号、用户偏好候选、风险提醒和下一步记忆。Humi 会先过滤噪音，再把这些转成你能用的个人画像。".to_string()
+    } else {
+        format!(
+            "我会把本地 Agent 线索先翻译成你的个人画像，而不是展示一堆文件。当前最有价值的判断是：{}。我会优先记住：{}",
+            skill_read, user_preference
+        )
+    };
+
+    let cards = vec![
+        HumiAgentCard {
+            title: "Skill knowledge".to_string(),
+            body: if top_skills.is_empty() {
+                "还没有足够明确的 SKILL.md 证据。下一步应该建立 skill 索引，而不是猜测使用偏好。"
+                    .to_string()
+            } else if primary_is_generic {
+                format!(
+                    "看到了 {}，但首位名称偏泛。Humi 会继续读取描述、标签和真实会话引用，再判断它是不是你的核心能力。",
+                    format_insight_names(top_skills, 3)
+                )
+            } else {
+                format!(
+                    "当前清晰线索：{}。这代表知识库覆盖，后续需要叠加真实调用记录。",
+                    format_insight_names(top_skills, 3)
+                )
+            },
+            tone: "blue".to_string(),
+        },
+        HumiAgentCard {
+            title: "Personal pattern".to_string(),
+            body: user_preference,
+            tone: "purple".to_string(),
+        },
+        HumiAgentCard {
+            title: "Gentle next step".to_string(),
+            body: next_memory,
+            tone: "green".to_string(),
+        },
+    ];
+
+    HumiAgentReply {
+        message,
+        confidence,
+        cards,
+        steps,
+    }
+}
+
+fn build_humi_context_packet(
+    prompt: &str,
+    assets: &[AgentAsset],
+    type_counts: &BTreeMap<String, usize>,
+    agent_counts: &BTreeMap<String, usize>,
+    top_tools: &[LocalUsageInsight],
+    top_skills: &[LocalUsageInsight],
+    agent_knowledge: &[LocalUsageInsight],
+    suggested_actions: &[String],
+) -> HumiContextPacket {
+    let mut observed_workflows = Vec::new();
+    let real_tools = top_tools
+        .iter()
+        .filter(|tool| !is_builtin_operation_tool(&tool.name))
+        .collect::<Vec<_>>();
+    if let Some(skill) = top_skills.first() {
+        observed_workflows.push(format!(
+            "Skill 知识库画像：{} 是当前最明显的可复用技能线索",
+            skill.name
+        ));
+    }
+    if let Some(agent) = agent_knowledge.first() {
+        observed_workflows.push(format!(
+            "Agent 知识库画像：{} 的规则、记忆或配置沉淀最多",
+            agent.name
+        ));
+    }
+    if let Some(tool) = real_tools.first() {
+        observed_workflows.push(format!(
+            "专项工具画像：真实非内置工具里最突出的是 {}",
+            tool.name
+        ));
+    }
+    if type_counts.get("memory").copied().unwrap_or(0) > 0
+        || type_counts.get("note").copied().unwrap_or(0) > 0
+    {
+        observed_workflows.push("记忆沉淀：已有 memory/note 线索，可以提炼成长期偏好".to_string());
+    }
+    if observed_workflows.is_empty() {
+        observed_workflows.push("上下文仍在建立：先观察常用 Agent 和最近项目文件".to_string());
+    }
+
+    let mut user_preference_candidates = Vec::new();
+    let mut memory_candidates = Vec::new();
+    let mut risk_notes = Vec::new();
+    for asset in assets.iter().take(240) {
+        let text = format!(
+            "{} {}",
+            asset.name.to_lowercase(),
+            asset.content.to_lowercase()
+        );
+        if text.contains("raw internals") || text.contains("少看配置") || text.contains("隐藏技术")
+        {
+            push_unique(
+                &mut user_preference_candidates,
+                "不要把原始配置、路径、资产数量直接摊给用户；优先解释成可用结论。",
+            );
+        }
+        if text.contains("warm")
+            || text.contains("soft")
+            || text.contains("温暖")
+            || text.contains("可爱")
+        {
+            push_unique(
+                &mut user_preference_candidates,
+                "界面应该温暖、柔软、可爱，接近 Humi 的白色和淡彩气质。",
+            );
+        }
+        if text.contains("local-first") || text.contains("本地") {
+            push_unique(
+                &mut memory_candidates,
+                "本地优先是 HUMHUM 的核心优势：先理解用户主机上的上下文。",
+            );
+        }
+        if text.contains("dingtalk") || text.contains("钉钉") || text.contains("阿里钉") {
+            push_unique(
+                &mut risk_notes,
+                "阿里钉不能只做打开 App；需要用户确认后的本地只读索引。",
+            );
+        }
+        if text.contains("dashboard") || text.contains("看板") {
+            push_unique(&mut risk_notes, "避免把 HUMHUM 做成数据看板或插件列表。");
+        }
+    }
+    if user_preference_candidates.is_empty() {
+        user_preference_candidates
+            .push("用户更需要被理解后的结论，而不是扫描过程本身。".to_string());
+    }
+    if memory_candidates.is_empty() {
+        memory_candidates.push("把常用技能、表达偏好、易错点沉淀成个人长期记忆。".to_string());
+    }
+
+    let mut context_sources = vec![
+        "Skill 知识库：本地 SKILL.md 与 skill metadata".to_string(),
+        "Agent 知识库：agent rules / memory / soul / config".to_string(),
+        "操作工具统计：Codex / Claude transcript，仅作辅助证据".to_string(),
+        "~/.humhum 下的知识、统计和 Humi 记忆文件".to_string(),
+    ];
+    for agent in agent_counts.keys().take(4) {
+        context_sources.push(format!("Agent source: {}", agent));
+    }
+
+    let mut evidence_notes = Vec::new();
+    if let Some(skill) = top_skills.first() {
+        evidence_notes.push(format!(
+            "Skill 知识库主信号：{}，来源 {}",
+            skill.name, skill.source
+        ));
+    }
+    if let Some(agent) = agent_knowledge.first() {
+        evidence_notes.push(format!(
+            "Agent 知识库主信号：{}，{} 个相关资产",
+            agent.name, agent.count
+        ));
+    }
+    if let Some(tool) = real_tools.first() {
+        evidence_notes.push(format!(
+            "非内置工具辅助信号：{}，来源 {}",
+            tool.name,
+            if tool.source.is_empty() {
+                "local transcripts"
+            } else {
+                &tool.source
+            }
+        ));
+    } else if top_tools
+        .iter()
+        .any(|tool| is_builtin_operation_tool(&tool.name))
+    {
+        evidence_notes.push(
+            "Bash/Read/Edit/Write 等内置工具只作为操作节奏证据，不参与技能画像。".to_string(),
+        );
+    }
+    let top_types = type_counts
+        .iter()
+        .rev()
+        .take(3)
+        .map(|(kind, _count)| {
+            match kind.as_str() {
+                "skill" => "技能",
+                "config" => "配置",
+                "memory" => "记忆",
+                "note" => "笔记",
+                "rule" => "规则",
+                "agent" => "Agent 角色",
+                other => other,
+            }
+            .to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("、");
+    if !top_types.is_empty() {
+        evidence_notes.push(format!("知识底座的主要类型：{}", top_types));
+    }
+    for action in suggested_actions.iter().take(2) {
+        evidence_notes.push(format!("系统建议：{}", action));
+    }
+
+    HumiContextPacket {
+        question: prompt.trim().to_string(),
+        observed_workflows,
+        user_preference_candidates,
+        memory_candidates,
+        risk_notes,
+        context_sources,
+        evidence_notes,
+    }
+}
+
+fn push_unique(items: &mut Vec<String>, value: &str) {
+    if !items.iter().any(|item| item == value) {
+        items.push(value.to_string());
+    }
+}
+
+fn build_local_kernel_summary(
+    prompt: &str,
+    assets: &[AgentAsset],
+    type_counts: &BTreeMap<String, usize>,
+    agent_counts: &BTreeMap<String, usize>,
+) -> String {
+    let top_types = type_counts
+        .iter()
+        .rev()
+        .take(4)
+        .map(|(kind, count)| format!("{} {}", count, kind))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let top_agents = agent_counts
+        .iter()
+        .rev()
+        .take(4)
+        .map(|(agent, count)| format!("{} {}", count, agent))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    format!(
+        "Local HUMHUM kernel processed {} assets for: {}. Asset mix: {}. Agent sources: {}.",
+        assets.len(),
+        prompt.trim(),
+        if top_types.is_empty() {
+            "none".to_string()
+        } else {
+            top_types
+        },
+        if top_agents.is_empty() {
+            "none".to_string()
+        } else {
+            top_agents
+        }
+    )
+}
+
+fn write_local_kernel_memory(
+    session_id: &str,
+    options: &LocalAgentKernelOptions,
+    summary: &str,
+    suggested_actions: &[String],
+) -> Result<String, String> {
+    let home = dirs::home_dir().ok_or_else(|| "Cannot determine home directory".to_string())?;
+    let memory_path = home.join(".humhum").join("local-agent-memory.md");
+    if let Some(parent) = memory_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create local memory dir: {}", e))?;
+    }
+
+    let mut entry = String::new();
+    entry.push_str("\n\n## Local Agent Kernel Run\n");
+    entry.push_str(&format!("- session: `{}`\n", session_id));
+    entry.push_str(&format!("- time: `{}`\n", chrono::Utc::now().to_rfc3339()));
+    if let Some(cwd) = &options.cwd {
+        entry.push_str(&format!("- cwd: `{}`\n", cwd));
+    }
+    entry.push_str(&format!("- prompt: {}\n", options.prompt.trim()));
+    entry.push_str(&format!("- summary: {}\n", summary));
+    entry.push_str("- next actions:\n");
+    for action in suggested_actions {
+        entry.push_str(&format!("  - {}\n", action));
+    }
+
+    let mut content = if memory_path.exists() {
+        std::fs::read_to_string(&memory_path).unwrap_or_default()
+    } else {
+        "# HUMHUM Local Agent Memory\n\nThis file is maintained by HUMHUM's local fallback agent kernel.\n".to_string()
+    };
+    content.push_str(&entry);
+    std::fs::write(&memory_path, content)
+        .map_err(|e| format!("Failed to write local kernel memory: {}", e))?;
+
+    Ok(memory_path.to_string_lossy().to_string())
+}
+
+fn emit_local_kernel_event(
+    app_handle: &tauri::AppHandle,
+    session_id: &str,
+    hook_event_name: &str,
+    payload: Value,
+    cwd: Option<String>,
+) {
+    let event = HookEvent {
+        id: uuid::Uuid::new_v4().to_string(),
+        hook_event_name: hook_event_name.to_string(),
+        session_id: session_id.to_string(),
+        transcript_path: None,
+        cwd,
+        client_type: "local-humhum".to_string(),
+        payload,
+        timestamp: chrono::Utc::now().to_rfc3339(),
+    };
+
+    if let Some(store) = app_handle.try_state::<Arc<std::sync::Mutex<SessionStore>>>() {
+        if let Ok(mut store) = store.lock() {
+            store.update_from_event(&event);
+        }
+    }
+
+    event_bus::emit_hook_event(app_handle, &event);
 }

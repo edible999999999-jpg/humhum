@@ -14,7 +14,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
 use tokio::net::TcpListener;
-use tokio::sync::{Mutex, oneshot};
+use tokio::sync::{oneshot, Mutex};
 use uuid::Uuid;
 
 /// Stores a pending permission request with its event info
@@ -122,13 +122,19 @@ async fn handle_request(
     match (method.as_str(), path.as_str()) {
         ("OPTIONS", _) => Ok(cors_preflight_response()),
         ("POST", "/event") => handle_event(req, app_handle, pending).await,
-        ("GET", "/health") => Ok(json_response(StatusCode::OK, &serde_json::json!({
-            "status": "ok",
-            "name": "HumHum",
-            "version": env!("CARGO_PKG_VERSION"),
-        }))),
+        ("GET", "/health") => Ok(json_response(
+            StatusCode::OK,
+            &serde_json::json!({
+                "status": "ok",
+                "name": "HumHum",
+                "version": env!("CARGO_PKG_VERSION"),
+            }),
+        )),
         ("GET", "/pending") => handle_pending(pending).await,
         ("POST", "/respond") => handle_respond(req, pending).await,
+        ("GET", "/knowledge") => handle_knowledge_query(req, app_handle).await,
+        ("GET", "/hush/inbox") => handle_hush_inbox_query(app_handle).await,
+        ("POST", "/hush/inbox") => handle_hush_inbox_post(req, app_handle).await,
         _ => Ok(json_response(
             StatusCode::NOT_FOUND,
             &serde_json::json!({"error": "not found"}),
@@ -222,7 +228,10 @@ async fn handle_event(
     }
 
     // Record stats on session end events
-    if matches!(hook_event_name.as_str(), "Stop" | "TaskCompleted" | "SessionEnd") {
+    if matches!(
+        hook_event_name.as_str(),
+        "Stop" | "TaskCompleted" | "SessionEnd"
+    ) {
         if let Some(transcript_path) = &hook_event.transcript_path {
             if let Some(store) = app_handle.try_state::<Arc<std::sync::Mutex<StatsStore>>>() {
                 if let Ok(mut store) = store.lock() {
@@ -241,17 +250,43 @@ async fn handle_event(
     // Emit event to frontend
     event_bus::emit_hook_event(&app_handle, &hook_event);
 
-    // AskUserQuestion doesn't need to block — answer goes to terminal, not back through hook
-    let tool_name = payload.get("tool_name").and_then(|v| v.as_str()).unwrap_or("");
-    let needs_blocking = hook_event_name == "PermissionRequest" && tool_name != "AskUserQuestion";
+    let tool_name = payload
+        .get("tool_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    log::info!(
+        "[HookServer] event={} client={} tool_name='{}'",
+        hook_event_name,
+        hook_event.client_type,
+        tool_name
+    );
 
-    // For PermissionRequest events (except AskUserQuestion), wait for user decision
+    let is_ask_question = tool_name == "AskUserQuestion";
+
+    // PermissionRequest for AskUserQuestion: auto-allow immediately (answer goes via PreToolUse)
+    if hook_event_name == "PermissionRequest" && is_ask_question {
+        let response = serde_json::json!({
+            "hookSpecificOutput": {
+                "hookEventName": "PermissionRequest",
+                "decision": { "behavior": "allow" }
+            }
+        });
+        return Ok(json_response(StatusCode::OK, &response));
+    }
+
+    // Block for: PermissionRequest (non-AskUserQuestion), AND PreToolUse with AskUserQuestion
+    let needs_blocking = hook_event_name == "PermissionRequest"
+        || (hook_event_name == "PreToolUse" && is_ask_question);
+
     if needs_blocking {
         // Rage mode: auto-confirm without waiting
-        let config_arc = app_handle.state::<Arc<std::sync::Mutex<crate::config::AppConfig>>>().inner().clone();
+        let config_arc = app_handle
+            .state::<Arc<std::sync::Mutex<crate::config::AppConfig>>>()
+            .inner()
+            .clone();
         let auto_confirm = config_arc.lock().unwrap().ui.auto_confirm;
 
-        if auto_confirm {
+        if auto_confirm && !is_ask_question {
             log::info!("Auto-confirm (rage mode) for event {}", event_id);
             let response = serde_json::json!({
                 "hookSpecificOutput": {
@@ -272,10 +307,13 @@ async fn handle_event(
         // Store the sender so the frontend command can use it
         {
             let mut map = pending.lock().await;
-            map.insert(event_id.clone(), PendingRequest {
-                sender: Some(tx),
-                event: hook_event.clone(),
-            });
+            map.insert(
+                event_id.clone(),
+                PendingRequest {
+                    sender: Some(tx),
+                    event: hook_event.clone(),
+                },
+            );
         }
 
         // Wait for the frontend to respond with a decision (timeout: 120s)
@@ -289,17 +327,51 @@ async fn handle_event(
 
         match decision {
             Ok(Ok(d)) => {
-                // Hook protocol only accepts "allow" or "deny" — map allowAlways → allow
-                let hook_behavior = if d.behavior == "allowAlways" { "allow" } else { &d.behavior };
-                log::info!("Permission decided for {}: {} (hook: {})", event_id, d.behavior, hook_behavior);
-                let response = serde_json::json!({
-                    "hookSpecificOutput": {
+                let hook_behavior = if d.behavior == "allowAlways" {
+                    "allow"
+                } else {
+                    &d.behavior
+                };
+                log::info!(
+                    "Permission decided for {}: {} (hook: {}) answer={:?}",
+                    event_id,
+                    d.behavior,
+                    hook_behavior,
+                    d.answer
+                );
+
+                let response = if is_ask_question && hook_event_name == "PreToolUse" {
+                    // PreToolUse + AskUserQuestion: must wrap in hookSpecificOutput with permissionDecision
+                    if let Some(answer) = &d.answer {
+                        serde_json::json!({
+                            "hookSpecificOutput": {
+                                "hookEventName": "PreToolUse",
+                                "permissionDecision": "allow",
+                                "updatedInput": answer
+                            }
+                        })
+                    } else {
+                        serde_json::json!({
+                            "hookSpecificOutput": {
+                                "hookEventName": "PreToolUse",
+                                "permissionDecision": "allow"
+                            }
+                        })
+                    }
+                } else {
+                    // PermissionRequest: standard hookSpecificOutput format
+                    let mut hook_output = serde_json::json!({
                         "hookEventName": "PermissionRequest",
-                        "decision": {
-                            "behavior": hook_behavior,
+                        "decision": { "behavior": hook_behavior }
+                    });
+                    if is_ask_question {
+                        if let Some(answer) = &d.answer {
+                            hook_output["updatedInput"] = answer.clone();
                         }
                     }
-                });
+                    serde_json::json!({"hookSpecificOutput": hook_output})
+                };
+
                 event_bus::emit_status_change(&app_handle, "idle");
                 Ok(json_response(StatusCode::OK, &response))
             }
@@ -314,7 +386,8 @@ async fn handle_event(
             Err(_) => {
                 log::warn!("Permission request timed out for event {}", event_id);
                 // Notify frontend to dismiss the stale ConfirmToast
-                app_handle.emit("humhum://permission-timeout", &event_id)
+                app_handle
+                    .emit("humhum://permission-timeout", &event_id)
                     .unwrap_or_else(|e| log::error!("Failed to emit timeout: {}", e));
                 event_bus::emit_status_change(&app_handle, "idle");
                 Ok(json_response(
@@ -333,15 +406,16 @@ async fn handle_event(
 }
 
 /// GET /pending — list all pending permission requests
-async fn handle_pending(
-    pending: PendingMap,
-) -> Result<Response<Full<Bytes>>, Infallible> {
+async fn handle_pending(pending: PendingMap) -> Result<Response<Full<Bytes>>, Infallible> {
     let map = pending.lock().await;
     let events: Vec<&HookEvent> = map.values().map(|pr| &pr.event).collect();
-    Ok(json_response(StatusCode::OK, &serde_json::json!({
-        "pending": events,
-        "count": events.len(),
-    })))
+    Ok(json_response(
+        StatusCode::OK,
+        &serde_json::json!({
+            "pending": events,
+            "count": events.len(),
+        }),
+    ))
 }
 
 /// POST /respond — respond to a pending permission request
@@ -395,7 +469,11 @@ async fn handle_respond(
         if let Some(sender) = pr.sender.take() {
             let decision = PermissionDecision {
                 behavior: behavior.clone(),
-                reason: payload.get("reason").and_then(|v| v.as_str()).map(String::from),
+                reason: payload
+                    .get("reason")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+                answer: payload.get("answer").cloned(),
             };
             match sender.send(decision) {
                 Ok(_) => Ok(json_response(
@@ -421,6 +499,91 @@ async fn handle_respond(
     }
 }
 
+/// GET /hush/inbox — current Hush message inbox.
+async fn handle_hush_inbox_query(
+    app_handle: tauri::AppHandle,
+) -> Result<Response<Full<Bytes>>, Infallible> {
+    let store =
+        app_handle.state::<std::sync::Arc<std::sync::Mutex<crate::hush_store::HushStore>>>();
+    let store = match store.lock() {
+        Ok(s) => s,
+        Err(e) => {
+            return Ok(json_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &serde_json::json!({"error": format!("lock error: {}", e)}),
+            ));
+        }
+    };
+
+    Ok(json_response(
+        StatusCode::OK,
+        &serde_json::to_value(store.summary()).unwrap_or_default(),
+    ))
+}
+
+/// POST /hush/inbox — ingest one DingTalk/WeChat/social message into Hush.
+async fn handle_hush_inbox_post(
+    req: Request<hyper::body::Incoming>,
+    app_handle: tauri::AppHandle,
+) -> Result<Response<Full<Bytes>>, Infallible> {
+    let body = match req.collect().await {
+        Ok(collected) => collected.to_bytes(),
+        Err(e) => {
+            return Ok(json_response(
+                StatusCode::BAD_REQUEST,
+                &serde_json::json!({"error": format!("failed to read body: {}", e)}),
+            ));
+        }
+    };
+
+    let payload: Value = match serde_json::from_slice(&body) {
+        Ok(v) => v,
+        Err(e) => {
+            return Ok(json_response(
+                StatusCode::BAD_REQUEST,
+                &serde_json::json!({"error": format!("invalid JSON: {}", e)}),
+            ));
+        }
+    };
+
+    let (message, summary) = {
+        let store =
+            app_handle.state::<std::sync::Arc<std::sync::Mutex<crate::hush_store::HushStore>>>();
+        let mut store = match store.lock() {
+            Ok(s) => s,
+            Err(e) => {
+                return Ok(json_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &serde_json::json!({"error": format!("lock error: {}", e)}),
+                ));
+            }
+        };
+
+        match store.add_from_value(payload) {
+            Ok(message) => {
+                let summary = store.summary();
+                (message, summary)
+            }
+            Err(error) => {
+                return Ok(json_response(
+                    StatusCode::BAD_REQUEST,
+                    &serde_json::json!({"error": error}),
+                ));
+            }
+        }
+    };
+
+    let _ = app_handle.emit("humhum://hush-message", &message);
+    Ok(json_response(
+        StatusCode::OK,
+        &serde_json::json!({
+            "status": "received",
+            "message": message,
+            "summary": summary,
+        }),
+    ))
+}
+
 fn cors_preflight_response() -> Response<Full<Bytes>> {
     Response::builder()
         .status(StatusCode::NO_CONTENT)
@@ -430,6 +593,49 @@ fn cors_preflight_response() -> Response<Full<Bytes>> {
         .header("access-control-max-age", "86400")
         .body(Full::new(Bytes::new()))
         .unwrap()
+}
+
+/// GET /knowledge?q=<keyword> — query the knowledge base
+async fn handle_knowledge_query(
+    req: Request<hyper::body::Incoming>,
+    app_handle: tauri::AppHandle,
+) -> Result<Response<Full<Bytes>>, Infallible> {
+    use tauri::Manager;
+
+    let query_string = req.uri().query().unwrap_or("");
+    let keyword = query_string
+        .split('&')
+        .find_map(|pair| {
+            let mut parts = pair.splitn(2, '=');
+            let key = parts.next()?;
+            let val = parts.next()?;
+            if key == "q" {
+                Some(val.to_string())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default();
+
+    let store = app_handle
+        .state::<std::sync::Arc<std::sync::Mutex<crate::knowledge_store::KnowledgeStore>>>();
+    let store = match store.lock() {
+        Ok(s) => s,
+        Err(e) => {
+            return Ok(json_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &serde_json::json!({"error": format!("lock error: {}", e)}),
+            ));
+        }
+    };
+
+    let result = if keyword.is_empty() {
+        serde_json::to_value(store.get_all()).unwrap_or_default()
+    } else {
+        serde_json::to_value(store.query(&keyword)).unwrap_or_default()
+    };
+
+    Ok(json_response(StatusCode::OK, &result))
 }
 
 fn json_response(status: StatusCode, body: &Value) -> Response<Full<Bytes>> {

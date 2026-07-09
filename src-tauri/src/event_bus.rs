@@ -25,6 +25,7 @@ pub struct PendingPermission {
 pub struct PermissionDecision {
     pub behavior: String, // "allow" | "deny"
     pub reason: Option<String>,
+    pub answer: Option<serde_json::Value>,
 }
 
 /// Event history for the frontend

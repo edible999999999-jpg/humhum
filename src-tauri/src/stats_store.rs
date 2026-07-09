@@ -61,6 +61,32 @@ pub struct AggregatedStats {
     pub daily_buckets: Vec<DailyBucket>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct AgentStats {
+    pub client_type: String,
+    pub total_sessions: u64,
+    pub total_tokens: u64,
+    pub total_input_tokens: u64,
+    pub total_output_tokens: u64,
+    pub total_cache_creation_tokens: u64,
+    pub total_cache_read_tokens: u64,
+    pub total_tool_calls: u64,
+    pub total_cost_usd: f64,
+    pub avg_tokens_per_session: f64,
+    pub avg_cost_per_session: f64,
+    pub top_tools: Vec<(String, u64)>,
+    pub models_used: Vec<String>,
+    pub daily_data: Vec<DailyAgentData>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DailyAgentData {
+    pub date: String,
+    pub tokens: u64,
+    pub cost_usd: f64,
+    pub sessions: u64,
+}
+
 struct ModelPricing {
     input_per_million: f64,
     output_per_million: f64,
@@ -232,8 +258,10 @@ impl StatsStore {
             day.to_string()
         };
         let cost = calculate_cost(stats);
-        let all_tokens = stats.input_tokens + stats.output_tokens
-            + stats.cache_creation_tokens + stats.cache_read_tokens;
+        let all_tokens = stats.input_tokens
+            + stats.output_tokens
+            + stats.cache_creation_tokens
+            + stats.cache_read_tokens;
 
         if let Some(bucket) = self
             .data
@@ -285,7 +313,8 @@ impl StatsStore {
         self.data.sessions.retain(|s| s.timestamp >= cutoff_str);
 
         if self.data.processed_transcripts.len() > 500 {
-            let sorted: BTreeSet<String> = self.data.processed_transcripts.iter().cloned().collect();
+            let sorted: BTreeSet<String> =
+                self.data.processed_transcripts.iter().cloned().collect();
             let keep_count = sorted.len() / 2;
             self.data.processed_transcripts = sorted.into_iter().skip(keep_count).collect();
         }
@@ -362,6 +391,97 @@ impl StatsStore {
             cost_30d_usd: cost_30d,
             daily_buckets: self.data.daily_buckets.clone(),
         }
+    }
+
+    pub fn get_per_agent_stats(&self) -> Vec<AgentStats> {
+        let mut by_client: HashMap<String, Vec<&SessionStats>> = HashMap::new();
+        for s in &self.data.sessions {
+            by_client.entry(s.client_type.clone()).or_default().push(s);
+        }
+
+        let mut result: Vec<AgentStats> = by_client
+            .into_iter()
+            .map(|(client_type, sessions)| {
+                let total_sessions = sessions.len() as u64;
+                let mut total_in = 0u64;
+                let mut total_out = 0u64;
+                let mut total_cc = 0u64;
+                let mut total_cr = 0u64;
+                let mut total_tools = 0u64;
+                let mut total_cost = 0.0f64;
+                let mut tool_counts: HashMap<String, u64> = HashMap::new();
+                let mut model_set: HashSet<String> = HashSet::new();
+
+                for s in &sessions {
+                    total_in += s.input_tokens;
+                    total_out += s.output_tokens;
+                    total_cc += s.cache_creation_tokens;
+                    total_cr += s.cache_read_tokens;
+                    total_tools += s.tool_calls;
+                    total_cost += calculate_cost(s);
+                    for t in &s.tool_names {
+                        *tool_counts.entry(t.clone()).or_insert(0) += 1;
+                    }
+                    if !s.model.is_empty() {
+                        model_set.insert(s.model.clone());
+                    }
+                }
+
+                let total_tokens = total_in + total_out + total_cc + total_cr;
+                let n = total_sessions.max(1) as f64;
+
+                let mut top_tools: Vec<(String, u64)> = tool_counts.into_iter().collect();
+                top_tools.sort_by(|a, b| b.1.cmp(&a.1));
+                top_tools.truncate(5);
+
+                let mut models_used: Vec<String> = model_set.into_iter().collect();
+                models_used.sort();
+
+                // Build per-agent daily data from daily_buckets
+                let daily_data: Vec<DailyAgentData> = self
+                    .data
+                    .daily_buckets
+                    .iter()
+                    .filter_map(|b| {
+                        let agent_sessions = b.clients.get(&client_type).copied().unwrap_or(0);
+                        if agent_sessions == 0 {
+                            return None;
+                        }
+                        let ratio = agent_sessions as f64 / b.session_count.max(1) as f64;
+                        Some(DailyAgentData {
+                            date: b.date.clone(),
+                            tokens: (b.total_tokens as f64 * ratio) as u64,
+                            cost_usd: b.estimated_cost_usd * ratio,
+                            sessions: agent_sessions,
+                        })
+                    })
+                    .collect();
+
+                AgentStats {
+                    client_type,
+                    total_sessions,
+                    total_tokens,
+                    total_input_tokens: total_in,
+                    total_output_tokens: total_out,
+                    total_cache_creation_tokens: total_cc,
+                    total_cache_read_tokens: total_cr,
+                    total_tool_calls: total_tools,
+                    total_cost_usd: total_cost,
+                    avg_tokens_per_session: total_tokens as f64 / n,
+                    avg_cost_per_session: total_cost / n,
+                    top_tools,
+                    models_used,
+                    daily_data,
+                }
+            })
+            .collect();
+
+        result.sort_by(|a, b| {
+            b.total_cost_usd
+                .partial_cmp(&a.total_cost_usd)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        result
     }
 }
 
@@ -491,10 +611,22 @@ fn parse_transcript(
 
                 if let Some(usage) = msg.get("usage") {
                     let u = MsgUsage {
-                        input: usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
-                        output: usage.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
-                        cache_create: usage.get("cache_creation_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
-                        cache_read: usage.get("cache_read_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+                        input: usage
+                            .get("input_tokens")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0),
+                        output: usage
+                            .get("output_tokens")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0),
+                        cache_create: usage
+                            .get("cache_creation_input_tokens")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0),
+                        cache_read: usage
+                            .get("cache_read_input_tokens")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0),
                     };
                     // Overwrite: later entries for the same message have the final usage
                     msg_usages.insert(msg_id.clone(), u);
@@ -510,7 +642,11 @@ fn parse_transcript(
                         if item.get("type").and_then(|v| v.as_str()) == Some("tool_use") {
                             let tool_id = item.get("id").and_then(|v| v.as_str()).unwrap_or("");
                             let dedup_key = if tool_id.is_empty() {
-                                format!("{}_{}", msg_id, item.get("name").and_then(|v| v.as_str()).unwrap_or(""))
+                                format!(
+                                    "{}_{}",
+                                    msg_id,
+                                    item.get("name").and_then(|v| v.as_str()).unwrap_or("")
+                                )
                             } else {
                                 tool_id.to_string()
                             };
@@ -548,9 +684,15 @@ fn parse_transcript(
     }
 
     // Sum deduplicated message usages
-    let (mut input_tokens, mut output_tokens, mut cache_creation, mut cache_read) =
-        msg_usages.values().fold((0u64, 0u64, 0u64, 0u64), |acc, u| {
-            (acc.0 + u.input, acc.1 + u.output, acc.2 + u.cache_create, acc.3 + u.cache_read)
+    let (mut input_tokens, mut output_tokens, mut cache_creation, mut cache_read) = msg_usages
+        .values()
+        .fold((0u64, 0u64, 0u64, 0u64), |acc, u| {
+            (
+                acc.0 + u.input,
+                acc.1 + u.output,
+                acc.2 + u.cache_create,
+                acc.3 + u.cache_read,
+            )
         });
     let mut tool_calls = tool_use_ids.len() as u64;
 
@@ -577,17 +719,16 @@ fn parse_transcript(
 
     // Prefer timestamp from inside the transcript (first message),
     // fall back to file modification time, then current time
-    let timestamp = first_message_timestamp
-        .unwrap_or_else(|| {
-            path.metadata()
-                .and_then(|m| m.modified())
-                .ok()
-                .map(|t| {
-                    let dt: chrono::DateTime<chrono::Local> = t.into();
-                    dt.to_rfc3339()
-                })
-                .unwrap_or_else(|| chrono::Local::now().to_rfc3339())
-        });
+    let timestamp = first_message_timestamp.unwrap_or_else(|| {
+        path.metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .map(|t| {
+                let dt: chrono::DateTime<chrono::Local> = t.into();
+                dt.to_rfc3339()
+            })
+            .unwrap_or_else(|| chrono::Local::now().to_rfc3339())
+    });
 
     Some(SessionStats {
         session_id: effective_session_id,

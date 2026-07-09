@@ -40,6 +40,20 @@
         "visible": false,
         "shadow": false,
         "url": "index.html"
+      },
+      {
+        "label": "hub",
+        "title": "HumHum Hub",
+        "width": 900,
+        "height": 700,
+        "decorations": false,
+        "transparent": true,
+        "skipTaskbar": false,
+        "resizable": true,
+        "focus": true,
+        "visible": true,
+        "shadow": false,
+        "url": "index.html"
       }
     ],
     "security": {
@@ -58,6 +72,10 @@
       "icons/icon.icns",
       "icons/icon.ico",
       "icons/icon.png"
-    ]
+    ],
+    "macOS": {
+      "entitlements": "./entitlements.plist",
+      "minimumSystemVersion": "11.0"
+    }
   }
 }

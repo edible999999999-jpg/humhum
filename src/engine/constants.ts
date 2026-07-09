@@ -18,6 +18,7 @@ export const AGENT_COLORS: Record<string, AgentCreatureColors> = {
   "gemini-cli":  { light: "#22d3ee", med: "#06b6d4", dark: "#0891b2" },
   "kimi-k1":     { light: "#d8b4fe", med: "#a855f7", dark: "#7c3aed" },
   qoderwork:     { light: "#86efac", med: "#4ade80", dark: "#16a34a" },
+  wukong:        { light: "#fcd34d", med: "#eab308", dark: "#a16207" },
 };
 
 export const AGENT_BRAND_COLOR: Record<string, string> = {
@@ -27,6 +28,7 @@ export const AGENT_BRAND_COLOR: Record<string, string> = {
   "gemini-cli":  "#06b6d4",
   "kimi-k1":     "#a855f7",
   qoderwork:     "#4ade80",
+  wukong:        "#eab308",
 };
 
 export const AGENT_ICON_SRC: Record<string, string> = {
@@ -36,6 +38,7 @@ export const AGENT_ICON_SRC: Record<string, string> = {
   "gemini-cli":  "/agents/gemini-cli.png",
   "kimi-k1":     "/agents/kimi-k1.png",
   qoderwork:     "/agents/qoderwork.png",
+  wukong:        "/agents/wukong.png",
 };
 
 export const BABY_THRESHOLD = 4;

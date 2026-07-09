@@ -13,6 +13,7 @@ const CLIENT_LABELS: Record<string, string> = {
   "gemini-cli": "Gemini",
   "kimi-k1": "Kimi",
   qoderwork: "Qoder",
+  wukong: "Wukong",
 };
 
 export function CompletionPanel({ event, onDismiss }: CompletionPanelProps) {

@@ -6,6 +6,7 @@ import { setLanguage } from "@/lib/i18n";
 import { PetCanvas } from "../Pet/PetCanvas";
 import { VOICE_PRESETS, DEFAULT_VOICE } from "./voicePresets";
 import { StatsPanel } from "./StatsPanel";
+import { MemoryPanel } from "./MemoryPanel";
 
 interface SettingsPanelProps {
   onClose: () => void;
@@ -23,7 +24,7 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
   const [hookLoading, setHookLoading] = useState<Record<string, boolean>>({});
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [clients, setClients] = useState<Array<{ id: string; name: string }>>([]);
-  const [activeTab, setActiveTab] = useState<"settings" | "stats">("settings");
+  const [activeTab, setActiveTab] = useState<"settings" | "stats" | "memory">("settings");
 
   useEffect(() => {
     (async () => {
@@ -138,12 +139,25 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
         >
           {t("settings.tabStats")}
         </button>
+        <button
+          onClick={() => setActiveTab("memory")}
+          className={`kawaii-tab ${activeTab === "memory" ? "active" : ""}`}
+        >
+          {t("settings.tabMemory")}
+        </button>
       </div>
 
       {/* Stats tab */}
       {activeTab === "stats" && (
         <div className="flex-1 overflow-y-auto px-5 py-4 scrollbar-thin">
           <StatsPanel />
+        </div>
+      )}
+
+      {/* Memory / Insights tab */}
+      {activeTab === "memory" && (
+        <div className="flex-1 overflow-y-auto px-5 py-4 scrollbar-thin">
+          <MemoryPanel />
         </div>
       )}
 
