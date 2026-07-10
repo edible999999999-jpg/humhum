@@ -343,13 +343,11 @@ export function HumiModule() {
           display: "flex",
           flexDirection: "column",
           minHeight: "min(720px, calc(100vh - 72px))",
-          background: "rgba(255,255,255,0.54)",
-          border: "1px solid rgba(116,143,165,0.14)",
-          borderRadius: 18,
+          background: "transparent",
           color: "#263241",
         }}
       >
-        <header style={{ display: "flex", alignItems: "center", gap: 10, minHeight: 58, padding: "10px 16px", borderBottom: "1px solid rgba(116,143,165,0.12)" }}>
+        <header style={{ display: "flex", alignItems: "center", gap: 10, width: "min(820px, 100%)", margin: "0 auto", minHeight: 52, padding: "4px 0" }}>
           <PetCanvas state={petState} size={34} activeClients={activeClientTypes} />
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 14, fontWeight: 850, color: "#263241" }}>Humi</div>
@@ -361,7 +359,7 @@ export function HumiModule() {
           </button>
         </header>
 
-        <div style={{ flex: 1, overflowY: "auto", padding: "20px clamp(14px, 5vw, 72px)", display: "flex", flexDirection: "column", gap: 18 }}>
+        <div style={{ flex: 1, width: "min(820px, 100%)", margin: "0 auto", overflowY: "auto", padding: "24px 0", display: "flex", flexDirection: "column", gap: 18 }}>
           {chatMessages.map((message) => (
             <div key={message.id} style={{ display: "flex", justifyContent: message.role === "user" ? "flex-end" : "flex-start" }}>
               <div style={{ maxWidth: "min(720px, 88%)", padding: message.role === "user" ? "10px 14px" : "2px 0", borderRadius: 14, background: message.role === "user" ? "rgba(109,106,222,0.12)" : "transparent", color: "#2d3748", fontSize: 14, lineHeight: 1.75, whiteSpace: "pre-wrap" }}>
@@ -372,18 +370,8 @@ export function HumiModule() {
           {kernelLoading && <div style={{ color: "#8290a3", fontSize: 13 }}>{humiProgress}…</div>}
         </div>
 
-        {chatMessages.length === 1 && (
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", padding: "0 clamp(14px, 5vw, 72px) 10px" }}>
-            {["我最近在忙什么？", "我常用哪些技能？", "帮我看看有什么偏好？"].map((question) => (
-              <button key={question} type="button" onClick={() => setKernelPrompt(question)} style={{ border: "1px solid rgba(116,143,165,0.16)", borderRadius: 999, background: "rgba(255,255,255,0.7)", color: "#66758a", fontSize: 11, padding: "6px 10px", cursor: "pointer" }}>
-                {question}
-              </button>
-            ))}
-          </div>
-        )}
-
-        <div style={{ padding: "10px clamp(14px, 5vw, 72px) 14px", borderTop: "1px solid rgba(116,143,165,0.12)" }}>
-          <div style={{ display: "flex", gap: 8, alignItems: "flex-end", border: "1px solid rgba(116,143,165,0.2)", borderRadius: 14, background: "rgba(255,255,255,0.86)", padding: "8px 8px 8px 12px" }}>
+        <div style={{ width: "min(820px, 100%)", margin: "0 auto", padding: "10px 0 14px" }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "flex-end", border: "1px solid rgba(116,143,165,0.2)", borderRadius: 12, background: "rgba(255,255,255,0.9)", padding: "8px 8px 8px 12px", boxShadow: "0 4px 18px rgba(61, 82, 108, 0.06)" }}>
             <textarea value={kernelPrompt} onChange={(e) => setKernelPrompt(e.target.value)} onKeyDown={handleComposerKeyDown} placeholder="和 Humi 聊聊" rows={1} style={{ ...warmInputStyle, flex: 1, minHeight: 30, maxHeight: 120, resize: "vertical", border: 0, padding: "5px 0", background: "transparent", boxShadow: "none" }} />
             <button onClick={() => void askHumi()} disabled={kernelLoading || !kernelPrompt.trim()} aria-label="Send message" style={{ width: 32, height: 32, border: 0, borderRadius: 10, background: kernelLoading || !kernelPrompt.trim() ? "rgba(116,143,165,0.12)" : "#6d6ade", color: kernelLoading || !kernelPrompt.trim() ? "#9aa6b6" : "#fff", fontSize: 18, lineHeight: 1, cursor: kernelLoading || !kernelPrompt.trim() ? "default" : "pointer" }}>↑</button>
           </div>
