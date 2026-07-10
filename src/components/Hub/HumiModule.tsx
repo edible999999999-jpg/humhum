@@ -1,9 +1,10 @@
-import { useState, useEffect, useCallback, type CSSProperties } from "react";
+import { useState, useEffect, useCallback, useRef, type CSSProperties, type KeyboardEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { PetCanvas } from "../Pet/PetCanvas";
 import { useTranslation } from "../../lib/i18n/react";
 import type { AppConfig } from "../../types";
 import { createHumiPiRuntime } from "../../lib/pi/runtime";
+import type { HumiPiRuntime } from "../../lib/pi/types";
 
 interface ActiveSession {
   session_id: string;
@@ -98,6 +99,12 @@ interface HumiAgentStep {
   content: string;
 }
 
+interface HumiChatMessage {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+}
+
 interface AgentKernelStatus {
   version: string;
   loop_model: AgentKernelStage[];
@@ -143,10 +150,17 @@ export function HumiModule() {
   const [kernelRoots, setKernelRoots] = useState(DEFAULT_KERNEL_ROOTS);
   const [localKernelResult, setLocalKernelResult] = useState<LocalAgentKernelResult | null>(null);
   const [appConfig, setAppConfig] = useState<AppConfig | null>(null);
-  const [humiAnswer, setHumiAnswer] = useState<string | null>(null);
   const [humiProgress, setHumiProgress] = useState("Humi 正在等你说话");
+  const [chatMessages, setChatMessages] = useState<HumiChatMessage[]>([
+    {
+      id: "humi-welcome",
+      role: "assistant",
+      text: "你好，我是 Humi。想了解最近的工作、技能或偏好吗？",
+    },
+  ]);
   const [agentKernelStatus, setAgentKernelStatus] = useState<AgentKernelStatus | null>(null);
   const [showDetails, setShowDetails] = useState(false);
+  const piRuntimeRef = useRef<HumiPiRuntime | null>(null);
   const [kernelPrompt, setKernelPrompt] = useState(
     "现在技能用得最多的是啥？"
   );
@@ -214,6 +228,10 @@ export function HumiModule() {
     return () => clearInterval(interval);
   }, [kernelSession, refreshPiSession]);
 
+  useEffect(() => {
+    piRuntimeRef.current = null;
+  }, [appConfig?.pi.url, appConfig?.pi.token, appConfig?.pi.model_name]);
+
   const startPiKernel = useCallback(async () => {
     setKernelLoading(true);
     setKernelMessage(null);
@@ -240,24 +258,48 @@ export function HumiModule() {
       setKernelMessage("还没有读取到 Pi 配置");
       return;
     }
+    const prompt = kernelPrompt.trim();
+    if (!prompt || kernelLoading) return;
     setKernelLoading(true);
     setKernelMessage(null);
-    setHumiAnswer(null);
     setHumiProgress("Humi 正在认真听你说");
+    setChatMessages((messages) => [
+      ...messages,
+      { id: `user-${Date.now()}`, role: "user", text: prompt },
+    ]);
+    setKernelPrompt("");
     try {
-      const runtime = createHumiPiRuntime(appConfig, {
+      const runtime = piRuntimeRef.current ?? createHumiPiRuntime(appConfig, {
         onProgress: ({ label }) => setHumiProgress(label),
       });
-      const answer = await runtime.ask(kernelPrompt);
-      setHumiAnswer(answer);
+      piRuntimeRef.current = runtime;
+      const answer = await runtime.ask(prompt);
+      setChatMessages((messages) => [
+        ...messages,
+        { id: `assistant-${Date.now()}`, role: "assistant", text: answer },
+      ]);
       setHumiProgress("我整理好啦");
     } catch (e) {
       setKernelMessage(String(e));
       setHumiProgress("这次没有连上 Pi");
+      setChatMessages((messages) => [
+        ...messages,
+        { id: `error-${Date.now()}`, role: "assistant", text: "我暂时没有连上 Pi，请检查 URL、Token 和 model_name。" },
+      ]);
     } finally {
       setKernelLoading(false);
     }
-  }, [appConfig, kernelPrompt]);
+  }, [appConfig, kernelLoading, kernelPrompt]);
+
+  const handleComposerKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLTextAreaElement>) => {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        void askHumi();
+      }
+    },
+    [askHumi],
+  );
 
   const sendPiTask = useCallback(async () => {
     if (!kernelSession) return;
@@ -292,180 +334,60 @@ export function HumiModule() {
     }
   }, [fetchSessions, kernelSession]);
 
-  const connectedClients = Object.entries(hooksStatus)
-    .filter(([, connected]) => connected)
-    .map(([id]) => id);
-
   const activeClientTypes = [...new Set(sessions.map((s) => s.client_type))];
-  const currentReply = localKernelResult?.agent_reply;
-  const visibleCards = currentReply?.cards?.length
-    ? currentReply.cards
-    : localKernelResult
-      ? [
-          { title: "Work direction", body: describeWorkDirection(localKernelResult), tone: "blue" },
-          { title: "Remember this", body: describePreferenceMemory(localKernelResult), tone: "purple" },
-          { title: "Gentle next step", body: describeNextStep(localKernelResult), tone: "green" },
-        ]
-      : [];
 
   return (
     <div className="hub-module">
-      <div className="hub-module-heading">
-        <span className="hub-module-kicker">{t("hub.role.humi")}</span>
-        <h2 className="hub-module-title">{t("hub.humi.title")}</h2>
-        <p className="hub-module-desc">{t("hub.humi.desc")}</p>
-      </div>
-
-      <QuietSignalsStrip
-        assets={localKernelResult?.asset_count ?? 0}
-        skillCount={localKernelResult?.type_counts.skill ?? 0}
-        agentCount={localKernelResult?.agent_counts ? Object.keys(localKernelResult.agent_counts).length : 0}
-        connectedClients={connectedClients}
-      />
-
-      {/* Ask Humi */}
       <div
         style={{
-          marginBottom: 16,
-          padding: 18,
-          borderRadius: 24,
-          background: "linear-gradient(145deg, rgba(255,250,247,0.98), rgba(239,249,255,0.94) 55%, rgba(244,236,255,0.9))",
-          border: "1px solid rgba(116,143,165,0.18)",
-          boxShadow: "0 18px 54px rgba(90, 115, 150, 0.16)",
+          display: "flex",
+          flexDirection: "column",
+          minHeight: "min(720px, calc(100vh - 72px))",
+          background: "rgba(255,255,255,0.54)",
+          border: "1px solid rgba(116,143,165,0.14)",
+          borderRadius: 18,
           color: "#263241",
         }}
       >
-        <div style={{ display: "grid", gridTemplateColumns: "128px 1fr", gap: 18, alignItems: "center", marginBottom: 16 }}>
-          <div
-            style={{
-              display: "grid",
-              placeItems: "center",
-              minHeight: 128,
-              borderRadius: 22,
-              background: "radial-gradient(circle at 35% 25%, rgba(255,255,255,0.95), rgba(224,246,255,0.72) 48%, rgba(236,226,255,0.6))",
-              border: "1px solid rgba(138, 171, 196, 0.14)",
-            }}
-          >
-            <PetCanvas state={petState} size={104} activeClients={activeClientTypes} />
+        <header style={{ display: "flex", alignItems: "center", gap: 10, minHeight: 58, padding: "10px 16px", borderBottom: "1px solid rgba(116,143,165,0.12)" }}>
+          <PetCanvas state={petState} size={34} activeClients={activeClientTypes} />
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 14, fontWeight: 850, color: "#263241" }}>Humi</div>
+            <div style={{ fontSize: 10, color: "#8290a3", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{humiProgress}</div>
           </div>
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 850, color: "#6d6ade", marginBottom: 5 }}>
-              Ask Humi
-            </div>
-            <div style={{ fontSize: 24, lineHeight: 1.18, fontWeight: 900, color: "#263241", letterSpacing: 0 }}>
-              Tell me what you noticed about me.
-            </div>
-            <div style={{ fontSize: 13, color: "#64748b", lineHeight: 1.55, marginTop: 8 }}>
-              Humi quietly reads local Agent context, then turns it into personal preferences, work direction, and gentle next steps.
-            </div>
-          </div>
-        </div>
+          <div style={{ flex: 1 }} />
+          <button onClick={() => setShowDetails((value) => !value)} aria-label="Toggle details" style={{ ...warmButtonStyle(false), padding: "6px 10px", fontSize: 11 }}>
+            {showDetails ? "收起" : "详情"}
+          </button>
+        </header>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              <textarea
-                value={kernelPrompt}
-                onChange={(e) => setKernelPrompt(e.target.value)}
-                placeholder="Ask Humi something like: 最近我最常用的技能是什么？"
-                rows={3}
-                style={{ ...warmInputStyle, resize: "vertical", minHeight: 82 }}
-              />
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                {[
-                  "最近我最常用的技能是什么？",
-                  "你觉得我现在的工作方向是什么？",
-                  "哪些偏好应该帮我记住？",
-                  "今天我最该先推进什么？",
-                ].map((question) => (
-                  <button
-                    key={question}
-                    type="button"
-                    onClick={() => setKernelPrompt(question)}
-                    style={{
-                      border: "1px solid rgba(116,143,165,0.14)",
-                      borderRadius: 999,
-                      background: "rgba(255,255,255,0.68)",
-                      color: "#57667a",
-                      fontSize: 11,
-                      fontWeight: 750,
-                      padding: "7px 10px",
-                      cursor: "pointer",
-                    }}
-                  >
-                    {question}
-                  </button>
-                ))}
+        <div style={{ flex: 1, overflowY: "auto", padding: "20px clamp(14px, 5vw, 72px)", display: "flex", flexDirection: "column", gap: 18 }}>
+          {chatMessages.map((message) => (
+            <div key={message.id} style={{ display: "flex", justifyContent: message.role === "user" ? "flex-end" : "flex-start" }}>
+              <div style={{ maxWidth: "min(720px, 88%)", padding: message.role === "user" ? "10px 14px" : "2px 0", borderRadius: 14, background: message.role === "user" ? "rgba(109,106,222,0.12)" : "transparent", color: "#2d3748", fontSize: 14, lineHeight: 1.75, whiteSpace: "pre-wrap" }}>
+                {message.text}
               </div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-            <button
-              onClick={askHumi}
-              disabled={kernelLoading}
-              style={warmButtonStyle(true)}
-            >
-              {kernelLoading ? "Humi is thinking..." : "Ask Humi"}
-            </button>
-            <button onClick={() => setShowDetails((value) => !value)} style={warmButtonStyle(false)}>
-              {showDetails ? "Hide details" : "Details"}
-            </button>
-            <span style={{ fontSize: 11, color: "#7b8798" }}>
-              {humiProgress}
-            </span>
-          </div>
+            </div>
+          ))}
+          {kernelLoading && <div style={{ color: "#8290a3", fontSize: 13 }}>{humiProgress}…</div>}
         </div>
 
-        {humiAnswer && (
-          <div
-            style={{
-              marginTop: 14,
-              padding: 16,
-              borderRadius: 20,
-              background: "rgba(255,255,255,0.72)",
-              border: "1px solid rgba(116,143,165,0.14)",
-              boxShadow: "0 10px 30px rgba(90,115,150,0.1)",
-            }}
-          >
-            <div style={{ fontSize: 12, color: "#8d7ddf", fontWeight: 900, marginBottom: 6 }}>
-              Humi
-            </div>
-            <div style={{ fontSize: 15, color: "#2d3748", lineHeight: 1.78, fontWeight: 650, whiteSpace: "pre-wrap" }}>
-              {humiAnswer}
-            </div>
+        {chatMessages.length === 1 && (
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", padding: "0 clamp(14px, 5vw, 72px) 10px" }}>
+            {["我最近在忙什么？", "我常用哪些技能？", "帮我看看有什么偏好？"].map((question) => (
+              <button key={question} type="button" onClick={() => setKernelPrompt(question)} style={{ border: "1px solid rgba(116,143,165,0.16)", borderRadius: 999, background: "rgba(255,255,255,0.7)", color: "#66758a", fontSize: 11, padding: "6px 10px", cursor: "pointer" }}>
+                {question}
+              </button>
+            ))}
           </div>
         )}
 
-        {localKernelResult && (
-          <div
-            style={{
-              marginTop: 14,
-              padding: 16,
-              borderRadius: 20,
-              background: "rgba(255,255,255,0.72)",
-              border: "1px solid rgba(116,143,165,0.14)",
-              boxShadow: "0 10px 30px rgba(90,115,150,0.1)",
-            }}
-          >
-            <div style={{ fontSize: 12, color: "#8d7ddf", fontWeight: 900, marginBottom: 6 }}>
-              What Humi noticed
-            </div>
-            <div style={{ fontSize: 15, color: "#2d3748", lineHeight: 1.78, fontWeight: 650 }}>
-              {currentReply?.message || localKernelResult.answer}
-            </div>
-            {currentReply?.confidence && (
-              <div style={{ marginTop: 9, fontSize: 10, color: "#8290a3", fontWeight: 750 }}>
-                Confidence: {currentReply.confidence} · Humi separates real skills from built-in operation tools.
-              </div>
-            )}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10, marginTop: 14 }}>
-              {visibleCards.map((card) => (
-                <WarmInsightCard
-                  key={`${card.title}-${card.tone}`}
-                  title={card.title}
-                  body={card.body}
-                  tint={cardTint(card.tone)}
-                />
-              ))}
-            </div>
+        <div style={{ padding: "10px clamp(14px, 5vw, 72px) 14px", borderTop: "1px solid rgba(116,143,165,0.12)" }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "flex-end", border: "1px solid rgba(116,143,165,0.2)", borderRadius: 14, background: "rgba(255,255,255,0.86)", padding: "8px 8px 8px 12px" }}>
+            <textarea value={kernelPrompt} onChange={(e) => setKernelPrompt(e.target.value)} onKeyDown={handleComposerKeyDown} placeholder="和 Humi 聊聊" rows={1} style={{ ...warmInputStyle, flex: 1, minHeight: 30, maxHeight: 120, resize: "vertical", border: 0, padding: "5px 0", background: "transparent", boxShadow: "none" }} />
+            <button onClick={() => void askHumi()} disabled={kernelLoading || !kernelPrompt.trim()} aria-label="Send message" style={{ width: 32, height: 32, border: 0, borderRadius: 10, background: kernelLoading || !kernelPrompt.trim() ? "rgba(116,143,165,0.12)" : "#6d6ade", color: kernelLoading || !kernelPrompt.trim() ? "#9aa6b6" : "#fff", fontSize: 18, lineHeight: 1, cursor: kernelLoading || !kernelPrompt.trim() ? "default" : "pointer" }}>↑</button>
           </div>
-        )}
+        </div>
 
         {showDetails && (
           <div
