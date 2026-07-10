@@ -117,7 +117,7 @@ After launch, open the **Hub** from the system tray menu or by right-clicking th
 
 HUMHUM is local-first — the data on your own machine is its advantage. All durable data is persisted under `~/.humhum/`:
 
-- `config.json` — app configuration (hook port, BYOK keys, TTS/STT, language)
+- `config.json` — app configuration (Pi URL/token/model, hook port, TTS/STT, language)
 - `knowledge.json` — Hype's knowledge base (preferences, rules, assets, Obsidian index)
 - `stats.json` — token and cost statistics
 - `hush-inbox.json` — Hush's local message inbox (up to 500 messages)
@@ -127,7 +127,7 @@ Privacy shows up in behavior: HUMHUM does not read private chats or sensitive st
 
 ## Tech stack
 
-The frontend is React 18 + TypeScript + Vite, with the desktop pet rendered via PixiJS v8 (2D) and Three.js (3D Humi); the desktop shell is Tauri v2 (Rust). The Rust backend provides a local hook server (Hyper, :31275), knowledge-base storage, session and stats stores, the Hush inbox, and watchers/parsers for Claude / Codex / Qoder / Wukong sessions. The voice pipeline supports Edge TTS / OpenAI / ElevenLabs and Web Speech / Whisper, with summarization over any OpenAI-compatible API (BYOK).
+The frontend is React 18 + TypeScript + Vite, with the desktop pet rendered via PixiJS v8 (2D) and Three.js (3D Humi); the desktop shell is Tauri v2 (Rust). Humi conversations use the bundled Pi Agent SDK and its ReAct/tool loop, with the Rust backend providing bounded local-context tools. The backend also provides a local hook server (Hyper, :31275), knowledge-base storage, session and stats stores, the Hush inbox, and watchers/parsers for Claude / Codex / Qoder / Wukong sessions. Voice remains optional through Edge TTS / OpenAI / ElevenLabs and Web Speech / Whisper.
 
 Key code locations: Tauri commands are registered in `src-tauri/src/lib.rs`; local knowledge logic lives in `src-tauri/src/knowledge_store.rs`; Humi's local Agent interpretation is in `src-tauri/src/commands.rs`; Hush message storage is in `src-tauri/src/hush_store.rs`; and the Hub UI modules live in `src/components/Hub/`.
 
