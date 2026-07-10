@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback, useRef, type CSSProperties, type KeyboardEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { PetCanvas } from "../Pet/PetCanvas";
 import { useTranslation } from "../../lib/i18n/react";
 import type { AppConfig } from "../../types";
 import { createHumiPiRuntime } from "../../lib/pi/runtime";
@@ -140,7 +139,6 @@ export function HumiModule() {
   const { t } = useTranslation();
   const [sessions, setSessions] = useState<ActiveSession[]>([]);
   const [hooksStatus, setHooksStatus] = useState<HooksStatus>({});
-  const [petState, setPetState] = useState<"idle" | "processing" | "speaking">("idle");
   const [piStatus, setPiStatus] = useState<PiInstallStatus | null>(null);
   const [qoderStatus, setQoderStatus] = useState<QoderAcpStatus | null>(null);
   const [kernelSession, setKernelSession] = useState<PiSessionStatus | null>(null);
@@ -169,11 +167,6 @@ export function HumiModule() {
     try {
       const data = await invoke<ActiveSession[]>("get_active_sessions");
       setSessions(data);
-      if (data.some((s) => s.status === "active")) {
-        setPetState("processing");
-      } else {
-        setPetState("idle");
-      }
     } catch {
       // ignore
     }
@@ -334,8 +327,6 @@ export function HumiModule() {
     }
   }, [fetchSessions, kernelSession]);
 
-  const activeClientTypes = [...new Set(sessions.map((s) => s.client_type))];
-
   return (
     <div className="hub-module">
       <div
@@ -348,7 +339,13 @@ export function HumiModule() {
         }}
       >
         <header style={{ display: "flex", alignItems: "center", gap: 10, width: "min(820px, 100%)", margin: "0 auto", minHeight: 52, padding: "4px 0" }}>
-          <PetCanvas state={petState} size={34} activeClients={activeClientTypes} />
+          <img
+            src="/mascots/humi-sprite-v1.png"
+            alt="Humi"
+            width={38}
+            height={38}
+            style={{ objectFit: "contain", borderRadius: 8, flexShrink: 0 }}
+          />
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 14, fontWeight: 850, color: "#263241" }}>Humi</div>
             <div style={{ fontSize: 10, color: "#8290a3", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{humiProgress}</div>
