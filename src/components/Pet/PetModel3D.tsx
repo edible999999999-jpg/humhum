@@ -4,7 +4,8 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { AGENT_BRAND_COLOR } from "@/engine/constants";
 import type { PetState } from "@/types";
 
-const HUMI_MODEL_SRC = "/mascots/3d/humi-window-pet.glb";
+const HUMI_MODEL_SRC = "/mascots/3d/humi-window-pet-geometry.glb";
+const HUMI_TEXTURE_SRC = "/mascots/3d/humi-window-pet-basecolor.jpg";
 
 interface PetModel3DProps {
   state: PetState;
@@ -40,11 +41,18 @@ export function PetModel3D({
     const startTime = performance.now();
     let lastTime = startTime;
 
-    const renderer = new THREE.WebGLRenderer({
-      alpha: true,
-      antialias: true,
-      powerPreference: "high-performance",
-    });
+    let renderer: THREE.WebGLRenderer;
+    try {
+      renderer = new THREE.WebGLRenderer({
+        alpha: true,
+        antialias: true,
+        powerPreference: "high-performance",
+      });
+    } catch (error) {
+      console.error("[PetModel3D] webgl-init-failed", error);
+      onUnavailable();
+      return;
+    }
 
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.setSize(size, size, false);
@@ -60,23 +68,23 @@ export function PetModel3D({
     const camera = new THREE.PerspectiveCamera(28, 1, 0.1, 100);
     camera.position.set(0, 0.25, 5.4);
 
-    const ambient = new THREE.HemisphereLight(0xffffff, 0x8ec9ff, 2.4);
+    const ambient = new THREE.HemisphereLight(0xffffff, 0xdff6ff, 1.65);
     scene.add(ambient);
 
-    const key = new THREE.DirectionalLight(0xffffff, 2.2);
+    const key = new THREE.DirectionalLight(0xffffff, 0.8);
     key.position.set(2.4, 3.2, 4);
     scene.add(key);
 
-    const fill = new THREE.DirectionalLight(0xb8f7ff, 1.2);
-    fill.position.set(-2.8, 1.2, 2.2);
-    scene.add(fill);
+    const faceFill = new THREE.DirectionalLight(0xfffbf7, 1.15);
+    faceFill.position.set(-0.4, 1.1, 4.8);
+    scene.add(faceFill);
 
     const shadow = new THREE.Mesh(
       new THREE.CircleGeometry(0.95, 48),
       new THREE.MeshBasicMaterial({
         color: 0x7d8a93,
         transparent: true,
-        opacity: 0.14,
+        opacity: 0.045,
         depthWrite: false,
       }),
     );
@@ -89,13 +97,26 @@ export function PetModel3D({
     scene.add(agentGroup);
 
     const loader = new GLTFLoader();
-    loader.load(
-      HUMI_MODEL_SRC,
-      (gltf) => {
+    const textureLoader = new THREE.TextureLoader();
+
+    Promise.all([
+      new Promise<import("three/examples/jsm/loaders/GLTFLoader.js").GLTF>((resolve, reject) => {
+        loader.load(HUMI_MODEL_SRC, resolve, undefined, reject);
+      }),
+      new Promise<THREE.Texture>((resolve, reject) => {
+        textureLoader.load(HUMI_TEXTURE_SRC, resolve, undefined, reject);
+      }),
+    ]).then(
+      ([gltf, baseColorTexture]) => {
         if (disposed) return;
 
+        baseColorTexture.colorSpace = THREE.SRGBColorSpace;
+        baseColorTexture.flipY = false;
+        baseColorTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+        baseColorTexture.needsUpdate = true;
+
         model = gltf.scene;
-        prepareModel(model);
+        prepareModel(model, baseColorTexture);
         fitModel(model);
         scene.add(model);
 
@@ -107,19 +128,26 @@ export function PetModel3D({
         readyRef.current = true;
         onReady();
       },
-      undefined,
-      () => {
+      (error) => {
+        console.error("[PetModel3D] gltf-load-failed", HUMI_MODEL_SRC, error);
         if (!disposed) onUnavailable();
       },
     );
 
-    function prepareModel(root: THREE.Object3D) {
+    function prepareModel(root: THREE.Object3D, baseColorTexture: THREE.Texture) {
       root.traverse((child) => {
         const mesh = child as THREE.Mesh;
         if (!mesh.isMesh) return;
         mesh.frustumCulled = false;
         const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
         materials.forEach((material) => {
+          const standardMaterial = material as THREE.MeshStandardMaterial;
+          standardMaterial.map = baseColorTexture;
+          standardMaterial.color?.set(0xffffff);
+          standardMaterial.metalness = 0;
+          standardMaterial.roughness = 0.68;
+          standardMaterial.emissive?.set(0xf7fbff);
+          standardMaterial.emissiveIntensity = 0.18;
           material.transparent = material.transparent || material.opacity < 1;
           material.needsUpdate = true;
         });
