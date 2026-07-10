@@ -37,7 +37,10 @@ function finalAssistantText(agent: Agent): string {
   const lastAssistant = [...agent.state.messages]
     .reverse()
     .find((message) => message.role === "assistant");
-  if (!lastAssistant || !Array.isArray(lastAssistant.content)) return "";
+  if (!lastAssistant) return "";
+  const content: unknown = lastAssistant.content;
+  if (typeof content === "string") return content.trim();
+  if (!Array.isArray(content)) return "";
   return lastAssistant.content
     .filter((block): block is { type: "text"; text: string } => block.type === "text")
     .map((block) => block.text)
@@ -105,7 +108,9 @@ export function createHumiPiRuntime(
     ask: async (prompt: string) => {
       await agent.prompt(prompt);
       const answer = finalAssistantText(agent);
-      if (!answer) throw new Error("Pi 没有返回可显示的回答");
+      if (!answer) {
+        throw new Error(agent.state.errorMessage || "Pi 没有返回可显示的回答");
+      }
       return answer;
     },
   };
