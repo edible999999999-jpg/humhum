@@ -19,6 +19,7 @@ const MODULES: { id: Module; icon: string; labelKey: string }[] = [
 export function HubLayout() {
   const [active, setActive] = useState<Module>("humi");
   const { t } = useTranslation();
+  const subtitle = t("hub.subtitle");
 
   return (
     <div className="hub-panel">
@@ -29,7 +30,7 @@ export function HubLayout() {
       >
         <div className="hub-title-stack">
           <span className="hub-title">{t("hub.title")}</span>
-          <span className="hub-subtitle">{t("hub.subtitle")}</span>
+          {subtitle && <span className="hub-subtitle">{subtitle}</span>}
         </div>
         <button
           className="hub-close"

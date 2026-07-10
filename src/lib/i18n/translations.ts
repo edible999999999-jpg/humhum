@@ -122,8 +122,8 @@ export const translations: TranslationMap = {
   "memory.inputOutput": { zh: "输入/输出", en: "In/Out" },
 
   // ── HumHum Hub ──
-  "hub.title": { zh: "HUMHUM 中枢", en: "HUMHUM Hub" },
-  "hub.subtitle": { zh: "个人 Agent 编排演示台", en: "Personal agent command center" },
+  "hub.title": { zh: "HUMHUM", en: "HUMHUM" },
+  "hub.subtitle": { zh: "", en: "" },
   "hub.close": { zh: "关闭", en: "Close" },
   "hub.common.save": { zh: "保存", en: "Save" },
   "hub.common.cancel": { zh: "取消", en: "Cancel" },
