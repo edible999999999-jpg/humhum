@@ -135,6 +135,8 @@ pub fn run() {
             commands::type_in_terminal,
             commands::toggle_hub,
             commands::get_knowledge,
+            commands::get_humi_context_tool,
+            commands::save_humi_memory,
             commands::save_preference,
             commands::delete_preference,
             commands::scan_agent_rules,

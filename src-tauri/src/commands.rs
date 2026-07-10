@@ -1994,6 +1994,196 @@ pub async fn get_knowledge(
     serde_json::to_value(store.get_all()).map_err(|e| format!("Serialize error: {}", e))
 }
 
+const HUMI_TOOL_MAX_TEXT: usize = 6000;
+
+pub fn bounded_tool_text(value: &str, max_chars: usize) -> String {
+    value.chars().take(max_chars).collect()
+}
+
+pub fn require_memory_confirmation(confirmed: bool) -> Result<(), String> {
+    if confirmed {
+        Ok(())
+    } else {
+        Err("Saving a memory requires explicit user confirmation".to_string())
+    }
+}
+
+/// Return bounded, user-safe context for Pi's local read tools.
+#[tauri::command]
+pub async fn get_humi_context_tool(
+    tool: String,
+    query: Option<String>,
+    sessions: State<'_, Arc<std::sync::Mutex<SessionStore>>>,
+    knowledge: State<'_, Arc<std::sync::Mutex<KnowledgeStore>>>,
+    stats: State<'_, Arc<std::sync::Mutex<StatsStore>>>,
+) -> Result<Value, String> {
+    match tool.as_str() {
+        "get_recent_sessions" => {
+            let sessions = sessions.lock().map_err(|e| format!("Lock error: {}", e))?;
+            let items = sessions
+                .get_all_sessions_with_history()
+                .into_iter()
+                .take(8)
+                .map(|session| {
+                    serde_json::json!({
+                        "client": session.client_type,
+                        "project": session.project_name,
+                        "status": session.status,
+                        "events": session.event_count,
+                        "last_event_at": session.last_event_at,
+                        "last_tool": session.last_tool_name,
+                        "recent_tools": session.recent_tools.iter().take(6).collect::<Vec<_>>(),
+                    })
+                })
+                .collect::<Vec<_>>();
+            Ok(serde_json::json!({ "tool": tool, "items": items }))
+        }
+        "get_agent_skills" => {
+            let knowledge = knowledge.lock().map_err(|e| format!("Lock error: {}", e))?;
+            let items = knowledge
+                .get_all()
+                .agent_assets
+                .iter()
+                .filter(|asset| asset.asset_type == "skill")
+                .take(12)
+                .map(|asset| {
+                    serde_json::json!({
+                        "name": asset.name,
+                        "agent": asset.agent_id,
+                        "description": bounded_tool_text(&asset.content, 900),
+                        "tags": asset.tags.iter().take(8).collect::<Vec<_>>(),
+                    })
+                })
+                .collect::<Vec<_>>();
+            Ok(serde_json::json!({ "tool": tool, "items": items }))
+        }
+        "get_local_memory" => {
+            let knowledge = knowledge.lock().map_err(|e| format!("Lock error: {}", e))?;
+            let preferences = knowledge
+                .get_all()
+                .preferences
+                .iter()
+                .take(20)
+                .map(|item| {
+                    serde_json::json!({
+                        "category": item.category,
+                        "content": bounded_tool_text(&item.content, 700),
+                        "priority": item.priority,
+                    })
+                })
+                .collect::<Vec<_>>();
+            let memories = knowledge
+                .get_all()
+                .memory_items
+                .iter()
+                .take(20)
+                .map(|item| {
+                    serde_json::json!({
+                        "agent": item.agent_id,
+                        "content": bounded_tool_text(&item.content, 700),
+                        "temperature": item.temperature,
+                    })
+                })
+                .collect::<Vec<_>>();
+            Ok(serde_json::json!({ "tool": tool, "preferences": preferences, "memories": memories }))
+        }
+        "get_project_context" => {
+            let keyword = query.unwrap_or_default();
+            let knowledge = knowledge.lock().map_err(|e| format!("Lock error: {}", e))?;
+            let result = if keyword.trim().is_empty() {
+                knowledge.get_all().clone()
+            } else {
+                knowledge.query(&keyword)
+            };
+            let rules = result
+                .agent_rules
+                .iter()
+                .take(12)
+                .map(|rule| {
+                    serde_json::json!({
+                        "agent": rule.agent_id,
+                        "type": rule.rule_type,
+                        "content": bounded_tool_text(&rule.content, 1000),
+                    })
+                })
+                .collect::<Vec<_>>();
+            let assets = result
+                .agent_assets
+                .iter()
+                .take(12)
+                .map(|asset| {
+                    serde_json::json!({
+                        "name": asset.name,
+                        "type": asset.asset_type,
+                        "agent": asset.agent_id,
+                        "content": bounded_tool_text(&asset.content, 1000),
+                    })
+                })
+                .collect::<Vec<_>>();
+            Ok(serde_json::json!({ "tool": tool, "query": keyword, "rules": rules, "assets": assets }))
+        }
+        "get_user_preferences" => {
+            let knowledge = knowledge.lock().map_err(|e| format!("Lock error: {}", e))?;
+            let items = knowledge
+                .get_all()
+                .preferences
+                .iter()
+                .take(20)
+                .map(|item| {
+                    serde_json::json!({
+                        "category": item.category,
+                        "content": bounded_tool_text(&item.content, 900),
+                        "source": bounded_tool_text(&item.source, 240),
+                    })
+                })
+                .collect::<Vec<_>>();
+            Ok(serde_json::json!({ "tool": tool, "items": items }))
+        }
+        "get_usage_signals" => {
+            let stats = stats.lock().map_err(|e| format!("Lock error: {}", e))?;
+            let items = stats
+                .get_per_agent_stats()
+                .into_iter()
+                .take(8)
+                .map(|item| {
+                    serde_json::json!({
+                        "agent": item.client_type,
+                        "sessions": item.total_sessions,
+                        "tool_calls": item.total_tool_calls,
+                        "top_tools": item.top_tools.iter().take(8).collect::<Vec<_>>(),
+                        "models": item.models_used.iter().take(6).collect::<Vec<_>>(),
+                    })
+                })
+                .collect::<Vec<_>>();
+            Ok(serde_json::json!({ "tool": tool, "items": items }))
+        }
+        _ => Err(format!("Unknown HUMI context tool: {}", tool)),
+    }
+}
+
+#[tauri::command]
+pub async fn save_humi_memory(
+    store: State<'_, Arc<std::sync::Mutex<KnowledgeStore>>>,
+    id: String,
+    category: String,
+    content: String,
+    source: String,
+    priority: u8,
+    confirmed: bool,
+) -> Result<(), String> {
+    require_memory_confirmation(confirmed)?;
+    let content = bounded_tool_text(&content, HUMI_TOOL_MAX_TEXT);
+    let mut store = store.lock().map_err(|e| format!("Lock error: {}", e))?;
+    store.save_preference(Preference {
+        id,
+        category,
+        content,
+        source: bounded_tool_text(&source, 240),
+        priority,
+    });
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn save_preference(
     store: State<'_, Arc<std::sync::Mutex<KnowledgeStore>>>,
@@ -2629,6 +2819,23 @@ fn build_humi_agent_reply(
         confidence,
         cards,
         steps,
+    }
+}
+
+#[cfg(test)]
+mod humi_tool_tests {
+    use super::{bounded_tool_text, require_memory_confirmation};
+
+    #[test]
+    fn tool_text_is_bounded() {
+        let text = "x".repeat(7000);
+        assert_eq!(bounded_tool_text(&text, 100).len(), 100);
+    }
+
+    #[test]
+    fn saving_memory_requires_explicit_confirmation() {
+        assert!(require_memory_confirmation(false).is_err());
+        assert!(require_memory_confirmation(true).is_ok());
     }
 }
 
