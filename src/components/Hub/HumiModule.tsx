@@ -1,7 +1,9 @@
-import { useState, useEffect, useCallback, useRef, type CSSProperties } from "react";
+import { useState, useEffect, useCallback, type CSSProperties } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { PetCanvas } from "../Pet/PetCanvas";
 import { useTranslation } from "../../lib/i18n/react";
+import type { AppConfig } from "../../types";
+import { createHumiPiRuntime } from "../../lib/pi/runtime";
 
 interface ActiveSession {
   session_id: string;
@@ -140,9 +142,11 @@ export function HumiModule() {
   const [kernelCwd, setKernelCwd] = useState("/Users/yuxi/Desktop/my_station/devpod-ai-companion");
   const [kernelRoots, setKernelRoots] = useState(DEFAULT_KERNEL_ROOTS);
   const [localKernelResult, setLocalKernelResult] = useState<LocalAgentKernelResult | null>(null);
+  const [appConfig, setAppConfig] = useState<AppConfig | null>(null);
+  const [humiAnswer, setHumiAnswer] = useState<string | null>(null);
+  const [humiProgress, setHumiProgress] = useState("Humi 正在等你说话");
   const [agentKernelStatus, setAgentKernelStatus] = useState<AgentKernelStatus | null>(null);
   const [showDetails, setShowDetails] = useState(false);
-  const autoScanStarted = useRef(false);
   const [kernelPrompt, setKernelPrompt] = useState(
     "现在技能用得最多的是啥？"
   );
@@ -172,11 +176,13 @@ export function HumiModule() {
 
   const fetchKernelStatus = useCallback(async () => {
     try {
-      const [pi, qoder, kernel] = await Promise.all([
+      const [config, pi, qoder, kernel] = await Promise.all([
+        invoke<AppConfig>("get_config"),
         invoke<PiInstallStatus>("check_pi_installed"),
         invoke<QoderAcpStatus>("check_qoder_acp_support"),
         invoke<AgentKernelStatus>("get_agent_kernel_status"),
       ]);
+      setAppConfig(config);
       setPiStatus(pi);
       setQoderStatus(qoder);
       setAgentKernelStatus(kernel);
@@ -229,35 +235,29 @@ export function HumiModule() {
     }
   }, [fetchSessions, kernelCwd]);
 
-  const runLocalKernel = useCallback(async () => {
+  const askHumi = useCallback(async () => {
+    if (!appConfig) {
+      setKernelMessage("还没有读取到 Pi 配置");
+      return;
+    }
     setKernelLoading(true);
     setKernelMessage(null);
+    setHumiAnswer(null);
+    setHumiProgress("Humi 正在认真听你说");
     try {
-      const roots = kernelRoots
-        .split(/\n|,/)
-        .map((item) => item.trim())
-        .filter(Boolean);
-      const result = await invoke<LocalAgentKernelResult>("run_local_agent_kernel", {
-        options: {
-          cwd: kernelCwd.trim() || undefined,
-          prompt: kernelPrompt,
-          roots,
-        },
+      const runtime = createHumiPiRuntime(appConfig, {
+        onProgress: ({ label }) => setHumiProgress(label),
       });
-      setLocalKernelResult(result);
-      await fetchSessions();
+      const answer = await runtime.ask(kernelPrompt);
+      setHumiAnswer(answer);
+      setHumiProgress("我整理好啦");
     } catch (e) {
-      setKernelMessage(`Local kernel failed: ${String(e)}`);
+      setKernelMessage(String(e));
+      setHumiProgress("这次没有连上 Pi");
     } finally {
       setKernelLoading(false);
     }
-  }, [fetchSessions, kernelCwd, kernelPrompt, kernelRoots]);
-
-  useEffect(() => {
-    if (autoScanStarted.current) return;
-    autoScanStarted.current = true;
-    void runLocalKernel();
-  }, [runLocalKernel]);
+  }, [appConfig, kernelPrompt]);
 
   const sendPiTask = useCallback(async () => {
     if (!kernelSession) return;
@@ -397,7 +397,7 @@ export function HumiModule() {
               </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             <button
-              onClick={runLocalKernel}
+              onClick={askHumi}
               disabled={kernelLoading}
               style={warmButtonStyle(true)}
             >
@@ -407,10 +407,30 @@ export function HumiModule() {
               {showDetails ? "Hide details" : "Details"}
             </button>
             <span style={{ fontSize: 11, color: "#7b8798" }}>
-              Scanning stays quiet. Humi only shows what is useful to you.
+              {humiProgress}
             </span>
           </div>
         </div>
+
+        {humiAnswer && (
+          <div
+            style={{
+              marginTop: 14,
+              padding: 16,
+              borderRadius: 20,
+              background: "rgba(255,255,255,0.72)",
+              border: "1px solid rgba(116,143,165,0.14)",
+              boxShadow: "0 10px 30px rgba(90,115,150,0.1)",
+            }}
+          >
+            <div style={{ fontSize: 12, color: "#8d7ddf", fontWeight: 900, marginBottom: 6 }}>
+              Humi
+            </div>
+            <div style={{ fontSize: 15, color: "#2d3748", lineHeight: 1.78, fontWeight: 650, whiteSpace: "pre-wrap" }}>
+              {humiAnswer}
+            </div>
+          </div>
+        )}
 
         {localKernelResult && (
           <div
@@ -459,10 +479,10 @@ export function HumiModule() {
           >
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
               <KernelStatusCard
-                name="Pi RPC"
-                ok={!!piStatus?.installed}
-                detail={piStatus?.installed ? piStatus.version || "installed" : piStatus?.error || "not installed"}
-                note="Active sidecar kernel"
+                name="Pi Agent"
+                ok={!!appConfig?.pi.token}
+                detail={appConfig?.pi.token ? appConfig.pi.model_name : "请先配置 Token"}
+                note="Bundled ReAct runtime"
               />
               <KernelStatusCard
                 name="Qoder ACP"
@@ -503,7 +523,7 @@ export function HumiModule() {
                 disabled={kernelLoading || !piStatus?.installed || (!!kernelSession && kernelSession.state !== "stopped")}
                 style={warmButtonStyle(false)}
               >
-                Start Pi
+                Legacy CLI
               </button>
               <button
                 onClick={sendPiTask}

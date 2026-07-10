@@ -48,10 +48,25 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
 
   const handleSave = useCallback(async () => {
     if (!config) return;
+    const piUrl = config.pi.url.trim().replace(/\/$/, "");
+    if (!piUrl || !config.pi.model_name.trim()) {
+      setMessage({ type: "error", text: "请填写 Pi 的 URL 和 model_name" });
+      return;
+    }
     setSaving(true);
     setMessage(null);
     try {
-      await invoke("save_config", { newConfig: config });
+      await invoke("save_config", {
+        newConfig: {
+          ...config,
+          pi: {
+            ...config.pi,
+            url: piUrl,
+            model_name: config.pi.model_name.trim(),
+            token: config.pi.token?.trim() || undefined,
+          },
+        },
+      });
       setMessage({ type: "success", text: t("settings.saved") });
       setTimeout(() => setMessage(null), 3000);
     } catch (e) {
@@ -301,36 +316,51 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
           </div>
         </KawaiiCard>
 
-        {/* API Key — compact */}
-        <KawaiiCard icon="~" title={t("settings.keysTitle")} subtitle={t("settings.keysSubtitle")}>
+        {/* Pi Agent — the only model configuration Humi needs */}
+        <KawaiiCard icon="~" title="Pi Agent" subtitle="Humi 的聊天和理解都由 Pi 负责">
           <div className="space-y-3">
             <div>
-              <label className="kawaii-label">OpenAI API Key</label>
+              <label className="kawaii-label">URL</label>
               <input
-                type="password"
-                value={config.api_keys.openai ?? ""}
+                type="url"
+                value={config.pi.url}
                 onChange={(e) =>
                   updateConfig((c) => ({
                     ...c,
-                    api_keys: { ...c.api_keys, openai: e.target.value || undefined },
+                    pi: { ...c.pi, url: e.target.value },
                   }))
                 }
-                placeholder={t("settings.openaiPlaceholder")}
+                placeholder="https://api.openai.com/v1"
                 className="kawaii-input"
               />
             </div>
             <div>
-              <label className="kawaii-label">{t("settings.elevenOptional")}</label>
+              <label className="kawaii-label">Token</label>
               <input
                 type="password"
-                value={config.api_keys.elevenlabs ?? ""}
+                value={config.pi.token ?? ""}
                 onChange={(e) =>
                   updateConfig((c) => ({
                     ...c,
-                    api_keys: { ...c.api_keys, elevenlabs: e.target.value || undefined },
+                    pi: { ...c.pi, token: e.target.value || undefined },
                   }))
                 }
-                placeholder={t("settings.elevenPlaceholder")}
+                placeholder="输入 Token"
+                className="kawaii-input"
+              />
+            </div>
+            <div>
+              <label className="kawaii-label">model_name</label>
+              <input
+                type="text"
+                value={config.pi.model_name}
+                onChange={(e) =>
+                  updateConfig((c) => ({
+                    ...c,
+                    pi: { ...c.pi, model_name: e.target.value },
+                  }))
+                }
+                placeholder="gpt-4o-mini"
                 className="kawaii-input"
               />
             </div>
@@ -409,36 +439,6 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
                     }))
                   }
                   placeholder="http://localhost:5050"
-                  className="kawaii-input"
-                />
-              </div>
-              <div>
-                <label className="kawaii-label">{t("settings.summaryModel")}</label>
-                <input
-                  type="text"
-                  value={config.summarizer.model}
-                  onChange={(e) =>
-                    updateConfig((c) => ({
-                      ...c,
-                      summarizer: { ...c.summarizer, model: e.target.value },
-                    }))
-                  }
-                  placeholder="gpt-4o-mini"
-                  className="kawaii-input"
-                />
-              </div>
-              <div>
-                <label className="kawaii-label">Summarizer API Base</label>
-                <input
-                  type="text"
-                  value={config.summarizer.api_base}
-                  onChange={(e) =>
-                    updateConfig((c) => ({
-                      ...c,
-                      summarizer: { ...c.summarizer, api_base: e.target.value },
-                    }))
-                  }
-                  placeholder="https://api.openai.com/v1"
                   className="kawaii-input"
                 />
               </div>
