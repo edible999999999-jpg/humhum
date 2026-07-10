@@ -38,7 +38,7 @@ const COMPACT_HEIGHT = 210;
 const OVERLAY_HEIGHT = 460;
 const PERMISSION_HEIGHT = 650;
 const CONTEXT_MENU_WIDTH = 148;
-const CONTEXT_MENU_HEIGHT = 104;
+const CONTEXT_MENU_HEIGHT = 42;
 
 const appWindow = getCurrentWindow();
 
@@ -413,13 +413,6 @@ export function PetView() {
     );
   }, []);
 
-  const handleOpenSettings = useCallback(() => {
-    setContextMenu(null);
-    invoke("toggle_settings").catch((err) =>
-      console.error("[PetView] toggle_settings failed:", err),
-    );
-  }, []);
-
   const handlePetEnter = useCallback(() => {
     if (hoverTimer.current) clearTimeout(hoverTimer.current);
     hoverTimer.current = setTimeout(() => setShowDashboard(true), 300);
@@ -538,11 +531,6 @@ export function PetView() {
           >
             <button type="button" onClick={handleOpenHub}>
               <span>Hub</span>
-              <small>Agent center</small>
-            </button>
-            <button type="button" onClick={handleOpenSettings}>
-              <span>Settings</span>
-              <small>Voice & hooks</small>
             </button>
           </div>
         )}

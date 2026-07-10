@@ -328,12 +328,8 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     };
 
-    let show = MenuItem::with_id(app, "show", "Show HumHum", true, None::<&str>)?;
-    let hide = MenuItem::with_id(app, "hide", "Hide HumHum", true, None::<&str>)?;
-    let hub = MenuItem::with_id(app, "hub", "Hub...", true, None::<&str>)?;
-    let settings = MenuItem::with_id(app, "settings", "Settings...", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show, &hide, &hub, &settings, &quit])?;
+    let hub = MenuItem::with_id(app, "hub", "Hub", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&hub])?;
 
     TrayIconBuilder::with_id("humhum-tray")
         .icon(app.default_window_icon().unwrap().clone())
@@ -341,28 +337,8 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .tooltip("HumHum - AI Coding Companion")
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
-            "quit" => {
-                app.exit(0);
-            }
-            "show" => {
-                if let Some(win) = app.get_webview_window("main") {
-                    let _ = win.show();
-                    let _ = win.set_focus();
-                }
-            }
-            "hide" => {
-                if let Some(win) = app.get_webview_window("main") {
-                    let _ = win.hide();
-                }
-            }
             "hub" => {
                 let _ = tauri::async_runtime::block_on(commands::toggle_hub(app.clone()));
-            }
-            "settings" => {
-                if let Some(win) = app.get_webview_window("settings") {
-                    let _ = win.show();
-                    let _ = win.set_focus();
-                }
             }
             _ => {}
         })
