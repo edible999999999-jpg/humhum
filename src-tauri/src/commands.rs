@@ -2189,6 +2189,11 @@ pub async fn focus_agent_session(
     };
     if client_type == "cursor" {
         if let Some(workspace) = workspace.as_deref() {
+            if let Some(route) = route.as_ref() {
+                if let Ok(result) = window_focus::focus_cursor_terminal(route, workspace) {
+                    return Ok(result);
+                }
+            }
             if let Ok(result) = window_focus::focus_cursor_workspace(workspace) {
                 return Ok(result);
             }
@@ -2269,6 +2274,9 @@ pub async fn install_hooks_for_client(
         }
         ConfigFormat::OpenCodePlugin => install_opencode_plugin(&config_path, port)?,
     }
+    if client_id == "cursor" {
+        crate::cursor_focus_extension::install_at(&home)?;
+    }
 
     Ok(format!(
         "Hooks installed for {} at {:?}",
@@ -2299,6 +2307,9 @@ pub async fn uninstall_hooks_for_client(client_id: String) -> Result<String, Str
             uninstall_flat_json_hooks(&config_path, profile.hook_events, true)?
         }
         ConfigFormat::OpenCodePlugin => uninstall_opencode_plugin(&config_path)?,
+    }
+    if client_id == "cursor" {
+        crate::cursor_focus_extension::uninstall_at(&home)?;
     }
 
     Ok(format!("Hooks removed for {}", profile.name))
@@ -2831,7 +2842,12 @@ pub async fn check_hooks_status() -> Result<Value, String> {
         let config_path = home.join(client.config_path);
         let installed = if config_path.exists() {
             let content = std::fs::read_to_string(&config_path).unwrap_or_default();
-            content.contains("humhum")
+            let hooks_installed = content.contains("humhum");
+            if client.id == "cursor" && hooks_installed {
+                crate::cursor_focus_extension::ensure_for_managed_hook(&home).unwrap_or(false)
+            } else {
+                hooks_installed
+            }
         } else {
             false
         };

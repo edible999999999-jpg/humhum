@@ -4,6 +4,7 @@ mod client_registry;
 pub mod codex_bridge;
 mod commands;
 mod config;
+mod cursor_focus_extension;
 mod event_bus;
 mod hexa_protocol;
 mod hook_server;
@@ -71,6 +72,9 @@ pub fn run() {
             if let Some(home) = dirs::home_dir() {
                 if let Err(error) = commands::ensure_hook_script_installed(&home) {
                     log::warn!("Could not refresh HUMHUM hook script: {error}");
+                }
+                if let Err(error) = cursor_focus_extension::ensure_for_managed_hook(&home) {
+                    log::warn!("Could not refresh HUMHUM Cursor focus extension: {error}");
                 }
                 let auth = local_api_auth::LocalApiAuth::load_or_create(&home.join(".humhum"))
                     .map_err(std::io::Error::other)?;

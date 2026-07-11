@@ -15,7 +15,7 @@ Status meanings:
 | Live Claude/Codex supervision | Complete | Claude hooks plus Codex app-server sessions feed Hexa and the pet. |
 | Waiting-first attention view | Complete | Hexa orders waiting, stalled/looping, working, idle, then completed; recency breaks ties. |
 | Approve/deny and questions | Complete | Claude hook requests and Codex app-server approvals are session scoped. |
-| Exact jump back | Partial | Hook captures terminal, TTY, tmux pane and iTerm session. Hexa can select an exact tmux pane, iTerm session, allow-listed Terminal.app TTY, a unique Ghostty terminal by canonical workspace, a Codex desktop task through its thread URL, or the exact Cursor workspace. Exact Cursor chat selection and stored Ghostty terminal UUIDs are still missing. |
+| Exact jump back | Partial | Hook captures terminal, PID, TTY, tmux pane and iTerm session. Hexa can select an exact tmux pane, iTerm session, allow-listed Terminal.app TTY, unique Ghostty workspace, Codex desktop task, or a Cursor integrated terminal verified by a one-time extension receipt. Cursor workspace fallback is correctly reported as inexact; exact Cursor chat selection and stored Ghostty terminal UUIDs are still missing. |
 | Follow-up from supervisor | Partial | Codex app-server and known local Claude Code sessions accept follow-ups through provider-scoped durable queues with retry-preserved text. Claude uses its stable session UUID, verified workspace and noninteractive `--resume`; generic terminal typing remains disabled because an unverified target is unsafe. |
 | Completion and attention notifications | Complete | Pet overlays and sounds remain ambient, while native macOS notifications can be enabled independently for approvals, questions, completions, and ordinary Agent messages. Legacy configs migrate with all four enabled. |
 | Transcript backfill | Complete | Local Codex JSONL and Claude stats/readouts feed history and summaries. |
@@ -63,6 +63,8 @@ Status meanings:
 - Cursor uses its current flat `~/.cursor/hooks.json` protocol, Copilot uses a versioned user-level `~/.copilot/hooks/humhum.json`, and OpenCode receives a managed global TypeScript plugin without embedded credentials.
 - Cursor 3.10.20 was detected at `/Applications/Cursor.app`. HUMHUM installed nine user-level steps including `preCompact`; Cursor's own hook-service log reported `Loaded 9 user hook(s)` with the full step list.
 - Cursor payload normalization now promotes `conversation_id` to stable `session_id` and the first `workspace_roots` entry to `cwd` without replacing already normalized fields. A real installed hook command accepted a synthetic Cursor request as session `cursor-smoke-20260712-b` and the HUMHUM endpoint returned HTTP 200 without logging its prompt.
+- Managed Cursor hooks now install a minimal MIT-licensed `humhum.session-focus` URI extension. It matches integrated terminals using the captured parent PID, allow-listed TTY and canonical workspace, refuses tied/zero-score matches, and reports exact focus only after the extension writes an owner-scoped one-time receipt.
+- Cursor's shared-process log confirmed the external extension was added to the default profile, and its extension-host process was running. With no integrated terminal open on the locked desktop, a negative URI smoke produced no receipt, confirming that workspace activation alone cannot create a false exact-focus result; positive terminal focus remains unit/build verified until an integrated terminal is available.
 - OpenCode was not present as a CLI or app on this Mac, so its managed TypeScript plugin remains unit verified rather than runtime verified.
 - A synthetic Copilot CLI camelCase event passed through the installed shell hook and appeared as a normalized `github-copilot` session; its private prompt did not appear in the mobile summary.
 - Cursor sessions now route through the verified `com.todesktop.230313mzl4w4u92` bundle and their existing absolute workspace path; invalid or missing paths are rejected before launching.
@@ -88,11 +90,11 @@ Status meanings:
 - Ghostty currently exposes terminal ID, name and working directory but not child PID or TTY through AppleScript. The installed Ghostty 1.3.1 process was detected, but the locked desktop blocked a runtime Apple Event, so unique-workspace focus remains unit/build verified until unlock.
 - The release arm64 `HumHum.app` built successfully. Because the locked desktop stalled only Tauri's decorative DMG Finder layout, a standard compressed read-only DMG was generated directly, verified by `hdiutil`, mounted, and its contained app passed strict deep code-sign verification.
 - Local release artifact: `src-tauri/target/release/bundle/dmg/HumHum_0.1.0_aarch64.dmg` (43 MB), SHA-256 `98a12ef30c23d71832a8582940dfa207bd67aaff5ef9079206aaae9bbc4132f0`. It includes the provider-scoped Claude/Codex queue, OpenPeon/CESP sound packs and per-Agent Humi themes, has a complete ad-hoc signature, passed `hdiutil verify`, and its mounted arm64 app passed strict deep code-sign verification. It is not Developer ID signed or notarized, so it is not yet a frictionless public download.
-- Rust: 91 passed, 1 ignored. Frontend: 22 passed. Production frontend build: passed.
+- Rust: 94 passed, 1 ignored. Frontend: 22 passed. Production frontend build: passed.
 
 ## Next Iteration Order
 
-1. Persist Ghostty terminal UUIDs at safe event boundaries and add IDE chat routing.
+1. Persist Ghostty terminal UUIDs at safe event boundaries and add exact IDE chat routing.
 2. Install/runtime smoke OpenCode and add OpenCode permission reply support.
 3. Real-host SSH smoke testing, multi-host presence, reconnect controls, and remote cleanup.
 4. Extend durable follow-up and permission replies to verified OpenCode and remote transports.

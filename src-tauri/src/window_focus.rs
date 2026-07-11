@@ -287,13 +287,88 @@ pub fn focus_cursor_workspace(workspace: &str) -> Result<FocusResult, String> {
         Ok(FocusResult {
             strategy: "cursor_workspace".into(),
             application: Some("Cursor".into()),
-            exact: true,
+            exact: false,
         })
     }
     #[cfg(not(target_os = "macos"))]
     {
         let _ = path;
         Err("Cursor workspace focus only supported on macOS".into())
+    }
+}
+
+pub fn focus_cursor_terminal(
+    route: &SessionRoute,
+    workspace: &str,
+) -> Result<FocusResult, String> {
+    let home = dirs::home_dir().ok_or("Cannot determine home directory")?;
+    if !crate::cursor_focus_extension::is_installed_at(&home) {
+        return Err("HUMHUM Cursor focus extension is not installed".into());
+    }
+    let path = std::path::Path::new(workspace);
+    if !valid_cursor_workspace(path) {
+        return Err("Cursor workspace must be an existing absolute directory".into());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let nonce = uuid::Uuid::new_v4().to_string();
+        let receipt = crate::cursor_focus_extension::receipt_path(&home, &nonce)?;
+        if let Some(parent) = receipt.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| format!("Could not prepare Cursor focus receipt: {error}"))?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))
+                    .map_err(|error| format!("Could not protect Cursor focus receipts: {error}"))?;
+            }
+        }
+        let url = crate::cursor_focus_extension::focus_request_url(path, route, &nonce)?;
+        let activated = Command::new("open")
+            .args(["-b", "com.todesktop.230313mzl4w4u92"])
+            .arg(path)
+            .output()
+            .map_err(|error| format!("Could not open Cursor workspace: {error}"))?;
+        if !activated.status.success() {
+            return Err(format!(
+                "Could not open Cursor workspace: {}",
+                String::from_utf8_lossy(&activated.stderr).trim()
+            ));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        let requested = Command::new("open")
+            .args(["-b", "com.todesktop.230313mzl4w4u92", &url])
+            .output()
+            .map_err(|error| format!("Could not request Cursor terminal focus: {error}"))?;
+        if !requested.status.success() {
+            return Err(format!(
+                "Could not request Cursor terminal focus: {}",
+                String::from_utf8_lossy(&requested.stderr).trim()
+            ));
+        }
+        for _ in 0..40 {
+            if receipt.is_file() {
+                let acknowledged = std::fs::read_to_string(&receipt)
+                    .is_ok_and(|value| value.trim() == "focused");
+                let _ = std::fs::remove_file(&receipt);
+                if acknowledged {
+                    return Ok(FocusResult {
+                        strategy: "cursor_terminal".into(),
+                        application: Some("Cursor".into()),
+                        exact: true,
+                    });
+                }
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        let _ = std::fs::remove_file(receipt);
+        Err("Cursor did not confirm an exact terminal match".into())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = route;
+        Err("Cursor terminal focus only supported on macOS".into())
     }
 }
 
