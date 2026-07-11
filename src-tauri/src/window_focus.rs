@@ -166,6 +166,41 @@ fn codex_thread_url(thread_id: &str) -> Option<String> {
     valid.then(|| format!("codex://threads/{thread_id}"))
 }
 
+fn valid_cursor_workspace(path: &std::path::Path) -> bool {
+    path.is_absolute() && path.is_dir()
+}
+
+pub fn focus_cursor_workspace(workspace: &str) -> Result<FocusResult, String> {
+    let path = std::path::Path::new(workspace);
+    if !valid_cursor_workspace(path) {
+        return Err("Cursor workspace must be an existing absolute directory".into());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let output = Command::new("open")
+            .args(["-b", "com.todesktop.230313mzl4w4u92"])
+            .arg(path)
+            .output()
+            .map_err(|error| format!("Could not open Cursor workspace: {error}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "Could not open Cursor workspace: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        Ok(FocusResult {
+            strategy: "cursor_workspace".into(),
+            application: Some("Cursor".into()),
+            exact: true,
+        })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = path;
+        Err("Cursor workspace focus only supported on macOS".into())
+    }
+}
+
 fn focus_tmux_pane(pane: &str) -> Result<(), String> {
     if !is_valid_tmux_pane(pane) {
         return Err("Invalid tmux pane identifier".into());
@@ -380,5 +415,14 @@ mod tests {
         );
         assert_eq!(codex_thread_url("thread/../../bad"), None);
         assert_eq!(codex_thread_url(""), None);
+    }
+
+    #[test]
+    fn cursor_workspace_requires_an_existing_absolute_directory() {
+        let temp = tempfile::tempdir().unwrap();
+
+        assert!(valid_cursor_workspace(temp.path()));
+        assert!(!valid_cursor_workspace(std::path::Path::new("relative/project")));
+        assert!(!valid_cursor_workspace(&temp.path().join("missing")));
     }
 }

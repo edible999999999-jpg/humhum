@@ -1989,14 +1989,28 @@ pub async fn focus_agent_session(
     bridge: State<'_, Arc<CodexBridgeState>>,
     session_id: String,
 ) -> Result<window_focus::FocusResult, String> {
-    let route = {
+    let (route, workspace, client_type) = {
         let store = store.lock().map_err(|error| format!("Lock error: {error}"))?;
         store
             .get_all_sessions_with_history()
             .into_iter()
             .find(|session| session.session_id == session_id)
-            .and_then(|session| session.route.clone())
+            .map(|session| {
+                (
+                    session.route.clone(),
+                    session.cwd.clone(),
+                    session.client_type.clone(),
+                )
+            })
+            .unwrap_or((None, None, String::new()))
     };
+    if client_type == "cursor" {
+        if let Some(workspace) = workspace.as_deref() {
+            if let Ok(result) = window_focus::focus_cursor_workspace(workspace) {
+                return Ok(result);
+            }
+        }
+    }
     if route.is_some() {
         return window_focus::focus_agent_route(route.as_ref());
     }
