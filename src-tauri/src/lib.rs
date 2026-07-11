@@ -72,6 +72,7 @@ pub fn run() {
             // Load configuration
             let config = config::AppConfig::load(&app_handle);
             let restore_awake_mode = config.ui.awake_mode;
+            let analytics_enabled = config.ui.analytics_enabled;
             app.manage(Arc::new(std::sync::Mutex::new(config)));
 
             if let Some(home) = dirs::home_dir() {
@@ -137,7 +138,8 @@ pub fn run() {
                 .unwrap_or_else(|| std::path::PathBuf::from("."))
                 .join(".humhum")
                 .join("stats.json");
-            let stats_store = stats_store::StatsStore::new(stats_path);
+            let stats_store =
+                stats_store::StatsStore::new_with_backfill(stats_path, analytics_enabled);
             app.manage(Arc::new(std::sync::Mutex::new(stats_store)));
 
             // Knowledge store (persistent)
@@ -267,6 +269,7 @@ pub fn run() {
             commands::clear_sound_pack,
             commands::get_sound_clip,
             commands::get_stats,
+            commands::clear_stats,
             commands::get_agent_stats,
             commands::get_hexa_readouts,
             commands::type_in_terminal,

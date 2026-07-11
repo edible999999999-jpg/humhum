@@ -175,6 +175,7 @@ export interface AppConfig {
     language: "zh" | "en";
     auto_confirm?: boolean;
     auto_confirm_sessions?: string[];
+    analytics_enabled?: boolean;
     awake_mode?: boolean;
     notifications?: {
       approval: boolean;

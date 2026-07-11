@@ -60,6 +60,7 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
   const [remoteLoading, setRemoteLoading] = useState(false);
   const [soundPacks, setSoundPacks] = useState<SoundPackInfo[]>([]);
   const [soundPackLoading, setSoundPackLoading] = useState(false);
+  const [statsClearing, setStatsClearing] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -128,6 +129,19 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
       setSaving(false);
     }
   }, [config]);
+
+  const handleClearStats = async () => {
+    setStatsClearing(true);
+    setMessage(null);
+    try {
+      await invoke("clear_stats");
+      setMessage({ type: "success", text: t("settings.analyticsCleared") });
+    } catch (cause) {
+      setMessage({ type: "error", text: String(cause) });
+    } finally {
+      setStatsClearing(false);
+    }
+  };
 
   const updateConfig = useCallback(
     (updater: (prev: AppConfig) => AppConfig) => {
@@ -508,6 +522,39 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
             >
               {config.ui.auto_confirm ? t("settings.rageOn") : t("settings.rageOff")}
             </button>
+          </div>
+        </KawaiiCard>
+
+        <KawaiiCard icon="◌" title={t("settings.analyticsTitle")} subtitle={t("settings.analyticsSubtitle")}>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs text-white/60">{t("settings.analyticsDesc")}</span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void handleClearStats()}
+                disabled={statsClearing}
+                className="kawaii-toggle-btn"
+              >
+                {statsClearing ? t("settings.analyticsClearing") : t("settings.analyticsClear")}
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  updateConfig((current) => ({
+                    ...current,
+                    ui: {
+                      ...current.ui,
+                      analytics_enabled: current.ui.analytics_enabled === false,
+                    },
+                  }))
+                }
+                className={`kawaii-toggle-btn ${config.ui.analytics_enabled !== false ? "connected" : ""}`}
+              >
+                {config.ui.analytics_enabled !== false
+                  ? t("settings.analyticsOn")
+                  : t("settings.analyticsOff")}
+              </button>
+            </div>
           </div>
         </KawaiiCard>
 

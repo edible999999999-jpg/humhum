@@ -93,6 +93,7 @@ pub struct UiConfig {
     pub language: String,
     pub auto_confirm: bool,
     pub auto_confirm_sessions: BTreeSet<String>,
+    pub analytics_enabled: bool,
     pub awake_mode: bool,
     pub notifications: NotificationPreferences,
     pub sounds: SoundPreferences,
@@ -152,6 +153,7 @@ impl Default for UiConfig {
             language: "zh".to_string(),
             auto_confirm: false,
             auto_confirm_sessions: BTreeSet::new(),
+            analytics_enabled: true,
             awake_mode: false,
             notifications: NotificationPreferences::default(),
             sounds: SoundPreferences::default(),
@@ -276,6 +278,7 @@ mod tests {
         assert!(config.ui.sounds.pack_path.is_none());
         assert!(config.ui.mascot_overrides.is_empty());
         assert!(config.ui.auto_confirm_sessions.is_empty());
+        assert!(config.ui.analytics_enabled);
     }
 
     #[test]
@@ -306,5 +309,6 @@ mod tests {
         assert_eq!(config.pi.token.as_deref(), Some("legacy-token"));
         assert!(config.ui.notifications.approval);
         assert!(config.ui.auto_confirm_sessions.is_empty());
+        assert!(config.ui.analytics_enabled);
     }
 }

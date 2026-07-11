@@ -391,15 +391,21 @@ async fn handle_event(
         hook_event_name.as_str(),
         "Stop" | "TaskCompleted" | "SessionEnd"
     ) {
-        if let Some(transcript_path) = &hook_event.transcript_path {
-            if let Some(store) = app_handle.try_state::<Arc<std::sync::Mutex<StatsStore>>>() {
-                if let Ok(mut store) = store.lock() {
-                    if let Err(e) = store.record_session_end(
-                        transcript_path,
-                        &hook_event.session_id,
-                        &hook_event.client_type,
-                    ) {
-                        log::error!("[Stats] Failed to record session: {}", e);
+        let analytics_enabled = app_handle
+            .try_state::<Arc<std::sync::Mutex<crate::config::AppConfig>>>()
+            .and_then(|config| config.lock().ok().map(|config| config.ui.analytics_enabled))
+            .unwrap_or(false);
+        if analytics_enabled {
+            if let Some(transcript_path) = &hook_event.transcript_path {
+                if let Some(store) = app_handle.try_state::<Arc<std::sync::Mutex<StatsStore>>>() {
+                    if let Ok(mut store) = store.lock() {
+                        if let Err(e) = store.record_session_end(
+                            transcript_path,
+                            &hook_event.session_id,
+                            &hook_event.client_type,
+                        ) {
+                            log::error!("[Stats] Failed to record session: {}", e);
+                        }
                     }
                 }
             }

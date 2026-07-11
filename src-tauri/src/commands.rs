@@ -3177,6 +3177,16 @@ pub async fn get_stats(
     serde_json::to_value(stats).map_err(|e| format!("Serialize error: {}", e))
 }
 
+#[tauri::command]
+pub async fn clear_stats(
+    store: State<'_, Arc<std::sync::Mutex<StatsStore>>>,
+) -> Result<(), String> {
+    store
+        .lock()
+        .map_err(|error| format!("Lock error: {error}"))?
+        .clear()
+}
+
 /// Get per-agent usage statistics for comparison
 #[tauri::command]
 pub async fn get_agent_stats(

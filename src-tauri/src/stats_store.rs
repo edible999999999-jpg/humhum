@@ -137,12 +137,27 @@ pub struct StatsStore {
 
 impl StatsStore {
     pub fn new(file_path: PathBuf) -> Self {
+        Self::new_with_backfill(file_path, true)
+    }
+
+    pub fn new_with_backfill(file_path: PathBuf, backfill_enabled: bool) -> Self {
         let data = Self::load_from_disk(&file_path);
         let mut store = Self { data, file_path };
-        if let Err(e) = store.backfill_recent_transcripts() {
-            log::warn!("[Stats] Backfill failed: {}", e);
+        if backfill_enabled {
+            if let Err(e) = store.backfill_recent_transcripts() {
+                log::warn!("[Stats] Backfill failed: {}", e);
+            }
         }
         store
+    }
+
+    pub fn clear(&mut self) -> Result<(), String> {
+        if self.file_path.exists() {
+            std::fs::remove_file(&self.file_path)
+                .map_err(|error| format!("Failed to remove stats file: {error}"))?;
+        }
+        self.data = StatsData::default();
+        Ok(())
     }
 
     fn load_from_disk(path: &PathBuf) -> StatsData {
@@ -848,5 +863,23 @@ mod tests {
         assert_eq!(aggregated.total_output_tokens, 2);
         assert_eq!(aggregated.daily_buckets.len(), 1);
         assert_eq!(aggregated.daily_buckets[0].session_count, 1);
+    }
+
+    #[test]
+    fn clear_removes_persisted_and_in_memory_usage() {
+        let temp = tempfile::tempdir().unwrap();
+        let stats_path = temp.path().join("stats.json");
+        std::fs::write(
+            &stats_path,
+            r#"{"sessions":[],"daily_buckets":[],"processed_transcripts":["private.jsonl"]}"#,
+        )
+        .unwrap();
+        let mut store = StatsStore::new_with_backfill(stats_path.clone(), false);
+
+        store.clear().unwrap();
+
+        assert!(!stats_path.exists());
+        assert_eq!(store.get_aggregated_stats().total_sessions, 0);
+        assert!(store.data.processed_transcripts.is_empty());
     }
 }
