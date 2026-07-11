@@ -1,5 +1,6 @@
 mod agent_kernel;
 mod client_registry;
+mod codex_bridge;
 mod commands;
 mod config;
 mod event_bus;
