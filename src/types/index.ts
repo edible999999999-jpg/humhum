@@ -190,6 +190,7 @@ export interface AppConfig {
       error: boolean;
       resource_limit: boolean;
     };
+    mascot_overrides?: Record<string, string>;
   };
 }
 

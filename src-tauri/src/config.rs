@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 /// Application configuration stored on disk
@@ -94,6 +95,7 @@ pub struct UiConfig {
     pub awake_mode: bool,
     pub notifications: NotificationPreferences,
     pub sounds: SoundPreferences,
+    pub mascot_overrides: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -151,6 +153,7 @@ impl Default for UiConfig {
             awake_mode: false,
             notifications: NotificationPreferences::default(),
             sounds: SoundPreferences::default(),
+            mascot_overrides: BTreeMap::new(),
         }
     }
 }
@@ -269,6 +272,7 @@ mod tests {
         assert!(config.ui.notifications.message);
         assert!(config.ui.sounds.enabled);
         assert!(config.ui.sounds.pack_path.is_none());
+        assert!(config.ui.mascot_overrides.is_empty());
     }
 
     #[test]

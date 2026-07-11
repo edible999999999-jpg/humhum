@@ -1,6 +1,7 @@
 import { COLORS, BABY_THRESHOLD } from "./constants";
 import { drawAbsorbedAgents } from "./AgentCreatures";
 import type { HumColors, PetState, ActiveAgent } from "./types";
+import type { MascotTheme } from "@/lib/mascot-theme";
 
 export class FallbackRenderer {
   private canvas: OffscreenCanvas;
@@ -11,6 +12,7 @@ export class FallbackRenderer {
   private agents: ActiveAgent[] = [];
   private spriteImage: CanvasImageSource | null = null;
   private agentIcons: Record<string, CanvasImageSource> = {};
+  private theme: MascotTheme | null = null;
 
   constructor(size: number, dpr: number) {
     this.sz = size;
@@ -35,6 +37,10 @@ export class FallbackRenderer {
 
   setSpriteImage(image: CanvasImageSource | null) {
     this.spriteImage = image;
+  }
+
+  setTheme(theme: MascotTheme) {
+    this.theme = theme;
   }
 
   render(dt: number): OffscreenCanvas {
@@ -65,12 +71,31 @@ export class FallbackRenderer {
     }
 
     if (this.spriteImage) {
+      this.drawThemeRing(ctx, cx, dcy, R);
       this.drawSpritePet(ctx, cx, dcy, dby, R, C, sz);
     }
 
     ctx.restore();
 
     return this.canvas;
+  }
+
+  private drawThemeRing(
+    ctx: OffscreenCanvasRenderingContext2D,
+    cx: number,
+    dcy: number,
+    R: number,
+  ) {
+    if (!this.theme || this.theme.id === "humi") return;
+    ctx.save();
+    ctx.strokeStyle = this.withAlpha(this.theme.accent, 0.2);
+    ctx.lineWidth = 1.6;
+    ctx.setLineDash([3, 5]);
+    ctx.lineDashOffset = -this.time * 5;
+    ctx.beginPath();
+    ctx.arc(cx, dcy + R * 0.14, R * 1.15, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
   }
 
   private drawSpritePet(

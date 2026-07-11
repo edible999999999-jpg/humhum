@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { FolderOpen, Play, X } from "lucide-react";
+import { FolderOpen, Play, RotateCcw, X } from "lucide-react";
 import type { AppConfig } from "@/types";
 import { useTranslation } from "@/lib/i18n/react";
 import { setLanguage } from "@/lib/i18n";
@@ -10,6 +10,7 @@ import { VOICE_PRESETS, DEFAULT_VOICE } from "./voicePresets";
 import { StatsPanel } from "./StatsPanel";
 import { MemoryPanel } from "./MemoryPanel";
 import { playSound, type SoundEvent } from "@/lib/audio/sound-effects";
+import { MASCOT_THEMES, resolveMascotTheme } from "@/lib/mascot-theme";
 
 interface SettingsPanelProps {
   onClose: () => void;
@@ -304,6 +305,12 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
     resource_limit: config.ui.sounds?.resource_limit !== false,
     pack_path: config.ui.sounds?.pack_path,
   };
+  const mascotOverrides = config.ui.mascot_overrides ?? {};
+  const mascotClients = [
+    ...clients,
+    { id: "pi", name: "Pi Agent" },
+    { id: "wukong", name: "Wukong" },
+  ].filter((client, index, all) => all.findIndex((candidate) => candidate.id === client.id) === index);
 
   return (
     <div className="w-full h-full flex flex-col settings-panel">
@@ -676,6 +683,67 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
                 );
               })}
             </div>
+          </div>
+        </KawaiiCard>
+
+        <KawaiiCard icon="H" title={t("settings.mascotTitle")} subtitle={t("settings.mascotSubtitle")}>
+          <div className="space-y-2">
+            {Object.keys(mascotOverrides).length > 0 && (
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => updateConfig((current) => ({
+                    ...current,
+                    ui: { ...current.ui, mascot_overrides: {} },
+                  }))}
+                  className="kawaii-icon-btn"
+                  title={t("settings.mascotResetAll")}
+                  aria-label={t("settings.mascotResetAll")}
+                >
+                  <RotateCcw size={14} />
+                </button>
+              </div>
+            )}
+            {mascotClients.map((client) => {
+              const theme = resolveMascotTheme(client.id, mascotOverrides);
+              return (
+                <div key={client.id} className="flex items-center gap-2 min-w-0">
+                  <span
+                    className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full border bg-white/80 text-[9px] font-bold"
+                    style={{ borderColor: theme.accent, color: theme.accent }}
+                    title={theme.label}
+                  >
+                    {theme.icon ? (
+                      <img src={theme.icon} alt="" className="h-5 w-5 object-contain" />
+                    ) : (
+                      theme.monogram
+                    )}
+                  </span>
+                  <span className="w-24 shrink-0 truncate text-xs text-white/65" title={client.name}>
+                    {client.name}
+                  </span>
+                  <select
+                    value={mascotOverrides[client.id] ?? ""}
+                    onChange={(event) => updateConfig((current) => {
+                      const nextOverrides = { ...(current.ui.mascot_overrides ?? {}) };
+                      if (event.target.value) nextOverrides[client.id] = event.target.value;
+                      else delete nextOverrides[client.id];
+                      return {
+                        ...current,
+                        ui: { ...current.ui, mascot_overrides: nextOverrides },
+                      };
+                    })}
+                    className="kawaii-input min-w-0 flex-1 py-2"
+                    aria-label={`${client.name} ${t("settings.mascotAppearance")}`}
+                  >
+                    <option value="">{t("settings.mascotAutomatic", { name: resolveMascotTheme(client.id).label })}</option>
+                    {MASCOT_THEMES.map((candidate) => (
+                      <option key={candidate.id} value={candidate.id}>{candidate.label}</option>
+                    ))}
+                  </select>
+                </div>
+              );
+            })}
           </div>
         </KawaiiCard>
 

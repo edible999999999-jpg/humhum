@@ -58,6 +58,7 @@ export function PetView() {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [windowReady, setWindowReady] = useState(false);
   const [activeClients, setActiveClients] = useState<string[]>([]);
+  const [primaryClient, setPrimaryClient] = useState<string | null>(null);
   const { bubbles, burst: burstBubbles } = useBubbleTrail();
   const dragStartPos = useRef({ x: 0, y: 0 });
   const clickCount = useRef(0);
@@ -83,6 +84,7 @@ export function PetView() {
         ]);
         const unique = [...new Set(sessions.map((s) => s.client_type))];
         setActiveClients(unique);
+        setPrimaryClient((current) => current ?? unique[0] ?? null);
         configRef.current = cfg;
         setLanguage(cfg.ui.language as "zh" | "en");
       } catch {
@@ -274,6 +276,7 @@ export function PetView() {
     console.log("[PetView] Event received:", eventName, "pipeline:", pipeline ? "OK" : "NULL");
 
     if (latestEvent.client_type) {
+      setPrimaryClient(latestEvent.client_type);
       setActiveClients((prev) =>
         prev.includes(latestEvent.client_type) ? prev : [...prev, latestEvent.client_type],
       );
@@ -570,7 +573,12 @@ export function PetView() {
             </button>
           </div>
         )}
-        <PetBody state={petState} activeClients={activeClients} />
+        <PetBody
+          state={petState}
+          activeClients={activeClients}
+          primaryClient={primaryClient}
+          mascotOverrides={configRef.current?.ui.mascot_overrides}
+        />
         <BubbleParticles bubbles={bubbles} />
       </div>
     </div>
@@ -603,12 +611,24 @@ async function respondToPermission(eventId: string, behavior: string) {
   }
 }
 
-function PetBody({ state, activeClients }: { state: string; activeClients: string[] }) {
+function PetBody({
+  state,
+  activeClients,
+  primaryClient,
+  mascotOverrides,
+}: {
+  state: string;
+  activeClients: string[];
+  primaryClient: string | null;
+  mascotOverrides?: Record<string, string>;
+}) {
   return (
     <PetCanvas
       state={state as import("@/types").PetState}
       size={140}
       activeClients={activeClients}
+      primaryClient={primaryClient}
+      mascotOverrides={mascotOverrides}
     />
   );
 }

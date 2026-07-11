@@ -3,6 +3,7 @@ import { FallbackRenderer } from "@/engine/FallbackRenderer";
 import { FPS, AGENT_BRAND_COLOR, AGENT_ICON_SRC } from "@/engine/constants";
 import type { PetState } from "@/types";
 import type { ActiveAgent } from "@/engine/types";
+import { resolveMascotTheme } from "@/lib/mascot-theme";
 
 const PetModel3D = lazy(() =>
   import("./PetModel3D").then((module) => ({ default: module.PetModel3D })),
@@ -15,19 +16,31 @@ interface PetCanvasProps {
   size?: number;
   activeClients?: string[];
   prefer3d?: boolean;
+  primaryClient?: string | null;
+  mascotOverrides?: Record<string, string>;
 }
 
-export function PetCanvas({ state, size = 140, activeClients = [], prefer3d = true }: PetCanvasProps) {
+export function PetCanvas({
+  state,
+  size = 140,
+  activeClients = [],
+  prefer3d = true,
+  primaryClient,
+  mascotOverrides,
+}: PetCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<FallbackRenderer | null>(null);
   const rafRef = useRef<number>(0);
   const stateRef = useRef<PetState>(state);
   const agentsRef = useRef<ActiveAgent[]>([]);
+  const themeRef = useRef(resolveMascotTheme(primaryClient, mascotOverrides));
   const agentIconsRef = useRef<Record<string, HTMLImageElement>>({});
   const [modelReady, setModelReady] = useState(false);
   const [modelUnavailable, setModelUnavailable] = useState(false);
 
   stateRef.current = state;
+  const theme = resolveMascotTheme(primaryClient, mascotOverrides);
+  themeRef.current = theme;
 
   const useModel3d = prefer3d && size >= 72 && !modelUnavailable;
 
@@ -83,6 +96,7 @@ export function PetCanvas({ state, size = 140, activeClients = [], prefer3d = tr
 
       renderer.setState(stateRef.current);
       renderer.setAgents(agentsRef.current);
+      renderer.setTheme(themeRef.current);
 
       const offscreen = renderer.render(dt);
       ctx!.clearRect(0, 0, canvas!.width, canvas!.height);
@@ -116,6 +130,7 @@ export function PetCanvas({ state, size = 140, activeClients = [], prefer3d = tr
       className="relative select-none pointer-events-none"
       style={{ width: size, height: size }}
       data-pet-renderer={useModel3d && modelReady ? "3d" : "2d"}
+      data-mascot-theme={theme.id}
     >
       <canvas
         ref={canvasRef}
@@ -132,6 +147,25 @@ export function PetCanvas({ state, size = 140, activeClients = [], prefer3d = tr
             onUnavailable={handleModelUnavailable}
           />
         </Suspense>
+      )}
+      {theme.id !== "humi" && (
+        <span
+          className="absolute right-[8%] bottom-[10%] flex items-center justify-center overflow-hidden rounded-full border bg-white/90 font-bold shadow-sm"
+          style={{
+            width: Math.max(16, size * 0.19),
+            height: Math.max(16, size * 0.19),
+            borderColor: theme.accent,
+            color: theme.accent,
+            fontSize: Math.max(7, size * 0.07),
+          }}
+          title={theme.label}
+        >
+          {theme.icon ? (
+            <img src={theme.icon} alt="" className="h-[72%] w-[72%] object-contain" />
+          ) : (
+            theme.monogram
+          )}
+        </span>
       )}
     </div>
   );

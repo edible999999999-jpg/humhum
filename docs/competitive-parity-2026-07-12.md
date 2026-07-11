@@ -21,7 +21,7 @@ Status meanings:
 | Transcript backfill | Complete | Local Codex JSONL and Claude stats/readouts feed history and summaries. |
 | Broad client coverage | Partial | Managed profiles now include Claude Code, Codex, Qwen Code, Gemini CLI, Kimi, QoderWork, Qoder, CodeBuddy, WorkBuddy, Cursor, GitHub Copilot CLI and OpenCode; local Pi and Wukong watchers also exist. Copilot normalization was runtime-smoked. OpenCode and Cursor still need an installed-client smoke test, and remote variants remain missing. |
 | SSH remote bridge | Partial | Settings can bootstrap Claude hooks over an already trusted, key-only SSH connection and receive events through a loopback-only reverse tunnel. The remote credential is event-only, stored separately from the local API token, and revoked locally on disconnect. A real remote-host smoke test and multi-host management are still missing. |
-| Custom sound packs and per-agent mascot | Partial | HUMHUM now imports local OpenPeon/CESP packs, auto-discovers the standard OpenPeon and peon-ping pack directories, maps five event categories, previews each event, preserves per-event mute controls, and falls back to built-in sounds when a pack is incomplete. Per-agent mascot assignment remains missing. |
+| Custom sound packs and per-agent mascot | Complete | HUMHUM imports and auto-discovers OpenPeon/CESP packs with five event categories, previews, per-event controls and built-in fallback. Humi now follows the most recently active Agent with a distinct brand theme and badge across 2D/3D rendering, while Settings supports per-Agent appearance overrides and reset-all. |
 | Launch at login | Complete | Settings exposes the native macOS LaunchAgent switch and always reads back system state. Runtime verification created `HumHum.plist` with `RunAtLoad=true`, then disabled it and confirmed clean removal. |
 
 ## Happy
@@ -73,6 +73,8 @@ Status meanings:
 - Settings now imports local folders containing `openpeon.json` and auto-discovers packs under `~/.openpeon/packs` and `~/.claude/hooks/peon-ping/packs`. HUMHUM supports `task.acknowledge`/`session.start`, `input.required`, `task.complete`, `task.error`, and `resource.limit` with `.wav`, `.mp3`, and `.ogg` files.
 - Sound pack access is backend-controlled: fixed event names select files, manifest and audio paths are canonicalized under the chosen directory, traversal and escaping symlinks are rejected, and malformed or incomplete packs fall back to the built-in HUMHUM sound instead of going silent.
 - `PostToolUseFailure` is now a first-class frontend hook event. Ordinary failures play the error category, while rate, quota, context, usage, token, and resource exhaustion use `resource.limit`.
+- Humi now resolves its appearance from the Agent that produced the latest event. Fifteen built-in HUMHUM themes cover the managed clients plus Pi and Wukong; unknown clients safely retain the base Humi appearance.
+- Agent appearance overrides persist in `~/.humhum/config.json`. Settings can keep each Agent's automatic theme, assign any other HUMHUM theme, or reset all overrides; the same resolver drives both 2D and 3D badge identity.
 - Awake Mode now combines persistent display/system idle assertions with a five-second `UserIsActive` pulse every 120 seconds, restores from saved config, and restarts its long-lived guard if that child exits unexpectedly.
 - Runtime power verification observed the persistent `PreventUserIdleDisplaySleep` and `PreventUserIdleSystemSleep` assertions plus pulse PID 94482 reporting `UserIsActive` with a five-second timeout in `pmset`.
 - Claude pending permissions are projected to control-scoped mobile devices with full paths reduced to file names. Decisions reuse the desktop pending channel instead of a second execution path.
@@ -80,11 +82,11 @@ Status meanings:
 - Terminal.app routes now normalize only `ttys` plus digits, reject script input, and select the matching AppleScript tab before activating the window. A locked Mac prevented the temporary real-tab smoke test, so this remains unit/build verified rather than runtime verified.
 - The release arm64 `HumHum.app` built successfully. Because the locked desktop stalled only Tauri's decorative DMG Finder layout, a standard compressed read-only DMG was generated directly, verified by `hdiutil`, mounted, and its contained app passed strict deep code-sign verification.
 - Local release artifact: `src-tauri/target/release/bundle/dmg/HumHum_0.1.0_aarch64.dmg` (43 MB), SHA-256 `dd7c486146643363a00203418dbc6d48fc56b8e5048403b676eea544efbfc1e0`. It includes the OpenPeon/CESP sound-pack slice, has a complete ad-hoc signature, passed `hdiutil verify`, and its mounted arm64 app passed strict deep code-sign verification. It is not Developer ID signed or notarized, so it is not yet a frictionless public download.
-- Rust: 84 passed, 1 ignored. Frontend: 17 passed. Production frontend build: passed.
+- Rust: 84 passed, 1 ignored. Frontend: 20 passed. Production frontend build: passed.
 
 ## Next Iteration Order
 
-1. Ghostty exact terminal identifiers, IDE chat routing, and per-agent mascot assignment.
+1. Ghostty exact terminal identifiers and IDE chat routing.
 2. Real installed-client smoke tests for OpenCode and Cursor, plus OpenCode permission reply support.
 3. Durable queued Claude follow-up on top of the scoped Codex and Claude approval controls.
 4. Real-host SSH smoke testing, multi-host presence, reconnect controls, and remote cleanup.
