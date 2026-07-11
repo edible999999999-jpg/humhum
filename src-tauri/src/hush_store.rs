@@ -17,6 +17,10 @@ pub struct HushInboxMessage {
     pub importance: u8,
     pub suggested_reply: Option<String>,
     pub received_at: String,
+    #[serde(default)]
+    pub source_id: Option<String>,
+    #[serde(default)]
+    pub preview_limited: bool,
     pub raw: Value,
 }
 
@@ -38,6 +42,10 @@ pub struct HushInboundPayload {
     pub tier: Option<String>,
     pub importance: Option<u8>,
     pub suggested_reply: Option<String>,
+    pub received_at: Option<String>,
+    pub source_id: Option<String>,
+    #[serde(default)]
+    pub preview_limited: bool,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
@@ -72,8 +80,17 @@ impl HushStore {
                 tier: None,
                 importance: None,
                 suggested_reply: None,
+                received_at: None,
+                source_id: None,
+                preview_limited: false,
                 extra: BTreeMap::new(),
             });
+
+        if let Some(source_id) = parsed.source_id.as_deref() {
+            if self.contains_source_id(source_id) {
+                return Err(format!("Duplicate source message: {source_id}"));
+            }
+        }
 
         let text = parsed
             .text
@@ -126,10 +143,14 @@ impl HushStore {
         let importance = parsed
             .importance
             .unwrap_or_else(|| infer_importance(&tier, &text));
-        let suggested_reply = parsed
-            .suggested_reply
-            .clone()
-            .or_else(|| suggest_reply(&tier, &sender, &text));
+        let suggested_reply = if parsed.preview_limited {
+            None
+        } else {
+            parsed
+                .suggested_reply
+                .clone()
+                .or_else(|| suggest_reply(&tier, &sender, &text))
+        };
 
         let message = HushInboxMessage {
             id: format!("hush-{}", Uuid::new_v4()),
@@ -140,7 +161,11 @@ impl HushStore {
             tier,
             importance,
             suggested_reply,
-            received_at: chrono::Utc::now().to_rfc3339(),
+            received_at: parsed
+                .received_at
+                .unwrap_or_else(|| chrono::Utc::now().to_rfc3339()),
+            source_id: parsed.source_id,
+            preview_limited: parsed.preview_limited,
             raw,
         };
 
@@ -150,6 +175,12 @@ impl HushStore {
         }
         self.save()?;
         Ok(message)
+    }
+
+    pub fn contains_source_id(&self, source_id: &str) -> bool {
+        self.messages
+            .iter()
+            .any(|message| message.source_id.as_deref() == Some(source_id))
     }
 
     pub fn summary(&self) -> HushInboxSummary {
@@ -187,6 +218,14 @@ impl HushStore {
             .map_err(|e| format!("Failed to serialize Hush inbox: {}", e))?;
         std::fs::write(&self.file_path, json)
             .map_err(|e| format!("Failed to write Hush inbox: {}", e))
+    }
+
+    #[cfg(test)]
+    fn with_file_path(file_path: PathBuf) -> Self {
+        Self {
+            messages: Vec::new(),
+            file_path,
+        }
     }
 }
 
@@ -266,5 +305,60 @@ fn suggest_reply(tier: &str, sender: &str, text: &str) -> Option<String> {
         Some(format!("收到，我先看一下，稍后同步进展给你。@{}", sender))
     } else {
         Some("看到了，我晚点回你～".to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn temp_file(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("humhum-hush-{label}-{}.json", Uuid::new_v4()))
+    }
+
+    #[test]
+    fn legacy_messages_default_notification_fields() {
+        let message: HushInboxMessage = serde_json::from_value(json!({
+            "id": "legacy",
+            "platform": "wechat",
+            "sender": "WeChat",
+            "chat": null,
+            "text": "hello",
+            "tier": "friends",
+            "importance": 2,
+            "suggested_reply": null,
+            "received_at": "2026-07-11T00:00:00Z",
+            "raw": {}
+        }))
+        .unwrap();
+
+        assert_eq!(message.source_id, None);
+        assert!(!message.preview_limited);
+    }
+
+    #[test]
+    fn rejects_duplicate_source_id() {
+        let path = temp_file("dedupe");
+        let mut store = HushStore::with_file_path(path.clone());
+        let payload = json!({
+            "platform": "wechat",
+            "sender": "WeChat",
+            "text": "你收到了一条消息",
+            "source_id": "wechat:abc",
+            "preview_limited": true,
+            "received_at": "2026-07-11T01:02:03Z"
+        });
+
+        let first = store.add_from_value(payload.clone()).unwrap();
+        assert_eq!(first.received_at, "2026-07-11T01:02:03Z");
+        assert!(first.preview_limited);
+        assert!(first.suggested_reply.is_none());
+
+        let error = store.add_from_value(payload).unwrap_err();
+        assert!(error.contains("Duplicate source message"));
+        assert_eq!(store.summary().total, 1);
+
+        let _ = std::fs::remove_file(path);
     }
 }
