@@ -189,6 +189,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::get_config,
             commands::save_config,
+            commands::get_auto_confirm_sessions,
+            commands::set_session_auto_confirm,
             commands::get_wake_guard_status,
             commands::get_launch_at_login,
             commands::set_launch_at_login,

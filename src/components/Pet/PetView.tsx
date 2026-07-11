@@ -72,6 +72,20 @@ export function PetView() {
     }).catch(console.error);
   }, []);
 
+  // A newly toggled session can auto-approve before the five-second config poll refreshes.
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    (async () => {
+      const { listen } = await import("@tauri-apps/api/event");
+      unlisten = await listen<string>("humhum://permission-auto-confirmed", (event) => {
+        setPermissionQueue((queue) => queue.filter((item) => item.id !== event.payload));
+      });
+    })();
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, []);
+
   const pendingPermission = permissionQueue[0] ?? null;
   const queueLength = permissionQueue.length;
 
@@ -295,7 +309,10 @@ export function PetView() {
         return;
       }
 
-      if (configRef.current?.ui?.auto_confirm) {
+      if (
+        configRef.current?.ui?.auto_confirm
+        || configRef.current?.ui?.auto_confirm_sessions?.includes(latestEvent.session_id)
+      ) {
         if (pipeline) {
           pipeline.processEvent(latestEvent).catch(console.error);
         }

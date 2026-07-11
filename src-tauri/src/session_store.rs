@@ -327,6 +327,29 @@ mod tests {
     }
 
     #[test]
+    fn clearing_an_auto_approved_permission_removes_the_waiting_flag() {
+        let mut store = SessionStore::new();
+        let mut permission = event(json!({}));
+        permission.hook_event_name = "PermissionRequest".into();
+        store.update_from_event(&permission);
+        assert!(
+            store
+                .get_session("session-1")
+                .unwrap()
+                .has_pending_permission
+        );
+
+        store.clear_pending_permission("session-1");
+
+        assert!(
+            !store
+                .get_session("session-1")
+                .unwrap()
+                .has_pending_permission
+        );
+    }
+
+    #[test]
     fn later_empty_route_fields_do_not_erase_exact_identifiers() {
         let mut store = SessionStore::new();
         store.update_from_event(&event(json!({

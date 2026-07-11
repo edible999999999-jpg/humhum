@@ -771,6 +771,60 @@ pub async fn save_config(
     Ok(())
 }
 
+const MAX_AUTO_CONFIRM_SESSIONS: usize = 100;
+
+#[tauri::command]
+pub async fn get_auto_confirm_sessions(
+    config: State<'_, Arc<std::sync::Mutex<AppConfig>>>,
+) -> Result<Vec<String>, String> {
+    let config = config
+        .lock()
+        .map_err(|error| format!("Lock error: {error}"))?;
+    Ok(config.ui.auto_confirm_sessions.iter().cloned().collect())
+}
+
+#[tauri::command]
+pub async fn set_session_auto_confirm(
+    config: State<'_, Arc<std::sync::Mutex<AppConfig>>>,
+    sessions: State<'_, Arc<std::sync::Mutex<SessionStore>>>,
+    session_id: String,
+    enabled: bool,
+) -> Result<Vec<String>, String> {
+    let session_id = session_id.trim();
+    if session_id.is_empty() || session_id.len() > 256 {
+        return Err("Invalid session ID".into());
+    }
+    {
+        let sessions = sessions
+            .lock()
+            .map_err(|error| format!("Lock error: {error}"))?;
+        let session = sessions
+            .get_session(session_id)
+            .ok_or_else(|| "Session is no longer active".to_string())?;
+        if session.client_type != "claude-code" {
+            return Err("Per-session auto-approve is available only for Claude Code".into());
+        }
+    }
+    let mut current = config
+        .lock()
+        .map_err(|error| format!("Lock error: {error}"))?;
+    let mut updated = current.clone();
+    if enabled {
+        if !updated.ui.auto_confirm_sessions.contains(session_id)
+            && updated.ui.auto_confirm_sessions.len() >= MAX_AUTO_CONFIRM_SESSIONS
+        {
+            return Err("Too many saved auto-approve sessions".into());
+        }
+        updated.ui.auto_confirm_sessions.insert(session_id.into());
+    } else {
+        updated.ui.auto_confirm_sessions.remove(session_id);
+    }
+    updated.save()?;
+    let result = updated.ui.auto_confirm_sessions.iter().cloned().collect();
+    *current = updated;
+    Ok(result)
+}
+
 /// Get the hook server port
 #[tauri::command]
 pub async fn get_hook_port(

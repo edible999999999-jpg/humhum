@@ -1,5 +1,6 @@
-import { useReducer, useState } from "react";
-import { Crosshair, FileDiff, Link, Power, RefreshCw, RotateCcw, Send, ShieldCheck, Smartphone, Square, Trash2 } from "lucide-react";
+import { useEffect, useReducer, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { Crosshair, FileDiff, Flame, Link, Power, RefreshCw, RotateCcw, Send, ShieldCheck, Smartphone, Square, Trash2 } from "lucide-react";
 import {
   useHexaData,
   type CodexRemoteControlState,
@@ -192,6 +193,8 @@ function SessionCard({
   queuedInterventions,
   onRetryIntervention,
   onDiscardIntervention,
+  autoConfirmEnabled,
+  onToggleAutoConfirm,
 }: {
   item: HexaSupervisorSession;
   reviewOpen: boolean;
@@ -205,6 +208,8 @@ function SessionCard({
   queuedInterventions: QueuedIntervention[];
   onRetryIntervention: (interventionId: string) => Promise<CodexSendReceipt>;
   onDiscardIntervention: (interventionId: string) => Promise<void>;
+  autoConfirmEnabled: boolean;
+  onToggleAutoConfirm: (sessionId: string, enabled: boolean) => Promise<void>;
 }) {
   const color = getClientColor(item.session.client_type);
   const eventNames = item.session.event_names.slice(-6);
@@ -212,6 +217,7 @@ function SessionCard({
   const isCompleted = item.session.status === "completed";
   const showReadout = !isCompleted || reviewOpen;
   const [focusState, setFocusState] = useState<"idle" | "busy" | "exact" | "fallback" | "failed">("idle");
+  const [autoConfirmBusy, setAutoConfirmBusy] = useState(false);
   const [changes, dispatchChanges] = useReducer(sessionChangesReducer, initialSessionChangesState);
   const interventionProvider = interventionProviderForClient(item.session.client_type);
 
@@ -308,13 +314,31 @@ function SessionCard({
             {item.project_intent}
           </p>
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "auto auto", gap: 8, alignItems: "start" }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
           <div style={{ textAlign: "right", minWidth: 42 }}>
             <div style={{ color: "rgba(255,255,255,0.72)", fontSize: 18, fontWeight: 850 }}>
               {item.session.event_count}
             </div>
             <div style={{ color: "rgba(255,255,255,0.28)", fontSize: 10 }}>events</div>
           </div>
+          {!isCompleted && item.session.client_type === "claude-code" && (
+            <button
+              type="button"
+              title={autoConfirmEnabled ? "关闭这个会话的自动批准" : "只为这个会话自动批准权限"}
+              aria-label={autoConfirmEnabled ? "关闭单会话自动批准" : "开启单会话自动批准"}
+              disabled={autoConfirmBusy}
+              onClick={() => {
+                setAutoConfirmBusy(true);
+                void onToggleAutoConfirm(item.session.session_id, !autoConfirmEnabled)
+                  .catch((cause) => console.error("Could not change session auto-approve", cause))
+                  .finally(() => setAutoConfirmBusy(false));
+              }}
+              className={`kawaii-toggle-btn ${autoConfirmEnabled ? "connected" : ""}`}
+              style={{ width: 34, height: 34, padding: 0, display: "grid", placeItems: "center" }}
+            >
+              <Flame size={15} />
+            </button>
+          )}
           <button
             type="button"
             title={focusState === "failed" ? "定位失败，点击重试" : "返回这个 Agent 会话"}
@@ -949,6 +973,18 @@ export function HexaModule() {
     revokeMobileDevice,
   } = useHexaData();
   const [openReviews, setOpenReviews] = useState<Set<string>>(new Set());
+  const [autoConfirmSessions, setAutoConfirmSessions] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    void invoke<string[]>("get_auto_confirm_sessions")
+      .then((sessions) => setAutoConfirmSessions(new Set(sessions)))
+      .catch(() => setAutoConfirmSessions(new Set()));
+  }, []);
+
+  const toggleAutoConfirm = async (sessionId: string, enabled: boolean) => {
+    const sessions = await invoke<string[]>("set_session_auto_confirm", { sessionId, enabled });
+    setAutoConfirmSessions(new Set(sessions));
+  };
 
   const active = activeSupervisorSessions;
   const recentCompleted = completedSupervisorSessions.slice(0, 6);
@@ -1076,6 +1112,8 @@ export function HexaModule() {
                     : []}
                   onRetryIntervention={retryMessage}
                   onDiscardIntervention={discardQueuedIntervention}
+                  autoConfirmEnabled={autoConfirmSessions.has(item.session.session_id)}
+                  onToggleAutoConfirm={toggleAutoConfirm}
                 />
               );
             })}

@@ -406,6 +406,27 @@ async fn handle_event(
         }
     }
 
+    if hook_event_name == "SessionEnd" {
+        if let Some(config) =
+            app_handle.try_state::<Arc<std::sync::Mutex<crate::config::AppConfig>>>()
+        {
+            if let Ok(mut current) = config.lock() {
+                let mut updated = current.clone();
+                if updated
+                    .ui
+                    .auto_confirm_sessions
+                    .remove(&hook_event.session_id)
+                {
+                    if let Err(error) = updated.save() {
+                        log::warn!("Could not expire session auto-approve: {error}");
+                    } else {
+                        *current = updated;
+                    }
+                }
+            }
+        }
+    }
+
     // Emit event to frontend
     event_bus::emit_hook_event(&app_handle, &hook_event);
 
@@ -443,10 +464,21 @@ async fn handle_event(
             .state::<Arc<std::sync::Mutex<crate::config::AppConfig>>>()
             .inner()
             .clone();
-        let auto_confirm = config_arc.lock().unwrap().ui.auto_confirm;
+        let auto_confirm = config_arc
+            .lock()
+            .map(|config| session_auto_confirm_enabled(&config, &hook_event.session_id))
+            .unwrap_or(false);
 
         if auto_confirm && !is_ask_question {
-            log::info!("Auto-confirm (rage mode) for event {}", event_id);
+            log::info!("Auto-confirm permission for event {}", event_id);
+            if let Ok(mut store) = app_handle
+                .state::<Arc<std::sync::Mutex<SessionStore>>>()
+                .inner()
+                .lock()
+            {
+                store.clear_pending_permission(&hook_event.session_id);
+            }
+            let _ = app_handle.emit("humhum://permission-auto-confirmed", &event_id);
             let response = serde_json::json!({
                 "hookSpecificOutput": {
                     "hookEventName": "PermissionRequest",
@@ -562,6 +594,10 @@ async fn handle_event(
             &serde_json::json!({"status": "received"}),
         ))
     }
+}
+
+fn session_auto_confirm_enabled(config: &crate::config::AppConfig, session_id: &str) -> bool {
+    config.ui.auto_confirm || config.ui.auto_confirm_sessions.contains(session_id)
 }
 
 fn enrich_ghostty_route(payload: &mut Value, hook_event_name: &str) {
@@ -933,5 +969,30 @@ mod agent_payload_tests {
 
         assert_eq!(payload["session_id"], "native-session");
         assert_eq!(payload["cwd"], "/native/project");
+    }
+}
+
+#[cfg(test)]
+mod session_auto_confirm_tests {
+    use super::*;
+
+    #[test]
+    fn a_saved_session_is_approved_without_enabling_global_rage_mode() {
+        let mut config = crate::config::AppConfig::default();
+        config
+            .ui
+            .auto_confirm_sessions
+            .insert("claude-session-1".into());
+
+        assert!(session_auto_confirm_enabled(&config, "claude-session-1"));
+        assert!(!session_auto_confirm_enabled(&config, "claude-session-2"));
+    }
+
+    #[test]
+    fn global_rage_mode_still_approves_every_session() {
+        let mut config = crate::config::AppConfig::default();
+        config.ui.auto_confirm = true;
+
+        assert!(session_auto_confirm_enabled(&config, "any-session"));
     }
 }

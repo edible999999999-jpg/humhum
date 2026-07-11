@@ -174,6 +174,7 @@ export interface AppConfig {
     position: "bottom-right" | "bottom-left" | "top-right" | "top-left";
     language: "zh" | "en";
     auto_confirm?: boolean;
+    auto_confirm_sessions?: string[];
     awake_mode?: boolean;
     notifications?: {
       approval: boolean;

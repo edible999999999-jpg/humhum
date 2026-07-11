@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 /// Application configuration stored on disk
@@ -92,6 +92,7 @@ pub struct UiConfig {
     /// Language: "zh" | "en"
     pub language: String,
     pub auto_confirm: bool,
+    pub auto_confirm_sessions: BTreeSet<String>,
     pub awake_mode: bool,
     pub notifications: NotificationPreferences,
     pub sounds: SoundPreferences,
@@ -150,6 +151,7 @@ impl Default for UiConfig {
             position: "bottom-right".to_string(),
             language: "zh".to_string(),
             auto_confirm: false,
+            auto_confirm_sessions: BTreeSet::new(),
             awake_mode: false,
             notifications: NotificationPreferences::default(),
             sounds: SoundPreferences::default(),
@@ -273,6 +275,7 @@ mod tests {
         assert!(config.ui.sounds.enabled);
         assert!(config.ui.sounds.pack_path.is_none());
         assert!(config.ui.mascot_overrides.is_empty());
+        assert!(config.ui.auto_confirm_sessions.is_empty());
     }
 
     #[test]
@@ -302,5 +305,6 @@ mod tests {
         assert_eq!(config.pi.model_name, "gateway-model");
         assert_eq!(config.pi.token.as_deref(), Some("legacy-token"));
         assert!(config.ui.notifications.approval);
+        assert!(config.ui.auto_confirm_sessions.is_empty());
     }
 }
