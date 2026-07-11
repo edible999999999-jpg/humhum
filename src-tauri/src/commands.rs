@@ -6,6 +6,7 @@ use crate::codex_bridge::{
 };
 use crate::config::AppConfig;
 use crate::event_bus::{self, HookEvent, PermissionDecision};
+use crate::git_changes::GitChangeSummary;
 use crate::hexa_protocol::HexaSessionProjection;
 use crate::hook_server::PendingMap;
 use crate::hush_store::{HushInboxSummary, HushStore};
@@ -160,6 +161,33 @@ mod client_hook_install_tests {
         assert!(HUMHUM_OPENCODE_PLUGIN.contains(r#"behavior === "deny" ? "reject" : "once""#));
         assert!(HUMHUM_OPENCODE_PLUGIN.contains("permission ? 125_000 : 3000"));
         assert!(HUMHUM_OPENCODE_PLUGIN.contains(r#"typeof properties.permission === "string""#));
+    }
+}
+
+#[cfg(test)]
+mod session_change_tests {
+    use super::*;
+
+    #[test]
+    fn change_summary_workspace_requires_a_known_session() {
+        let mut store = SessionStore::new();
+        store.update_from_event(&HookEvent {
+            id: "event-1".into(),
+            hook_event_name: "SessionStart".into(),
+            session_id: "known-session".into(),
+            transcript_path: None,
+            cwd: Some("/tmp".into()),
+            client_type: "claude-code".into(),
+            payload: serde_json::json!({}),
+            timestamp: "2026-07-12T00:00:00Z".into(),
+        });
+        let store = std::sync::Mutex::new(store);
+
+        assert_eq!(
+            change_summary_workspace(&store, "known-session").unwrap(),
+            std::path::PathBuf::from("/tmp")
+        );
+        assert!(change_summary_workspace(&store, "unknown-session").is_err());
     }
 }
 
@@ -1996,6 +2024,32 @@ pub async fn get_all_sessions_history(
     merge_codex_sessions(&mut sessions);
     sessions.sort_by(|a, b| b.last_event_at.cmp(&a.last_event_at));
     serde_json::to_value(sessions).map_err(|e| format!("Serialize error: {}", e))
+}
+
+fn change_summary_workspace(
+    store: &std::sync::Mutex<SessionStore>,
+    session_id: &str,
+) -> Result<PathBuf, String> {
+    store
+        .lock()
+        .map_err(|error| format!("Lock error: {error}"))?
+        .get_all_sessions_with_history()
+        .into_iter()
+        .find(|session| session.session_id == session_id)
+        .ok_or("This Agent session is no longer available")?
+        .cwd
+        .as_deref()
+        .map(PathBuf::from)
+        .ok_or_else(|| "This Agent session did not report a workspace".into())
+}
+
+#[tauri::command]
+pub async fn get_session_change_summary(
+    store: State<'_, Arc<std::sync::Mutex<SessionStore>>>,
+    session_id: String,
+) -> Result<GitChangeSummary, String> {
+    let workspace = change_summary_workspace(&store, &session_id)?;
+    crate::git_changes::summarize_workspace(&workspace).await
 }
 
 /// Get a specific session by ID

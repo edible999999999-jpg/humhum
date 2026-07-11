@@ -1,5 +1,5 @@
 import { useReducer, useState } from "react";
-import { Crosshair, Link, Power, RefreshCw, RotateCcw, Send, ShieldCheck, Smartphone, Square, Trash2 } from "lucide-react";
+import { Crosshair, FileDiff, Link, Power, RefreshCw, RotateCcw, Send, ShieldCheck, Smartphone, Square, Trash2 } from "lucide-react";
 import {
   useHexaData,
   type CodexRemoteControlState,
@@ -17,6 +17,11 @@ import {
   interventionProviderForClient,
   type InterventionProvider,
 } from "../../hooks/interventionProvider";
+import {
+  initialSessionChangesState,
+  sessionChangesReducer,
+  type GitChangeSummary,
+} from "../../hooks/sessionChangesState";
 
 const CLIENT_COLORS: Record<string, string> = {
   "claude-code": "#f59e0b",
@@ -181,6 +186,7 @@ function SessionCard({
   onResume,
   onResolveApproval,
   onFocus,
+  onLoadChanges,
   queuedInterventions,
   onRetryIntervention,
   onDiscardIntervention,
@@ -193,6 +199,7 @@ function SessionCard({
   onResume: (threadId: string) => Promise<void>;
   onResolveApproval: (approvalId: string, decision: "allow_once" | "deny") => Promise<void>;
   onFocus: (sessionId: string) => Promise<FocusResult>;
+  onLoadChanges: (sessionId: string) => Promise<GitChangeSummary>;
   queuedInterventions: QueuedIntervention[];
   onRetryIntervention: (interventionId: string) => Promise<CodexSendReceipt>;
   onDiscardIntervention: (interventionId: string) => Promise<void>;
@@ -203,6 +210,7 @@ function SessionCard({
   const isCompleted = item.session.status === "completed";
   const showReadout = !isCompleted || reviewOpen;
   const [focusState, setFocusState] = useState<"idle" | "busy" | "exact" | "fallback" | "failed">("idle");
+  const [changes, dispatchChanges] = useReducer(sessionChangesReducer, initialSessionChangesState);
   const interventionProvider = interventionProviderForClient(item.session.client_type);
 
   const focusSession = async () => {
@@ -212,6 +220,36 @@ function SessionCard({
       setFocusState(result.exact ? "exact" : "fallback");
     } catch {
       setFocusState("failed");
+    }
+  };
+
+  const toggleChanges = async () => {
+    if (changes.open) {
+      dispatchChanges({ type: "close" });
+      return;
+    }
+    dispatchChanges({ type: "open" });
+    if (changes.summary) return;
+    dispatchChanges({ type: "load" });
+    try {
+      dispatchChanges({
+        type: "success",
+        summary: await onLoadChanges(item.session.session_id),
+      });
+    } catch (cause) {
+      dispatchChanges({ type: "failure", error: String(cause) });
+    }
+  };
+
+  const reloadChanges = async () => {
+    dispatchChanges({ type: "load" });
+    try {
+      dispatchChanges({
+        type: "success",
+        summary: await onLoadChanges(item.session.session_id),
+      });
+    } catch (cause) {
+      dispatchChanges({ type: "failure", error: String(cause) });
     }
   };
 
@@ -341,6 +379,34 @@ function SessionCard({
         <MiniStat label="loop" value={item.loop_status} />
       </div>
 
+      {item.session.cwd && (
+        <div style={{ display: "grid", gap: 8, paddingTop: 9, borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+          <button
+            type="button"
+            onClick={() => void toggleChanges()}
+            className="kawaii-toggle-btn"
+            style={{ width: "fit-content", display: "inline-flex", alignItems: "center", gap: 6 }}
+          >
+            <FileDiff size={14} />
+            {changes.open ? "收起本轮改动" : "查看本轮改动"}
+          </button>
+          {changes.open && changes.status === "loading" && (
+            <div style={{ color: "rgba(255,255,255,0.38)", fontSize: 10 }}>正在读取本地 Git 状态...</div>
+          )}
+          {changes.open && changes.status === "error" && (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <span style={{ color: "#f87171", fontSize: 10, overflowWrap: "anywhere" }}>{changes.error}</span>
+              <button type="button" onClick={() => void reloadChanges()} className="kawaii-toggle-btn" title="重试读取" aria-label="重试读取">
+                <RefreshCw size={13} />
+              </button>
+            </div>
+          )}
+          {changes.open && changes.status === "ready" && changes.summary && (
+            <SessionChangeSummary summary={changes.summary} />
+          )}
+        </div>
+      )}
+
       {showReadout && (
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 10 }}>
           <ChipGroup title="判断依据" values={item.evidence.length ? item.evidence.slice(0, 4) : ["暂无依据"]} />
@@ -385,6 +451,45 @@ function SessionCard({
         </div>
       )}
     </article>
+  );
+}
+
+function SessionChangeSummary({ summary }: { summary: GitChangeSummary }) {
+  if (summary.total_files === 0) {
+    return <div style={{ color: "rgba(255,255,255,0.38)", fontSize: 10 }}>工作区目前没有未提交改动</div>;
+  }
+  return (
+    <div style={{ display: "grid", gap: 6, minWidth: 0 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", color: "rgba(255,255,255,0.48)", fontSize: 10 }}>
+        <span>{summary.branch || "detached HEAD"}</span>
+        <span>{summary.total_files} 个文件</span>
+        {summary.truncated && <span>仅显示前 {summary.files.length} 个</span>}
+      </div>
+      {summary.files.map((file) => (
+        <div
+          key={`${file.status}-${file.path}`}
+          style={{
+            display: "grid",
+            gridTemplateColumns: "auto minmax(0, 1fr) auto",
+            gap: 8,
+            alignItems: "center",
+            minWidth: 0,
+            padding: "5px 0",
+            borderTop: "1px solid rgba(255,255,255,0.04)",
+          }}
+        >
+          <span style={{ color: file.staged ? "#22c55e" : "#38bdf8", fontSize: 9, fontWeight: 850 }}>
+            {file.staged ? "已暂存" : file.status === "untracked" ? "新文件" : file.status}
+          </span>
+          <span style={{ minWidth: 0, color: "rgba(255,255,255,0.68)", fontSize: 10, overflowWrap: "anywhere" }}>
+            {file.path}
+          </span>
+          <span style={{ color: "rgba(255,255,255,0.38)", fontSize: 9, whiteSpace: "nowrap" }}>
+            {file.binary ? "binary" : <><span style={{ color: "#22c55e" }}>+{file.insertions}</span> <span style={{ color: "#f87171" }}>-{file.deletions}</span></>}
+          </span>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -831,6 +936,7 @@ export function HexaModule() {
     resumeCodexThread,
     resolveCodexApproval,
     focusAgentSession,
+    getSessionChangeSummary,
     enableCodexRemoteControl,
     disableCodexRemoteControl,
     startCodexRemotePairing,
@@ -962,6 +1068,7 @@ export function HexaModule() {
                   onResume={resumeCodexThread}
                   onResolveApproval={resolveCodexApproval}
                   onFocus={focusAgentSession}
+                  onLoadChanges={getSessionChangeSummary}
                   queuedInterventions={provider
                     ? queuedInterventions.filter((queued) => interventionMatches(queued, provider, threadId))
                     : []}

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { AgentStats } from "@/types";
+import type { GitChangeSummary } from "./sessionChangesState";
 import { sortHexaSessions } from "./hexaPriority";
 import {
   mergeHexaSessions,
@@ -56,7 +57,7 @@ export interface MobilePairingInfo {
 }
 
 export interface FocusResult {
-  strategy: "tmux_pane" | "iterm_session" | "terminal_tty" | "codex_thread" | "cursor_terminal" | "cursor_workspace" | "ghostty_workspace" | "application" | "generic_terminal";
+  strategy: "tmux_pane" | "iterm_session" | "terminal_tty" | "codex_thread" | "cursor_terminal" | "cursor_workspace" | "ghostty_terminal" | "ghostty_workspace" | "application" | "generic_terminal";
   application: string | null;
   exact: boolean;
 }
@@ -657,6 +658,10 @@ export function useHexaData() {
     return invoke<FocusResult>("focus_agent_session", { sessionId });
   }, []);
 
+  const getSessionChangeSummary = useCallback(async (sessionId: string) => {
+    return invoke<GitChangeSummary>("get_session_change_summary", { sessionId });
+  }, []);
+
   const enableCodexRemoteControl = useCallback(async () => {
     const state = await invoke<CodexRemoteControlState>("hexa_enable_codex_remote_control");
     setRemoteControl(state);
@@ -736,6 +741,7 @@ export function useHexaData() {
     resumeCodexThread,
     resolveCodexApproval,
     focusAgentSession,
+    getSessionChangeSummary,
     enableCodexRemoteControl,
     disableCodexRemoteControl,
     startCodexRemotePairing,

@@ -6,6 +6,7 @@ mod commands;
 mod config;
 mod cursor_focus_extension;
 mod event_bus;
+mod git_changes;
 mod hexa_protocol;
 mod hook_server;
 mod hush_store;
@@ -199,6 +200,7 @@ pub fn run() {
             commands::get_codex_bridge_health,
             commands::get_codex_remote_control,
             commands::get_hexa_bridge_sessions,
+            commands::get_session_change_summary,
             commands::hexa_enable_codex_remote_control,
             commands::hexa_disable_codex_remote_control,
             commands::hexa_start_codex_remote_pairing,

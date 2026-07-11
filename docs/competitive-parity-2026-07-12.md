@@ -37,7 +37,7 @@ Status meanings:
 | Multi-machine sessions | Missing | Local multi-agent sessions work on one Mac; there is no machine registry or presence protocol. |
 | Mobile permission controls | Partial | A separately paired control device can inspect bounded Codex, Claude and OpenCode approval summaries and allow once or deny; read-only devices receive 403 and never receive action summaries. Internet delivery remains missing. |
 | Voice control | Partial | HUMHUM has local STT/TTS and voice commands, but voice is not connected to a remote session client. |
-| Attachments and file review | Missing | Hexa summarizes tools and transcript evidence but has no encrypted remote attachment or changed-file review flow. |
+| Attachments and file review | Partial | Hexa now loads a session-bound local Git change summary on demand: branch, staged/unstaged/untracked state, relative paths, binary markers, and bounded insertion/deletion totals. It never returns absolute paths or source text. Full patch reading, image/file attachments, and encrypted remote review remain missing. |
 
 ## HUMHUM Advantages To Preserve
 
@@ -95,9 +95,12 @@ Status meanings:
 - Terminal.app routes now normalize only `ttys` plus digits, reject script input, and select the matching AppleScript tab before activating the window. A locked Mac prevented the temporary real-tab smoke test, so this remains unit/build verified rather than runtime verified.
 - Ghostty 1.3+ routes now ask its native AppleScript API for terminals whose working directory matches the session's canonical workspace. HUMHUM focuses only when exactly one terminal matches; ambiguity or Automation failure falls back to ordinary app activation instead of guessing. Workspace data is passed through a child-process environment variable rather than interpolated into AppleScript.
 - Ghostty 1.3 exposes terminal ID, name and working directory but not child PID or TTY through AppleScript. HUMHUM now captures a stable terminal ID only on `SessionStart` or `UserPromptSubmit` when exactly one terminal has the canonical workspace, preserves that ID across later events, and focuses it before trying workspace fallback. IDs and paths cross the AppleScript boundary through environment variables. Ghostty was not running during final verification, so the live focus action remains unit/build verified.
+- Happy's current app exposes an experimental file-diffs sidebar. HUMHUM now provides a privacy-bounded first layer directly in Hexa: an explicit disclosure invokes a session-scoped Tauri command, which runs NUL-delimited Git porcelain/numstat commands with separated arguments, `GIT_OPTIONAL_LOCKS=0`, five-second timeouts, and an 80-file limit.
+- Session change summaries reject unknown sessions and missing workspaces, never return absolute paths or file bodies, merge staged and unstaged line counts, flag binary files without reading them, and preserve loaded results while the disclosure is closed. A real temporary Git repository verified staged and untracked files plus relative-path-only output.
+- Runtime UI limitation: the latest development binary restarted successfully, but its menu-bar/transparent launch had no visible Hub window during automated screenshot capture. The disclosure layout is TypeScript-build verified; interactive visual QA remains pending until the Hub can be opened on the desktop.
 - The release arm64 `HumHum.app` built successfully. Because the locked desktop stalled only Tauri's decorative DMG Finder layout, a standard compressed read-only DMG was generated directly, verified by `hdiutil`, mounted, and its contained app passed strict deep code-sign verification.
 - Local release artifact: `src-tauri/target/release/bundle/dmg/HumHum_0.1.0_aarch64.dmg` (43 MB), SHA-256 `82543fcb0094cbf155bc7ab5c7044b670b8775c2174743ec0049225b706da8a2`. It includes verified OpenCode permissions, Cursor terminal focus, the provider-scoped Claude/Codex queue, OpenPeon/CESP sound packs and per-Agent Humi themes, has a complete ad-hoc signature, passed `hdiutil verify`, and its mounted arm64 app passed strict deep code-sign verification. It is not Developer ID signed or notarized, so it is not yet a frictionless public download.
-- Rust: 100 passed, 1 ignored. Frontend: 22 passed. Production frontend build: passed.
+- Rust: 104 passed, 1 ignored. Frontend: 24 passed. Production frontend build: passed.
 
 ## Next Iteration Order
 
