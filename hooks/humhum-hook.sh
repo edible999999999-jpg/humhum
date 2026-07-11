@@ -51,6 +51,38 @@ if [ -z "$PAYLOAD" ]; then
   exit 1
 fi
 
+# Capture the route back to the exact terminal session. Hook stdin is a pipe, so
+# ask the parent process for its controlling TTY and keep environment hints too.
+PARENT_TTY=$(ps -p "$PPID" -o tty= 2>/dev/null | xargs || true)
+PAYLOAD=$(printf '%s' "$PAYLOAD" | \
+  HUMHUM_PARENT_TTY="$PARENT_TTY" HUMHUM_PARENT_PID="$PPID" python3 -c '
+import json, os, sys
+
+payload = json.load(sys.stdin)
+route = payload.get("route") if isinstance(payload.get("route"), dict) else {}
+
+def put(name, value):
+    if value is not None:
+        value = str(value).strip()
+    if value:
+        route[name] = value
+
+put("term_program", os.environ.get("TERM_PROGRAM"))
+put("term_program_version", os.environ.get("TERM_PROGRAM_VERSION"))
+put("tty", os.environ.get("HUMHUM_PARENT_TTY"))
+put("tmux", os.environ.get("TMUX"))
+put("tmux_pane", os.environ.get("TMUX_PANE"))
+put("iterm_session_id", os.environ.get("ITERM_SESSION_ID"))
+
+parent_pid = os.environ.get("HUMHUM_PARENT_PID", "").strip()
+if parent_pid.isdigit():
+    route["parent_pid"] = int(parent_pid)
+
+if route:
+    payload["route"] = route
+json.dump(payload, sys.stdout, ensure_ascii=False, separators=(",", ":"))
+')
+
 HOOK_EVENT=$(echo "$PAYLOAD" | python3 -c "import sys,json; print(json.load(sys.stdin).get('hook_event_name',''))" 2>/dev/null || echo "unknown")
 log_debug "=== Hook invoked: $HOOK_EVENT ==="
 log_debug "Client: ${HUMHUM_CLIENT:-default}"

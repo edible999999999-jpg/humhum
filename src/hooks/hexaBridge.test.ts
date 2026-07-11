@@ -15,6 +15,7 @@ const hookCodex: HexaHookSession = {
   recent_tools: ["Bash"],
   event_names: ["PreToolUse"],
   has_pending_permission: false,
+  route: null,
 };
 
 const hookClaude: HexaHookSession = {

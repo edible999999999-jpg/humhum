@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { AgentStats } from "@/types";
+import { sortHexaSessions } from "./hexaPriority";
 import {
   mergeHexaSessions,
   type HexaBridgeApproval,
@@ -31,6 +32,12 @@ export interface CodexRemotePairing {
   manual_pairing_code: string | null;
   environment_id: string;
   expires_at: number;
+}
+
+export interface FocusResult {
+  strategy: "tmux_pane" | "iterm_session" | "application" | "generic_terminal";
+  application: string | null;
+  exact: boolean;
 }
 
 export interface HexaAlert {
@@ -478,7 +485,7 @@ export function useHexaData() {
 
       setSessions(mergedSessions);
       setAgentStats(statsData);
-      setSupervisorSessions(snapshots);
+      setSupervisorSessions(sortHexaSessions(snapshots));
       setAlerts(allAlerts);
       setBridgeHealth(healthData);
       if (remoteData) setRemoteControl(remoteData);
@@ -545,6 +552,10 @@ export function useHexaData() {
     await fetchSessions();
   }, [fetchSessions]);
 
+  const focusAgentSession = useCallback(async (sessionId: string) => {
+    return invoke<FocusResult>("focus_agent_session", { sessionId });
+  }, []);
+
   const enableCodexRemoteControl = useCallback(async () => {
     const state = await invoke<CodexRemoteControlState>("hexa_enable_codex_remote_control");
     setRemoteControl(state);
@@ -581,6 +592,7 @@ export function useHexaData() {
     interruptCodexTurn,
     resumeCodexThread,
     resolveCodexApproval,
+    focusAgentSession,
     enableCodexRemoteControl,
     disableCodexRemoteControl,
     startCodexRemotePairing,

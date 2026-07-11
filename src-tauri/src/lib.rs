@@ -57,6 +57,12 @@ pub fn run() {
             let restore_awake_mode = config.ui.awake_mode;
             app.manage(Arc::new(std::sync::Mutex::new(config)));
 
+            if let Some(home) = dirs::home_dir() {
+                if let Err(error) = commands::ensure_hook_script_installed(&home) {
+                    log::warn!("Could not refresh HUMHUM hook script: {error}");
+                }
+            }
+
             let wake_guard = Arc::new(wake_guard::WakeGuardState::default());
             app.manage(wake_guard.clone());
             let wake_handle = app_handle.clone();
@@ -177,6 +183,7 @@ pub fn run() {
             commands::install_hooks_for_client,
             commands::uninstall_hooks_for_client,
             commands::focus_terminal,
+            commands::focus_agent_session,
             commands::toggle_settings,
             commands::send_notification,
             commands::check_hooks_status,

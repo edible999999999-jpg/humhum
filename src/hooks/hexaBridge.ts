@@ -12,6 +12,15 @@ export interface HexaHookSession {
   recent_tools: string[];
   event_names: string[];
   has_pending_permission: boolean;
+  route: {
+    term_program: string | null;
+    term_program_version: string | null;
+    tty: string | null;
+    tmux: string | null;
+    tmux_pane: string | null;
+    iterm_session_id: string | null;
+    parent_pid: number | null;
+  } | null;
 }
 
 export interface HexaBridgeApproval {
@@ -63,6 +72,7 @@ function bridgeOnlySession(bridge: HexaBridgeSession): HexaHookSession {
     recent_tools: [],
     event_names: [],
     has_pending_permission: bridge.pending_approvals.length > 0,
+    route: null,
   };
 }
 

@@ -1,11 +1,13 @@
-import { useState } from "react";
-import { Link, Power, RotateCcw, Send, Smartphone, Square } from "lucide-react";
+import { useReducer, useState } from "react";
+import { Crosshair, Link, Power, RotateCcw, Send, Smartphone, Square } from "lucide-react";
 import {
   useHexaData,
   type CodexRemoteControlState,
   type CodexRemotePairing,
+  type FocusResult,
   type HexaSupervisorSession,
 } from "../../hooks/useHexaData";
+import { initialInterventionState, interventionReducer } from "../../hooks/interventionState";
 
 const CLIENT_COLORS: Record<string, string> = {
   "claude-code": "#f59e0b",
@@ -166,6 +168,7 @@ function SessionCard({
   onInterrupt,
   onResume,
   onResolveApproval,
+  onFocus,
 }: {
   item: HexaSupervisorSession;
   reviewOpen: boolean;
@@ -174,12 +177,24 @@ function SessionCard({
   onInterrupt: (threadId: string, turnId: string) => Promise<void>;
   onResume: (threadId: string) => Promise<void>;
   onResolveApproval: (approvalId: string, decision: "allow_once" | "deny") => Promise<void>;
+  onFocus: (sessionId: string) => Promise<FocusResult>;
 }) {
   const color = getClientColor(item.session.client_type);
   const eventNames = item.session.event_names.slice(-6);
   const stats = item.stats;
   const isCompleted = item.session.status === "completed";
   const showReadout = !isCompleted || reviewOpen;
+  const [focusState, setFocusState] = useState<"idle" | "busy" | "exact" | "fallback" | "failed">("idle");
+
+  const focusSession = async () => {
+    setFocusState("busy");
+    try {
+      const result = await onFocus(item.session.session_id);
+      setFocusState(result.exact ? "exact" : "fallback");
+    } catch {
+      setFocusState("failed");
+    }
+  };
 
   return (
     <article
@@ -229,13 +244,41 @@ function SessionCard({
             {item.project_intent}
           </p>
         </div>
-        <div style={{ textAlign: "right" }}>
-          <div style={{ color: "rgba(255,255,255,0.72)", fontSize: 18, fontWeight: 850 }}>
-            {item.session.event_count}
+        <div style={{ display: "grid", gridTemplateColumns: "auto auto", gap: 8, alignItems: "start" }}>
+          <div style={{ textAlign: "right", minWidth: 42 }}>
+            <div style={{ color: "rgba(255,255,255,0.72)", fontSize: 18, fontWeight: 850 }}>
+              {item.session.event_count}
+            </div>
+            <div style={{ color: "rgba(255,255,255,0.28)", fontSize: 10 }}>events</div>
           </div>
-          <div style={{ color: "rgba(255,255,255,0.28)", fontSize: 10 }}>events</div>
+          <button
+            type="button"
+            title={focusState === "failed" ? "定位失败，点击重试" : "返回这个 Agent 会话"}
+            aria-label="返回这个 Agent 会话"
+            disabled={focusState === "busy"}
+            onClick={() => void focusSession()}
+            className="kawaii-toggle-btn"
+            style={{ width: 34, height: 34, padding: 0, display: "grid", placeItems: "center" }}
+          >
+            <Crosshair size={15} />
+          </button>
         </div>
       </div>
+
+      {focusState !== "idle" && focusState !== "busy" && (
+        <div
+          role="status"
+          style={{
+            minHeight: 14,
+            marginTop: -6,
+            color: focusState === "failed" ? "#f87171" : focusState === "exact" ? "#22c55e" : "#38bdf8",
+            fontSize: 10,
+            textAlign: "right",
+          }}
+        >
+          {focusState === "exact" ? "已准确返回原会话" : focusState === "fallback" ? "已打开对应终端" : "定位失败，点击按钮重试"}
+        </div>
+      )}
 
       <NeedFitBar item={item} />
 
@@ -330,11 +373,12 @@ function CodexIntervention({
   onResume: (threadId: string) => Promise<void>;
   onResolveApproval: (approvalId: string, decision: "allow_once" | "deny") => Promise<void>;
 }) {
-  const [message, setMessage] = useState("");
+  const [delivery, dispatchDelivery] = useReducer(interventionReducer, initialInterventionState);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const threadId = item.bridge?.provider_thread_id ?? item.session.session_id;
   const currentTurnId = item.bridge?.current_turn_id;
+  const sending = delivery.status === "sending";
 
   const run = async (action: () => Promise<unknown>) => {
     setBusy(true);
@@ -345,6 +389,18 @@ function CodexIntervention({
       setError(String(cause));
     } finally {
       setBusy(false);
+    }
+  };
+
+  const sendMessage = async () => {
+    const message = delivery.draft.trim();
+    if (!message || sending) return;
+    dispatchDelivery({ type: "send" });
+    try {
+      await onSend(threadId, message);
+      dispatchDelivery({ type: "delivered" });
+    } catch (cause) {
+      dispatchDelivery({ type: "failed", error: String(cause) });
     }
   };
 
@@ -363,14 +419,11 @@ function CodexIntervention({
       {item.can_intervene ? (
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto auto", gap: 7 }}>
           <input
-            value={message}
-            onChange={(event) => setMessage(event.target.value)}
+            value={delivery.draft}
+            onChange={(event) => dispatchDelivery({ type: "draft", value: event.target.value })}
             onKeyDown={(event) => {
-              if (event.key === "Enter" && message.trim() && !busy) {
-                void run(async () => {
-                  await onSend(threadId, message.trim());
-                  setMessage("");
-                });
+              if (event.key === "Enter" && delivery.draft.trim() && !busy && !sending) {
+                void sendMessage();
               }
             }}
             placeholder="给 Codex 发后续指令"
@@ -379,11 +432,8 @@ function CodexIntervention({
           <button
             type="button"
             title="发送"
-            disabled={busy || !message.trim()}
-            onClick={() => run(async () => {
-              await onSend(threadId, message.trim());
-              setMessage("");
-            })}
+            disabled={busy || sending || !delivery.draft.trim()}
+            onClick={() => void sendMessage()}
             className="kawaii-toggle-btn connected"
           ><Send size={15} /></button>
           {currentTurnId ? (
@@ -397,6 +447,23 @@ function CodexIntervention({
           <RotateCcw size={14} /> 由 HUMHUM 恢复后介入
         </button>
       )}
+      <div
+        role="status"
+        style={{
+          minHeight: 14,
+          color: delivery.status === "failed" ? "#f87171" : delivery.status === "delivered" ? "#22c55e" : "rgba(255,255,255,0.28)",
+          fontSize: 10,
+          overflowWrap: "anywhere",
+        }}
+      >
+        {delivery.status === "sending"
+          ? "正在发送..."
+          : delivery.status === "delivered"
+            ? "已送达 Codex 会话"
+            : delivery.status === "failed"
+              ? `发送失败，指令已保留，可重试：${delivery.error}`
+              : ""}
+      </div>
       {error && <div style={{ color: "#f87171", fontSize: 10, overflowWrap: "anywhere" }}>{error}</div>}
     </div>
   );
@@ -585,6 +652,7 @@ export function HexaModule() {
     interruptCodexTurn,
     resumeCodexThread,
     resolveCodexApproval,
+    focusAgentSession,
     enableCodexRemoteControl,
     disableCodexRemoteControl,
     startCodexRemotePairing,
@@ -685,6 +753,7 @@ export function HexaModule() {
                 onInterrupt={interruptCodexTurn}
                 onResume={resumeCodexThread}
                 onResolveApproval={resolveCodexApproval}
+                onFocus={focusAgentSession}
               />
             ))}
           </div>

@@ -1641,6 +1641,7 @@ fn parse_codex_session_file(path: &Path) -> Option<Session> {
         recent_tools,
         event_names,
         has_pending_permission: false,
+        route: None,
     })
 }
 
@@ -1743,6 +1744,23 @@ pub async fn respond_to_permission(
 #[tauri::command]
 pub async fn focus_terminal() -> Result<(), String> {
     window_focus::focus_terminal_app()
+}
+
+/// Focus the application, terminal session, or tmux pane that owns a Hexa session.
+#[tauri::command]
+pub async fn focus_agent_session(
+    store: State<'_, Arc<std::sync::Mutex<SessionStore>>>,
+    session_id: String,
+) -> Result<window_focus::FocusResult, String> {
+    let route = {
+        let store = store.lock().map_err(|error| format!("Lock error: {error}"))?;
+        store
+            .get_all_sessions_with_history()
+            .into_iter()
+            .find(|session| session.session_id == session_id)
+            .and_then(|session| session.route.clone())
+    };
+    window_focus::focus_agent_route(route.as_ref())
 }
 
 /// Focus the terminal and type text + Enter (for AskUserQuestion responses)
@@ -1892,7 +1910,9 @@ fn install_json_hooks(
     Ok(())
 }
 
-fn ensure_hook_script_installed(home: &std::path::Path) -> Result<std::path::PathBuf, String> {
+pub(crate) fn ensure_hook_script_installed(
+    home: &std::path::Path,
+) -> Result<std::path::PathBuf, String> {
     let hook_dir = home.join(".humhum").join("hooks");
     std::fs::create_dir_all(&hook_dir).map_err(|e| format!("Failed to create hook dir: {}", e))?;
 

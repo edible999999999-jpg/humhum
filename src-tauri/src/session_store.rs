@@ -1,6 +1,73 @@
 use crate::event_bus::HookEvent;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SessionRoute {
+    pub term_program: Option<String>,
+    pub term_program_version: Option<String>,
+    pub tty: Option<String>,
+    pub tmux: Option<String>,
+    pub tmux_pane: Option<String>,
+    pub iterm_session_id: Option<String>,
+    pub parent_pid: Option<u32>,
+}
+
+impl SessionRoute {
+    fn from_payload(payload: &serde_json::Value) -> Option<Self> {
+        let mut route: Self = serde_json::from_value(payload.get("route")?.clone()).ok()?;
+        route.normalize();
+        route.has_values().then_some(route)
+    }
+
+    fn merge(&mut self, newer: Self) {
+        merge_text(&mut self.term_program, newer.term_program);
+        merge_text(&mut self.term_program_version, newer.term_program_version);
+        merge_text(&mut self.tty, newer.tty);
+        merge_text(&mut self.tmux, newer.tmux);
+        merge_text(&mut self.tmux_pane, newer.tmux_pane);
+        merge_text(&mut self.iterm_session_id, newer.iterm_session_id);
+        if newer.parent_pid.is_some() {
+            self.parent_pid = newer.parent_pid;
+        }
+    }
+
+    fn normalize(&mut self) {
+        for value in [
+            &mut self.term_program,
+            &mut self.term_program_version,
+            &mut self.tty,
+            &mut self.tmux,
+            &mut self.tmux_pane,
+            &mut self.iterm_session_id,
+        ] {
+            *value = value
+                .take()
+                .map(|item| item.trim().to_string())
+                .filter(|item| !item.is_empty());
+        }
+        self.tty = self
+            .tty
+            .take()
+            .map(|item| item.strip_prefix("/dev/").unwrap_or(&item).to_string());
+    }
+
+    fn has_values(&self) -> bool {
+        self.term_program.is_some()
+            || self.term_program_version.is_some()
+            || self.tty.is_some()
+            || self.tmux.is_some()
+            || self.tmux_pane.is_some()
+            || self.iterm_session_id.is_some()
+            || self.parent_pid.is_some()
+    }
+}
+
+fn merge_text(current: &mut Option<String>, newer: Option<String>) {
+    if newer.as_deref().is_some_and(|value| !value.is_empty()) {
+        *current = newer;
+    }
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Session {
@@ -18,6 +85,7 @@ pub struct Session {
     pub recent_tools: Vec<String>,
     pub event_names: Vec<String>,
     pub has_pending_permission: bool,
+    pub route: Option<SessionRoute>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -76,6 +144,7 @@ impl SessionStore {
                 recent_tools: Vec::new(),
                 event_names: Vec::new(),
                 has_pending_permission: false,
+                route: SessionRoute::from_payload(&event.payload),
             });
 
         session.last_event_at = event.timestamp.clone();
@@ -104,6 +173,14 @@ impl SessionStore {
         }
 
         session.has_pending_permission = event.hook_event_name == "PermissionRequest";
+
+        if let Some(route) = SessionRoute::from_payload(&event.payload) {
+            if let Some(existing) = session.route.as_mut() {
+                existing.merge(route);
+            } else {
+                session.route = Some(route);
+            }
+        }
 
         if event.cwd.is_some() && session.cwd.is_none() {
             session.cwd = event.cwd.clone();
@@ -163,5 +240,70 @@ impl SessionStore {
         if let Some(session) = self.sessions.get_mut(session_id) {
             session.has_pending_permission = false;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::event_bus::HookEvent;
+    use serde_json::json;
+
+    fn event(payload: serde_json::Value) -> HookEvent {
+        HookEvent {
+            id: "event-1".into(),
+            hook_event_name: "Notification".into(),
+            session_id: "session-1".into(),
+            transcript_path: None,
+            cwd: Some("/tmp/humhum".into()),
+            client_type: "claude-code".into(),
+            payload,
+            timestamp: "2026-07-12T00:00:00Z".into(),
+        }
+    }
+
+    #[test]
+    fn captures_route_metadata_from_hook_payload() {
+        let mut store = SessionStore::new();
+        store.update_from_event(&event(json!({
+            "route": {
+                "term_program": "iTerm.app",
+                "tty": "/dev/ttys007",
+                "tmux_pane": "%12",
+                "iterm_session_id": "w0t1p0:ABC"
+            }
+        })));
+
+        let route = store
+            .get_session("session-1")
+            .unwrap()
+            .route
+            .as_ref()
+            .unwrap();
+        assert_eq!(route.term_program.as_deref(), Some("iTerm.app"));
+        assert_eq!(route.tty.as_deref(), Some("ttys007"));
+        assert_eq!(route.tmux_pane.as_deref(), Some("%12"));
+        assert_eq!(route.iterm_session_id.as_deref(), Some("w0t1p0:ABC"));
+    }
+
+    #[test]
+    fn later_empty_route_fields_do_not_erase_exact_identifiers() {
+        let mut store = SessionStore::new();
+        store.update_from_event(&event(json!({
+            "route": { "term_program": "Ghostty", "tty": "ttys004", "tmux_pane": "%3" }
+        })));
+        store.update_from_event(&event(json!({
+            "route": { "term_program": "", "tty": null, "tmux_pane": "" }
+        })));
+
+        let route = store
+            .get_session("session-1")
+            .unwrap()
+            .route
+            .as_ref()
+            .unwrap();
+        assert_eq!(route.term_program.as_deref(), Some("Ghostty"));
+        assert_eq!(route.tty.as_deref(), Some("ttys004"));
+        assert_eq!(route.tmux_pane.as_deref(), Some("%3"));
     }
 }
