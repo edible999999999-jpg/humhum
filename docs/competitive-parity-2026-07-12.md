@@ -15,7 +15,7 @@ Status meanings:
 | Live Claude/Codex supervision | Complete | Claude hooks plus Codex app-server sessions feed Hexa and the pet. |
 | Waiting-first attention view | Complete | Hexa orders waiting, stalled/looping, working, idle, then completed; recency breaks ties. |
 | Approve/deny and questions | Complete | Claude hook requests and Codex app-server approvals are session scoped. |
-| Exact jump back | Partial | Hook captures terminal, TTY, tmux pane and iTerm session. Hexa can select an exact tmux pane or iTerm session, then activate the host. IDE chat routing and Ghostty terminal identifiers are still missing. |
+| Exact jump back | Partial | Hook captures terminal, TTY, tmux pane and iTerm session. Hexa can select an exact tmux pane or iTerm session, or open a Codex desktop task through its thread URL. IDE chat routing and Ghostty terminal identifiers are still missing. |
 | Follow-up from supervisor | Partial | Codex app-server follow-up resumes before send and now reports sending/delivered/failed with retry-preserved text. Generic terminal inline follow-up is not enabled because typing into an unverified target is unsafe. |
 | Completion and attention notifications | Complete | Pet overlays, sounds, and native macOS notifications exist for permission, question, tool, and completion events. Notification preference granularity still trails Ping Island. |
 | Transcript backfill | Complete | Local Codex JSONL and Claude stats/readouts feed history and summaries. |
@@ -55,7 +55,7 @@ Status meanings:
 - Intervention drafts survive failure and clear only after successful Codex delivery.
 - The localhost API now requires an owner-only token for private data and control routes, disables browser CORS, and keeps only `/health` public.
 - Hook debug logging no longer records message payloads and uses owner-only file permissions.
-- Rust: 49 passed, 1 ignored. Frontend: 10 passed. Production frontend build: passed.
+- Rust: 50 passed, 1 ignored. Frontend: 10 passed. Production frontend build: passed.
 
 ## Next Iteration Order
 

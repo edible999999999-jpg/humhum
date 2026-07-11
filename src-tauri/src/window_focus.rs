@@ -130,6 +130,42 @@ pub fn focus_agent_route(route: Option<&SessionRoute>) -> Result<FocusResult, St
     }
 }
 
+pub fn focus_codex_thread(thread_id: &str) -> Result<FocusResult, String> {
+    let url =
+        codex_thread_url(thread_id).ok_or_else(|| "Invalid Codex thread identifier".to_string())?;
+    #[cfg(target_os = "macos")]
+    {
+        let output = Command::new("open")
+            .args(["-b", "com.openai.codex", &url])
+            .output()
+            .map_err(|error| format!("Could not open Codex thread: {error}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "Could not open Codex thread: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        Ok(FocusResult {
+            strategy: "codex_thread".into(),
+            application: Some("Codex".into()),
+            exact: true,
+        })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = url;
+        Err("Codex thread focus only supported on macOS".into())
+    }
+}
+
+fn codex_thread_url(thread_id: &str) -> Option<String> {
+    let valid = !thread_id.is_empty()
+        && thread_id.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | ':')
+        });
+    valid.then(|| format!("codex://threads/{thread_id}"))
+}
+
 fn focus_tmux_pane(pane: &str) -> Result<(), String> {
     if !is_valid_tmux_pane(pane) {
         return Err("Invalid tmux pane identifier".into());
@@ -334,5 +370,15 @@ mod tests {
             choose_focus_strategy(&route),
             FocusStrategy::TmuxPane("%7".into())
         );
+    }
+
+    #[test]
+    fn codex_thread_urls_accept_only_stable_thread_identifiers() {
+        assert_eq!(
+            codex_thread_url("019f26d2-b29e-7b50-a232-520d8a1a9d49"),
+            Some("codex://threads/019f26d2-b29e-7b50-a232-520d8a1a9d49".into())
+        );
+        assert_eq!(codex_thread_url("thread/../../bad"), None);
+        assert_eq!(codex_thread_url(""), None);
     }
 }

@@ -35,7 +35,7 @@ export interface CodexRemotePairing {
 }
 
 export interface FocusResult {
-  strategy: "tmux_pane" | "iterm_session" | "application" | "generic_terminal";
+  strategy: "tmux_pane" | "iterm_session" | "codex_thread" | "application" | "generic_terminal";
   application: string | null;
   exact: boolean;
 }

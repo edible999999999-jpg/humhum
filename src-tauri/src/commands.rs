@@ -1750,6 +1750,7 @@ pub async fn focus_terminal() -> Result<(), String> {
 #[tauri::command]
 pub async fn focus_agent_session(
     store: State<'_, Arc<std::sync::Mutex<SessionStore>>>,
+    bridge: State<'_, Arc<CodexBridgeState>>,
     session_id: String,
 ) -> Result<window_focus::FocusResult, String> {
     let route = {
@@ -1760,7 +1761,19 @@ pub async fn focus_agent_session(
             .find(|session| session.session_id == session_id)
             .and_then(|session| session.route.clone())
     };
-    window_focus::focus_agent_route(route.as_ref())
+    if route.is_some() {
+        return window_focus::focus_agent_route(route.as_ref());
+    }
+
+    let codex_thread = bridge.sessions().into_iter().find_map(|session| {
+        let thread_id = session.provider_thread_id.as_deref().unwrap_or(&session.session_id);
+        (session.session_id == session_id || thread_id == session_id).then(|| thread_id.to_string())
+    });
+    if let Some(thread_id) = codex_thread {
+        return window_focus::focus_codex_thread(&thread_id);
+    }
+
+    window_focus::focus_agent_route(None)
 }
 
 /// Focus the terminal and type text + Enter (for AskUserQuestion responses)
