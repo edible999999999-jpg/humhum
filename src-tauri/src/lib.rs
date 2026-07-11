@@ -18,6 +18,7 @@ mod local_api_auth;
 mod mac_notification_watcher;
 mod mobile_bridge;
 mod openclaw_hook;
+mod openclaw_transcript;
 mod opencode_followup;
 mod pi_sidecar;
 mod qoder_log_watcher;
@@ -172,6 +173,9 @@ pub fn run() {
 
             // Start Wukong r2c database watcher
             wukong_watcher::start_watcher(app_handle.clone());
+
+            // Backfill local OpenClaw conversations without copying their message bodies.
+            openclaw_transcript::start_watcher(app_handle.clone());
 
             // Start the read-only Hush bridge for new local macOS notifications.
             #[cfg(target_os = "macos")]

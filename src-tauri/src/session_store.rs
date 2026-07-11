@@ -209,7 +209,7 @@ impl SessionStore {
                     }
                 }
             }
-            "Stop" | "TaskCompleted" => {
+            "Stop" | "TaskCompleted" | "TranscriptBackfill" => {
                 session.status = SessionStatus::Idle;
             }
             _ => {

@@ -15,14 +15,18 @@ Status meanings:
 | Live Claude/Codex supervision | Complete | Claude hooks plus Codex app-server sessions feed Hexa and the pet. |
 | Waiting-first attention view | Complete | Hexa orders waiting, stalled/looping, working, idle, then completed; recency breaks ties. |
 | Approve/deny and questions | Complete | Claude hook requests, Codex app-server approvals, and OpenCode `permission.asked` decisions are session scoped. OpenCode replies through its official permission API and preserves the native prompt when HUMHUM is unavailable. |
+| Per-session auto-approve | Partial | Rage mode is a real global switch: ordinary permission requests are auto-confirmed in the hook server while explicit questions remain interactive. Ping Island can scope this behavior to one Claude session, which HUMHUM cannot yet do. |
 | Exact jump back | Partial | Hook captures terminal, PID, TTY, tmux pane and iTerm session. Hexa can select an exact tmux pane, iTerm session, allow-listed Terminal.app TTY, Codex desktop task, or a Cursor integrated terminal verified by a one-time extension receipt. At safe Ghostty event boundaries, a uniquely matched workspace is now persisted as its stable terminal ID and later focused directly; unique-workspace fallback remains. Exact Cursor chat selection is still missing. |
 | Follow-up from supervisor | Partial | Codex app-server plus known local Claude Code and OpenCode sessions accept follow-ups through provider-scoped durable queues with retry-preserved text. CLI transports use stable session IDs, verified workspaces and noninteractive resume commands; generic terminal typing remains disabled because an unverified target is unsafe. |
 | Completion and attention notifications | Complete | Pet overlays and sounds remain ambient, while native macOS notifications can be enabled independently for approvals, questions, completions, and ordinary Agent messages. Legacy configs migrate with all four enabled. |
-| Transcript backfill | Complete | Local Codex JSONL and Claude stats/readouts feed history and summaries. |
+| Codex/Claude transcript backfill | Complete | Local Codex JSONL and Claude stats/readouts feed history and summaries. |
+| OpenClaw transcript backfill | Complete | A local watcher follows each Agent's official session index, imports the 30 most recently updated JSONL transcripts into Hexa, and refreshes changed sessions every 20 seconds. Canonical path containment and bounded readouts keep message bodies out of event payloads and Mobile Web. |
 | Broad client coverage | Partial | Managed profiles include Claude Code, Codex, Qwen Code, Gemini CLI, Kimi, QoderWork, Qoder, CodeBuddy, WorkBuddy, Cursor, GitHub Copilot CLI, OpenCode, Hermes Agent and OpenClaw; local Pi and Wukong watchers also exist. OpenClaw 2026.3.13, Copilot, Cursor 3.10.20 and OpenCode 1.17.18 have installed runtime evidence; Hermes lifecycle/progress delivery is protocol-smoke verified. Deep OpenClaw tool hooks, Hermes/OpenClaw follow-ups and remote variants remain incomplete. |
 | SSH remote bridge | Partial | Settings can bootstrap Claude hooks over an already trusted, key-only SSH connection and receive events through a loopback-only reverse tunnel. The remote credential is event-only, stored separately from the local API token, and revoked locally on disconnect. A real remote-host smoke test and multi-host management are still missing. |
 | Custom sound packs and per-agent mascot | Complete | HUMHUM imports and auto-discovers OpenPeon/CESP packs with five event categories, previews, per-event controls and built-in fallback. Humi now follows the most recently active Agent with a distinct brand theme and badge across 2D/3D rendering, while Settings supports per-Agent appearance overrides and reset-all. |
+| Detached desktop pet | Complete | Humi is a native always-on-top transparent desktop pet independent of the Hub window, with session overlays and click-through behavior. |
 | Launch at login | Complete | Settings exposes the native macOS LaunchAgent switch and always reads back system state. Runtime verification created `HumHum.plist` with `RunAtLoad=true`, then disabled it and confirmed clean removal. |
+| Signed automatic distribution | Missing | A verified arm64 DMG exists locally, but it is only ad-hoc signed. HUMHUM has no Developer ID notarization, Sparkle updater, or Homebrew cask yet. |
 
 ## Happy
 
@@ -34,10 +38,18 @@ Status meanings:
 | Self-hosted relay | Missing | Requires protocol, identity, storage and deployment work. |
 | Ordered/retryable outgoing messages | Partial | Desktop and mobile Codex, Claude and OpenCode follow-ups use an owner-only persistent queue with strict per-provider/session order, crash recovery, explicit queued/delivered/failed receipts, and retry/discard controls. Future internet transports do not use the queue yet. |
 | Push notifications | Missing | Native Mac notifications exist, but no APNs/FCM/Web Push path. |
+| Smart push routing | Missing | There is no remote device-presence or foreground-aware router that chooses which phone/web client should receive a push. |
 | Multi-machine sessions | Missing | Local multi-agent sessions work on one Mac; there is no machine registry or presence protocol. |
 | Mobile permission controls | Partial | A separately paired control device can inspect bounded Codex, Claude and OpenCode approval summaries and allow once or deny; read-only devices receive 403 and never receive action summaries. Internet delivery remains missing. |
 | Voice control | Partial | HUMHUM has local STT/TTS and voice commands, but voice is not connected to a remote session client. |
-| Attachments and file review | Partial | Hexa now loads a session-bound local Git change summary on demand: branch, staged/unstaged/untracked state, relative paths, binary markers, and bounded insertion/deletion totals. It never returns absolute paths or source text. Full patch reading, image/file attachments, and encrypted remote review remain missing. |
+| File change review | Partial | Hexa loads a session-bound local Git change summary on demand: branch, staged/unstaged/untracked state, relative paths, binary markers, and bounded insertion/deletion totals. It never returns absolute paths or source text. Happy's full diff sidebar remains broader. |
+| File viewer and editor | Missing | HUMHUM does not expose file bodies or allow remote edits; the Git summary is intentionally metadata-only. |
+| Image and file attachments | Missing | Desktop and mobile follow-ups are text-only; there is no Codex image attachment or web/Android upload path. |
+| Fork or duplicate a session | Missing | HUMHUM can resume known provider sessions but cannot clone one into a new task with inherited context. |
+| Session resume | Partial | Codex, Claude and OpenCode follow-ups resume a stable known session through provider-specific transports. This is not yet a general cross-device RPC resume workflow. |
+| Paginated encrypted history | Missing | Local bounded history exists, but there is no E2EE history store with lazy backward pagination or parallel decryption. |
+| Dynamic workflows and authoritative goals | Missing | Hexa observes progress and accepts follow-ups, but it does not create or synchronize Happy-style durable workflow/goal objects with the Agent runtime. |
+| Analytics privacy controls | Partial | HUMHUM keeps local usage statistics and does not require cloud analytics, but the UI has no explicit analytics retention/cleanup control. |
 
 ## HUMHUM Advantages To Preserve
 
@@ -67,6 +79,7 @@ Status meanings:
 - OpenClaw supervision now installs an owner-marked internal hook at `~/.openclaw/hooks/humhum-openclaw` and merges only `hooks.internal.entries.humhum-openclaw.enabled=true` into the existing config. It subscribes to the official `command`, `message` and `session` families, mapping new/reset/stop, message receive/send, compaction and patch events into Hexa without typed interception powers.
 - The generated OpenClaw TypeScript handler runs through a single Promise queue, reads the current HUMHUM port/token at delivery time, posts only to `127.0.0.1`, skips unknown events and missing session IDs, and returns no policy decision. A Node runtime smoke received seven ordered authenticated envelopes and confirmed that a malformed first event produced no session.
 - OpenClaw 2026.3.13 is installed locally. After the real HUMHUM install path ran against `~/.openclaw`, `openclaw hooks info humhum-openclaw --json` reported source `openclaw-managed`, all three event families, `eligible:true`, `disabled:false`, and no missing requirements; `openclaw hooks check --json` reported all five discovered hooks eligible. The Gateway remained stopped and was not restarted for testing. A pre-install config backup and recursive semantic comparison confirmed all non-HUMHUM configuration remained unchanged. Install/uninstall tests also prove a config with no prior hook parents is restored exactly.
+- OpenClaw transcript backfill reads only `sessions.json` entries under `~/.openclaw/agents/*/sessions`, canonicalizes every declared JSONL path beneath the agents root, and keeps the 30 newest sessions. A 20-second watcher emits metadata-only `TranscriptBackfill` envelopes, while the existing readout parser examines at most 500 recent lines and truncates extracted text before local display. Unit tests cover the current OpenClaw schema, path escape rejection and recency bounds; an explicit live-home smoke discovered the installed OpenClaw session without reading its message text into test output.
 - Cursor 3.10.20 was detected at `/Applications/Cursor.app`. HUMHUM installed nine user-level steps including `preCompact`; Cursor's own hook-service log reported `Loaded 9 user hook(s)` with the full step list.
 - Cursor payload normalization now promotes `conversation_id` to stable `session_id` and the first `workspace_roots` entry to `cwd` without replacing already normalized fields. A real installed hook command accepted a synthetic Cursor request as session `cursor-smoke-20260712-b` and the HUMHUM endpoint returned HTTP 200 without logging its prompt.
 - Managed Cursor hooks now install a minimal MIT-licensed `humhum.session-focus` URI extension. It matches integrated terminals using the captured parent PID, allow-listed TTY and canonical workspace, refuses tied/zero-score matches, and reports exact focus only after the extension writes an owner-scoped one-time receipt.
@@ -106,19 +119,21 @@ Status meanings:
 - Runtime UI limitation: the latest development binary restarted successfully, but its menu-bar/transparent launch had no visible Hub window during automated screenshot capture. The disclosure layout is TypeScript-build verified; interactive visual QA remains pending until the Hub can be opened on the desktop.
 - The release arm64 `HumHum.app` built successfully. Because the locked desktop stalled only Tauri's decorative DMG Finder layout, a standard compressed read-only DMG was generated directly, verified by `hdiutil`, mounted, and its contained app passed strict deep code-sign verification.
 - Local release artifact: `src-tauri/target/release/bundle/dmg/HumHum_0.1.0_aarch64.dmg` (43 MB), SHA-256 `01dd56b6b9368ee007b970e291ef181136718aff57b38dc38c4b2e07e6816530`. It includes OpenClaw and Hermes Agent supervision/identity alongside provider-aware mobile follow-ups, OpenCode completion reliability, Ghostty terminal-ID routing, privacy-bounded session change summaries, permissions, sounds, themes, and wake guard. The DMG passed `hdiutil verify`; its read-only mounted app passed strict deep ad-hoc signature verification and contains a thin arm64 executable. It is not Developer ID signed or notarized, so it is not yet a frictionless public download.
-- Rust: 116 passed, 3 ignored. Frontend: 25 passed across 13 files. Production frontend build: passed.
+- Rust: 119 passed, 4 ignored across the full suite. Frontend: 25 passed across 13 files. Production frontend build: passed.
 
 ## Next Iteration Order
 
 1. Add exact IDE chat routing where the host exposes a stable conversation command, then evaluate OpenClaw typed tool hooks without widening default privileges.
-2. Real-host SSH smoke testing, multi-host presence, reconnect controls, and remote cleanup.
-3. Extend durable follow-up and permission replies to Hermes and other verified transports.
-4. Internet E2EE relay, push, attachments and multi-machine presence.
+2. Add per-session auto-approve while keeping global Rage Mode available.
+3. Real-host SSH smoke testing, multi-host presence, reconnect controls, and remote cleanup.
+4. Extend durable follow-up and permission replies to Hermes and other verified transports.
+5. Internet E2EE relay, smart push, attachments, encrypted history and multi-machine presence.
 
 ## Competitor Sources
 
 - Ping Island current feature and OpenPeon/CESP sound-pack documentation: <https://github.com/erha19/ping-island>
 - Happy architecture, remote clients, E2EE relay and self-hosting documentation: <https://happy.engineering/docs/>
+- Happy current release notes for session duplication, file editing, image uploads, smart push routing, encrypted-history performance, workflows and goals: <https://github.com/slopus/happy/releases>
 - OpenCode plugin events, permissions and server API: <https://opencode.ai/docs/plugins/>, <https://opencode.ai/docs/server/>
 - Hermes Agent official plugin and hook documentation: <https://hermes-agent.nousresearch.com/docs/developer-guide/plugins>, <https://hermes-agent.nousresearch.com/docs/user-guide/features/hooks>
 - OpenClaw official internal and typed plugin hook documentation: <https://docs.openclaw.ai/automation/hooks>, <https://docs.openclaw.ai/plugins/hooks>
