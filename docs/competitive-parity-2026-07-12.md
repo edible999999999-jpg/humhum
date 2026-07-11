@@ -75,6 +75,8 @@ Status meanings:
 - Claude pending permissions are projected to control-scoped mobile devices with full paths reduced to file names. Decisions reuse the desktop pending channel instead of a second execution path.
 - Runtime Claude mobile verification showed `Edit · secret-mobile.txt` without a `/Users` path, returned HTTP 200 for deny, and the blocked hook received `behavior: deny`; the test device was then revoked.
 - Terminal.app routes now normalize only `ttys` plus digits, reject script input, and select the matching AppleScript tab before activating the window. A locked Mac prevented the temporary real-tab smoke test, so this remains unit/build verified rather than runtime verified.
+- The release arm64 `HumHum.app` built successfully. Because the locked desktop stalled only Tauri's decorative DMG Finder layout, a standard compressed read-only DMG was generated directly, verified by `hdiutil`, mounted, and its contained app passed strict deep code-sign verification.
+- Local release artifact: `src-tauri/target/release/bundle/dmg/HumHum_0.1.0_aarch64.dmg` (42 MB), SHA-256 `ea955450c6363ce1a1f28a72f01ff460bde71a627f64563c22c963cb647efebb`. It has a complete ad-hoc signature but is not Developer ID signed or notarized, so it is not yet a frictionless public download.
 - Rust: 79 passed, 1 ignored. Frontend: 12 passed. Production frontend build: passed.
 
 ## Next Iteration Order
