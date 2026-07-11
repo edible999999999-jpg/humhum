@@ -17,6 +17,7 @@ import { useVoiceCommand } from "../../hooks/useVoiceCommand";
 import { useKeyboardShortcuts } from "../../hooks/useKeyboardShortcuts";
 import { useAudioQueue } from "../../hooks/useAudioQueue";
 import { getPipeline } from "../../lib/bootstrap";
+import { nativeNotificationKind } from "../../lib/notification-policy";
 import { t } from "../../lib/i18n";
 import { setLanguage } from "../../lib/i18n";
 import type { PipelineState } from "../../lib/pipeline";
@@ -267,6 +268,7 @@ export function PetView() {
     const eventName = latestEvent.hook_event_name;
     const payload = latestEvent.payload as Record<string, unknown>;
     const pipeline = getPipeline();
+    const eventToolName = (payload.tool_name as string) || null;
 
     console.log("[PetView] Event received:", eventName, "pipeline:", pipeline ? "OK" : "NULL");
 
@@ -316,10 +318,12 @@ export function PetView() {
         detail = `\n${t("petview.file")}: ${(toolInput.file_path as string).split("/").pop()}`;
       }
 
-      invoke("send_notification", {
-        title: t("petview.needsApproval", { tool: toolName }),
-        body: `${t("petview.requestExec", { client: latestEvent.client_type || "Agent", tool: toolName })}${detail}`,
-      });
+      if (nativeNotificationKind(eventName, toolName) === "approval") {
+        invoke("send_notification", {
+          title: t("petview.needsApproval", { tool: toolName }),
+          body: `${t("petview.requestExec", { client: latestEvent.client_type || "Agent", tool: toolName })}${detail}`,
+        });
+      }
 
       if (pipeline) {
         pipeline.processEvent(latestEvent).catch(console.error);
@@ -334,6 +338,12 @@ export function PetView() {
         completionSpeaking.current = false;
         setPetState("idle");
       }, 8000);
+      if (nativeNotificationKind(eventName, eventToolName) === "completed") {
+        invoke("send_notification", {
+          title: `${latestEvent.client_type || "Agent"} 已完成`,
+          body: (payload.message as string) || "任务已经完成，可以回来查看结果。",
+        });
+      }
       if (pipeline) {
         pipeline.processEvent(latestEvent).catch(console.error);
       }
@@ -347,6 +357,12 @@ export function PetView() {
         type: "system",
       });
       setTimeout(() => setNotification(null), 5000);
+      if (nativeNotificationKind(eventName, eventToolName) === "message") {
+        invoke("send_notification", {
+          title: latestEvent.client_type || "Agent",
+          body: notifText,
+        });
+      }
 
       if (pipeline) {
         pipeline.processEvent(latestEvent).catch(console.error);
@@ -375,12 +391,6 @@ export function PetView() {
             return prev;
           });
         }, 60000);
-      } else {
-        const action = eventName === "PreToolUse" ? t("petview.using") : t("petview.done");
-        invoke("send_notification", {
-          title: toolName,
-          body: `${latestEvent.client_type} ${action} ${toolName}`,
-        });
       }
     }
   }, [latestEvent, setPetState]);

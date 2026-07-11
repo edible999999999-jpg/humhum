@@ -19,7 +19,7 @@ Status meanings:
 | Follow-up from supervisor | Partial | Codex app-server follow-up resumes before send and now reports sending/delivered/failed with retry-preserved text. Generic terminal inline follow-up is not enabled because typing into an unverified target is unsafe. |
 | Completion and attention notifications | Complete | Pet overlays, sounds, and native macOS notifications exist for permission, question, tool, and completion events. Notification preference granularity still trails Ping Island. |
 | Transcript backfill | Complete | Local Codex JSONL and Claude stats/readouts feed history and summaries. |
-| Broad client coverage | Partial | Verified profiles: Claude Code, Codex, Qwen Code, Gemini CLI, Kimi, QoderWork; local Pi and Wukong watchers also exist. Ping Island supports additional OpenCode, Copilot, Cursor and remote variants. |
+| Broad client coverage | Partial | Managed profiles: Claude Code, Codex, Qwen Code, Gemini CLI, Kimi, QoderWork, Qoder, CodeBuddy and WorkBuddy; local Pi and Wukong watchers also exist. Claude-compatible profile structure is tested, while each third-party runtime still needs a real installed-client smoke test. Ping Island also supports OpenCode, Copilot, Cursor and remote variants. |
 | SSH remote bridge | Missing | HUMHUM has no authenticated SSH event bridge yet. |
 | Custom sound packs and per-agent mascot | Partial | HUMHUM has event sounds and 2D/3D pets, but no imported sound packs or per-agent mascot assignment. |
 | Launch at login | Missing | No verified user-facing launch-at-login setting. |
@@ -53,7 +53,7 @@ Status meanings:
 - tmux pane targets are allow-listed before direct process invocation.
 - Hexa has a stable crosshair action for returning to the originating session.
 - Intervention drafts survive failure and clear only after successful Codex delivery.
-- Rust: 45 passed, 1 ignored. Frontend: 8 passed. Production frontend build: passed.
+- Rust: 47 passed, 1 ignored. Frontend: 10 passed. Production frontend build: passed.
 
 ## Next Iteration Order
 

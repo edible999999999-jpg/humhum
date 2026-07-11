@@ -22,7 +22,21 @@ pub const CLIENTS: &[ClientProfile] = &[
         name: "Claude Code",
         config_format: ConfigFormat::Json,
         config_path: ".claude/settings.json",
-        hook_events: &["PermissionRequest", "Stop", "TaskCompleted", "Notification"],
+        hook_events: &[
+            "UserPromptSubmit",
+            "PreToolUse",
+            "PostToolUse",
+            "PostToolUseFailure",
+            "PermissionRequest",
+            "Notification",
+            "Stop",
+            "TaskCompleted",
+            "SubagentStart",
+            "SubagentStop",
+            "SessionStart",
+            "SessionEnd",
+            "PreCompact",
+        ],
     },
     ClientProfile {
         id: "codex",
@@ -36,7 +50,21 @@ pub const CLIENTS: &[ClientProfile] = &[
         name: "Qwen Code",
         config_format: ConfigFormat::Json,
         config_path: ".qwen/settings.json",
-        hook_events: &["PermissionRequest", "Stop", "TaskCompleted", "Notification"],
+        hook_events: &[
+            "UserPromptSubmit",
+            "PreToolUse",
+            "PostToolUse",
+            "PostToolUseFailure",
+            "PermissionRequest",
+            "Notification",
+            "Stop",
+            "TaskCompleted",
+            "SubagentStart",
+            "SubagentStop",
+            "SessionStart",
+            "SessionEnd",
+            "PreCompact",
+        ],
     },
     ClientProfile {
         id: "gemini-cli",
@@ -63,6 +91,64 @@ pub const CLIENTS: &[ClientProfile] = &[
             "Notification",
             "PreToolUse",
             "PostToolUse",
+            "PostToolUseFailure",
+            "SessionStart",
+            "SessionEnd",
+        ],
+    },
+    ClientProfile {
+        id: "qoder",
+        name: "Qoder",
+        config_format: ConfigFormat::Json,
+        config_path: ".qoder/settings.json",
+        hook_events: &[
+            "UserPromptSubmit",
+            "PreToolUse",
+            "PostToolUse",
+            "PostToolUseFailure",
+            "PermissionRequest",
+            "Notification",
+            "Stop",
+            "SessionStart",
+            "SessionEnd",
+        ],
+    },
+    ClientProfile {
+        id: "codebuddy",
+        name: "CodeBuddy",
+        config_format: ConfigFormat::Json,
+        config_path: ".codebuddy/settings.json",
+        hook_events: &[
+            "UserPromptSubmit",
+            "PreToolUse",
+            "PostToolUse",
+            "PostToolUseFailure",
+            "PermissionRequest",
+            "Notification",
+            "Stop",
+            "SubagentStop",
+            "SessionStart",
+            "SessionEnd",
+            "PreCompact",
+        ],
+    },
+    ClientProfile {
+        id: "workbuddy",
+        name: "WorkBuddy",
+        config_format: ConfigFormat::Json,
+        config_path: ".workbuddy/settings.json",
+        hook_events: &[
+            "UserPromptSubmit",
+            "PreToolUse",
+            "PostToolUse",
+            "PostToolUseFailure",
+            "PermissionRequest",
+            "Notification",
+            "Stop",
+            "SubagentStop",
+            "SessionStart",
+            "SessionEnd",
+            "PreCompact",
         ],
     },
 ];
@@ -73,4 +159,45 @@ pub fn get_client(id: &str) -> Option<&'static ClientProfile> {
 
 pub fn get_all_clients() -> &'static [ClientProfile] {
     CLIENTS
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn includes_verified_claude_compatible_clients() {
+        for id in ["claude-code", "qoder", "codebuddy", "workbuddy"] {
+            assert!(get_client(id).is_some(), "missing client profile: {id}");
+        }
+    }
+
+    #[test]
+    fn supervision_profiles_capture_progress_and_lifecycle_events() {
+        for id in [
+            "claude-code",
+            "qwen-code",
+            "qoder",
+            "codebuddy",
+            "workbuddy",
+        ] {
+            let profile = get_client(id).unwrap();
+            assert!(
+                profile.hook_events.contains(&"PreToolUse"),
+                "{id} lacks PreToolUse"
+            );
+            assert!(
+                profile.hook_events.contains(&"PostToolUse"),
+                "{id} lacks PostToolUse"
+            );
+            assert!(
+                profile.hook_events.contains(&"SessionStart"),
+                "{id} lacks SessionStart"
+            );
+            assert!(
+                profile.hook_events.contains(&"SessionEnd"),
+                "{id} lacks SessionEnd"
+            );
+        }
+    }
 }
