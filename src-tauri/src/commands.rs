@@ -162,6 +162,24 @@ mod client_hook_install_tests {
         assert!(HUMHUM_OPENCODE_PLUGIN.contains("permission ? 125_000 : 3000"));
         assert!(HUMHUM_OPENCODE_PLUGIN.contains(r#"typeof properties.permission === "string""#));
     }
+
+    #[test]
+    fn hermes_format_installs_without_a_shell_hook_command() {
+        let temp = tempfile::tempdir().unwrap();
+        let plugin_dir = temp.path().join(".hermes/plugins/humhum");
+
+        install_client_format(&ConfigFormat::HermesPlugin, &plugin_dir, None, &[], 31_275).unwrap();
+
+        assert!(client_format_is_installed(
+            &ConfigFormat::HermesPlugin,
+            &plugin_dir
+        ));
+        std::fs::remove_file(plugin_dir.join("__init__.py")).unwrap();
+        assert!(!client_format_is_installed(
+            &ConfigFormat::HermesPlugin,
+            &plugin_dir
+        ));
+    }
 }
 
 #[cfg(test)]
@@ -2444,24 +2462,27 @@ pub async fn install_hooks_for_client(
         std::fs::create_dir_all(parent).map_err(|e| format!("Failed to create dir: {}", e))?;
     }
 
-    let hook_script = ensure_hook_script_installed(&home)?;
-    let hook_cmd = format!(
-        "{} --client {}",
-        shell_quote(&hook_script.to_string_lossy()),
-        shell_quote(&client_id)
-    );
+    let hook_cmd = if matches!(
+        profile.config_format,
+        ConfigFormat::OpenCodePlugin | ConfigFormat::HermesPlugin
+    ) {
+        None
+    } else {
+        let hook_script = ensure_hook_script_installed(&home)?;
+        Some(format!(
+            "{} --client {}",
+            shell_quote(&hook_script.to_string_lossy()),
+            shell_quote(&client_id)
+        ))
+    };
 
-    match profile.config_format {
-        ConfigFormat::Json => install_json_hooks(&config_path, &hook_cmd, profile.hook_events)?,
-        ConfigFormat::Toml => install_toml_hooks(&config_path, &hook_cmd, profile.hook_events)?,
-        ConfigFormat::FlatJson => {
-            install_flat_json_hooks(&config_path, &hook_cmd, profile.hook_events, false)?
-        }
-        ConfigFormat::CopilotJson => {
-            install_flat_json_hooks(&config_path, &hook_cmd, profile.hook_events, true)?
-        }
-        ConfigFormat::OpenCodePlugin => install_opencode_plugin(&config_path, port)?,
-    }
+    install_client_format(
+        &profile.config_format,
+        &config_path,
+        hook_cmd.as_deref(),
+        profile.hook_events,
+        port,
+    )?;
     if client_id == "cursor" {
         crate::cursor_focus_extension::install_at(&home)?;
     }
@@ -2485,22 +2506,52 @@ pub async fn uninstall_hooks_for_client(client_id: String) -> Result<String, Str
         return Ok(format!("No {} config found", profile.name));
     }
 
-    match profile.config_format {
-        ConfigFormat::Json => uninstall_json_hooks(&config_path, profile.hook_events)?,
-        ConfigFormat::Toml => uninstall_toml_hooks(&config_path, profile.hook_events)?,
-        ConfigFormat::FlatJson => {
-            uninstall_flat_json_hooks(&config_path, profile.hook_events, false)?
-        }
-        ConfigFormat::CopilotJson => {
-            uninstall_flat_json_hooks(&config_path, profile.hook_events, true)?
-        }
-        ConfigFormat::OpenCodePlugin => uninstall_opencode_plugin(&config_path)?,
-    }
+    uninstall_client_format(&profile.config_format, &config_path, profile.hook_events)?;
     if client_id == "cursor" {
         crate::cursor_focus_extension::uninstall_at(&home)?;
     }
 
     Ok(format!("Hooks removed for {}", profile.name))
+}
+
+fn install_client_format(
+    format: &ConfigFormat,
+    config_path: &Path,
+    hook_cmd: Option<&str>,
+    events: &[&str],
+    port: u16,
+) -> Result<(), String> {
+    let command = || hook_cmd.ok_or_else(|| "Hook command is required for this client".to_string());
+    match format {
+        ConfigFormat::Json => install_json_hooks(config_path, command()?, events),
+        ConfigFormat::Toml => install_toml_hooks(config_path, command()?, events),
+        ConfigFormat::FlatJson => install_flat_json_hooks(config_path, command()?, events, false),
+        ConfigFormat::CopilotJson => install_flat_json_hooks(config_path, command()?, events, true),
+        ConfigFormat::OpenCodePlugin => install_opencode_plugin(config_path, port),
+        ConfigFormat::HermesPlugin => crate::hermes_plugin::install_at(config_path),
+    }
+}
+
+fn uninstall_client_format(
+    format: &ConfigFormat,
+    config_path: &Path,
+    events: &[&str],
+) -> Result<(), String> {
+    match format {
+        ConfigFormat::Json => uninstall_json_hooks(config_path, events),
+        ConfigFormat::Toml => uninstall_toml_hooks(config_path, events),
+        ConfigFormat::FlatJson => uninstall_flat_json_hooks(config_path, events, false),
+        ConfigFormat::CopilotJson => uninstall_flat_json_hooks(config_path, events, true),
+        ConfigFormat::OpenCodePlugin => uninstall_opencode_plugin(config_path),
+        ConfigFormat::HermesPlugin => crate::hermes_plugin::uninstall_at(config_path),
+    }
+}
+
+fn client_format_is_installed(format: &ConfigFormat, config_path: &Path) -> bool {
+    if matches!(format, ConfigFormat::HermesPlugin) {
+        return crate::hermes_plugin::is_installed_at(config_path);
+    }
+    std::fs::read_to_string(config_path).is_ok_and(|content| content.contains("humhum"))
 }
 
 fn install_json_hooks(
@@ -3029,8 +3080,7 @@ pub async fn check_hooks_status() -> Result<Value, String> {
     for client in client_registry::get_all_clients() {
         let config_path = home.join(client.config_path);
         let installed = if config_path.exists() {
-            let content = std::fs::read_to_string(&config_path).unwrap_or_default();
-            let hooks_installed = content.contains("humhum");
+            let hooks_installed = client_format_is_installed(&client.config_format, &config_path);
             if client.id == "cursor" && hooks_installed {
                 crate::cursor_focus_extension::ensure_for_managed_hook(&home).unwrap_or(false)
             } else {

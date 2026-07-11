@@ -17,6 +17,7 @@ pub enum ConfigFormat {
     FlatJson,
     CopilotJson,
     OpenCodePlugin,
+    HermesPlugin,
 }
 
 pub const CLIENTS: &[ClientProfile] = &[
@@ -201,6 +202,22 @@ pub const CLIENTS: &[ClientProfile] = &[
             "tool.execute.after",
         ],
     },
+    ClientProfile {
+        id: "hermes",
+        name: "Hermes Agent",
+        config_format: ConfigFormat::HermesPlugin,
+        config_path: ".hermes/plugins/humhum",
+        hook_events: &[
+            "on_session_start",
+            "pre_llm_call",
+            "pre_tool_call",
+            "post_tool_call",
+            "post_llm_call",
+            "on_session_end",
+            "on_session_finalize",
+            "on_session_reset",
+        ],
+    },
 ];
 
 pub fn get_client(id: &str) -> Option<&'static ClientProfile> {
@@ -228,6 +245,16 @@ mod tests {
         ] {
             assert!(get_client(id).is_some(), "missing client profile: {id}");
         }
+    }
+
+    #[test]
+    fn includes_hermes_plugin_profile() {
+        let profile = get_client("hermes").expect("missing Hermes client profile");
+
+        assert!(matches!(profile.config_format, ConfigFormat::HermesPlugin));
+        assert_eq!(profile.config_path, ".hermes/plugins/humhum");
+        assert!(profile.hook_events.contains(&"pre_tool_call"));
+        assert!(profile.hook_events.contains(&"on_session_finalize"));
     }
 
     #[test]

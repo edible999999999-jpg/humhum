@@ -7,6 +7,7 @@ mod config;
 mod cursor_focus_extension;
 mod event_bus;
 mod git_changes;
+mod hermes_plugin;
 mod hexa_protocol;
 mod hook_server;
 mod hush_store;
