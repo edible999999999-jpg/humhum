@@ -68,12 +68,13 @@ Status meanings:
 - SSH bridge limitation: no suitable second host was available for a real remote smoke test; installer, argument boundaries, authorization scope, replacement behavior, and disconnect revocation are covered locally.
 - Mobile pairing now records an explicit `read` or `control` scope. Existing device records migrate to read-only, read devices cannot see approval summaries or message controls, and only control credentials reach Codex action routes.
 - Mobile Codex follow-ups use the desktop durable intervention queue. Runtime HTTPS verification returned `control` and `read` scopes, control approval reached Codex and returned 409 for a synthetic missing item, read approval returned 403, control malformed message reached parsing with 400, read message returned 403, and revoked tokens returned 401.
-- Rust: 74 passed, 1 ignored. Frontend: 11 passed. Production frontend build: passed.
+- Hexa lists paired devices without exposing token digests, shows each device's read/control scope, and can revoke one device without invalidating the others; revoke-all remains available.
+- Rust: 75 passed, 1 ignored. Frontend: 11 passed. Production frontend build: passed.
 
 ## Next Iteration Order
 
 1. Ghostty/Terminal exact terminal identifiers and IDE chat routing.
 2. Real installed-client smoke tests for OpenCode and Cursor, plus OpenCode permission reply support.
-3. Claude mobile approvals, queued follow-up, and per-device management on top of the scoped Codex controls.
+3. Claude mobile approvals and queued follow-up on top of the scoped Codex controls.
 4. Real-host SSH smoke testing, multi-host presence, reconnect controls, and remote cleanup.
 5. Internet E2EE relay, push, attachments and multi-machine presence.

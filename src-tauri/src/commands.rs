@@ -197,6 +197,14 @@ pub async fn revoke_mobile_devices(
 }
 
 #[tauri::command]
+pub async fn revoke_mobile_device(
+    state: State<'_, Arc<MobileBridgeState>>,
+    device_id: String,
+) -> Result<MobileBridgeStatus, String> {
+    state.revoke_device(&device_id)
+}
+
+#[tauri::command]
 pub async fn get_wake_guard_status(
     state: State<'_, Arc<WakeGuardState>>,
 ) -> Result<WakeGuardStatus, String> {

@@ -39,6 +39,12 @@ export interface MobileBridgeStatus {
   url: string | null;
   certificate_fingerprint: string | null;
   paired_devices: number;
+  devices: Array<{
+    id: string;
+    name: string;
+    paired_at: string;
+    scope: "read" | "control";
+  }>;
 }
 
 export interface MobilePairingInfo {
@@ -499,6 +505,7 @@ export function useHexaData() {
     url: null,
     certificate_fingerprint: null,
     paired_devices: 0,
+    devices: [],
   });
   const [mobilePairing, setMobilePairing] = useState<MobilePairingInfo | null>(null);
   const [queuedInterventions, setQueuedInterventions] = useState<QueuedIntervention[]>([]);
@@ -662,6 +669,12 @@ export function useHexaData() {
     return state;
   }, []);
 
+  const revokeMobileDevice = useCallback(async (deviceId: string) => {
+    const state = await invoke<MobileBridgeStatus>("revoke_mobile_device", { deviceId });
+    setMobileBridge(state);
+    return state;
+  }, []);
+
   return {
     sessions,
     activeSessions,
@@ -693,5 +706,6 @@ export function useHexaData() {
     disableMobileBridge,
     startMobilePairing,
     revokeMobileDevices,
+    revokeMobileDevice,
   };
 }

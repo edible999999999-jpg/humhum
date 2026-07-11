@@ -603,6 +603,7 @@ function HumHumMobilePanel({
   onDisable,
   onPair,
   onRevoke,
+  onRevokeDevice,
 }: {
   state: MobileBridgeStatus;
   pairing: MobilePairingInfo | null;
@@ -610,6 +611,7 @@ function HumHumMobilePanel({
   onDisable: () => Promise<MobileBridgeStatus>;
   onPair: (scope?: "read" | "control") => Promise<MobilePairingInfo>;
   onRevoke: () => Promise<MobileBridgeStatus>;
+  onRevokeDevice: (deviceId: string) => Promise<MobileBridgeStatus>;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -635,6 +637,14 @@ function HumHumMobilePanel({
             TLS {state.certificate_fingerprint}
           </div>
         )}
+        {state.devices.map((device) => (
+          <div key={device.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 7, marginTop: 5, color: "rgba(255,255,255,0.42)", fontSize: 9 }}>
+            <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {device.name} · {device.scope === "control" ? "可控制" : "只读"}
+            </span>
+            <button type="button" title={`撤销 ${device.name}`} aria-label={`撤销 ${device.name}`} disabled={busy} onClick={() => run(() => onRevokeDevice(device.id))} className="kawaii-icon-btn" style={{ width: 24, height: 24, minWidth: 24 }}><Trash2 size={12} /></button>
+          </div>
+        ))}
       </div>
       <div style={{ display: "flex", gap: 6 }}>
         {state.enabled ? (
@@ -807,6 +817,7 @@ export function HexaModule() {
     disableMobileBridge,
     startMobilePairing,
     revokeMobileDevices,
+    revokeMobileDevice,
   } = useHexaData();
   const [openReviews, setOpenReviews] = useState<Set<string>>(new Set());
 
@@ -872,6 +883,7 @@ export function HexaModule() {
         onDisable={disableMobileBridge}
         onPair={startMobilePairing}
         onRevoke={revokeMobileDevices}
+        onRevokeDevice={revokeMobileDevice}
       />
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10, marginBottom: 14 }}>

@@ -29,6 +29,7 @@ pub struct MobileBridgeStatus {
     pub url: Option<String>,
     pub certificate_fingerprint: Option<String>,
     pub paired_devices: usize,
+    pub devices: Vec<MobileDeviceSummary>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -45,6 +46,14 @@ pub struct MobilePairingInfo {
 pub enum MobileDeviceScope {
     Read,
     Control,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct MobileDeviceSummary {
+    pub id: String,
+    pub name: String,
+    pub paired_at: String,
+    pub scope: MobileDeviceScope,
 }
 
 impl MobileDeviceScope {
@@ -91,17 +100,17 @@ impl MobileBridgeState {
             .runtime
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        let paired_devices = self
+        let devices = self
             .devices
             .lock()
             .unwrap_or_else(|error| error.into_inner())
-            .devices
-            .len();
+            .summaries();
         MobileBridgeStatus {
             enabled: runtime.enabled,
             url: runtime.url.clone(),
             certificate_fingerprint: runtime.certificate_fingerprint.clone(),
-            paired_devices,
+            paired_devices: devices.len(),
+            devices,
         }
     }
 
@@ -199,6 +208,14 @@ impl MobileBridgeState {
             .lock()
             .map_err(|error| error.to_string())?
             .revoke_all()?;
+        Ok(self.status())
+    }
+
+    pub fn revoke_device(&self, device_id: &str) -> Result<MobileBridgeStatus, String> {
+        self.devices
+            .lock()
+            .map_err(|error| error.to_string())?
+            .revoke_device(device_id)?;
         Ok(self.status())
     }
 }
@@ -673,6 +690,27 @@ impl MobileDeviceStore {
             .map(|device| device.scope)
     }
 
+    fn summaries(&self) -> Vec<MobileDeviceSummary> {
+        self.devices
+            .iter()
+            .map(|device| MobileDeviceSummary {
+                id: device.id.clone(),
+                name: device.name.clone(),
+                paired_at: device.paired_at.clone(),
+                scope: device.scope,
+            })
+            .collect()
+    }
+
+    fn revoke_device(&mut self, device_id: &str) -> Result<(), String> {
+        let before = self.devices.len();
+        self.devices.retain(|device| device.id != device_id);
+        if self.devices.len() == before {
+            return Err("Paired mobile device not found".into());
+        }
+        self.persist()
+    }
+
     fn revoke_all(&mut self) -> Result<(), String> {
         self.devices.clear();
         self.persist()
@@ -850,6 +888,28 @@ mod tests {
         assert!(store
             .authorize("control-token")
             .is_some_and(MobileDeviceScope::allows_control));
+    }
+
+    #[test]
+    fn one_device_can_be_revoked_without_affecting_others() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut store = MobileDeviceStore::load_or_create(temp.path()).unwrap();
+        let first = store
+            .add_device("Phone", "phone-token", MobileDeviceScope::Control)
+            .unwrap();
+        store
+            .add_device("Tablet", "tablet-token", MobileDeviceScope::Read)
+            .unwrap();
+
+        store.revoke_device(&first.id).unwrap();
+
+        assert_eq!(store.authorize("phone-token"), None);
+        assert_eq!(
+            store.authorize("tablet-token"),
+            Some(MobileDeviceScope::Read)
+        );
+        assert_eq!(store.summaries().len(), 1);
+        assert_eq!(store.summaries()[0].name, "Tablet");
     }
 
     #[test]

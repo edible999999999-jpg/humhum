@@ -171,6 +171,7 @@ pub fn run() {
             commands::disable_mobile_bridge,
             commands::start_mobile_pairing,
             commands::revoke_mobile_devices,
+            commands::revoke_mobile_device,
             commands::get_remote_bridge_status,
             commands::connect_remote_bridge,
             commands::disconnect_remote_bridge,
