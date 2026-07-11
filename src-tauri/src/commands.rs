@@ -13,6 +13,7 @@ use crate::knowledge_store::{AgentAsset, AgentAssetRootDiagnostic, KnowledgeStor
 use crate::pi_sidecar::{self, PiSessionStatus, PiSidecarState, PiStartOptions};
 use crate::session_store::{Session, SessionStatus, SessionStore};
 use crate::stats_store::StatsStore;
+use crate::wake_guard::{WakeGuardState, WakeGuardStatus};
 use crate::window_focus;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -26,6 +27,26 @@ use tauri::{Emitter, Manager, State};
 use tokio::process::Command;
 
 const HUMHUM_HOOK_SCRIPT: &str = include_str!("../../hooks/humhum-hook.sh");
+
+#[tauri::command]
+pub async fn get_wake_guard_status(
+    state: State<'_, Arc<WakeGuardState>>,
+) -> Result<WakeGuardStatus, String> {
+    Ok(state.status().await)
+}
+
+#[tauri::command]
+pub async fn set_wake_guard_enabled(
+    state: State<'_, Arc<WakeGuardState>>,
+    config: State<'_, Arc<std::sync::Mutex<AppConfig>>>,
+    enabled: bool,
+) -> Result<WakeGuardStatus, String> {
+    let status = state.set_enabled(enabled).await?;
+    let mut stored = config.lock().map_err(|error| error.to_string())?;
+    stored.ui.awake_mode = status.enabled;
+    stored.save()?;
+    Ok(status)
+}
 
 #[tauri::command]
 pub async fn get_codex_bridge_health(

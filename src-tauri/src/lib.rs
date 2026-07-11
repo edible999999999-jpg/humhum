@@ -14,6 +14,7 @@ mod pi_sidecar;
 mod qoder_log_watcher;
 mod session_store;
 mod stats_store;
+mod wake_guard;
 mod window_focus;
 mod wukong_watcher;
 
@@ -53,7 +54,27 @@ pub fn run() {
 
             // Load configuration
             let config = config::AppConfig::load(&app_handle);
+            let restore_awake_mode = config.ui.awake_mode;
             app.manage(Arc::new(std::sync::Mutex::new(config)));
+
+            let wake_guard = Arc::new(wake_guard::WakeGuardState::default());
+            app.manage(wake_guard.clone());
+            let wake_handle = app_handle.clone();
+            tauri::async_runtime::spawn(async move {
+                if restore_awake_mode {
+                    if let Err(error) = wake_guard.set_enabled(true).await {
+                        log::warn!("Could not restore Awake Mode: {error}");
+                    }
+                }
+                let mut pulse = tokio::time::interval(std::time::Duration::from_secs(180));
+                pulse.tick().await;
+                loop {
+                    pulse.tick().await;
+                    if wake_guard.status().await.enabled {
+                        let _ = wake_handle.emit("humhum://awake-mode-pulse", ());
+                    }
+                }
+            });
 
             // Session store
             let session_store = session_store::SessionStore::new();
@@ -113,6 +134,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::get_config,
             commands::save_config,
+            commands::get_wake_guard_status,
+            commands::set_wake_guard_enabled,
             commands::get_hook_port,
             commands::get_codex_bridge_health,
             commands::get_codex_remote_control,

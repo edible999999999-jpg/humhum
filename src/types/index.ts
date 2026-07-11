@@ -168,6 +168,7 @@ export interface AppConfig {
     position: "bottom-right" | "bottom-left" | "top-right" | "top-left";
     language: "zh" | "en";
     auto_confirm?: boolean;
+    awake_mode?: boolean;
   };
 }
 

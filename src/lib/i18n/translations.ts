@@ -59,6 +59,14 @@ export const translations: TranslationMap = {
   "settings.rageDesc": { zh: "开启后，Hum 自动批准所有权限请求", en: "When on, Hum auto-approves every request" },
   "settings.rageOn": { zh: "已开启", en: "On" },
   "settings.rageOff": { zh: "关闭", en: "Off" },
+  "settings.awakeTitle": { zh: "不眠模式", en: "Awake Mode" },
+  "settings.awakeSubtitle": { zh: "陪你守夜，不让 Mac 自动熄屏", en: "Keep this Mac awake with HumHum" },
+  "settings.awakeDesc": { zh: "开启后阻止显示器熄灭和系统空闲休眠", en: "Prevent display and idle system sleep" },
+  "settings.awakeActive": { zh: "HumHum 正在陪你守夜，每 3 分钟活动一次", en: "HumHum is keeping watch and moves every 3 minutes" },
+  "settings.awakeOn": { zh: "正在守夜", en: "Keeping awake" },
+  "settings.awakeOff": { zh: "陪我守夜", en: "Keep me awake" },
+  "settings.awakeChanging": { zh: "切换中", en: "Changing" },
+  "settings.awakeFailed": { zh: "不眠模式启动失败: {e}", en: "Awake Mode failed: {e}" },
   "settings.keysTitle": { zh: "密钥", en: "API Keys" },
   "settings.keysSubtitle": { zh: "BYOK，数据不离开本地", en: "BYOK — data stays local" },
   "settings.openaiPlaceholder": { zh: "sk-... (TTS / 摘要 / Whisper)", en: "sk-... (TTS / Summary / Whisper)" },
@@ -76,6 +84,7 @@ export const translations: TranslationMap = {
   "settings.hookFailed": { zh: "Hook 操作失败: {e}", en: "Hook operation failed: {e}" },
   "settings.saving": { zh: "保存中", en: "Saving" },
   "settings.save": { zh: "保存设置", en: "Save" },
+  "petview.awakePulse": { zh: "我还醒着，继续陪你守夜。", en: "Still awake. I am keeping watch with you." },
 
   // ── Stats Panel ──
   "stats.loading": { zh: "加载统计数据...", en: "Loading stats..." },

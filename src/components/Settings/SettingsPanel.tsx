@@ -12,6 +12,14 @@ interface SettingsPanelProps {
   onClose: () => void;
 }
 
+interface WakeGuardStatus {
+  available: boolean;
+  enabled: boolean;
+  process_id: number | null;
+  started_at: string | null;
+  message: string;
+}
+
 const LANG_TO_STT: Record<string, string> = { zh: "zh-CN", en: "en-US" };
 
 export function SettingsPanel({ onClose }: SettingsPanelProps) {
@@ -25,19 +33,23 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [clients, setClients] = useState<Array<{ id: string; name: string }>>([]);
   const [activeTab, setActiveTab] = useState<"settings" | "stats" | "memory">("settings");
+  const [wakeStatus, setWakeStatus] = useState<WakeGuardStatus | null>(null);
+  const [wakeLoading, setWakeLoading] = useState(false);
 
   useEffect(() => {
     (async () => {
       try {
-        const [cfg, status, clientList] = await Promise.all([
+        const [cfg, status, clientList, awake] = await Promise.all([
           invoke<AppConfig>("get_config"),
           invoke<Record<string, boolean>>("check_hooks_status"),
           invoke<Array<{ id: string; name: string }>>("get_supported_clients"),
+          invoke<WakeGuardStatus>("get_wake_guard_status"),
         ]);
         setConfig(cfg as AppConfig);
         setLanguage((cfg as AppConfig).ui.language as "zh" | "en");
         setHookStatus(status as Record<string, boolean>);
         setClients(clientList as Array<{ id: string; name: string }>);
+        setWakeStatus(awake);
       } catch (e) {
         console.error("Failed to load settings:", e);
       } finally {
@@ -87,6 +99,24 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
     },
     []
   );
+
+  const handleAwakeToggle = useCallback(async () => {
+    const enabled = !(wakeStatus?.enabled ?? false);
+    setWakeLoading(true);
+    setMessage(null);
+    try {
+      const status = await invoke<WakeGuardStatus>("set_wake_guard_enabled", { enabled });
+      setWakeStatus(status);
+      updateConfig((current) => ({
+        ...current,
+        ui: { ...current.ui, awake_mode: status.enabled },
+      }));
+    } catch (error) {
+      setMessage({ type: "error", text: t("settings.awakeFailed", { e: String(error) }) });
+    } finally {
+      setWakeLoading(false);
+    }
+  }, [wakeStatus, updateConfig]);
 
   if (loading || !config) {
     return (
@@ -297,6 +327,26 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
               className={`kawaii-toggle-btn ${config.ui.auto_confirm ? "connected" : ""}`}
             >
               {config.ui.auto_confirm ? t("settings.rageOn") : t("settings.rageOff")}
+            </button>
+          </div>
+        </KawaiiCard>
+
+        <KawaiiCard icon="☾" title={t("settings.awakeTitle")} subtitle={t("settings.awakeSubtitle")}>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs text-white/60">
+              {wakeStatus?.enabled ? t("settings.awakeActive") : t("settings.awakeDesc")}
+            </span>
+            <button
+              type="button"
+              onClick={handleAwakeToggle}
+              disabled={wakeLoading || wakeStatus?.available === false}
+              className={`kawaii-toggle-btn ${wakeStatus?.enabled ? "connected" : ""}`}
+            >
+              {wakeLoading
+                ? t("settings.awakeChanging")
+                : wakeStatus?.enabled
+                  ? t("settings.awakeOn")
+                  : t("settings.awakeOff")}
             </button>
           </div>
         </KawaiiCard>

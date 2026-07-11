@@ -146,3 +146,12 @@ described as revoking controller devices already enrolled with the provider.
 - API keys are stored locally in `~/.humhum/config.json`
 - No data is sent to external services except the TTS/STT/LLM APIs the user configures
 - The Tauri capability system restricts filesystem access to specific directories
+
+## macOS Awake Mode
+
+Awake Mode is an explicit, persisted desktop-pet skill. When enabled, the Rust
+backend owns one `/usr/bin/caffeinate -d -i -w <HUMHUM_PID>` child process. The
+display and idle system sleep assertions last only while HUMHUM is alive; disabling
+the mode kills and reaps the child. HUMHUM does not synthesize input or modify
+permanent `pmset` settings. A three-minute Tauri heartbeat drives visible pet
+feedback independently from the underlying power assertion.

@@ -196,6 +196,32 @@ export function PetView() {
     };
   }, []);
 
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    let resetTimer: ReturnType<typeof setTimeout> | null = null;
+    (async () => {
+      const { listen } = await import("@tauri-apps/api/event");
+      unlisten = await listen("humhum://awake-mode-pulse", () => {
+        setPetState("completed");
+        burstBubbles(70, 90);
+        setNotification({
+          id: `awake-${Date.now()}`,
+          text: t("petview.awakePulse"),
+          timestamp: new Date(),
+          type: "system",
+        });
+        resetTimer = setTimeout(() => {
+          setNotification(null);
+          setPetState("idle");
+        }, 3200);
+      });
+    })();
+    return () => {
+      if (unlisten) unlisten();
+      if (resetTimer) clearTimeout(resetTimer);
+    };
+  }, [burstBubbles, setPetState]);
+
   useKeyboardShortcuts({
     enabled: !!pendingPermission,
     onConfirm: () => handleKeyboardConfirm("allow"),
