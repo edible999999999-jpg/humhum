@@ -348,6 +348,20 @@ async fn handle_mobile_request(
                 json_error(StatusCode::UNAUTHORIZED, "Pair this device first")
             } else {
                 let scope = scope.unwrap_or(MobileDeviceScope::Read);
+                let mut hook_actions =
+                    std::collections::HashMap::<String, Vec<MobileApprovalSummary>>::new();
+                if scope.allows_control() {
+                    if let Some(pending) = app.try_state::<crate::hook_server::PendingMap>() {
+                        for request in pending.lock().await.values() {
+                            if let Some(action) = mobile_hook_approval(&request.event) {
+                                hook_actions
+                                    .entry(request.event.session_id.clone())
+                                    .or_default()
+                                    .push(action);
+                            }
+                        }
+                    }
+                }
                 let store = app.state::<Arc<Mutex<crate::session_store::SessionStore>>>();
                 let codex = app.state::<Arc<crate::codex_bridge::CodexBridgeState>>();
                 let mut sessions = codex
@@ -369,7 +383,13 @@ async fn handle_mobile_request(
                         .into_iter()
                         .filter(|session| !known_ids.contains(&session.session_id))
                         .take(30)
-                        .map(|session| MobileSessionSummary::from_hook(&session)),
+                        .map(|session| {
+                            let mut summary = MobileSessionSummary::from_hook(&session);
+                            summary.pending_actions =
+                                hook_actions.remove(&session.session_id).unwrap_or_default();
+                            summary.needs_attention |= !summary.pending_actions.is_empty();
+                            summary
+                        }),
                 );
                 sessions.sort_by(|left, right| right.last_activity_at.cmp(&left.last_activity_at));
                 sessions.truncate(30);
@@ -391,6 +411,13 @@ async fn handle_mobile_request(
                 json_error(StatusCode::FORBIDDEN, "This device is paired read-only")
             } else {
                 send_mobile_codex_message(request, &app).await
+            }
+        }
+        (&Method::POST, "/api/claude/permission") => {
+            if !request_scope(&request, &bridge).is_some_and(MobileDeviceScope::allows_control) {
+                json_error(StatusCode::FORBIDDEN, "This device is paired read-only")
+            } else {
+                resolve_mobile_claude_permission(request, &app).await
             }
         }
         _ => json_error(StatusCode::NOT_FOUND, "Not found"),
@@ -551,6 +578,52 @@ async fn send_mobile_codex_message(
             &serde_json::to_value(receipt).unwrap_or_default(),
         ),
         Err(error) => json_error(StatusCode::BAD_REQUEST, &error),
+    }
+}
+
+#[derive(Deserialize)]
+struct MobileClaudePermissionRequest {
+    event_id: String,
+    decision: String,
+}
+
+async fn resolve_mobile_claude_permission(
+    request: Request<hyper::body::Incoming>,
+    app: &tauri::AppHandle,
+) -> Response<HttpBody> {
+    let body = match request.into_body().collect().await {
+        Ok(body) => body.to_bytes(),
+        Err(_) => return json_error(StatusCode::BAD_REQUEST, "Invalid permission request"),
+    };
+    if body.len() > 4096 {
+        return json_error(StatusCode::BAD_REQUEST, "Invalid permission request");
+    }
+    let input: MobileClaudePermissionRequest = match serde_json::from_slice(&body) {
+        Ok(input) => input,
+        Err(_) => return json_error(StatusCode::BAD_REQUEST, "Invalid permission request"),
+    };
+    let behavior = match input.decision.as_str() {
+        "allow_once" => "allow",
+        "deny" => "deny",
+        _ => return json_error(StatusCode::BAD_REQUEST, "Unsupported permission decision"),
+    };
+    let Some(pending) = app.try_state::<crate::hook_server::PendingMap>() else {
+        return json_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Claude permission bridge is starting",
+        );
+    };
+    match crate::commands::resolve_hook_permission(
+        pending.inner(),
+        &input.event_id,
+        behavior,
+        None,
+        None,
+    )
+    .await
+    {
+        Ok(()) => json_response(StatusCode::OK, &serde_json::json!({ "status": "resolved" })),
+        Err(error) => json_error(StatusCode::CONFLICT, &error),
     }
 }
 
@@ -744,6 +817,7 @@ struct MobileSessionSummary {
 #[derive(Debug, Clone, Serialize)]
 struct MobileApprovalSummary {
     id: String,
+    provider: String,
     operation: String,
     summary: String,
 }
@@ -785,6 +859,7 @@ impl MobileSessionSummary {
                     .iter()
                     .map(|approval| MobileApprovalSummary {
                         id: approval.approval_id.clone(),
+                        provider: "codex".into(),
                         operation: format!("{:?}", approval.operation).to_ascii_lowercase(),
                         summary: approval.summary.chars().take(240).collect(),
                     })
@@ -795,6 +870,38 @@ impl MobileSessionSummary {
             can_message: include_actions,
         }
     }
+}
+
+fn mobile_hook_approval(event: &crate::event_bus::HookEvent) -> Option<MobileApprovalSummary> {
+    if event.hook_event_name != "PermissionRequest" {
+        return None;
+    }
+    let tool = event
+        .payload
+        .get("tool_name")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("Agent action");
+    let input = event.payload.get("tool_input");
+    let detail = match tool {
+        "Bash" => input
+            .and_then(|value| value.get("command"))
+            .and_then(serde_json::Value::as_str)
+            .map(|command| command.chars().take(180).collect::<String>()),
+        "Write" | "Edit" | "Read" => input
+            .and_then(|value| value.get("file_path"))
+            .and_then(serde_json::Value::as_str)
+            .and_then(|path| std::path::Path::new(path).file_name())
+            .map(|name| name.to_string_lossy().to_string()),
+        _ => None,
+    };
+    Some(MobileApprovalSummary {
+        id: event.id.clone(),
+        provider: "claude".into(),
+        operation: tool.to_string(),
+        summary: detail
+            .map(|detail| format!("{tool} · {detail}"))
+            .unwrap_or_else(|| tool.to_string()),
+    })
 }
 
 fn digest_token(raw_token: &str) -> String {
@@ -1005,5 +1112,58 @@ mod tests {
         assert!(read.pending_actions.is_empty());
         assert!(control.can_message);
         assert_eq!(control.pending_actions.len(), 1);
+    }
+
+    #[test]
+    fn claude_mobile_approval_hides_full_file_paths() {
+        let event = crate::event_bus::HookEvent {
+            id: "permission-1".into(),
+            hook_event_name: "PermissionRequest".into(),
+            session_id: "claude-1".into(),
+            transcript_path: None,
+            cwd: None,
+            client_type: "claude-code".into(),
+            payload: serde_json::json!({
+                "tool_name": "Edit",
+                "tool_input": { "file_path": "/Users/me/private/project/secret.txt" }
+            }),
+            timestamp: "2026-07-12T00:00:00Z".into(),
+        };
+
+        let approval = mobile_hook_approval(&event).unwrap();
+
+        assert_eq!(approval.provider, "claude");
+        assert!(approval.summary.contains("secret.txt"));
+        assert!(!approval.summary.contains("/Users"));
+    }
+
+    #[tokio::test]
+    async fn mobile_claude_decision_uses_the_existing_pending_channel() {
+        let pending: crate::hook_server::PendingMap =
+            Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        pending.lock().await.insert(
+            "permission-1".into(),
+            crate::hook_server::PendingRequest {
+                sender: Some(sender),
+                event: crate::event_bus::HookEvent {
+                    id: "permission-1".into(),
+                    hook_event_name: "PermissionRequest".into(),
+                    session_id: "claude-1".into(),
+                    transcript_path: None,
+                    cwd: None,
+                    client_type: "claude-code".into(),
+                    payload: serde_json::json!({ "tool_name": "Bash" }),
+                    timestamp: chrono::Utc::now().to_rfc3339(),
+                },
+            },
+        );
+
+        crate::commands::resolve_hook_permission(&pending, "permission-1", "allow", None, None)
+            .await
+            .unwrap();
+
+        assert_eq!(receiver.await.unwrap().behavior, "allow");
+        assert!(pending.lock().await.is_empty());
     }
 }

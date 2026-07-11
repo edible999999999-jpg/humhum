@@ -1985,6 +1985,16 @@ pub async fn respond_to_permission(
     reason: Option<String>,
     answer: Option<serde_json::Value>,
 ) -> Result<(), String> {
+    resolve_hook_permission(&pending, &event_id, &behavior, reason, answer).await
+}
+
+pub(crate) async fn resolve_hook_permission(
+    pending: &PendingMap,
+    event_id: &str,
+    behavior: &str,
+    reason: Option<String>,
+    answer: Option<serde_json::Value>,
+) -> Result<(), String> {
     log::info!(
         "[Permission] Responding to {} with behavior={} answer={:?}",
         event_id,
@@ -1992,10 +2002,10 @@ pub async fn respond_to_permission(
         answer
     );
     let mut map = pending.lock().await;
-    if let Some(mut pr) = map.remove(&event_id) {
+    if let Some(mut pr) = map.remove(event_id) {
         if let Some(sender) = pr.sender.take() {
             let decision = PermissionDecision {
-                behavior: behavior.clone(),
+                behavior: behavior.to_string(),
                 reason,
                 answer,
             };

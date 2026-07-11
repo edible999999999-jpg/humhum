@@ -35,7 +35,7 @@ Status meanings:
 | Ordered/retryable outgoing messages | Partial | Desktop and mobile Codex follow-ups share an owner-only persistent queue with strict per-thread order, crash recovery, explicit queued/delivered/failed receipts, and retry/discard controls. Claude and future remote transports do not use the queue yet. |
 | Push notifications | Missing | Native Mac notifications exist, but no APNs/FCM/Web Push path. |
 | Multi-machine sessions | Missing | Local multi-agent sessions work on one Mac; there is no machine registry or presence protocol. |
-| Mobile permission controls | Partial | A separately paired control device can inspect bounded Codex approval summaries and allow once or deny; read-only devices receive 403 and never receive the action summaries. Claude mobile decisions and internet delivery remain missing. |
+| Mobile permission controls | Partial | A separately paired control device can inspect bounded Codex and Claude approval summaries and allow once or deny; read-only devices receive 403 and never receive action summaries. Internet delivery remains missing. |
 | Voice control | Partial | HUMHUM has local STT/TTS and voice commands, but voice is not connected to a remote session client. |
 | Attachments and file review | Missing | Hexa summarizes tools and transcript evidence but has no encrypted remote attachment or changed-file review flow. |
 
@@ -72,12 +72,14 @@ Status meanings:
 - Native macOS notification preferences are independently configurable for approvals, questions, completions, and ordinary Agent messages without hiding the corresponding desktop-pet activity.
 - Awake Mode now combines persistent display/system idle assertions with a five-second `UserIsActive` pulse every 120 seconds, restores from saved config, and restarts its long-lived guard if that child exits unexpectedly.
 - Runtime power verification observed the persistent `PreventUserIdleDisplaySleep` and `PreventUserIdleSystemSleep` assertions plus pulse PID 94482 reporting `UserIsActive` with a five-second timeout in `pmset`.
-- Rust: 76 passed, 1 ignored. Frontend: 12 passed. Production frontend build: passed.
+- Claude pending permissions are projected to control-scoped mobile devices with full paths reduced to file names. Decisions reuse the desktop pending channel instead of a second execution path.
+- Runtime Claude mobile verification showed `Edit · secret-mobile.txt` without a `/Users` path, returned HTTP 200 for deny, and the blocked hook received `behavior: deny`; the test device was then revoked.
+- Rust: 78 passed, 1 ignored. Frontend: 12 passed. Production frontend build: passed.
 
 ## Next Iteration Order
 
 1. Ghostty/Terminal exact terminal identifiers and IDE chat routing.
 2. Real installed-client smoke tests for OpenCode and Cursor, plus OpenCode permission reply support.
-3. Claude mobile approvals and queued follow-up on top of the scoped Codex controls.
+3. Durable queued Claude follow-up on top of the scoped Codex and Claude approval controls.
 4. Real-host SSH smoke testing, multi-host presence, reconnect controls, and remote cleanup.
 5. Internet E2EE relay, push, attachments and multi-machine presence.
