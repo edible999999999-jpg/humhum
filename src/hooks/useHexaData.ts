@@ -51,6 +51,17 @@ export interface HexaSupervisorNote {
   text: string;
 }
 
+export interface HexaReadout {
+  session_id: string;
+  project_intent: string;
+  recent_user_intent: string;
+  agent_current_work: string;
+  performance_read: string;
+  fit_score: number;
+  suggested_nudge: string;
+  evidence: string[];
+}
+
 export interface HexaSupervisorSession {
   session: HexaSession;
   display_name: string;
@@ -64,6 +75,15 @@ export interface HexaSupervisorSession {
   memory_locations: HexaMemoryLocation[];
   strong_outputs: HexaSupervisorNote[];
   watchouts: HexaSupervisorNote[];
+  current_work: string;
+  recent_need_score: number;
+  recent_need_label: string;
+  recent_need_basis: string;
+  project_intent: string;
+  recent_user_intent: string;
+  performance_read: string;
+  suggested_nudge: string;
+  evidence: string[];
   stats: AgentStats | null;
   alerts: HexaAlert[];
   last_seen_ms: number;
@@ -231,7 +251,7 @@ function progressCopy(session: HexaSession, status: HexaSupervisorSession["progr
     case "completed":
       return {
         label: "Completed",
-        detail: `会话已结束，可用于复盘。最近事件: ${eventTrail}`,
+        detail: `会话已结束，已生成复盘摘要。最近事件: ${eventTrail}`,
       };
     default:
       return {
@@ -245,6 +265,51 @@ function loopStatus(alerts: HexaAlert[]): HexaSupervisorSession["loop_status"] {
   if (alerts.some((a) => a.type === "looping")) return "looping";
   if (alerts.some((a) => a.type === "low_signal" || a.type === "stalled")) return "watch";
   return "clear";
+}
+
+function inferCurrentWork(session: HexaSession, status: HexaSupervisorSession["progress_status"]): string {
+  if (status === "waiting") return "等待用户确认";
+  if (status === "stalled") return "疑似停滞";
+  if (status === "looping") return `重复调用 ${session.last_tool_name ?? "工具"}`;
+  if (status === "completed") return "已完成，等待复盘";
+  if (status === "idle") return "阶段结束，空闲中";
+  if (session.last_tool_name) return `正在使用 ${session.last_tool_name}`;
+  const lastEvent = session.event_names[session.event_names.length - 1];
+  if (lastEvent) return `处理 ${lastEvent}`;
+  return "等待事件";
+}
+
+function inferRecentNeedFit(
+  session: HexaSession,
+  alerts: HexaAlert[],
+): Pick<HexaSupervisorSession, "recent_need_score" | "recent_need_label" | "recent_need_basis"> {
+  const recent = session.event_names.slice(-10);
+  const completed = recent.filter((e) => e === "TaskCompleted" || e === "Stop" || e === "SessionEnd").length;
+  const toolEvents = recent.filter((e) => e === "PreToolUse" || e === "PostToolUse").length;
+  const pendingPenalty = session.has_pending_permission ? 22 : 0;
+  const stallPenalty = alerts.some((a) => a.type === "stalled") ? 24 : 0;
+  const loopPenalty = alerts.some((a) => a.type === "looping") ? 28 : 0;
+  const lowSignalPenalty = alerts.some((a) => a.type === "low_signal") ? 12 : 0;
+
+  const raw =
+    45 +
+    Math.min(25, completed * 18) +
+    Math.min(24, toolEvents * 4) +
+    (session.status === "completed" ? 12 : 0) -
+    pendingPenalty -
+    stallPenalty -
+    loopPenalty -
+    lowSignalPenalty;
+  const score = Math.max(5, Math.min(98, raw));
+
+  const label = score >= 78 ? "高匹配" : score >= 58 ? "推进中" : score >= 38 ? "需关注" : "偏离/卡住";
+  const basis = `近 10 事件: 完成 ${completed} · 工具 ${toolEvents} · 告警 ${alerts.length}`;
+
+  return {
+    recent_need_score: score,
+    recent_need_label: label,
+    recent_need_basis: basis,
+  };
 }
 
 function buildStrongOutputs(session: HexaSession, stats: AgentStats | null): HexaSupervisorNote[] {
@@ -264,7 +329,7 @@ function buildStrongOutputs(session: HexaSession, stats: AgentStats | null): Hex
     });
   }
   if (session.status === "completed") {
-    notes.push({ tone: "good", text: "会话完成并进入历史列表，适合做结束复盘。" });
+    notes.push({ tone: "good", text: "会话完成并进入历史列表，已生成可展开的复盘摘要。" });
   }
 
   return notes.length > 0 ? notes : [{ tone: "neutral", text: "已有基础事件流，等待更多工具和完成事件形成结论。" }];
@@ -296,14 +361,21 @@ function buildWatchouts(
 function buildSupervisorSession(
   session: HexaSession,
   statsByClient: Map<string, AgentStats>,
+  readoutBySession: Map<string, HexaReadout>,
   source: HexaSupervisorSession["source"] = "hook",
   bridge: HexaBridgeSession | null = null,
 ): HexaSupervisorSession {
   const stats = statsByClient.get(session.client_type) ?? null;
+  const readout = readoutBySession.get(session.session_id) ?? null;
   const alerts = detectAlerts(session);
   const progress_status = inferProgressStatus(session, alerts);
   const progress = progressCopy(session, progress_status);
-
+  const recentNeed = inferRecentNeedFit(session, alerts);
+  const fallbackEvidence = [
+    `hook events: ${session.event_count}`,
+    session.last_tool_name ? `last tool: ${session.last_tool_name}` : "last tool: unknown",
+    `status: ${session.status}`,
+  ];
   const bridgeStatus = bridge?.status;
   const liveProgressStatus: HexaSupervisorSession["progress_status"] = bridge?.pending_approvals.length
     ? "waiting"
@@ -316,8 +388,7 @@ function buildSupervisorSession(
           : bridgeStatus === "idle"
             ? "idle"
             : progress_status;
-  const liveDetail = bridge?.current_activity
-    ?? (bridgeStatus === "disconnected" ? "Codex 连接暂时中断，hook 记录仍然保留。" : progress.detail);
+  const liveProgress = progressCopy(session, liveProgressStatus);
 
   return {
     session,
@@ -325,13 +396,33 @@ function buildSupervisorSession(
     agent_label: agentLabel(session.client_type),
     priority: PRIMARY_CLIENTS.has(session.client_type) ? "primary" : "compatible",
     progress_status: liveProgressStatus,
-    progress_label: bridge ? liveProgressStatus : progress.label,
-    progress_detail: liveDetail,
+    progress_label: liveProgress.label,
+    progress_detail: bridge?.current_activity
+      ?? (bridgeStatus === "disconnected" ? "Codex 连接暂时中断，hook 记录仍然保留。" : liveProgress.detail),
     loop_status: loopStatus(alerts),
     pending_confirmations: bridge?.pending_approvals.length ?? (session.has_pending_permission ? 1 : 0),
     memory_locations: fallbackMemoryLocations(session),
     strong_outputs: buildStrongOutputs(session, stats),
     watchouts: buildWatchouts(session, alerts, stats),
+    current_work: bridge?.current_activity ?? readout?.agent_current_work ?? inferCurrentWork(session, liveProgressStatus),
+    recent_need_score: readout?.fit_score ?? recentNeed.recent_need_score,
+    recent_need_label: readout
+      ? readout.fit_score >= 78
+        ? "高匹配"
+        : readout.fit_score >= 58
+          ? "推进中"
+          : readout.fit_score >= 38
+            ? "需关注"
+            : "偏离/卡住"
+      : recentNeed.recent_need_label,
+    recent_need_basis: readout
+      ? `transcript + hook: ${readout.evidence.slice(0, 2).join(" · ")}`
+      : recentNeed.recent_need_basis,
+    project_intent: readout?.project_intent ?? (session.project_name ? `${session.project_name} 项目会话` : "项目意图待识别"),
+    recent_user_intent: readout?.recent_user_intent ?? "暂未读到最近用户消息，当前仅基于 hook 事件判断。",
+    performance_read: readout?.performance_read ?? progress.detail,
+    suggested_nudge: readout?.suggested_nudge ?? "让 agent 对照用户目标说明当前进展。",
+    evidence: readout?.evidence ?? fallbackEvidence,
     stats,
     alerts,
     last_seen_ms: Date.now() - new Date(session.last_event_at).getTime(),
@@ -366,19 +457,20 @@ export function useHexaData() {
 
   const fetchSessions = useCallback(async () => {
     try {
-      const [sessionData, statsData, bridgeData, healthData] = await Promise.all([
+      const [sessionData, statsData, readoutData, bridgeData, healthData] = await Promise.all([
         invoke<HexaSession[]>("get_all_sessions_history"),
         invoke<AgentStats[]>("get_agent_stats"),
+        invoke<HexaReadout[]>("get_hexa_readouts"),
         invoke<HexaBridgeSession[]>("get_hexa_bridge_sessions"),
         invoke<CodexBridgeHealth>("get_codex_bridge_health"),
       ]);
-      const remoteData = await invoke<CodexRemoteControlState>("get_codex_remote_control")
-        .catch(() => null);
+      const remoteData = await invoke<CodexRemoteControlState>("get_codex_remote_control").catch(() => null);
       const statsByClient = new Map(statsData.map((stat) => [stat.client_type, stat]));
+      const readoutBySession = new Map(readoutData.map((readout) => [readout.session_id, readout]));
       const merged = mergeHexaSessions(sessionData, bridgeData);
       const mergedSessions = merged.map((item) => item.session);
       const snapshots = merged.map((item) =>
-        buildSupervisorSession(item.session, statsByClient, item.source, item.bridge),
+        buildSupervisorSession(item.session, statsByClient, readoutBySession, item.source, item.bridge),
       );
       const allAlerts = snapshots
         .filter((s) => s.session.status !== "completed")
@@ -405,12 +497,8 @@ export function useHexaData() {
     const unlistenTimeout = listen("humhum://permission-timeout", () => {
       fetchSessions();
     });
-    const unlistenBridgeSession = listen("humhum://hexa-session-changed", () => {
-      fetchSessions();
-    });
-    const unlistenBridgeHealth = listen("humhum://codex-bridge-health", () => {
-      fetchSessions();
-    });
+    const unlistenBridgeSession = listen("humhum://hexa-session-changed", fetchSessions);
+    const unlistenBridgeHealth = listen("humhum://codex-bridge-health", fetchSessions);
     const unlistenRemoteControl = listen<CodexRemoteControlState>(
       "humhum://codex-remote-control-changed",
       (event) => setRemoteControl(event.payload),

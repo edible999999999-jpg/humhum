@@ -164,6 +164,11 @@ export interface AppConfig {
     model: string;
     max_tokens: number;
   };
+  pi: {
+    url: string;
+    token?: string;
+    model_name: string;
+  };
   ui: {
     position: "bottom-right" | "bottom-left" | "top-right" | "top-left";
     language: "zh" | "en";

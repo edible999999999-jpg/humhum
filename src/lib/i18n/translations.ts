@@ -13,6 +13,8 @@ export const translations: TranslationMap = {
   "completion.stopped": { zh: "结束", en: "Stopped" },
   "completion.notification": { zh: "通知", en: "Notice" },
   "completion.fallback": { zh: "{client} 会话{status}", en: "{client} session {status}" },
+  "completion.bubbleDone": { zh: "会话完成啦", en: "Session done" },
+  "completion.bubbleStopped": { zh: "会话结束啦", en: "Session ended" },
 
   // ── ConfirmToast ──
   "confirm.title": { zh: "请求批准", en: "Approval" },

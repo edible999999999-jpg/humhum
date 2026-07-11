@@ -57,7 +57,6 @@ export function PetView() {
   const [windowReady, setWindowReady] = useState(false);
   const [activeClients, setActiveClients] = useState<string[]>([]);
   const { bubbles, burst: burstBubbles } = useBubbleTrail();
-  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dragStartPos = useRef({ x: 0, y: 0 });
   const clickCount = useRef(0);
   const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -439,25 +438,8 @@ export function PetView() {
     );
   }, []);
 
-  const handlePetEnter = useCallback(() => {
-    if (hoverTimer.current) clearTimeout(hoverTimer.current);
-    hoverTimer.current = setTimeout(() => setShowDashboard(true), 300);
-  }, []);
-
   const handlePetLeave = useCallback(() => {
-    if (hoverTimer.current) clearTimeout(hoverTimer.current);
-    hoverTimer.current = setTimeout(() => setShowDashboard(false), 200);
     setTimeout(() => setContextMenu(null), 1200);
-  }, []);
-
-  const handleDashboardEnter = useCallback(() => {
-    if (hoverTimer.current) clearTimeout(hoverTimer.current);
-    setShowDashboard(true);
-  }, []);
-
-  const handleDashboardLeave = useCallback(() => {
-    if (hoverTimer.current) clearTimeout(hoverTimer.current);
-    hoverTimer.current = setTimeout(() => setShowDashboard(false), 200);
   }, []);
 
   const bubbleText =
@@ -476,12 +458,10 @@ export function PetView() {
     <div
       className="w-full h-full flex flex-col items-center justify-end pb-6 select-none pointer-events-none"
     >
-      {/* Session dashboard — hover popup */}
+      {/* Session dashboard — click toggled */}
       {showDashboard && !hasOverlay && (
         <div
-          className="w-64 pb-2 pointer-events-auto"
-          onMouseEnter={handleDashboardEnter}
-          onMouseLeave={handleDashboardLeave}
+          className="inline-flex w-fit max-w-[calc(100vw-24px)] pb-2 pointer-events-auto"
         >
           <SessionDashboard visible={showDashboard} />
         </div>
@@ -539,12 +519,11 @@ export function PetView() {
       {/* Bubble */}
       {!showDashboard && <Bubble state={petState} text={bubbleText} />}
 
-      {/* Pet body — draggable, hover → dashboard, right-click → command menu */}
+      {/* Pet body — draggable, click → dashboard, right-click → command menu */}
       <div
         className="relative cursor-grab active:cursor-grabbing pointer-events-auto"
         onMouseDown={handleMouseDown}
         onMouseUp={handleMouseUp}
-        onMouseEnter={handlePetEnter}
         onMouseLeave={handlePetLeave}
         onContextMenu={handleContextMenu}
       >

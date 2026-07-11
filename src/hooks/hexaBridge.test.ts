@@ -1,3 +1,4 @@
+import { describe, expect, it } from "vitest";
 import { mergeHexaSessions, type HexaBridgeSession, type HexaHookSession } from "./hexaBridge";
 
 const hookCodex: HexaHookSession = {
@@ -36,8 +37,14 @@ const bridgeCodex: HexaBridgeSession = {
   last_activity_at: "2026-07-11T00:02:00Z",
 };
 
-const merged = mergeHexaSessions([hookCodex, hookClaude], [bridgeCodex]);
-console.assert(merged.length === 2);
-console.assert(merged.find((item) => item.session.client_type === "codex")?.bridge?.current_activity === "Running tests");
-console.assert(merged.find((item) => item.session.client_type === "codex")?.session.event_count === 4);
-console.assert(merged.find((item) => item.session.client_type === "claude-code") !== undefined);
+describe("mergeHexaSessions", () => {
+  it("combines bridge activity with matching hook evidence without dropping other agents", () => {
+    const merged = mergeHexaSessions([hookCodex, hookClaude], [bridgeCodex]);
+    const codex = merged.find((item) => item.session.client_type === "codex");
+
+    expect(merged).toHaveLength(2);
+    expect(codex?.bridge?.current_activity).toBe("Running tests");
+    expect(codex?.session.event_count).toBe(4);
+    expect(merged.some((item) => item.session.client_type === "claude-code")).toBe(true);
+  });
+});

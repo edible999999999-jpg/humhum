@@ -50,8 +50,8 @@
         "transparent": true,
         "skipTaskbar": false,
         "resizable": true,
-        "focus": true,
-        "visible": true,
+        "focus": false,
+        "visible": false,
         "shadow": false,
         "url": "index.html"
       }

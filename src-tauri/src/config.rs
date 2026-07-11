@@ -19,6 +19,10 @@ pub struct AppConfig {
     /// LLM summarizer configuration
     pub summarizer: SummarizerConfig,
 
+    /// Pi Agent provider configuration (the single source for Humi's Agent runtime)
+    #[serde(default)]
+    pub pi: PiConfig,
+
     /// UI preferences
     pub ui: UiConfig,
 }
@@ -57,6 +61,26 @@ pub struct SummarizerConfig {
     pub model: String,
     /// Max tokens for summary
     pub max_tokens: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiConfig {
+    /// OpenAI-compatible API base URL
+    pub url: String,
+    /// Provider token, kept local and omitted from user-facing status
+    pub token: Option<String>,
+    /// Provider model identifier
+    pub model_name: String,
+}
+
+impl Default for PiConfig {
+    fn default() -> Self {
+        Self {
+            url: "https://api.openai.com/v1".to_string(),
+            token: None,
+            model_name: "gpt-4o-mini".to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -101,6 +125,7 @@ impl Default for AppConfig {
                 model: "gpt-4o-mini".to_string(),
                 max_tokens: 500,
             },
+            pi: PiConfig::default(),
             ui: UiConfig::default(),
         }
     }
@@ -133,8 +158,11 @@ impl AppConfig {
 
         if path.exists() {
             match std::fs::read_to_string(&path) {
-                Ok(content) => match serde_json::from_str(&content) {
-                    Ok(config) => return config,
+                Ok(content) => match serde_json::from_str::<AppConfig>(&content) {
+                    Ok(mut config) => {
+                        config.migrate_legacy_pi_config();
+                        return config;
+                    }
                     Err(e) => {
                         log::warn!("Failed to parse config: {}, using defaults", e);
                     }
@@ -147,6 +175,21 @@ impl AppConfig {
         Self::default()
     }
 
+    pub fn migrate_legacy_pi_config(&mut self) {
+        let defaults = PiConfig::default();
+        if self.pi.url == defaults.url && self.summarizer.api_base != defaults.url {
+            self.pi.url = self.summarizer.api_base.clone();
+        }
+        if self.pi.model_name == defaults.model_name
+            && self.summarizer.model != defaults.model_name
+        {
+            self.pi.model_name = self.summarizer.model.clone();
+        }
+        if self.pi.token.is_none() {
+            self.pi.token = self.api_keys.openai.clone();
+        }
+    }
+
     /// Save config to disk
     pub fn save(&self) -> Result<(), String> {
         let path = Self::config_path();
@@ -157,5 +200,47 @@ impl AppConfig {
             .map_err(|e| format!("Failed to serialize: {}", e))?;
         std::fs::write(&path, content).map_err(|e| format!("Failed to write config: {}", e))?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AppConfig;
+
+    #[test]
+    fn defaults_include_a_single_pi_provider_configuration() {
+        let config = AppConfig::default();
+
+        assert_eq!(config.pi.url, "https://api.openai.com/v1");
+        assert_eq!(config.pi.model_name, "gpt-4o-mini");
+        assert_eq!(config.pi.token, None);
+    }
+
+    #[test]
+    fn legacy_provider_fields_are_migrated_into_pi_configuration() {
+        let mut config: AppConfig = serde_json::from_value(serde_json::json!({
+            "hook_port": 31275,
+            "api_keys": { "openai": "legacy-token" },
+            "tts": {
+                "provider": "edge",
+                "voice": "zh-CN-XiaoxiaoNeural",
+                "speed": 1.0,
+                "model": null
+            },
+            "stt": { "provider": "web-speech", "language": "zh-CN" },
+            "summarizer": {
+                "api_base": "https://gateway.example/v1",
+                "model": "gateway-model",
+                "max_tokens": 500
+            },
+            "ui": { "position": "bottom-right", "language": "zh", "auto_confirm": false }
+        }))
+        .expect("legacy config should deserialize");
+
+        config.migrate_legacy_pi_config();
+
+        assert_eq!(config.pi.url, "https://gateway.example/v1");
+        assert_eq!(config.pi.model_name, "gateway-model");
+        assert_eq!(config.pi.token.as_deref(), Some("legacy-token"));
     }
 }

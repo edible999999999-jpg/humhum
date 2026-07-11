@@ -1,12 +1,10 @@
-import { Fragment, useState, type CSSProperties } from "react";
-import { Link as LinkIcon, Power, RotateCcw, Send, Smartphone, Square } from "lucide-react";
+import { useState } from "react";
+import { Link, Power, RotateCcw, Send, Smartphone, Square } from "lucide-react";
 import {
   useHexaData,
   type CodexRemoteControlState,
   type CodexRemotePairing,
   type HexaSupervisorSession,
-  type HexaMemoryLocation,
-  type HexaSupervisorNote,
 } from "../../hooks/useHexaData";
 
 const CLIENT_COLORS: Record<string, string> = {
@@ -25,29 +23,20 @@ const STATUS_COLORS: Record<HexaSupervisorSession["progress_status"], string> = 
   looping: "#fb923c",
   stalled: "#f87171",
   idle: "#38bdf8",
-  completed: "rgba(255,255,255,0.35)",
+  completed: "rgba(255,255,255,0.42)",
 };
 
 function getClientColor(client: string): string {
   return CLIENT_COLORS[client] || "#94eff4";
 }
 
-function formatDuration(startedAt: string): string {
-  const start = new Date(startedAt).getTime();
-  const diff = Math.max(0, Date.now() - start);
-  const mins = Math.floor(diff / 60000);
-  const hours = Math.floor(mins / 60);
-  if (hours > 0) return `${hours}h ${mins % 60}m`;
-  return `${mins}m`;
-}
-
 function formatTimeAgo(ms: number): string {
   const secs = Math.max(0, Math.floor(ms / 1000));
-  if (secs < 60) return `${secs}s ago`;
+  if (secs < 60) return `${secs}s`;
   const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m ago`;
+  if (mins < 60) return `${mins}m`;
   const hours = Math.floor(mins / 60);
-  return `${hours}h ago`;
+  return `${hours}h`;
 }
 
 function formatTokens(n: number): string {
@@ -56,13 +45,51 @@ function formatTokens(n: number): string {
   return n.toString();
 }
 
-function formatCost(usd: number): string {
-  if (usd >= 1) return `$${usd.toFixed(2)}`;
-  if (usd >= 0.01) return `$${usd.toFixed(3)}`;
-  return `$${usd.toFixed(4)}`;
+function scoreColor(score: number): string {
+  if (score >= 78) return "#22c55e";
+  if (score >= 58) return "#38bdf8";
+  if (score >= 38) return "#f59e0b";
+  return "#f87171";
 }
 
-function StatusPill({ item }: { item: HexaSupervisorSession }) {
+function averageScore(items: HexaSupervisorSession[]): number {
+  if (items.length === 0) return 0;
+  return Math.round(items.reduce((sum, item) => sum + item.recent_need_score, 0) / items.length);
+}
+
+function MetricCard({
+  label,
+  value,
+  tone,
+  detail,
+}: {
+  label: string;
+  value: string | number;
+  tone: string;
+  detail: string;
+}) {
+  return (
+    <div
+      style={{
+        minWidth: 0,
+        padding: 12,
+        borderRadius: 8,
+        background: "rgba(255,255,255,0.025)",
+        border: `1px solid ${tone}30`,
+      }}
+    >
+      <div style={{ color: tone, fontSize: 22, lineHeight: 1, fontWeight: 850 }}>{value}</div>
+      <div style={{ color: "rgba(255,255,255,0.58)", fontSize: 11, fontWeight: 750, marginTop: 6 }}>
+        {label}
+      </div>
+      <div style={{ color: "rgba(255,255,255,0.28)", fontSize: 10, marginTop: 3, lineHeight: 1.35 }}>
+        {detail}
+      </div>
+    </div>
+  );
+}
+
+function StatusBadge({ item }: { item: HexaSupervisorSession }) {
   const color = STATUS_COLORS[item.progress_status];
   return (
     <span
@@ -70,14 +97,13 @@ function StatusPill({ item }: { item: HexaSupervisorSession }) {
         display: "inline-flex",
         alignItems: "center",
         gap: 6,
-        padding: "3px 8px",
+        padding: "4px 8px",
         borderRadius: 999,
-        background: `${color}18`,
-        border: `1px solid ${color}40`,
+        background: `${color}16`,
+        border: `1px solid ${color}38`,
         color,
         fontSize: 10,
-        fontWeight: 700,
-        lineHeight: 1,
+        fontWeight: 800,
         whiteSpace: "nowrap",
       }}
     >
@@ -95,284 +121,203 @@ function StatusPill({ item }: { item: HexaSupervisorSession }) {
   );
 }
 
-function NoteList({ title, notes }: { title: string; notes: HexaSupervisorNote[] }) {
+function NeedFitBar({ item }: { item: HexaSupervisorSession }) {
+  const color = scoreColor(item.recent_need_score);
   return (
-    <div style={{ minWidth: 0 }}>
-      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.32)", marginBottom: 6, fontWeight: 700 }}>
-        {title}
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, marginBottom: 5 }}>
+        <span style={{ color: "rgba(255,255,255,0.42)", fontSize: 10, fontWeight: 750 }}>
+          最近需求满足推断
+        </span>
+        <span style={{ color, fontSize: 11, fontWeight: 850 }}>
+          {item.recent_need_score}% · {item.recent_need_label}
+        </span>
       </div>
-      <div style={{ display: "grid", gap: 5 }}>
-        {notes.slice(0, 3).map((note, index) => {
-          const color =
-            note.tone === "good" ? "#22c55e" : note.tone === "watch" ? "#f59e0b" : "rgba(255,255,255,0.36)";
-          return (
-            <div
-              key={`${title}-${index}`}
-              style={{
-                display: "grid",
-                gridTemplateColumns: "6px 1fr",
-                gap: 8,
-                alignItems: "start",
-                color: "rgba(255,255,255,0.58)",
-                fontSize: 11,
-                lineHeight: 1.45,
-              }}
-            >
-              <span style={{ width: 6, height: 6, marginTop: 5, borderRadius: "50%", background: color }} />
-              <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>{note.text}</span>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function MemoryList({ locations }: { locations: HexaMemoryLocation[] }) {
-  return (
-    <div style={{ minWidth: 0 }}>
-      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.32)", marginBottom: 6, fontWeight: 700 }}>
-        Memory locations
-      </div>
-      <div style={{ display: "grid", gap: 6 }}>
-        {locations.slice(0, 3).map((location) => (
-          <div
-            key={`${location.label}-${location.path}`}
-            style={{
-              minWidth: 0,
-              padding: "7px 8px",
-              borderRadius: 8,
-              background: "rgba(255,255,255,0.025)",
-              border: "1px solid rgba(255,255,255,0.055)",
-            }}
-          >
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 3, minWidth: 0 }}>
-              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.68)", fontWeight: 650 }}>
-                {location.label}
-              </span>
-              <span style={{ fontSize: 9, color: location.exists ? "#22c55e" : "rgba(255,255,255,0.28)" }}>
-                {location.exists ? "visible" : "unknown"}
-              </span>
-            </div>
-            <div
-              style={{
-                fontSize: 10,
-                color: "rgba(255,255,255,0.4)",
-                fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-                overflowWrap: "anywhere",
-                lineHeight: 1.35,
-              }}
-              title={location.path}
-            >
-              {location.path}
-            </div>
-            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.28)", marginTop: 3, lineHeight: 1.35, overflowWrap: "anywhere" }}>
-              {location.description}
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function StatStrip({ item }: { item: HexaSupervisorSession }) {
-  const stats = item.stats;
-  return (
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-        gap: 8,
-      }}
-    >
-      {[
-        ["events", item.session.event_count.toString()],
-        ["last seen", formatTimeAgo(item.last_seen_ms)],
-        ["tokens", stats ? formatTokens(stats.total_tokens) : "pending"],
-        ["cost", stats ? formatCost(stats.total_cost_usd) : "pending"],
-      ].map(([label, value]) => (
-        <div
-          key={label}
-          style={{
-            minWidth: 0,
-            padding: "7px 8px",
-            borderRadius: 8,
-            background: "rgba(0,0,0,0.18)",
-            border: "1px solid rgba(255,255,255,0.04)",
-          }}
-        >
-          <div style={{ fontSize: 9, color: "rgba(255,255,255,0.26)", marginBottom: 2 }}>{label}</div>
-          <div
-            className="hexa-session-details"
-            style={{
-              fontSize: 12,
-              color: "rgba(255,255,255,0.72)",
-              fontWeight: 700,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {value}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function SessionPanel({
-  item,
-  expanded,
-  onToggle,
-}: {
-  item: HexaSupervisorSession;
-  expanded: boolean;
-  onToggle: () => void;
-}) {
-  const color = getClientColor(item.session.client_type);
-  const recentEvents = item.session.event_names.slice(-6);
-
-  return (
-    <button
-      type="button"
-      onClick={onToggle}
-      style={{
-        width: "100%",
-        textAlign: "left",
-        padding: 0,
-        border: "none",
-        background: "transparent",
-        color: "inherit",
-        cursor: "pointer",
-      }}
-    >
-      <article
+      <div
         style={{
-          borderRadius: 8,
-          background: "rgba(255,255,255,0.026)",
-          border: "1px solid rgba(255,255,255,0.07)",
-          borderLeft: `3px solid ${color}`,
-          padding: 14,
+          height: 7,
+          borderRadius: 999,
+          background: "rgba(255,255,255,0.06)",
+          overflow: "hidden",
         }}
       >
-        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 5 }}>
-              <span style={{ fontSize: 10, color, fontWeight: 800 }}>{item.agent_label}</span>
-              <StatusPill item={item} />
-              {item.pending_confirmations > 0 && (
-                <span
-                  style={{
-                    fontSize: 10,
-                    color: "#facc15",
-                    background: "rgba(250,204,21,0.1)",
-                    border: "1px solid rgba(250,204,21,0.22)",
-                    borderRadius: 999,
-                    padding: "3px 8px",
-                    fontWeight: 700,
-                  }}
-                >
-                  pending confirmation
-                </span>
-              )}
-            </div>
-            <h3
-              style={{
-                margin: 0,
-                fontSize: 15,
-                lineHeight: 1.25,
-                color: "rgba(255,255,255,0.88)",
-                overflowWrap: "anywhere",
-              }}
-            >
-              {item.display_name}
-            </h3>
-            <p style={{ margin: "7px 0 0", fontSize: 12, color: "rgba(255,255,255,0.48)", lineHeight: 1.45 }}>
-              {item.progress_detail}
-            </p>
-          </div>
-          <div style={{ textAlign: "right", flex: "0 0 auto", color: "rgba(255,255,255,0.32)", fontSize: 10 }}>
-            <div>{formatDuration(item.session.started_at)}</div>
-            <div style={{ marginTop: 4 }}>loop: {item.loop_status}</div>
-          </div>
-        </div>
-
-        <div style={{ marginTop: 12 }}>
-          <StatStrip item={item} />
-        </div>
-
-        {expanded && (
-          <div
-            style={{
-              marginTop: 12,
-              paddingTop: 12,
-              borderTop: "1px solid rgba(255,255,255,0.06)",
-              display: "grid",
-              gap: 14,
-              alignItems: "start",
-            }}
-          >
-            <div style={{ display: "grid", gap: 14, minWidth: 0 }}>
-              <MemoryList locations={item.memory_locations} />
-              {item.session.cwd && (
-                <div>
-                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.32)", marginBottom: 5, fontWeight: 700 }}>
-                    Workspace
-                  </div>
-                  <div
-                    style={{
-                      fontSize: 10,
-                      color: "rgba(255,255,255,0.4)",
-                      fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-                      overflowWrap: "anywhere",
-                      lineHeight: 1.4,
-                    }}
-                  >
-                    {item.session.cwd}
-                  </div>
-                </div>
-              )}
-            </div>
-            <div style={{ display: "grid", gap: 14, minWidth: 0 }}>
-              <NoteList title="Strong outputs" notes={item.strong_outputs} />
-              <NoteList title="Watchouts" notes={item.watchouts} />
-              {recentEvents.length > 0 && (
-                <div>
-                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.32)", marginBottom: 6, fontWeight: 700 }}>
-                    Event trail
-                  </div>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 4, minWidth: 0 }}>
-                    {recentEvents.map((eventName, index) => (
-                      <span
-                        key={`${eventName}-${index}`}
-                        style={{
-                          padding: "2px 6px",
-                          borderRadius: 6,
-                          background: "rgba(255,255,255,0.04)",
-                          color: "rgba(255,255,255,0.42)",
-                          fontSize: 9,
-                          fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-                          maxWidth: "100%",
-                          overflowWrap: "anywhere",
-                        }}
-                      >
-                        {eventName}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-      </article>
-    </button>
+        <div
+          style={{
+            width: `${item.recent_need_score}%`,
+            height: "100%",
+            borderRadius: 999,
+            background: color,
+            boxShadow: `0 0 12px ${color}55`,
+          }}
+        />
+      </div>
+      <div style={{ color: "rgba(255,255,255,0.25)", fontSize: 10, marginTop: 5 }}>
+        {item.recent_need_basis}
+      </div>
+    </div>
   );
 }
 
-function CodexControls({
+function SessionCard({
+  item,
+  reviewOpen,
+  onToggleReview,
+  onSend,
+  onInterrupt,
+  onResume,
+  onResolveApproval,
+}: {
+  item: HexaSupervisorSession;
+  reviewOpen: boolean;
+  onToggleReview: () => void;
+  onSend: (threadId: string, message: string) => Promise<string>;
+  onInterrupt: (threadId: string, turnId: string) => Promise<void>;
+  onResume: (threadId: string) => Promise<void>;
+  onResolveApproval: (approvalId: string, decision: "allow_once" | "deny") => Promise<void>;
+}) {
+  const color = getClientColor(item.session.client_type);
+  const eventNames = item.session.event_names.slice(-6);
+  const stats = item.stats;
+  const isCompleted = item.session.status === "completed";
+  const showReadout = !isCompleted || reviewOpen;
+
+  return (
+    <article
+      style={{
+        borderRadius: 8,
+        background: "rgba(255,255,255,0.026)",
+        border: "1px solid rgba(255,255,255,0.065)",
+        borderLeft: `3px solid ${color}`,
+        padding: 14,
+        display: "grid",
+        gap: 12,
+      }}
+    >
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 12, alignItems: "start" }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 7 }}>
+            <span style={{ color, fontSize: 11, fontWeight: 850 }}>{item.agent_label}</span>
+            <StatusBadge item={item} />
+            {item.pending_confirmations > 0 && (
+              <span
+                style={{
+                  color: "#facc15",
+                  background: "rgba(250,204,21,0.1)",
+                  border: "1px solid rgba(250,204,21,0.24)",
+                  borderRadius: 999,
+                  padding: "4px 8px",
+                  fontSize: 10,
+                  fontWeight: 850,
+                }}
+              >
+                等待确认
+              </span>
+            )}
+          </div>
+          <h3
+            style={{
+              margin: 0,
+              color: "rgba(255,255,255,0.9)",
+              fontSize: 15,
+              lineHeight: 1.25,
+              overflowWrap: "anywhere",
+            }}
+          >
+            {item.display_name}
+          </h3>
+          <p style={{ margin: "6px 0 0", color: "rgba(255,255,255,0.52)", fontSize: 12, lineHeight: 1.45 }}>
+            {item.project_intent}
+          </p>
+        </div>
+        <div style={{ textAlign: "right" }}>
+          <div style={{ color: "rgba(255,255,255,0.72)", fontSize: 18, fontWeight: 850 }}>
+            {item.session.event_count}
+          </div>
+          <div style={{ color: "rgba(255,255,255,0.28)", fontSize: 10 }}>events</div>
+        </div>
+      </div>
+
+      <NeedFitBar item={item} />
+
+      {isCompleted && (
+        <button
+          type="button"
+          onClick={onToggleReview}
+          style={{
+            width: "fit-content",
+            border: `1px solid ${color}42`,
+            background: `${color}12`,
+            color,
+            borderRadius: 8,
+            padding: "7px 10px",
+            fontSize: 11,
+            fontWeight: 850,
+            cursor: "pointer",
+          }}
+        >
+          {reviewOpen ? "收起复盘" : "打开复盘"}
+        </button>
+      )}
+
+      {showReadout && (
+        <>
+          <ReadoutBlock title="用户最近想要" text={item.recent_user_intent} tone="#38bdf8" />
+          <ReadoutBlock title="Agent 正在做" text={item.current_work} tone={color} />
+          <ReadoutBlock title="感官反馈" text={item.performance_read} tone={scoreColor(item.recent_need_score)} />
+        </>
+      )}
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 8 }}>
+        <MiniStat label="last seen" value={formatTimeAgo(item.last_seen_ms)} />
+        <MiniStat label="evidence" value={item.evidence.length} />
+        <MiniStat label="tokens" value={stats ? formatTokens(stats.total_tokens) : "-"} />
+        <MiniStat label="loop" value={item.loop_status} />
+      </div>
+
+      {showReadout && (
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 10 }}>
+          <ChipGroup title="判断依据" values={item.evidence.length ? item.evidence.slice(0, 4) : ["暂无依据"]} />
+          <ChipGroup title="事件轨迹" values={eventNames.length ? eventNames : ["等待事件"]} />
+        </div>
+      )}
+
+      {showReadout && <ReviewAction item={item} />}
+
+      {item.session.client_type === "codex" && (
+        <CodexIntervention
+          item={item}
+          onSend={onSend}
+          onInterrupt={onInterrupt}
+          onResume={onResume}
+          onResolveApproval={onResolveApproval}
+        />
+      )}
+
+      {item.alerts.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+          {item.alerts.map((alert) => (
+            <span
+              key={`${item.session.session_id}-${alert.type}-${alert.message}`}
+              style={{
+                color: "#f59e0b",
+                background: "rgba(245,158,11,0.09)",
+                border: "1px solid rgba(245,158,11,0.22)",
+                borderRadius: 999,
+                padding: "3px 8px",
+                fontSize: 10,
+                fontWeight: 750,
+              }}
+            >
+              {alert.message}
+            </span>
+          ))}
+        </div>
+      )}
+    </article>
+  );
+}
+
+function CodexIntervention({
   item,
   onSend,
   onInterrupt,
@@ -380,16 +325,16 @@ function CodexControls({
   onResolveApproval,
 }: {
   item: HexaSupervisorSession;
-  onSend: (threadId: string, message: string) => Promise<unknown>;
-  onInterrupt: (threadId: string, turnId: string) => Promise<unknown>;
-  onResume: (threadId: string) => Promise<unknown>;
-  onResolveApproval: (approvalId: string, decision: "allow_once" | "deny") => Promise<unknown>;
+  onSend: (threadId: string, message: string) => Promise<string>;
+  onInterrupt: (threadId: string, turnId: string) => Promise<void>;
+  onResume: (threadId: string) => Promise<void>;
+  onResolveApproval: (approvalId: string, decision: "allow_once" | "deny") => Promise<void>;
 }) {
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const bridge = item.bridge;
-  if (!bridge || !item.can_intervene) return null;
+  const threadId = item.bridge?.provider_thread_id ?? item.session.session_id;
+  const currentTurnId = item.bridge?.current_turn_id;
 
   const run = async (action: () => Promise<unknown>) => {
     setBusy(true);
@@ -397,180 +342,67 @@ function CodexControls({
     try {
       await action();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(String(cause));
     } finally {
       setBusy(false);
     }
   };
 
-  const send = async () => {
-    const text = message.trim();
-    if (!text) return;
-    await run(async () => {
-      await onSend(bridge.provider_thread_id ?? bridge.session_id, text);
-      setMessage("");
-    });
-  };
-
   return (
-    <div
-      style={{
-        margin: "-5px 8px 3px",
-        padding: "10px 12px",
-        borderLeft: "1px solid rgba(34,197,94,0.2)",
-        borderRight: "1px solid rgba(34,197,94,0.2)",
-        borderBottom: "1px solid rgba(34,197,94,0.2)",
-        background: "rgba(34,197,94,0.035)",
-        borderRadius: "0 0 8px 8px",
-      }}
-    >
-      {item.pending_approvals.length > 0 && (
-        <div style={{ display: "grid", gap: 7, marginBottom: 9 }}>
-          {item.pending_approvals.map((approval) => (
-            <div
-              key={approval.approval_id}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: 10,
-                paddingBottom: 7,
-                borderBottom: "1px solid rgba(255,255,255,0.055)",
-              }}
-            >
-              <div style={{ minWidth: 0 }}>
-                <div style={{ color: "rgba(255,255,255,0.76)", fontSize: 11, lineHeight: 1.4, overflowWrap: "anywhere" }}>
-                  {approval.summary}
-                </div>
-                {approval.reason && (
-                  <div style={{ color: "rgba(255,255,255,0.38)", fontSize: 10, marginTop: 2 }}>
-                    {approval.reason}
-                  </div>
-                )}
-              </div>
-              <div style={{ display: "flex", gap: 6, flex: "0 0 auto" }}>
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => run(() => onResolveApproval(approval.approval_id, "deny"))}
-                  style={{
-                    border: "1px solid rgba(248,113,113,0.3)",
-                    background: "rgba(248,113,113,0.08)",
-                    color: "#fca5a5",
-                    borderRadius: 6,
-                    padding: "5px 8px",
-                    fontSize: 10,
-                    cursor: busy ? "default" : "pointer",
-                  }}
-                >
-                  Deny
-                </button>
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => run(() => onResolveApproval(approval.approval_id, "allow_once"))}
-                  style={{
-                    border: "1px solid rgba(34,197,94,0.32)",
-                    background: "rgba(34,197,94,0.1)",
-                    color: "#86efac",
-                    borderRadius: 6,
-                    padding: "5px 8px",
-                    fontSize: 10,
-                    cursor: busy ? "default" : "pointer",
-                  }}
-                >
-                  Allow once
-                </button>
-              </div>
-            </div>
-          ))}
+    <div style={{ display: "grid", gap: 8, paddingTop: 10, borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+      {item.pending_approvals.map((approval) => (
+        <div key={approval.approval_id} style={{ display: "grid", gap: 7, padding: 9, borderRadius: 8, background: "rgba(250,204,21,0.07)", border: "1px solid rgba(250,204,21,0.2)" }}>
+          <div style={{ color: "rgba(255,255,255,0.66)", fontSize: 11, lineHeight: 1.45 }}>{approval.summary}</div>
+          <div style={{ display: "flex", gap: 6 }}>
+            <button type="button" disabled={busy} onClick={() => run(() => onResolveApproval(approval.approval_id, "allow_once"))} className="kawaii-toggle-btn connected">允许一次</button>
+            <button type="button" disabled={busy} onClick={() => run(() => onResolveApproval(approval.approval_id, "deny"))} className="kawaii-toggle-btn">拒绝</button>
+          </div>
         </div>
-      )}
+      ))}
 
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 7 }}>
-        <input
-          value={message}
-          onChange={(event) => setMessage(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey && !bridge.current_turn_id) {
-              event.preventDefault();
-              void send();
-            }
-          }}
-          disabled={busy || Boolean(bridge.current_turn_id)}
-          placeholder={bridge.current_turn_id ? "Codex is working" : "Send a follow-up to Codex"}
-          aria-label="Message Codex"
-          style={{
-            minWidth: 0,
-            height: 32,
-            boxSizing: "border-box",
-            border: "1px solid rgba(255,255,255,0.09)",
-            background: "rgba(0,0,0,0.18)",
-            color: "rgba(255,255,255,0.78)",
-            borderRadius: 6,
-            padding: "0 9px",
-            fontSize: 11,
-            outline: "none",
-          }}
-        />
-        <div style={{ display: "flex", gap: 6 }}>
-          {bridge.current_turn_id ? (
-            <button
-              type="button"
-              title="Interrupt current Codex turn"
-              aria-label="Interrupt current Codex turn"
-              disabled={busy}
-              onClick={() => run(() => onInterrupt(bridge.provider_thread_id ?? bridge.session_id, bridge.current_turn_id!))}
-              style={iconButtonStyle("#fca5a5", busy)}
-            >
-              <Square size={14} strokeWidth={2} />
-            </button>
-          ) : (
-            <button
-              type="button"
-              title="Resume Codex thread"
-              aria-label="Resume Codex thread"
-              disabled={busy}
-              onClick={() => run(() => onResume(bridge.provider_thread_id ?? bridge.session_id))}
-              style={iconButtonStyle("#93c5fd", busy)}
-            >
-              <RotateCcw size={14} strokeWidth={2} />
-            </button>
-          )}
+      {item.can_intervene ? (
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto auto", gap: 7 }}>
+          <input
+            value={message}
+            onChange={(event) => setMessage(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && message.trim() && !busy) {
+                void run(async () => {
+                  await onSend(threadId, message.trim());
+                  setMessage("");
+                });
+              }
+            }}
+            placeholder="给 Codex 发后续指令"
+            className="kawaii-input"
+          />
           <button
             type="button"
-            title="Send to Codex"
-            aria-label="Send to Codex"
-            disabled={busy || Boolean(bridge.current_turn_id) || message.trim().length === 0}
-            onClick={() => void send()}
-            style={iconButtonStyle("#86efac", busy || Boolean(bridge.current_turn_id) || message.trim().length === 0)}
-          >
-            <Send size={14} strokeWidth={2} />
-          </button>
+            title="发送"
+            disabled={busy || !message.trim()}
+            onClick={() => run(async () => {
+              await onSend(threadId, message.trim());
+              setMessage("");
+            })}
+            className="kawaii-toggle-btn connected"
+          ><Send size={15} /></button>
+          {currentTurnId ? (
+            <button type="button" title="中断当前回合" disabled={busy} onClick={() => run(() => onInterrupt(threadId, currentTurnId))} className="kawaii-toggle-btn"><Square size={14} /></button>
+          ) : (
+            <button type="button" title="恢复会话" disabled={busy} onClick={() => run(() => onResume(threadId))} className="kawaii-toggle-btn"><RotateCcw size={15} /></button>
+          )}
         </div>
-      </div>
-      {error && <div style={{ color: "#fca5a5", fontSize: 10, marginTop: 6 }}>{error}</div>}
+      ) : (
+        <button type="button" disabled={busy} onClick={() => run(() => onResume(threadId))} className="kawaii-toggle-btn" style={{ width: "fit-content" }}>
+          <RotateCcw size={14} /> 由 HUMHUM 恢复后介入
+        </button>
+      )}
+      {error && <div style={{ color: "#f87171", fontSize: 10, overflowWrap: "anywhere" }}>{error}</div>}
     </div>
   );
 }
 
-function iconButtonStyle(color: string, disabled: boolean): CSSProperties {
-  return {
-    width: 32,
-    height: 32,
-    display: "grid",
-    placeItems: "center",
-    border: `1px solid ${color}44`,
-    background: `${color}10`,
-    color,
-    borderRadius: 6,
-    cursor: disabled ? "default" : "pointer",
-    opacity: disabled ? 0.4 : 1,
-    padding: 0,
-  };
-}
-
-function RemoteControlPanel({
+function RemoteAccessPanel({
   state,
   pairing,
   onEnable,
@@ -584,122 +416,157 @@ function RemoteControlPanel({
   onPair: () => Promise<CodexRemotePairing>;
 }) {
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const enabled = state.status === "connected" || state.status === "connecting";
-  const pairingActive = pairing && pairing.expires_at * 1000 > Date.now();
-
   const run = async (action: () => Promise<unknown>) => {
     setBusy(true);
-    setError(null);
-    try {
-      await action();
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
-    } finally {
-      setBusy(false);
-    }
+    try { await action(); } finally { setBusy(false); }
   };
+  const connected = state.status === "connected";
 
   return (
-    <div
-      style={{
-        borderRadius: 8,
-        background: "rgba(255,255,255,0.022)",
-        border: "1px solid rgba(255,255,255,0.06)",
-        padding: 12,
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-          <Smartphone size={15} color="#93c5fd" aria-hidden="true" />
-          <div>
-            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.74)", fontWeight: 800 }}>
-              Codex mobile
-            </div>
-            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.36)", marginTop: 2 }}>
-              {state.message}
-            </div>
-          </div>
-        </div>
-        <span
-          title={state.status}
-          style={{
-            width: 7,
-            height: 7,
-            borderRadius: "50%",
-            flex: "0 0 auto",
-            background: state.status === "connected" ? "#22c55e" : state.status === "connecting" ? "#facc15" : "rgba(255,255,255,0.26)",
-          }}
-        />
+    <div style={{ display: "grid", gridTemplateColumns: "auto minmax(0, 1fr) auto", alignItems: "center", gap: 10, padding: 11, marginBottom: 14, borderRadius: 8, background: "rgba(56,189,248,0.045)", border: "1px solid rgba(56,189,248,0.16)" }}>
+      <Smartphone size={18} color={connected ? "#22c55e" : "#38bdf8"} />
+      <div style={{ minWidth: 0 }}>
+        <div style={{ color: "rgba(255,255,255,0.72)", fontSize: 11, fontWeight: 850 }}>Codex Mobile Remote</div>
+        <div style={{ color: "rgba(255,255,255,0.34)", fontSize: 10, marginTop: 3, overflowWrap: "anywhere" }}>{pairing?.manual_pairing_code ? `配对码: ${pairing.manual_pairing_code}` : state.message}</div>
       </div>
-
-      {pairingActive && (
-        <div style={{ marginTop: 10, padding: "9px 10px", borderRadius: 6, background: "rgba(147,197,253,0.08)", border: "1px solid rgba(147,197,253,0.18)" }}>
-          <div style={{ color: "#bfdbfe", fontSize: 18, fontWeight: 800, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}>
-            {pairing.manual_pairing_code ?? pairing.pairing_code}
-          </div>
-          <div style={{ color: "rgba(255,255,255,0.34)", fontSize: 9, marginTop: 4 }}>
-            Expires {new Date(pairing.expires_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-          </div>
-        </div>
-      )}
-
-      <div style={{ display: "flex", gap: 7, marginTop: 10, flexWrap: "wrap" }}>
-        {!enabled ? (
-          <button type="button" disabled={busy || state.status === "unavailable"} onClick={() => void run(onEnable)} style={remoteButtonStyle("#93c5fd", busy || state.status === "unavailable") }>
-            <Power size={13} aria-hidden="true" /> Enable mobile access
-          </button>
+      <div style={{ display: "flex", gap: 6 }}>
+        {connected ? (
+          <button type="button" title="关闭移动访问" disabled={busy} onClick={() => run(onDisable)} className="kawaii-toggle-btn"><Power size={15} /></button>
         ) : (
           <>
-            <button type="button" disabled={busy} onClick={() => void run(onPair)} style={remoteButtonStyle("#86efac", busy)}>
-              <LinkIcon size={13} aria-hidden="true" /> Create pairing code
-            </button>
-            <button type="button" disabled={busy} onClick={() => void run(onDisable)} style={remoteButtonStyle("#fca5a5", busy)}>
-              <Power size={13} aria-hidden="true" /> Disable
-            </button>
+            <button type="button" title="开启移动访问" disabled={busy || state.status === "unavailable"} onClick={() => run(onEnable)} className="kawaii-toggle-btn connected"><Power size={15} /></button>
+            <button type="button" title="生成配对码" disabled={busy || state.status === "unavailable"} onClick={() => run(onPair)} className="kawaii-toggle-btn"><Link size={15} /></button>
           </>
         )}
       </div>
-      {state.server_name && <div style={{ fontSize: 9, color: "rgba(255,255,255,0.24)", marginTop: 8 }}>{state.server_name}</div>}
-      {error && <div style={{ color: "#fca5a5", fontSize: 10, marginTop: 8, lineHeight: 1.4 }}>{error}</div>}
     </div>
   );
 }
 
-function remoteButtonStyle(color: string, disabled: boolean): CSSProperties {
-  return {
-    minHeight: 30,
-    display: "inline-flex",
-    alignItems: "center",
-    gap: 6,
-    border: `1px solid ${color}3d`,
-    background: `${color}0d`,
-    color,
-    borderRadius: 6,
-    padding: "0 9px",
-    fontSize: 10,
-    fontWeight: 750,
-    cursor: disabled ? "default" : "pointer",
-    opacity: disabled ? 0.45 : 1,
-  };
+function ReviewAction({ item }: { item: HexaSupervisorSession }) {
+  const isCompleted = item.session.status === "completed";
+  return (
+    <div
+      style={{
+        padding: "10px 11px",
+        borderRadius: 8,
+        background: isCompleted ? "rgba(34,197,94,0.055)" : "rgba(255,255,255,0.025)",
+        border: isCompleted ? "1px solid rgba(34,197,94,0.18)" : "1px solid rgba(255,255,255,0.06)",
+        color: "rgba(255,255,255,0.56)",
+        fontSize: 11,
+        lineHeight: 1.5,
+        display: "grid",
+        gap: 7,
+      }}
+    >
+      <div style={{ color: isCompleted ? "#22c55e" : "rgba(255,255,255,0.36)", fontWeight: 850 }}>
+        {isCompleted ? "复盘结论" : "建议提醒"}
+      </div>
+      <div>{item.suggested_nudge}</div>
+      {isCompleted && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 6 }}>
+          <MiniStat label="fit score" value={`${item.recent_need_score}%`} />
+          <MiniStat label="evidence" value={item.evidence.length} />
+          <MiniStat label="events" value={item.session.event_count} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ReadoutBlock({ title, text, tone }: { title: string; text: string; tone: string }) {
+  return (
+    <div
+      style={{
+        padding: "9px 10px",
+        borderRadius: 8,
+        background: `${tone}0d`,
+        border: `1px solid ${tone}24`,
+      }}
+    >
+      <div style={{ color: tone, fontSize: 10, fontWeight: 850, marginBottom: 4 }}>{title}</div>
+      <div style={{ color: "rgba(255,255,255,0.62)", fontSize: 12, lineHeight: 1.5 }}>
+        {text}
+      </div>
+    </div>
+  );
+}
+
+function MiniStat({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div
+      style={{
+        minWidth: 0,
+        padding: "8px 9px",
+        borderRadius: 8,
+        background: "rgba(0,0,0,0.16)",
+        border: "1px solid rgba(255,255,255,0.04)",
+      }}
+    >
+      <div style={{ color: "rgba(255,255,255,0.26)", fontSize: 9, marginBottom: 3 }}>{label}</div>
+      <div
+        style={{
+          color: "rgba(255,255,255,0.7)",
+          fontSize: 12,
+          fontWeight: 800,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function ChipGroup({ title, values }: { title: string; values: string[] }) {
+  return (
+    <div style={{ minWidth: 0 }}>
+      <div style={{ color: "rgba(255,255,255,0.3)", fontSize: 10, fontWeight: 750, marginBottom: 5 }}>
+        {title}
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+        {values.map((value, index) => (
+          <span
+            key={`${title}-${value}-${index}`}
+            style={{
+              maxWidth: "100%",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              padding: "3px 7px",
+              borderRadius: 6,
+              background: "rgba(255,255,255,0.045)",
+              color: "rgba(255,255,255,0.45)",
+              fontSize: 10,
+              fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+            }}
+          >
+            {value}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function EmptyState() {
   return (
     <div
       style={{
-        padding: 28,
+        padding: 32,
         borderRadius: 8,
         background: "rgba(255,255,255,0.018)",
-        border: "1px dashed rgba(255,255,255,0.07)",
+        border: "1px dashed rgba(255,255,255,0.08)",
         textAlign: "center",
       }}
     >
-      <div style={{ fontSize: 13, color: "rgba(255,255,255,0.48)", fontWeight: 700 }}>
-        暂无 Claude/Codex 会话
+      <div style={{ color: "rgba(255,255,255,0.58)", fontSize: 13, fontWeight: 800 }}>
+        暂无会话
       </div>
-      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.28)", marginTop: 6 }}>
-        启动本地 hook 后，Hexa 会把进度、确认点和 transcript 复盘集中到这里。
+      <div style={{ color: "rgba(255,255,255,0.28)", fontSize: 11, marginTop: 6 }}>
+        agent hook 产生事件后，这里会显示当前工作状态和最近需求推进度。
       </div>
     </div>
   );
@@ -709,8 +576,7 @@ export function HexaModule() {
   const {
     activeSupervisorSessions,
     completedSupervisorSessions,
-    primarySupervisorSessions,
-    compatibleSupervisorSessions,
+    supervisorSessions,
     alerts,
     bridgeHealth,
     remoteControl,
@@ -723,197 +589,107 @@ export function HexaModule() {
     disableCodexRemoteControl,
     startCodexRemotePairing,
   } = useHexaData();
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [openReviews, setOpenReviews] = useState<Set<string>>(new Set());
 
-  const activePrimary = activeSupervisorSessions.filter((s) => s.priority === "primary");
-  const completedPrimary = completedSupervisorSessions.filter((s) => s.priority === "primary").slice(0, 6);
-  const pendingCount = activeSupervisorSessions.reduce((sum, item) => sum + item.pending_confirmations, 0);
-  const loopCount = activeSupervisorSessions.filter((item) => item.loop_status !== "clear").length;
+  const active = activeSupervisorSessions;
+  const recentCompleted = completedSupervisorSessions.slice(0, 6);
+  const visibleSessions = [...active, ...recentCompleted];
+  const pendingCount = active.reduce((sum, item) => sum + item.pending_confirmations, 0);
+  const workingCount = active.filter((item) => item.progress_status === "working").length;
+  const attentionCount = active.filter((item) =>
+    ["waiting", "looping", "stalled"].includes(item.progress_status),
+  ).length;
+  const score = averageScore(visibleSessions);
+  const toggleReview = (sessionId: string) => {
+    setOpenReviews((prev) => {
+      const next = new Set(prev);
+      if (next.has(sessionId)) next.delete(sessionId);
+      else next.add(sessionId);
+      return next;
+    });
+  };
 
   return (
     <div className="hub-module">
       <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", marginBottom: 16 }}>
         <div>
-          <h2 className="hub-module-title" style={{ marginBottom: 4 }}>Hexa Supervisor</h2>
+          <h2 className="hub-module-title" style={{ marginBottom: 4 }}>Hexa Agent 看板</h2>
           <p className="hub-module-desc">
-            Claude / Codex 监工台，观察每轮进度、确认点、memory 和复盘信号。
+            每个活跃会话一张感官反馈卡：项目是什么、用户最近想要什么、agent 干得如何。
           </p>
-          <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 7, fontSize: 10, color: "rgba(255,255,255,0.38)" }}>
-            <span
-              style={{
-                width: 6,
-                height: 6,
-                borderRadius: "50%",
-                background: bridgeHealth.status === "connected" ? "#22c55e" : bridgeHealth.status === "starting" ? "#facc15" : "#f87171",
-              }}
-            />
-            <span>{bridgeHealth.message}</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 7, color: "rgba(255,255,255,0.34)", fontSize: 10 }}>
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: bridgeHealth.status === "connected" ? "#22c55e" : bridgeHealth.status === "starting" ? "#facc15" : "#f87171" }} />
+            {bridgeHealth.message}
           </div>
         </div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-          <SummaryPill label="active" value={activeSupervisorSessions.length} color="#22c55e" />
-          <SummaryPill label="pending" value={pendingCount} color="#facc15" />
-          <SummaryPill label="watch" value={alerts.length + loopCount} color="#fb923c" />
+        <div
+          style={{
+            color: scoreColor(score),
+            background: `${scoreColor(score)}14`,
+            border: `1px solid ${scoreColor(score)}34`,
+            borderRadius: 8,
+            padding: "9px 11px",
+            textAlign: "right",
+            minWidth: 96,
+          }}
+        >
+          <div style={{ fontSize: 22, lineHeight: 1, fontWeight: 900 }}>{score || "-"}</div>
+          <div style={{ color: "rgba(255,255,255,0.38)", fontSize: 10, marginTop: 4 }}>avg need fit</div>
         </div>
       </div>
 
-      <section style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.45fr) minmax(260px, 0.8fr)", gap: 14 }}>
-        <div style={{ display: "grid", gap: 10 }}>
-          <SectionHeader title="Claude Session / Codex Session" count={primarySupervisorSessions.length} />
-          {activePrimary.length === 0 && completedPrimary.length === 0 ? (
-            <EmptyState />
-          ) : (
-            <>
-              {activePrimary.map((item) => (
-                <Fragment key={`active-${item.session.session_id}`}>
-                  <SessionPanel
-                    item={item}
-                    expanded={expandedId === item.session.session_id}
-                    onToggle={() =>
-                      setExpandedId(expandedId === item.session.session_id ? null : item.session.session_id)
-                    }
-                  />
-                  <CodexControls
-                    item={item}
-                    onSend={sendCodexMessage}
-                    onInterrupt={interruptCodexTurn}
-                    onResume={resumeCodexThread}
-                    onResolveApproval={resolveCodexApproval}
-                  />
-                </Fragment>
-              ))}
-              {completedPrimary.map((item) => (
-                <SessionPanel
-                  key={`completed-${item.session.session_id}`}
-                  item={item}
-                  expanded={expandedId === item.session.session_id}
-                  onToggle={() =>
-                    setExpandedId(expandedId === item.session.session_id ? null : item.session.session_id)
-                  }
-                />
-              ))}
-            </>
-          )}
+      <RemoteAccessPanel
+        state={remoteControl}
+        pairing={remotePairing}
+        onEnable={enableCodexRemoteControl}
+        onDisable={disableCodexRemoteControl}
+        onPair={startCodexRemotePairing}
+      />
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10, marginBottom: 14 }}>
+        <MetricCard label="活跃会话" value={active.length} tone="#22c55e" detail={`${workingCount} 个正在推进`} />
+        <MetricCard label="需要关注" value={attentionCount} tone="#f59e0b" detail={`${pendingCount} 个等待确认`} />
+        <MetricCard label="最近完成" value={recentCompleted.length} tone="#38bdf8" detail="保留最近 6 个复盘样本" />
+        <MetricCard label="告警信号" value={alerts.length} tone="#f87171" detail="停滞、循环、低进展" />
+      </div>
+
+      <section style={{ display: "grid", gap: 10 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+          <div
+            style={{
+              color: "rgba(255,255,255,0.42)",
+              fontSize: 11,
+              fontWeight: 850,
+              textTransform: "uppercase",
+              letterSpacing: 0.4,
+            }}
+          >
+            Sessions ({supervisorSessions.length})
+          </div>
+          <div style={{ color: "rgba(255,255,255,0.25)", fontSize: 10 }}>
+            score 优先基于 transcript 最近用户消息 + hook 事件推断
+          </div>
         </div>
 
-        <aside style={{ display: "grid", gap: 10, alignContent: "start" }}>
-          <RemoteControlPanel
-            state={remoteControl}
-            pairing={remotePairing}
-            onEnable={enableCodexRemoteControl}
-            onDisable={disableCodexRemoteControl}
-            onPair={startCodexRemotePairing}
-          />
-          <ReviewPanel
-            title="Needs attention"
-            rows={[
-              [`${pendingCount}`, "pending confirmations"],
-              [`${loopCount}`, "loop or stalled sessions"],
-              [`${alerts.length}`, "active alerts"],
-            ]}
-          />
-          <ReviewPanel
-            title="Supervisor model"
-            rows={[
-              ["progress", "working / waiting / stalled / completed"],
-              ["memory", "~/.claude/projects + ~/.codex/sessions"],
-              ["review", "strong outputs + watchouts"],
-            ]}
-          />
-          {compatibleSupervisorSessions.length > 0 && (
-            <div
-              style={{
-                borderRadius: 8,
-                background: "rgba(255,255,255,0.022)",
-                border: "1px solid rgba(255,255,255,0.06)",
-                padding: 12,
-              }}
-            >
-              <SectionHeader title="Compatible agents" count={compatibleSupervisorSessions.length} />
-              <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
-                {compatibleSupervisorSessions.slice(0, 6).map((item) => (
-                  <div key={`compatible-${item.session.session_id}`}>
-                    <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 3 }}>
-                      <span style={{ fontSize: 11, color: "rgba(255,255,255,0.66)", fontWeight: 700 }}>
-                        {item.agent_label}
-                      </span>
-                      <span style={{ fontSize: 10, color: STATUS_COLORS[item.progress_status] }}>
-                        {item.progress_label}
-                      </span>
-                    </div>
-                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.32)", lineHeight: 1.35 }}>
-                      {item.display_name} · {formatTimeAgo(item.last_seen_ms)}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </aside>
+        {visibleSessions.length === 0 ? (
+          <EmptyState />
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
+            {visibleSessions.map((item) => (
+              <SessionCard
+                key={item.session.session_id}
+                item={item}
+                reviewOpen={openReviews.has(item.session.session_id)}
+                onToggleReview={() => toggleReview(item.session.session_id)}
+                onSend={sendCodexMessage}
+                onInterrupt={interruptCodexTurn}
+                onResume={resumeCodexThread}
+                onResolveApproval={resolveCodexApproval}
+              />
+            ))}
+          </div>
+        )}
       </section>
-    </div>
-  );
-}
-
-function SectionHeader({ title, count }: { title: string; count: number }) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-      <div
-        style={{
-          fontSize: 11,
-          fontWeight: 800,
-          color: "rgba(255,255,255,0.42)",
-          textTransform: "uppercase",
-          letterSpacing: 0.4,
-        }}
-      >
-        {title}
-      </div>
-      <span style={{ color: "rgba(255,255,255,0.28)", fontSize: 11 }}>{count}</span>
-    </div>
-  );
-}
-
-function SummaryPill({ label, value, color }: { label: string; value: number; color: string }) {
-  return (
-    <div
-      style={{
-        minWidth: 72,
-        padding: "7px 9px",
-        borderRadius: 8,
-        background: `${color}12`,
-        border: `1px solid ${color}2f`,
-      }}
-    >
-      <div style={{ color, fontSize: 15, fontWeight: 800, lineHeight: 1 }}>{value}</div>
-      <div style={{ color: "rgba(255,255,255,0.34)", fontSize: 9, marginTop: 3 }}>{label}</div>
-    </div>
-  );
-}
-
-function ReviewPanel({ title, rows }: { title: string; rows: [string, string][] }) {
-  return (
-    <div
-      style={{
-        borderRadius: 8,
-        background: "rgba(255,255,255,0.022)",
-        border: "1px solid rgba(255,255,255,0.06)",
-        padding: 12,
-      }}
-    >
-      <div style={{ fontSize: 12, color: "rgba(255,255,255,0.72)", fontWeight: 800, marginBottom: 9 }}>
-        {title}
-      </div>
-      <div style={{ display: "grid", gap: 7 }}>
-        {rows.map(([value, label]) => (
-          <div key={`${title}-${label}`} style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-            <span style={{ color: "rgba(255,255,255,0.42)", fontSize: 11 }}>{label}</span>
-            <span style={{ color: "rgba(255,255,255,0.76)", fontSize: 11, fontWeight: 750, textAlign: "right" }}>
-              {value}
-            </span>
-          </div>
-        ))}
-      </div>
     </div>
   );
 }
