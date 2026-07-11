@@ -1,5 +1,6 @@
 use crate::event_bus::{self, HookEvent, PermissionDecision};
 use crate::local_api_auth::{LocalApiAuth, TOKEN_HEADER};
+use crate::mobile_bridge::MobileBridgeState;
 use crate::session_store::SessionStore;
 use crate::stats_store::StatsStore;
 use http_body_util::{BodyExt, Full};
@@ -155,9 +156,88 @@ async fn handle_request(
         ("GET", "/knowledge") => handle_knowledge_query(req, app_handle).await,
         ("GET", "/hush/inbox") => handle_hush_inbox_query(app_handle).await,
         ("POST", "/hush/inbox") => handle_hush_inbox_post(req, app_handle).await,
+        ("GET", "/mobile/status") => handle_mobile_status(app_handle).await,
+        ("POST", "/mobile/enable") => handle_mobile_enable(app_handle).await,
+        ("POST", "/mobile/disable") => handle_mobile_disable(app_handle).await,
+        ("POST", "/mobile/pair") => handle_mobile_pairing(app_handle).await,
+        ("POST", "/mobile/revoke") => handle_mobile_revoke(app_handle).await,
         _ => Ok(json_response(
             StatusCode::NOT_FOUND,
             &serde_json::json!({"error": "not found"}),
+        )),
+    }
+}
+
+async fn handle_mobile_status(
+    app_handle: tauri::AppHandle,
+) -> Result<Response<Full<Bytes>>, Infallible> {
+    let state = app_handle.state::<Arc<MobileBridgeState>>();
+    Ok(json_response(
+        StatusCode::OK,
+        &serde_json::to_value(state.status()).unwrap_or_default(),
+    ))
+}
+
+async fn handle_mobile_enable(
+    app_handle: tauri::AppHandle,
+) -> Result<Response<Full<Bytes>>, Infallible> {
+    let state = app_handle.state::<Arc<MobileBridgeState>>().inner().clone();
+    match state.enable(app_handle).await {
+        Ok(status) => Ok(json_response(
+            StatusCode::OK,
+            &serde_json::to_value(status).unwrap_or_default(),
+        )),
+        Err(error) => Ok(json_response(
+            StatusCode::BAD_REQUEST,
+            &serde_json::json!({ "error": error }),
+        )),
+    }
+}
+
+async fn handle_mobile_disable(
+    app_handle: tauri::AppHandle,
+) -> Result<Response<Full<Bytes>>, Infallible> {
+    let state = app_handle.state::<Arc<MobileBridgeState>>();
+    match state.disable() {
+        Ok(status) => Ok(json_response(
+            StatusCode::OK,
+            &serde_json::to_value(status).unwrap_or_default(),
+        )),
+        Err(error) => Ok(json_response(
+            StatusCode::BAD_REQUEST,
+            &serde_json::json!({ "error": error }),
+        )),
+    }
+}
+
+async fn handle_mobile_pairing(
+    app_handle: tauri::AppHandle,
+) -> Result<Response<Full<Bytes>>, Infallible> {
+    let state = app_handle.state::<Arc<MobileBridgeState>>();
+    match state.create_pairing() {
+        Ok(pairing) => Ok(json_response(
+            StatusCode::OK,
+            &serde_json::to_value(pairing).unwrap_or_default(),
+        )),
+        Err(error) => Ok(json_response(
+            StatusCode::BAD_REQUEST,
+            &serde_json::json!({ "error": error }),
+        )),
+    }
+}
+
+async fn handle_mobile_revoke(
+    app_handle: tauri::AppHandle,
+) -> Result<Response<Full<Bytes>>, Infallible> {
+    let state = app_handle.state::<Arc<MobileBridgeState>>();
+    match state.revoke_devices() {
+        Ok(status) => Ok(json_response(
+            StatusCode::OK,
+            &serde_json::to_value(status).unwrap_or_default(),
+        )),
+        Err(error) => Ok(json_response(
+            StatusCode::BAD_REQUEST,
+            &serde_json::json!({ "error": error }),
         )),
     }
 }

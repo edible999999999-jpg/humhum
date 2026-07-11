@@ -11,6 +11,7 @@ use crate::hook_server::PendingMap;
 use crate::hush_store::{HushInboxSummary, HushStore};
 use crate::intervention_queue::{InterventionQueue, QueuedIntervention};
 use crate::knowledge_store::{AgentAsset, AgentAssetRootDiagnostic, KnowledgeStore, Preference};
+use crate::mobile_bridge::{MobileBridgeState, MobileBridgeStatus, MobilePairingInfo};
 use crate::pi_sidecar::{self, PiSessionStatus, PiSidecarState, PiStartOptions};
 use crate::session_store::{Session, SessionStatus, SessionStore};
 use crate::stats_store::StatsStore;
@@ -24,10 +25,46 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command as StdCommand;
 use std::sync::Arc;
-use tauri::{Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::process::Command;
 
 const HUMHUM_HOOK_SCRIPT: &str = include_str!("../../hooks/humhum-hook.sh");
+
+#[tauri::command]
+pub async fn get_mobile_bridge_status(
+    state: State<'_, Arc<MobileBridgeState>>,
+) -> Result<MobileBridgeStatus, String> {
+    Ok(state.status())
+}
+
+#[tauri::command]
+pub async fn enable_mobile_bridge(
+    app: AppHandle,
+    state: State<'_, Arc<MobileBridgeState>>,
+) -> Result<MobileBridgeStatus, String> {
+    state.inner().enable(app).await
+}
+
+#[tauri::command]
+pub async fn disable_mobile_bridge(
+    state: State<'_, Arc<MobileBridgeState>>,
+) -> Result<MobileBridgeStatus, String> {
+    state.disable()
+}
+
+#[tauri::command]
+pub async fn start_mobile_pairing(
+    state: State<'_, Arc<MobileBridgeState>>,
+) -> Result<MobilePairingInfo, String> {
+    state.create_pairing()
+}
+
+#[tauri::command]
+pub async fn revoke_mobile_devices(
+    state: State<'_, Arc<MobileBridgeState>>,
+) -> Result<MobileBridgeStatus, String> {
+    state.revoke_devices()
+}
 
 #[tauri::command]
 pub async fn get_wake_guard_status(

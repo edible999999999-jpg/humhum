@@ -7,6 +7,8 @@ import {
   type CodexSendReceipt,
   type FocusResult,
   type HexaSupervisorSession,
+  type MobileBridgeStatus,
+  type MobilePairingInfo,
   type QueuedIntervention,
 } from "../../hooks/useHexaData";
 import { initialInterventionState, interventionReducer } from "../../hooks/interventionState";
@@ -589,6 +591,61 @@ function RemoteAccessPanel({
   );
 }
 
+function HumHumMobilePanel({
+  state,
+  pairing,
+  onEnable,
+  onDisable,
+  onPair,
+  onRevoke,
+}: {
+  state: MobileBridgeStatus;
+  pairing: MobilePairingInfo | null;
+  onEnable: () => Promise<MobileBridgeStatus>;
+  onDisable: () => Promise<MobileBridgeStatus>;
+  onPair: () => Promise<MobilePairingInfo>;
+  onRevoke: () => Promise<MobileBridgeStatus>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const run = async (action: () => Promise<unknown>) => {
+    setBusy(true);
+    setError(null);
+    try { await action(); } catch (cause) { setError(String(cause)); } finally { setBusy(false); }
+  };
+  const detail = pairing
+    ? `配对码 ${pairing.code} · 5 分钟内有效`
+    : state.enabled
+      ? `${state.url} · ${state.paired_devices} 台设备`
+      : "默认关闭；开启后仅同一局域网可见";
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "auto minmax(0, 1fr) auto", alignItems: "center", gap: 10, padding: 11, marginBottom: 10, borderRadius: 8, background: "rgba(34,197,94,0.045)", border: "1px solid rgba(34,197,94,0.16)" }}>
+      <Smartphone size={18} color={state.enabled ? "#22c55e" : "#86a7d5"} />
+      <div style={{ minWidth: 0 }}>
+        <div style={{ color: "rgba(255,255,255,0.72)", fontSize: 11, fontWeight: 850 }}>HUMHUM Mobile Web</div>
+        <div style={{ color: error ? "#f87171" : "rgba(255,255,255,0.34)", fontSize: 10, marginTop: 3, overflowWrap: "anywhere" }}>{error ?? detail}</div>
+        {state.enabled && state.certificate_fingerprint && (
+          <div title={state.certificate_fingerprint} style={{ color: "rgba(255,255,255,0.22)", fontSize: 9, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            TLS {state.certificate_fingerprint}
+          </div>
+        )}
+      </div>
+      <div style={{ display: "flex", gap: 6 }}>
+        {state.enabled ? (
+          <>
+            <button type="button" title="生成一次性配对码" aria-label="生成一次性配对码" disabled={busy} onClick={() => run(onPair)} className="kawaii-toggle-btn connected"><Link size={15} /></button>
+            {state.paired_devices > 0 && <button type="button" title="撤销全部移动设备" aria-label="撤销全部移动设备" disabled={busy} onClick={() => run(onRevoke)} className="kawaii-toggle-btn"><Trash2 size={15} /></button>}
+            <button type="button" title="关闭 HUMHUM 移动访问" aria-label="关闭 HUMHUM 移动访问" disabled={busy} onClick={() => run(onDisable)} className="kawaii-toggle-btn"><Power size={15} /></button>
+          </>
+        ) : (
+          <button type="button" title="开启 HUMHUM 移动访问" aria-label="开启 HUMHUM 移动访问" disabled={busy} onClick={() => run(onEnable)} className="kawaii-toggle-btn connected"><Power size={15} /></button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ReviewAction({ item }: { item: HexaSupervisorSession }) {
   const isCompleted = item.session.status === "completed";
   return (
@@ -727,6 +784,8 @@ export function HexaModule() {
     bridgeHealth,
     remoteControl,
     remotePairing,
+    mobileBridge,
+    mobilePairing,
     queuedInterventions,
     sendCodexMessage,
     retryCodexMessage,
@@ -738,6 +797,10 @@ export function HexaModule() {
     enableCodexRemoteControl,
     disableCodexRemoteControl,
     startCodexRemotePairing,
+    enableMobileBridge,
+    disableMobileBridge,
+    startMobilePairing,
+    revokeMobileDevices,
   } = useHexaData();
   const [openReviews, setOpenReviews] = useState<Set<string>>(new Set());
 
@@ -794,6 +857,15 @@ export function HexaModule() {
         onEnable={enableCodexRemoteControl}
         onDisable={disableCodexRemoteControl}
         onPair={startCodexRemotePairing}
+      />
+
+      <HumHumMobilePanel
+        state={mobileBridge}
+        pairing={mobilePairing}
+        onEnable={enableMobileBridge}
+        onDisable={disableMobileBridge}
+        onPair={startMobilePairing}
+        onRevoke={revokeMobileDevices}
       />
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10, marginBottom: 14 }}>

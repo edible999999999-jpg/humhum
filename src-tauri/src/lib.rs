@@ -10,6 +10,7 @@ mod hush_store;
 mod intervention_queue;
 mod knowledge_store;
 mod local_api_auth;
+mod mobile_bridge;
 #[cfg(target_os = "macos")]
 mod mac_notification_watcher;
 mod pi_sidecar;
@@ -70,6 +71,11 @@ pub fn run() {
                     intervention_queue::InterventionQueue::load_or_create(&home.join(".humhum"))
                         .map_err(std::io::Error::other)?;
                 app.manage(Arc::new(std::sync::Mutex::new(intervention_queue)));
+                let mobile_bridge = mobile_bridge::MobileBridgeState::load_or_create(
+                    &home.join(".humhum"),
+                )
+                .map_err(std::io::Error::other)?;
+                app.manage(Arc::new(mobile_bridge));
             } else {
                 return Err(std::io::Error::other("Could not determine home directory").into());
             }
@@ -152,6 +158,11 @@ pub fn run() {
             commands::get_config,
             commands::save_config,
             commands::get_wake_guard_status,
+            commands::get_mobile_bridge_status,
+            commands::enable_mobile_bridge,
+            commands::disable_mobile_bridge,
+            commands::start_mobile_pairing,
+            commands::revoke_mobile_devices,
             commands::set_wake_guard_enabled,
             commands::get_hook_port,
             commands::get_codex_bridge_health,

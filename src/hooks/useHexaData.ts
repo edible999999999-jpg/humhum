@@ -34,6 +34,20 @@ export interface CodexRemotePairing {
   expires_at: number;
 }
 
+export interface MobileBridgeStatus {
+  enabled: boolean;
+  url: string | null;
+  certificate_fingerprint: string | null;
+  paired_devices: number;
+}
+
+export interface MobilePairingInfo {
+  code: string;
+  expires_at: number;
+  url: string;
+  certificate_fingerprint: string;
+}
+
 export interface FocusResult {
   strategy: "tmux_pane" | "iterm_session" | "codex_thread" | "application" | "generic_terminal";
   application: string | null;
@@ -479,6 +493,13 @@ export function useHexaData() {
     message: "Codex mobile access is unavailable",
   });
   const [remotePairing, setRemotePairing] = useState<CodexRemotePairing | null>(null);
+  const [mobileBridge, setMobileBridge] = useState<MobileBridgeStatus>({
+    enabled: false,
+    url: null,
+    certificate_fingerprint: null,
+    paired_devices: 0,
+  });
+  const [mobilePairing, setMobilePairing] = useState<MobilePairingInfo | null>(null);
   const [queuedInterventions, setQueuedInterventions] = useState<QueuedIntervention[]>([]);
   const intervalRef = useRef<ReturnType<typeof setInterval>>();
 
@@ -493,6 +514,7 @@ export function useHexaData() {
         invoke<QueuedIntervention[]>("get_intervention_queue"),
       ]);
       const remoteData = await invoke<CodexRemoteControlState>("get_codex_remote_control").catch(() => null);
+      const mobileData = await invoke<MobileBridgeStatus>("get_mobile_bridge_status").catch(() => null);
       const statsByClient = new Map(statsData.map((stat) => [stat.client_type, stat]));
       const readoutBySession = new Map(readoutData.map((readout) => [readout.session_id, readout]));
       const merged = mergeHexaSessions(sessionData, bridgeData);
@@ -511,6 +533,7 @@ export function useHexaData() {
       setBridgeHealth(healthData);
       setQueuedInterventions(queueData);
       if (remoteData) setRemoteControl(remoteData);
+      if (mobileData) setMobileBridge(mobileData);
     } catch {
       // Hub may open before the backend is ready.
     }
@@ -611,6 +634,33 @@ export function useHexaData() {
     return pairing;
   }, []);
 
+  const enableMobileBridge = useCallback(async () => {
+    const state = await invoke<MobileBridgeStatus>("enable_mobile_bridge");
+    setMobileBridge(state);
+    setMobilePairing(null);
+    return state;
+  }, []);
+
+  const disableMobileBridge = useCallback(async () => {
+    const state = await invoke<MobileBridgeStatus>("disable_mobile_bridge");
+    setMobileBridge(state);
+    setMobilePairing(null);
+    return state;
+  }, []);
+
+  const startMobilePairing = useCallback(async () => {
+    const pairing = await invoke<MobilePairingInfo>("start_mobile_pairing");
+    setMobilePairing(pairing);
+    return pairing;
+  }, []);
+
+  const revokeMobileDevices = useCallback(async () => {
+    const state = await invoke<MobileBridgeStatus>("revoke_mobile_devices");
+    setMobileBridge(state);
+    setMobilePairing(null);
+    return state;
+  }, []);
+
   return {
     sessions,
     activeSessions,
@@ -625,6 +675,8 @@ export function useHexaData() {
     bridgeHealth,
     remoteControl,
     remotePairing,
+    mobileBridge,
+    mobilePairing,
     queuedInterventions,
     sendCodexMessage,
     retryCodexMessage,
@@ -636,5 +688,9 @@ export function useHexaData() {
     enableCodexRemoteControl,
     disableCodexRemoteControl,
     startCodexRemotePairing,
+    enableMobileBridge,
+    disableMobileBridge,
+    startMobilePairing,
+    revokeMobileDevices,
   };
 }
