@@ -37,6 +37,7 @@ const CLIENT_LABELS: Record<string, string> = {
   "gemini-cli": "Gemini CLI",
   "kimi-k1": "Kimi K1",
   qoderwork: "QoderWork",
+  hermes: "Hermes Agent",
   wukong: "Wukong",
 };
 
@@ -47,6 +48,7 @@ const CLIENT_COLORS: Record<string, string> = {
   "gemini-cli": "bg-cyan-400/80",
   "kimi-k1": "bg-purple-500/80",
   qoderwork: "bg-rose-400/80",
+  hermes: "bg-teal-500/80",
   wukong: "bg-yellow-500/80",
 };
 

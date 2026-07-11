@@ -33,6 +33,7 @@ const CLIENT_COLORS: Record<string, string> = {
   "qwen-code": "#8b5cf6",
   "gemini-cli": "#38bdf8",
   "kimi-k1": "#f97316",
+  hermes: "#0f9f8f",
   wukong: "#eab308",
 };
 

@@ -5,6 +5,7 @@ describe("resolveMascotTheme", () => {
   it("uses the current Agent's default HUMHUM theme", () => {
     expect(resolveMascotTheme("codex").id).toBe("codex");
     expect(resolveMascotTheme("github-copilot").id).toBe("github-copilot");
+    expect(resolveMascotTheme("hermes").id).toBe("hermes");
   });
 
   it("applies a valid per-Agent override", () => {

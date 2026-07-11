@@ -13,6 +13,7 @@ const CLIENT_LABELS: Record<string, string> = {
   "gemini-cli": "Gemini",
   "kimi-k1": "Kimi",
   qoderwork: "Qoder",
+  hermes: "Hermes Agent",
   wukong: "Wukong",
 };
 

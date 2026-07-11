@@ -152,6 +152,7 @@ const CLIENT_LABELS: Record<string, string> = {
   "qwen-code": "Qwen Code",
   "gemini-cli": "Gemini CLI",
   "kimi-k1": "Kimi K1",
+  hermes: "Hermes Agent",
   wukong: "Wukong",
 };
 
@@ -233,7 +234,7 @@ function detectAlerts(session: HexaSession): HexaAlert[] {
   return alerts;
 }
 
-function agentLabel(clientType: string): string {
+export function agentLabel(clientType: string): string {
   return CLIENT_LABELS[clientType] ?? clientType;
 }
 

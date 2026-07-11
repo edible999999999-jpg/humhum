@@ -20,6 +20,7 @@ export const MASCOT_THEMES: MascotTheme[] = [
   { id: "cursor", label: "Cursor", accent: "#64748b", monogram: "⌁" },
   { id: "github-copilot", label: "Copilot", accent: "#6366f1", monogram: "GH" },
   { id: "opencode", label: "OpenCode", accent: "#14b8a6", monogram: "O" },
+  { id: "hermes", label: "Hermes Agent", accent: "#0f9f8f", monogram: "H" },
   { id: "pi", label: "Pi Agent", accent: "#38bdf8", monogram: "π" },
   { id: "wukong", label: "Wukong", accent: "#eab308", monogram: "W" },
 ];

@@ -21,6 +21,7 @@ const CLIENT_COLORS: Record<string, string> = {
   "gemini-cli": "bg-cyan-400/80",
   "kimi-k1": "bg-purple-500/80",
   qoderwork: "bg-rose-400/80",
+  hermes: "bg-teal-500/80",
 };
 
 const CLIENT_LABELS: Record<string, string> = {
@@ -30,6 +31,7 @@ const CLIENT_LABELS: Record<string, string> = {
   "gemini-cli": "Gemini",
   "kimi-k1": "Kimi",
   qoderwork: "Qoder",
+  hermes: "Hermes Agent",
 };
 
 const STATUS_DOTS: Record<string, string> = {
