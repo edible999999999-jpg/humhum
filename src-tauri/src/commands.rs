@@ -9,6 +9,7 @@ use crate::event_bus::{self, HookEvent, PermissionDecision};
 use crate::hexa_protocol::HexaSessionProjection;
 use crate::hook_server::PendingMap;
 use crate::hush_store::{HushInboxSummary, HushStore};
+use crate::intervention_queue::{InterventionQueue, QueuedIntervention};
 use crate::knowledge_store::{AgentAsset, AgentAssetRootDiagnostic, KnowledgeStore, Preference};
 use crate::pi_sidecar::{self, PiSessionStatus, PiSidecarState, PiStartOptions};
 use crate::session_store::{Session, SessionStatus, SessionStore};
@@ -124,13 +125,112 @@ pub async fn hexa_resume_codex_thread(
 #[tauri::command]
 pub async fn hexa_send_codex_message(
     state: State<'_, Arc<CodexBridgeState>>,
+    queue: State<'_, Arc<std::sync::Mutex<InterventionQueue>>>,
     thread_id: String,
     message: String,
+) -> Result<CodexSendReceipt, String> {
+    let entry = queue
+        .lock()
+        .map_err(|error| format!("Queue lock error: {error}"))?
+        .enqueue(&thread_id, &message)?;
+    let is_next = queue
+        .lock()
+        .map_err(|error| format!("Queue lock error: {error}"))?
+        .is_next_for_thread(&entry.id)?;
+    if !is_next {
+        return Ok(CodexSendReceipt {
+            status: "queued".into(),
+            turn_id: None,
+            intervention_id: entry.id,
+        });
+    }
+    match deliver_queued_codex_message(&state, &queue, &entry.id).await {
+        Ok(turn_id) => Ok(CodexSendReceipt {
+            status: "delivered".into(),
+            turn_id: Some(turn_id),
+            intervention_id: entry.id,
+        }),
+        Err(_) => Ok(CodexSendReceipt {
+            status: "queued".into(),
+            turn_id: None,
+            intervention_id: entry.id,
+        }),
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct CodexSendReceipt {
+    pub status: String,
+    pub turn_id: Option<String>,
+    pub intervention_id: String,
+}
+
+#[tauri::command]
+pub async fn get_intervention_queue(
+    queue: State<'_, Arc<std::sync::Mutex<InterventionQueue>>>,
+) -> Result<Vec<QueuedIntervention>, String> {
+    Ok(queue
+        .lock()
+        .map_err(|error| format!("Queue lock error: {error}"))?
+        .entries())
+}
+
+#[tauri::command]
+pub async fn hexa_retry_codex_message(
+    state: State<'_, Arc<CodexBridgeState>>,
+    queue: State<'_, Arc<std::sync::Mutex<InterventionQueue>>>,
+    intervention_id: String,
+) -> Result<CodexSendReceipt, String> {
+    let turn_id = deliver_queued_codex_message(&state, &queue, &intervention_id).await?;
+    Ok(CodexSendReceipt {
+        status: "delivered".into(),
+        turn_id: Some(turn_id),
+        intervention_id,
+    })
+}
+
+#[tauri::command]
+pub async fn discard_queued_intervention(
+    queue: State<'_, Arc<std::sync::Mutex<InterventionQueue>>>,
+    intervention_id: String,
+) -> Result<(), String> {
+    queue
+        .lock()
+        .map_err(|error| format!("Queue lock error: {error}"))?
+        .mark_delivered(&intervention_id)
+}
+
+async fn deliver_queued_codex_message(
+    state: &CodexBridgeState,
+    queue: &std::sync::Mutex<InterventionQueue>,
+    intervention_id: &str,
 ) -> Result<String, String> {
-    state
-        .send_message(&thread_id, &message)
-        .await
-        .map_err(|error| error.to_string())
+    let entry = queue
+        .lock()
+        .map_err(|error| format!("Queue lock error: {error}"))?
+        .mark_sending(intervention_id)?;
+
+    match state.send_message(&entry.thread_id, &entry.message).await {
+        Ok(turn_id) => {
+            queue
+                .lock()
+                .map_err(|error| format!("Queue lock error after delivery: {error}"))?
+                .mark_delivered(intervention_id)
+                .map_err(|error| {
+                    format!("Codex accepted the message, but queue cleanup failed: {error}")
+                })?;
+            Ok(turn_id)
+        }
+        Err(error) => {
+            let message = error.to_string();
+            queue
+                .lock()
+                .map_err(|lock_error| format!("{message}; queue lock error: {lock_error}"))?
+                .mark_failed(intervention_id, &message)
+                .map_err(|queue_error| format!("{message}; queue update failed: {queue_error}"))?;
+            Err(message)
+        }
+    }
 }
 
 #[tauri::command]

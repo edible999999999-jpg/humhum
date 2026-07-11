@@ -7,6 +7,7 @@ mod event_bus;
 mod hexa_protocol;
 mod hook_server;
 mod hush_store;
+mod intervention_queue;
 mod knowledge_store;
 mod local_api_auth;
 #[cfg(target_os = "macos")]
@@ -65,6 +66,10 @@ pub fn run() {
                 let auth = local_api_auth::LocalApiAuth::load_or_create(&home.join(".humhum"))
                     .map_err(std::io::Error::other)?;
                 app.manage(Arc::new(auth));
+                let intervention_queue =
+                    intervention_queue::InterventionQueue::load_or_create(&home.join(".humhum"))
+                        .map_err(std::io::Error::other)?;
+                app.manage(Arc::new(std::sync::Mutex::new(intervention_queue)));
             } else {
                 return Err(std::io::Error::other("Could not determine home directory").into());
             }
@@ -158,6 +163,9 @@ pub fn run() {
             commands::hexa_start_codex_thread,
             commands::hexa_resume_codex_thread,
             commands::hexa_send_codex_message,
+            commands::get_intervention_queue,
+            commands::hexa_retry_codex_message,
+            commands::discard_queued_intervention,
             commands::hexa_interrupt_codex_turn,
             commands::hexa_resolve_codex_approval,
             commands::hexa_answer_codex_question,

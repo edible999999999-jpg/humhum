@@ -40,6 +40,22 @@ export interface FocusResult {
   exact: boolean;
 }
 
+export interface QueuedIntervention {
+  id: string;
+  thread_id: string;
+  message: string;
+  created_at: string;
+  attempts: number;
+  status: "pending" | "sending" | "failed";
+  last_error: string | null;
+}
+
+export interface CodexSendReceipt {
+  status: "queued" | "delivered";
+  turn_id: string | null;
+  intervention_id: string;
+}
+
 export interface HexaAlert {
   session_id: string;
   type: "stalled" | "looping" | "permission" | "low_signal";
@@ -463,16 +479,18 @@ export function useHexaData() {
     message: "Codex mobile access is unavailable",
   });
   const [remotePairing, setRemotePairing] = useState<CodexRemotePairing | null>(null);
+  const [queuedInterventions, setQueuedInterventions] = useState<QueuedIntervention[]>([]);
   const intervalRef = useRef<ReturnType<typeof setInterval>>();
 
   const fetchSessions = useCallback(async () => {
     try {
-      const [sessionData, statsData, readoutData, bridgeData, healthData] = await Promise.all([
+      const [sessionData, statsData, readoutData, bridgeData, healthData, queueData] = await Promise.all([
         invoke<HexaSession[]>("get_all_sessions_history"),
         invoke<AgentStats[]>("get_agent_stats"),
         invoke<HexaReadout[]>("get_hexa_readouts"),
         invoke<HexaBridgeSession[]>("get_hexa_bridge_sessions"),
         invoke<CodexBridgeHealth>("get_codex_bridge_health"),
+        invoke<QueuedIntervention[]>("get_intervention_queue"),
       ]);
       const remoteData = await invoke<CodexRemoteControlState>("get_codex_remote_control").catch(() => null);
       const statsByClient = new Map(statsData.map((stat) => [stat.client_type, stat]));
@@ -491,6 +509,7 @@ export function useHexaData() {
       setSupervisorSessions(sortHexaSessions(snapshots));
       setAlerts(allAlerts);
       setBridgeHealth(healthData);
+      setQueuedInterventions(queueData);
       if (remoteData) setRemoteControl(remoteData);
     } catch {
       // Hub may open before the backend is ready.
@@ -532,9 +551,24 @@ export function useHexaData() {
   const compatibleSupervisorSessions = supervisorSessions.filter((s) => s.priority === "compatible");
 
   const sendCodexMessage = useCallback(async (threadId: string, message: string) => {
-    const turnId = await invoke<string>("hexa_send_codex_message", { threadId, message });
+    try {
+      return await invoke<CodexSendReceipt>("hexa_send_codex_message", { threadId, message });
+    } finally {
+      await fetchSessions();
+    }
+  }, [fetchSessions]);
+
+  const retryCodexMessage = useCallback(async (interventionId: string) => {
+    try {
+      return await invoke<CodexSendReceipt>("hexa_retry_codex_message", { interventionId });
+    } finally {
+      await fetchSessions();
+    }
+  }, [fetchSessions]);
+
+  const discardQueuedIntervention = useCallback(async (interventionId: string) => {
+    await invoke("discard_queued_intervention", { interventionId });
     await fetchSessions();
-    return turnId;
   }, [fetchSessions]);
 
   const interruptCodexTurn = useCallback(async (threadId: string, turnId: string) => {
@@ -591,7 +625,10 @@ export function useHexaData() {
     bridgeHealth,
     remoteControl,
     remotePairing,
+    queuedInterventions,
     sendCodexMessage,
+    retryCodexMessage,
+    discardQueuedIntervention,
     interruptCodexTurn,
     resumeCodexThread,
     resolveCodexApproval,

@@ -1,5 +1,5 @@
 export interface InterventionState {
-  status: "idle" | "sending" | "delivered" | "failed";
+  status: "idle" | "sending" | "queued" | "delivered" | "failed";
   draft: string;
   error: string | null;
 }
@@ -7,6 +7,7 @@ export interface InterventionState {
 export type InterventionAction =
   | { type: "draft"; value: string }
   | { type: "send" }
+  | { type: "queued" }
   | { type: "delivered" }
   | { type: "failed"; error: string };
 
@@ -29,6 +30,8 @@ export function interventionReducer(
         : state;
     case "delivered":
       return { status: "delivered", draft: "", error: null };
+    case "queued":
+      return { status: "queued", draft: "", error: null };
     case "failed":
       return { ...state, status: "failed", error: action.error };
   }

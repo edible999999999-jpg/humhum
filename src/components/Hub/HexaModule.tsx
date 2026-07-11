@@ -1,11 +1,13 @@
 import { useReducer, useState } from "react";
-import { Crosshair, Link, Power, RotateCcw, Send, Smartphone, Square } from "lucide-react";
+import { Crosshair, Link, Power, RefreshCw, RotateCcw, Send, Smartphone, Square, Trash2 } from "lucide-react";
 import {
   useHexaData,
   type CodexRemoteControlState,
   type CodexRemotePairing,
+  type CodexSendReceipt,
   type FocusResult,
   type HexaSupervisorSession,
+  type QueuedIntervention,
 } from "../../hooks/useHexaData";
 import { initialInterventionState, interventionReducer } from "../../hooks/interventionState";
 
@@ -172,15 +174,21 @@ function SessionCard({
   onResume,
   onResolveApproval,
   onFocus,
+  queuedInterventions,
+  onRetryIntervention,
+  onDiscardIntervention,
 }: {
   item: HexaSupervisorSession;
   reviewOpen: boolean;
   onToggleReview: () => void;
-  onSend: (threadId: string, message: string) => Promise<string>;
+  onSend: (threadId: string, message: string) => Promise<CodexSendReceipt>;
   onInterrupt: (threadId: string, turnId: string) => Promise<void>;
   onResume: (threadId: string) => Promise<void>;
   onResolveApproval: (approvalId: string, decision: "allow_once" | "deny") => Promise<void>;
   onFocus: (sessionId: string) => Promise<FocusResult>;
+  queuedInterventions: QueuedIntervention[];
+  onRetryIntervention: (interventionId: string) => Promise<CodexSendReceipt>;
+  onDiscardIntervention: (interventionId: string) => Promise<void>;
 }) {
   const color = getClientColor(item.session.client_type);
   const eventNames = item.session.event_names.slice(-6);
@@ -336,6 +344,9 @@ function SessionCard({
           onInterrupt={onInterrupt}
           onResume={onResume}
           onResolveApproval={onResolveApproval}
+          queuedInterventions={queuedInterventions}
+          onRetryIntervention={onRetryIntervention}
+          onDiscardIntervention={onDiscardIntervention}
         />
       )}
 
@@ -369,12 +380,18 @@ function CodexIntervention({
   onInterrupt,
   onResume,
   onResolveApproval,
+  queuedInterventions,
+  onRetryIntervention,
+  onDiscardIntervention,
 }: {
   item: HexaSupervisorSession;
-  onSend: (threadId: string, message: string) => Promise<string>;
+  onSend: (threadId: string, message: string) => Promise<CodexSendReceipt>;
   onInterrupt: (threadId: string, turnId: string) => Promise<void>;
   onResume: (threadId: string) => Promise<void>;
   onResolveApproval: (approvalId: string, decision: "allow_once" | "deny") => Promise<void>;
+  queuedInterventions: QueuedIntervention[];
+  onRetryIntervention: (interventionId: string) => Promise<CodexSendReceipt>;
+  onDiscardIntervention: (interventionId: string) => Promise<void>;
 }) {
   const [delivery, dispatchDelivery] = useReducer(interventionReducer, initialInterventionState);
   const [busy, setBusy] = useState(false);
@@ -400,8 +417,8 @@ function CodexIntervention({
     if (!message || sending) return;
     dispatchDelivery({ type: "send" });
     try {
-      await onSend(threadId, message);
-      dispatchDelivery({ type: "delivered" });
+      const receipt = await onSend(threadId, message);
+      dispatchDelivery({ type: receipt.status });
     } catch (cause) {
       dispatchDelivery({ type: "failed", error: String(cause) });
     }
@@ -409,6 +426,57 @@ function CodexIntervention({
 
   return (
     <div style={{ display: "grid", gap: 8, paddingTop: 10, borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+      {queuedInterventions.map((queued) => (
+        <div
+          key={queued.id}
+          style={{
+            display: "grid",
+            gridTemplateColumns: "minmax(0, 1fr) auto auto",
+            gap: 7,
+            alignItems: "center",
+            padding: 9,
+            borderRadius: 8,
+            background: "rgba(248,113,113,0.06)",
+            border: "1px solid rgba(248,113,113,0.2)",
+          }}
+        >
+          <div style={{ minWidth: 0 }}>
+            <div style={{ color: "#f87171", fontSize: 10, fontWeight: 850 }}>
+              {queued.status === "sending" ? "正在重试" : `待重试 · 已尝试 ${queued.attempts} 次`}
+            </div>
+            <div style={{ color: "rgba(255,255,255,0.64)", fontSize: 11, lineHeight: 1.4, marginTop: 3, overflowWrap: "anywhere" }}>
+              {queued.message}
+            </div>
+            {queued.last_error && (
+              <div style={{ color: "rgba(248,113,113,0.72)", fontSize: 9, marginTop: 3, overflowWrap: "anywhere" }}>
+                {queued.last_error}
+              </div>
+            )}
+          </div>
+          <button
+            type="button"
+            title="重试发送"
+            aria-label="重试发送"
+            disabled={busy || queued.status === "sending"}
+            onClick={() => run(() => onRetryIntervention(queued.id))}
+            className="kawaii-toggle-btn connected"
+            style={{ width: 34, height: 34, padding: 0, display: "grid", placeItems: "center" }}
+          >
+            <RefreshCw size={14} />
+          </button>
+          <button
+            type="button"
+            title="放弃这条指令"
+            aria-label="放弃这条指令"
+            disabled={busy || queued.status === "sending"}
+            onClick={() => run(() => onDiscardIntervention(queued.id))}
+            className="kawaii-toggle-btn"
+            style={{ width: 34, height: 34, padding: 0, display: "grid", placeItems: "center" }}
+          >
+            <Trash2 size={14} />
+          </button>
+        </div>
+      ))}
       {item.pending_approvals.map((approval) => (
         <div key={approval.approval_id} style={{ display: "grid", gap: 7, padding: 9, borderRadius: 8, background: "rgba(250,204,21,0.07)", border: "1px solid rgba(250,204,21,0.2)" }}>
           <div style={{ color: "rgba(255,255,255,0.66)", fontSize: 11, lineHeight: 1.45 }}>{approval.summary}</div>
@@ -454,13 +522,21 @@ function CodexIntervention({
         role="status"
         style={{
           minHeight: 14,
-          color: delivery.status === "failed" ? "#f87171" : delivery.status === "delivered" ? "#22c55e" : "rgba(255,255,255,0.28)",
+          color: delivery.status === "failed"
+            ? "#f87171"
+            : delivery.status === "delivered"
+              ? "#22c55e"
+              : delivery.status === "queued"
+                ? "#38bdf8"
+                : "rgba(255,255,255,0.28)",
           fontSize: 10,
           overflowWrap: "anywhere",
         }}
       >
         {delivery.status === "sending"
           ? "正在发送..."
+          : delivery.status === "queued"
+            ? "前一条指令尚未送达，当前指令已安全排队"
           : delivery.status === "delivered"
             ? "已送达 Codex 会话"
             : delivery.status === "failed"
@@ -651,7 +727,10 @@ export function HexaModule() {
     bridgeHealth,
     remoteControl,
     remotePairing,
+    queuedInterventions,
     sendCodexMessage,
+    retryCodexMessage,
+    discardQueuedIntervention,
     interruptCodexTurn,
     resumeCodexThread,
     resolveCodexApproval,
@@ -757,6 +836,12 @@ export function HexaModule() {
                 onResume={resumeCodexThread}
                 onResolveApproval={resolveCodexApproval}
                 onFocus={focusAgentSession}
+                queuedInterventions={queuedInterventions.filter((queued) => {
+                  const threadId = item.bridge?.provider_thread_id ?? item.session.session_id;
+                  return queued.thread_id === threadId;
+                })}
+                onRetryIntervention={retryCodexMessage}
+                onDiscardIntervention={discardQueuedIntervention}
               />
             ))}
           </div>

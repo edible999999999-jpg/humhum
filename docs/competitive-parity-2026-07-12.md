@@ -32,7 +32,7 @@ Status meanings:
 | iOS, Android and web clients | Missing | No HUMHUM mobile/web app exists. |
 | End-to-end encrypted relay | Missing | No HUMHUM internet relay exists; an unauthenticated LAN shortcut will not be shipped. |
 | Self-hosted relay | Missing | Requires protocol, identity, storage and deployment work. |
-| Ordered/retryable outgoing messages | Partial | Codex resume-before-send plus UI delivery/retry state works; there is no durable offline queue yet. |
+| Ordered/retryable outgoing messages | Partial | Codex now has an owner-only persistent queue, strict per-thread order, crash recovery, explicit queued/delivered/failed receipts, and retry/discard controls. Claude and future remote transports do not use the queue yet. |
 | Push notifications | Missing | Native Mac notifications exist, but no APNs/FCM/Web Push path. |
 | Multi-machine sessions | Missing | Local multi-agent sessions work on one Mac; there is no machine registry or presence protocol. |
 | Mobile permission controls | Missing | Desktop permission controls work; there is no HUMHUM remote permission surface. |
@@ -53,9 +53,10 @@ Status meanings:
 - tmux pane targets are allow-listed before direct process invocation.
 - Hexa has a stable crosshair action for returning to the originating session.
 - Intervention drafts survive failure and clear only after successful Codex delivery.
+- Codex interventions persist under `~/.humhum/intervention-queue.json`, preserve per-thread order, recover interrupted sends as retryable failures, and never silently auto-repeat after a crash.
 - The localhost API now requires an owner-only token for private data and control routes, disables browser CORS, and keeps only `/health` public.
 - Hook debug logging no longer records message payloads and uses owner-only file permissions.
-- Rust: 50 passed, 1 ignored. Frontend: 10 passed. Production frontend build: passed.
+- Rust: 55 passed, 1 ignored. Frontend: 11 passed. Production frontend build: passed.
 
 ## Next Iteration Order
 

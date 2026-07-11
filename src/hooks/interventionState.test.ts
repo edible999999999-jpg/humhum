@@ -21,4 +21,14 @@ describe("interventionReducer", () => {
 
     expect(delivered).toEqual({ status: "delivered", draft: "", error: null });
   });
+
+  it("clears an accepted draft when it is queued behind an earlier message", () => {
+    const drafted = interventionReducer(initialInterventionState, { type: "draft", value: "second" });
+    const queued = interventionReducer(
+      interventionReducer(drafted, { type: "send" }),
+      { type: "queued" },
+    );
+
+    expect(queued).toEqual({ status: "queued", draft: "", error: null });
+  });
 });
