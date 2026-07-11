@@ -3,6 +3,8 @@ use crate::hexa_protocol::{
     HexaSessionProjection,
 };
 use serde_json::{json, Value};
+use std::fmt;
+use std::path::Path;
 use std::sync::{Arc, Mutex, RwLock};
 use tauri::Emitter;
 use tokio::process::Command;
@@ -32,6 +34,55 @@ pub struct CodexBridgeHealth {
     pub message: String,
 }
 
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ApprovalDecision {
+    AllowOnce,
+    Deny,
+}
+
+#[derive(Debug)]
+pub enum CodexBridgeError {
+    NotConnected,
+    InvalidWorkspace,
+    EmptyMessage,
+    SessionNotFound,
+    StaleTurn,
+    ApprovalNotFound,
+    ApprovalExpired,
+    InvalidAnswer,
+    Transport(String),
+    InvalidResponse(String),
+}
+
+impl fmt::Display for CodexBridgeError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let message = match self {
+            Self::NotConnected => "Codex is not connected",
+            Self::InvalidWorkspace => "Choose an existing workspace folder",
+            Self::EmptyMessage => "Write a message before sending",
+            Self::SessionNotFound => "This Codex session is no longer available",
+            Self::StaleTurn => "This Codex turn has already changed",
+            Self::ApprovalNotFound => "This approval is no longer waiting",
+            Self::ApprovalExpired => "This approval has expired",
+            Self::InvalidAnswer => "The question answer is invalid",
+            Self::Transport(message) | Self::InvalidResponse(message) => message,
+        };
+        write!(formatter, "{message}")
+    }
+}
+
+impl std::error::Error for CodexBridgeError {}
+
+#[derive(Debug, Clone)]
+struct PendingCodexRequest {
+    rpc_id: Value,
+    method: String,
+    session_id: String,
+    turn_id: Option<String>,
+    expires_at: chrono::DateTime<chrono::Utc>,
+}
+
 impl Default for CodexBridgeHealth {
     fn default() -> Self {
         Self {
@@ -47,6 +98,7 @@ pub struct CodexBridgeState {
     health: RwLock<CodexBridgeHealth>,
     projections: Mutex<HexaProjectionStore>,
     transport: AsyncRwLock<Option<Arc<JsonRpcTransport>>>,
+    pending_requests: Mutex<std::collections::HashMap<String, PendingCodexRequest>>,
 }
 
 impl Default for CodexBridgeState {
@@ -55,6 +107,7 @@ impl Default for CodexBridgeState {
             health: RwLock::new(CodexBridgeHealth::default()),
             projections: Mutex::new(HexaProjectionStore::default()),
             transport: AsyncRwLock::new(None),
+            pending_requests: Mutex::new(std::collections::HashMap::new()),
         }
     }
 }
@@ -101,6 +154,237 @@ impl CodexBridgeState {
             .lock()
             .map(|store| store.sessions())
             .unwrap_or_default()
+    }
+
+    pub async fn start_thread(&self, workspace: &str) -> Result<String, CodexBridgeError> {
+        let path = Path::new(workspace);
+        if !path.is_absolute() || !path.is_dir() {
+            return Err(CodexBridgeError::InvalidWorkspace);
+        }
+        let transport = self.connected_transport().await?;
+        let response = transport
+            .request(
+                "thread/start",
+                json!({
+                    "cwd": workspace,
+                    "approvalPolicy": "on-request",
+                    "approvalsReviewer": "user",
+                    "serviceName": "humhum"
+                }),
+            )
+            .await
+            .map_err(|error| CodexBridgeError::Transport(error.to_string()))?;
+        response
+            .get("thread")
+            .and_then(|thread| string_at(thread, "id"))
+            .map(String::from)
+            .ok_or_else(|| {
+                CodexBridgeError::InvalidResponse("Codex did not return a thread".into())
+            })
+    }
+
+    pub async fn resume_thread(&self, thread_id: &str) -> Result<String, CodexBridgeError> {
+        if self
+            .projections
+            .lock()
+            .ok()
+            .and_then(|store| store.session(thread_id).cloned())
+            .is_none()
+        {
+            return Err(CodexBridgeError::SessionNotFound);
+        }
+        let transport = self.connected_transport().await?;
+        let response = transport
+            .request(
+                "thread/resume",
+                json!({
+                    "threadId": thread_id,
+                    "approvalPolicy": "on-request",
+                    "approvalsReviewer": "user"
+                }),
+            )
+            .await
+            .map_err(|error| CodexBridgeError::Transport(error.to_string()))?;
+        response
+            .get("thread")
+            .and_then(|thread| string_at(thread, "id"))
+            .map(String::from)
+            .ok_or_else(|| {
+                CodexBridgeError::InvalidResponse("Codex did not resume the thread".into())
+            })
+    }
+
+    pub async fn send_message(
+        &self,
+        thread_id: &str,
+        message: &str,
+    ) -> Result<String, CodexBridgeError> {
+        let message = message.trim();
+        if message.is_empty() {
+            return Err(CodexBridgeError::EmptyMessage);
+        }
+        if self
+            .projections
+            .lock()
+            .ok()
+            .and_then(|store| store.session(thread_id).cloned())
+            .is_none()
+        {
+            return Err(CodexBridgeError::SessionNotFound);
+        }
+        let transport = self.connected_transport().await?;
+        let response = transport
+            .request(
+                "turn/start",
+                json!({
+                    "threadId": thread_id,
+                    "input": [{"type": "text", "text": message, "text_elements": []}],
+                    "approvalPolicy": "on-request",
+                    "approvalsReviewer": "user"
+                }),
+            )
+            .await
+            .map_err(|error| CodexBridgeError::Transport(error.to_string()))?;
+        response
+            .get("turn")
+            .and_then(|turn| string_at(turn, "id"))
+            .map(String::from)
+            .ok_or_else(|| CodexBridgeError::InvalidResponse("Codex did not start a turn".into()))
+    }
+
+    pub async fn interrupt(&self, thread_id: &str, turn_id: &str) -> Result<(), CodexBridgeError> {
+        let current_turn = self
+            .projections
+            .lock()
+            .ok()
+            .and_then(|store| store.session(thread_id).cloned())
+            .ok_or(CodexBridgeError::SessionNotFound)?
+            .current_turn_id;
+        if current_turn.as_deref() != Some(turn_id) {
+            return Err(CodexBridgeError::StaleTurn);
+        }
+        self.connected_transport()
+            .await?
+            .request(
+                "turn/interrupt",
+                json!({"threadId": thread_id, "turnId": turn_id}),
+            )
+            .await
+            .map_err(|error| CodexBridgeError::Transport(error.to_string()))?;
+        Ok(())
+    }
+
+    pub async fn resolve_approval(
+        &self,
+        approval_id: &str,
+        decision: ApprovalDecision,
+    ) -> Result<(), CodexBridgeError> {
+        let pending = self
+            .pending_requests
+            .lock()
+            .map_err(|_| CodexBridgeError::ApprovalNotFound)?
+            .get(approval_id)
+            .cloned()
+            .ok_or(CodexBridgeError::ApprovalNotFound)?;
+        if chrono::Utc::now() >= pending.expires_at {
+            return Err(CodexBridgeError::ApprovalExpired);
+        }
+        if !matches!(
+            pending.method.as_str(),
+            "item/commandExecution/requestApproval" | "item/fileChange/requestApproval"
+        ) {
+            return Err(CodexBridgeError::ApprovalNotFound);
+        }
+        let provider_decision = match decision {
+            ApprovalDecision::AllowOnce => "accept",
+            ApprovalDecision::Deny => "decline",
+        };
+        self.connected_transport()
+            .await?
+            .respond(pending.rpc_id, json!({"decision": provider_decision}))
+            .await
+            .map_err(|error| CodexBridgeError::Transport(error.to_string()))?;
+        self.pending_requests
+            .lock()
+            .map_err(|_| CodexBridgeError::ApprovalNotFound)?
+            .remove(approval_id);
+        self.apply_resolution_event(
+            &pending.session_id,
+            pending.turn_id,
+            HexaEventKind::ApprovalResolved,
+            json!({"approval_id": approval_id, "decision": provider_decision}),
+        );
+        Ok(())
+    }
+
+    pub async fn answer_question(
+        &self,
+        question_id: &str,
+        answers: Value,
+    ) -> Result<(), CodexBridgeError> {
+        if !answers.is_object() {
+            return Err(CodexBridgeError::InvalidAnswer);
+        }
+        let pending = self
+            .pending_requests
+            .lock()
+            .map_err(|_| CodexBridgeError::ApprovalNotFound)?
+            .get(question_id)
+            .cloned()
+            .ok_or(CodexBridgeError::ApprovalNotFound)?;
+        if pending.method != "item/tool/requestUserInput" {
+            return Err(CodexBridgeError::InvalidAnswer);
+        }
+        if chrono::Utc::now() >= pending.expires_at {
+            return Err(CodexBridgeError::ApprovalExpired);
+        }
+        self.connected_transport()
+            .await?
+            .respond(pending.rpc_id, json!({"answers": answers}))
+            .await
+            .map_err(|error| CodexBridgeError::Transport(error.to_string()))?;
+        self.pending_requests
+            .lock()
+            .map_err(|_| CodexBridgeError::ApprovalNotFound)?
+            .remove(question_id);
+        self.apply_resolution_event(
+            &pending.session_id,
+            pending.turn_id,
+            HexaEventKind::UserQuestionResolved,
+            json!({"question_id": question_id}),
+        );
+        Ok(())
+    }
+
+    async fn connected_transport(&self) -> Result<Arc<JsonRpcTransport>, CodexBridgeError> {
+        self.transport
+            .read()
+            .await
+            .clone()
+            .ok_or(CodexBridgeError::NotConnected)
+    }
+
+    fn apply_resolution_event(
+        &self,
+        session_id: &str,
+        turn_id: Option<String>,
+        kind: HexaEventKind,
+        payload: Value,
+    ) {
+        let event = HexaEvent {
+            event_id: uuid::Uuid::new_v4().to_string(),
+            session_id: session_id.to_string(),
+            provider: "codex".to_string(),
+            provider_thread_id: Some(session_id.to_string()),
+            turn_id,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            kind,
+            payload,
+            sensitivity: HexaSensitivity::Private,
+        };
+        if let Ok(mut store) = self.projections.lock() {
+            store.apply(&event);
+        }
     }
 
     async fn connect_and_listen(&self, app: &tauri::AppHandle) -> Result<(), String> {
@@ -181,12 +465,35 @@ impl CodexBridgeState {
         );
 
         while let Some(message) = transport.next_incoming().await {
-            let (method, params) = match message {
-                IncomingMessage::Request { method, params, .. }
-                | IncomingMessage::Notification { method, params } => (method, params),
-            };
-            if let Some(event) = normalize_codex_message(&method, params) {
-                self.apply_event(app, event);
+            match message {
+                IncomingMessage::Request { id, method, params } => {
+                    if let Some(event) = normalize_codex_message(&method, params.clone()) {
+                        if let Some(request_key) = pending_key_for_event(&event) {
+                            let timeout_ms = params
+                                .get("autoResolutionMs")
+                                .and_then(Value::as_u64)
+                                .unwrap_or(120_000)
+                                .min(120_000);
+                            let pending = PendingCodexRequest {
+                                rpc_id: id,
+                                method,
+                                session_id: event.session_id.clone(),
+                                turn_id: event.turn_id.clone(),
+                                expires_at: chrono::Utc::now()
+                                    + chrono::Duration::milliseconds(timeout_ms as i64),
+                            };
+                            if let Ok(mut requests) = self.pending_requests.lock() {
+                                requests.insert(request_key, pending);
+                            }
+                        }
+                        self.apply_event(app, event);
+                    }
+                }
+                IncomingMessage::Notification { method, params } => {
+                    if let Some(event) = normalize_codex_message(&method, params) {
+                        self.apply_event(app, event);
+                    }
+                }
             }
         }
 
@@ -237,6 +544,22 @@ fn thread_list_events(response: &Value) -> Vec<HexaEvent> {
         .flatten()
         .filter_map(|thread| normalize_codex_message("thread/started", json!({"thread": thread})))
         .collect()
+}
+
+fn pending_key_for_event(event: &HexaEvent) -> Option<String> {
+    match event.kind {
+        HexaEventKind::ApprovalRequested => event
+            .payload
+            .get("approval_id")
+            .and_then(Value::as_str)
+            .map(String::from),
+        HexaEventKind::UserQuestionRequested => event
+            .payload
+            .get("question_id")
+            .and_then(Value::as_str)
+            .map(String::from),
+        _ => None,
+    }
 }
 
 async fn detect_codex_version() -> Result<String, String> {
@@ -334,6 +657,20 @@ pub(crate) fn normalize_codex_message(method: &str, params: Value) -> Option<Hex
             normalize_approval(&params, &thread_id, "command")
         }
         "item/fileChange/requestApproval" => normalize_approval(&params, &thread_id, "file_change"),
+        "item/tool/requestUserInput" => {
+            let item_id = scope_provider_item(
+                Some(&thread_id),
+                string_at(&params, "itemId").unwrap_or("unknown"),
+            );
+            (
+                HexaEventKind::UserQuestionRequested,
+                json!({
+                    "question_id": item_id,
+                    "questions": params.get("questions").cloned().unwrap_or(Value::Array(Vec::new())),
+                    "auto_resolution_ms": params.get("autoResolutionMs").cloned().unwrap_or(Value::Null),
+                }),
+            )
+        }
         _ => return None,
     };
 
@@ -505,5 +842,40 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].session_id, "thread-1");
         assert_eq!(events[0].payload["project_name"], "Bridge work");
+    }
+
+    #[tokio::test]
+    async fn action_rejects_an_expired_approval_before_transport_use() {
+        let state = CodexBridgeState::default();
+        state.pending_requests.lock().unwrap().insert(
+            "approval-1".to_string(),
+            PendingCodexRequest {
+                rpc_id: json!(61),
+                method: "item/commandExecution/requestApproval".to_string(),
+                session_id: "thread-1".to_string(),
+                turn_id: Some("turn-1".to_string()),
+                expires_at: chrono::Utc::now() - chrono::Duration::seconds(1),
+            },
+        );
+
+        let error = state
+            .resolve_approval("approval-1", ApprovalDecision::AllowOnce)
+            .await
+            .unwrap_err();
+        assert!(matches!(error, CodexBridgeError::ApprovalExpired));
+    }
+
+    #[tokio::test]
+    async fn action_interrupt_requires_the_current_turn() {
+        let state = CodexBridgeState::default();
+        let event = normalize_codex_message(
+            "turn/started",
+            json!({"threadId": "thread-1", "turn": {"id": "turn-new", "status": "inProgress", "items": []}}),
+        )
+        .unwrap();
+        state.projections.lock().unwrap().apply(&event);
+
+        let error = state.interrupt("thread-1", "turn-old").await.unwrap_err();
+        assert!(matches!(error, CodexBridgeError::StaleTurn));
     }
 }

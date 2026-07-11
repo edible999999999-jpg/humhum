@@ -1,6 +1,6 @@
 use crate::agent_kernel::{self, AgentKernelStatus};
 use crate::client_registry::{self, ConfigFormat};
-use crate::codex_bridge::{CodexBridgeHealth, CodexBridgeState};
+use crate::codex_bridge::{ApprovalDecision, CodexBridgeHealth, CodexBridgeState};
 use crate::config::AppConfig;
 use crate::event_bus::{self, HookEvent, PermissionDecision};
 use crate::hexa_protocol::HexaSessionProjection;
@@ -36,6 +36,76 @@ pub async fn get_hexa_bridge_sessions(
     state: State<'_, Arc<CodexBridgeState>>,
 ) -> Result<Vec<HexaSessionProjection>, String> {
     Ok(state.sessions())
+}
+
+#[tauri::command]
+pub async fn hexa_start_codex_thread(
+    state: State<'_, Arc<CodexBridgeState>>,
+    workspace: String,
+) -> Result<String, String> {
+    state
+        .start_thread(&workspace)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn hexa_resume_codex_thread(
+    state: State<'_, Arc<CodexBridgeState>>,
+    thread_id: String,
+) -> Result<String, String> {
+    state
+        .resume_thread(&thread_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn hexa_send_codex_message(
+    state: State<'_, Arc<CodexBridgeState>>,
+    thread_id: String,
+    message: String,
+) -> Result<String, String> {
+    state
+        .send_message(&thread_id, &message)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn hexa_interrupt_codex_turn(
+    state: State<'_, Arc<CodexBridgeState>>,
+    thread_id: String,
+    turn_id: String,
+) -> Result<(), String> {
+    state
+        .interrupt(&thread_id, &turn_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn hexa_resolve_codex_approval(
+    state: State<'_, Arc<CodexBridgeState>>,
+    approval_id: String,
+    decision: ApprovalDecision,
+) -> Result<(), String> {
+    state
+        .resolve_approval(&approval_id, decision)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn hexa_answer_codex_question(
+    state: State<'_, Arc<CodexBridgeState>>,
+    question_id: String,
+    answers: Value,
+) -> Result<(), String> {
+    state
+        .answer_question(&question_id, answers)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 /// Get the current configuration
