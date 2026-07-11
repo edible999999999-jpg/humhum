@@ -366,13 +366,14 @@ export function useHexaData() {
 
   const fetchSessions = useCallback(async () => {
     try {
-      const [sessionData, statsData, bridgeData, healthData, remoteData] = await Promise.all([
+      const [sessionData, statsData, bridgeData, healthData] = await Promise.all([
         invoke<HexaSession[]>("get_all_sessions_history"),
         invoke<AgentStats[]>("get_agent_stats"),
         invoke<HexaBridgeSession[]>("get_hexa_bridge_sessions"),
         invoke<CodexBridgeHealth>("get_codex_bridge_health"),
-        invoke<CodexRemoteControlState>("get_codex_remote_control"),
       ]);
+      const remoteData = await invoke<CodexRemoteControlState>("get_codex_remote_control")
+        .catch(() => null);
       const statsByClient = new Map(statsData.map((stat) => [stat.client_type, stat]));
       const merged = mergeHexaSessions(sessionData, bridgeData);
       const mergedSessions = merged.map((item) => item.session);
@@ -388,7 +389,7 @@ export function useHexaData() {
       setSupervisorSessions(snapshots);
       setAlerts(allAlerts);
       setBridgeHealth(healthData);
-      setRemoteControl(remoteData);
+      if (remoteData) setRemoteControl(remoteData);
     } catch {
       // Hub may open before the backend is ready.
     }
