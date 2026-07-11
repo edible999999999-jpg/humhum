@@ -162,6 +162,14 @@ impl JsonRpcTransport {
         .await
     }
 
+    pub async fn notify(&self, method: &str, params: Value) -> Result<(), JsonRpcTransportError> {
+        write_message(
+            &self.inner,
+            &json!({"jsonrpc": "2.0", "method": method, "params": params}),
+        )
+        .await
+    }
+
     pub async fn next_incoming(&self) -> Option<IncomingMessage> {
         self.incoming.lock().await.recv().await
     }
@@ -307,5 +315,28 @@ mod tests {
         let transport = fake_transport("read request; exit 0").await;
         let error = transport.request("never", json!({})).await.unwrap_err();
         assert!(matches!(error, JsonRpcTransportError::ProcessExited));
+    }
+
+    #[tokio::test]
+    async fn sends_notifications_without_waiting_for_a_response() {
+        let transport = fake_transport(
+            r#"
+            read notification
+            case "$notification" in
+              *'"method":"initialized"'*)
+                printf '%s\n' '{"method":"test/observed","params":{"ok":true}}'
+                ;;
+            esac
+            sleep 1
+            "#,
+        )
+        .await;
+        transport.notify("initialized", json!({})).await.unwrap();
+        let incoming = transport.next_incoming().await.unwrap();
+        assert!(matches!(
+            incoming,
+            IncomingMessage::Notification { method, params }
+                if method == "test/observed" && params["ok"] == true
+        ));
     }
 }

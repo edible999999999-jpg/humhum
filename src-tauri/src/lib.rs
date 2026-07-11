@@ -83,6 +83,11 @@ pub fn run() {
             // Pi sidecar process registry. Sessions are started only by explicit command.
             app.manage(Arc::new(pi_sidecar::PiSidecarState::default()));
 
+            // Hexa's local Codex app-server bridge. It degrades to health state on failure.
+            let codex_bridge = Arc::new(codex_bridge::CodexBridgeState::default());
+            app.manage(codex_bridge.clone());
+            codex_bridge::CodexBridgeState::start(app_handle.clone(), codex_bridge);
+
             // Start the hook event server
             let server_handle = app_handle.clone();
             std::thread::spawn(move || {
@@ -109,6 +114,8 @@ pub fn run() {
             commands::get_config,
             commands::save_config,
             commands::get_hook_port,
+            commands::get_codex_bridge_health,
+            commands::get_hexa_bridge_sessions,
             commands::check_pi_installed,
             commands::start_pi_session,
             commands::send_pi_prompt,

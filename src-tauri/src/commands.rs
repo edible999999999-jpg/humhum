@@ -1,7 +1,9 @@
 use crate::agent_kernel::{self, AgentKernelStatus};
 use crate::client_registry::{self, ConfigFormat};
+use crate::codex_bridge::{CodexBridgeHealth, CodexBridgeState};
 use crate::config::AppConfig;
 use crate::event_bus::{self, HookEvent, PermissionDecision};
+use crate::hexa_protocol::HexaSessionProjection;
 use crate::hook_server::PendingMap;
 use crate::hush_store::{HushInboxSummary, HushStore};
 use crate::knowledge_store::{AgentAsset, AgentAssetRootDiagnostic, KnowledgeStore, Preference};
@@ -21,6 +23,20 @@ use tauri::{Emitter, Manager, State};
 use tokio::process::Command;
 
 const HUMHUM_HOOK_SCRIPT: &str = include_str!("../../hooks/humhum-hook.sh");
+
+#[tauri::command]
+pub async fn get_codex_bridge_health(
+    state: State<'_, Arc<CodexBridgeState>>,
+) -> Result<CodexBridgeHealth, String> {
+    Ok(state.blocking_health())
+}
+
+#[tauri::command]
+pub async fn get_hexa_bridge_sessions(
+    state: State<'_, Arc<CodexBridgeState>>,
+) -> Result<Vec<HexaSessionProjection>, String> {
+    Ok(state.sessions())
+}
 
 /// Get the current configuration
 #[tauri::command]
