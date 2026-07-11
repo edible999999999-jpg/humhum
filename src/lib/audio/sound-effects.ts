@@ -1,4 +1,16 @@
-type SoundEvent = "taskCompleted" | "attentionRequired" | "processingStarted" | "error";
+import { invoke } from "@tauri-apps/api/core";
+import { playConfiguredSound, type CustomSoundClip } from "./sound-playback";
+
+export type SoundEvent = "taskCompleted" | "attentionRequired" | "processingStarted" | "error" | "resourceLimit";
+
+export interface SoundPreferences {
+  enabled: boolean;
+  processing_started: boolean;
+  attention_required: boolean;
+  task_completed: boolean;
+  error: boolean;
+  resource_limit: boolean;
+}
 
 const audioCtx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
 
@@ -38,15 +50,50 @@ const SOUNDS: Record<SoundEvent, () => void> = {
     playTone(330, 0.2, "square", 0.1);
     setTimeout(() => playTone(262, 0.3, "square", 0.1), 200);
   },
+  resourceLimit: () => {
+    playTone(440, 0.18, "sawtooth", 0.1);
+    setTimeout(() => playTone(349, 0.28, "sawtooth", 0.1), 180);
+  },
 };
 
-export function playSound(event: SoundEvent) {
+let activeCustomAudio: HTMLAudioElement | null = null;
+
+function preferenceKey(event: SoundEvent): keyof Omit<SoundPreferences, "enabled"> {
+  const keys: Record<SoundEvent, keyof Omit<SoundPreferences, "enabled">> = {
+    taskCompleted: "task_completed",
+    attentionRequired: "attention_required",
+    processingStarted: "processing_started",
+    error: "error",
+    resourceLimit: "resource_limit",
+  };
+  return keys[event];
+}
+
+async function playCustomClip(clip: CustomSoundClip) {
+  activeCustomAudio?.pause();
+  const audio = new Audio(`data:${clip.mime_type};base64,${clip.data_base64}`);
+  activeCustomAudio = audio;
+  await audio.play();
+}
+
+function playBuiltIn(event: SoundEvent) {
   try {
     if (audioCtx.state === "suspended") {
-      audioCtx.resume();
+      void audioCtx.resume();
     }
     SOUNDS[event]?.();
   } catch {
-    // Audio might not be available
+    // Audio might not be available.
   }
+}
+
+export function playSound(event: SoundEvent, preferences?: SoundPreferences, preview = false) {
+  if (!preview && preferences && (!preferences.enabled || preferences[preferenceKey(event)] === false)) {
+    return;
+  }
+  void playConfiguredSound(
+    () => invoke<CustomSoundClip | null>("get_sound_clip", { event, preview }),
+    playCustomClip,
+    () => playBuiltIn(event),
+  );
 }

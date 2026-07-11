@@ -11,6 +11,7 @@ import { NotificationToast } from "../Overlay/NotificationToast";
 import { CompletionPanel } from "../Overlay/CompletionPanel";
 import { QuestionToast } from "../Overlay/QuestionToast";
 import { playSound } from "../../lib/audio/sound-effects";
+import { failureSoundEvent } from "../../lib/audio/sound-event-policy";
 import { usePetState } from "../../hooks/usePetState";
 import { useEventBus } from "../../hooks/useEventBus";
 import { useVoiceCommand } from "../../hooks/useVoiceCommand";
@@ -298,7 +299,7 @@ export function PetView() {
         return;
       }
 
-      playSound("attentionRequired");
+      playSound("attentionRequired", configRef.current?.ui.sounds);
       setPermissionQueue((q) => [...q, latestEvent]);
       setPetState("waiting");
 
@@ -332,7 +333,7 @@ export function PetView() {
         pipeline.processEvent(latestEvent).catch(console.error);
       }
     } else if (eventName === "TaskCompleted" || eventName === "Stop") {
-      playSound("taskCompleted");
+      playSound("taskCompleted", configRef.current?.ui.sounds);
       setPetState("completed");
       setCompletionEvent(latestEvent);
       completionSpeaking.current = true;
@@ -354,7 +355,7 @@ export function PetView() {
         pipeline.processEvent(latestEvent).catch(console.error);
       }
     } else if (eventName === "Notification") {
-      playSound("processingStarted");
+      playSound("processingStarted", configRef.current?.ui.sounds);
       const notifText = (payload.message as string) ?? t("petview.gotNotification");
       setNotification({
         id: latestEvent.id,
@@ -379,11 +380,20 @@ export function PetView() {
         setPetState("processing");
         setTimeout(() => setPetState("idle"), 3000);
       }
+    } else if (eventName === "PostToolUseFailure") {
+      const failureMessage = [payload.message, payload.error, payload.tool_error]
+        .find((value): value is string => typeof value === "string") ?? "";
+      playSound(failureSoundEvent(failureMessage), configRef.current?.ui.sounds);
+      setPetState("error");
+      setTimeout(() => setPetState("idle"), 5000);
+      if (pipeline) {
+        pipeline.processEvent(latestEvent).catch(console.error);
+      }
     } else if (eventName === "PreToolUse" || eventName === "PostToolUse") {
       const toolName = (payload.tool_name as string) ?? "";
 
       if (eventName === "PreToolUse" && toolName === "AskUserQuestion") {
-        playSound("attentionRequired");
+        playSound("attentionRequired", configRef.current?.ui.sounds);
         setQuestionEvent(latestEvent);
         setPetState("waiting");
         if (shouldSendNativeNotification("question", configRef.current?.ui.notifications)) {

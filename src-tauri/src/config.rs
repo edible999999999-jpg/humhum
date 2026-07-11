@@ -93,6 +93,7 @@ pub struct UiConfig {
     pub auto_confirm: bool,
     pub awake_mode: bool,
     pub notifications: NotificationPreferences,
+    pub sounds: SoundPreferences,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -115,6 +116,32 @@ impl Default for NotificationPreferences {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SoundPreferences {
+    pub enabled: bool,
+    pub pack_path: Option<String>,
+    pub processing_started: bool,
+    pub attention_required: bool,
+    pub task_completed: bool,
+    pub error: bool,
+    pub resource_limit: bool,
+}
+
+impl Default for SoundPreferences {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            pack_path: None,
+            processing_started: true,
+            attention_required: true,
+            task_completed: true,
+            error: true,
+            resource_limit: true,
+        }
+    }
+}
+
 impl Default for UiConfig {
     fn default() -> Self {
         Self {
@@ -123,6 +150,7 @@ impl Default for UiConfig {
             auto_confirm: false,
             awake_mode: false,
             notifications: NotificationPreferences::default(),
+            sounds: SoundPreferences::default(),
         }
     }
 }
@@ -239,6 +267,8 @@ mod tests {
         assert!(config.ui.notifications.question);
         assert!(config.ui.notifications.completed);
         assert!(config.ui.notifications.message);
+        assert!(config.ui.sounds.enabled);
+        assert!(config.ui.sounds.pack_path.is_none());
     }
 
     #[test]

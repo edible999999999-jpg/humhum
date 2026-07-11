@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
+import { FolderOpen, Play, X } from "lucide-react";
 import type { AppConfig } from "@/types";
 import { useTranslation } from "@/lib/i18n/react";
 import { setLanguage } from "@/lib/i18n";
@@ -7,6 +9,7 @@ import { PetCanvas } from "../Pet/PetCanvas";
 import { VOICE_PRESETS, DEFAULT_VOICE } from "./voicePresets";
 import { StatsPanel } from "./StatsPanel";
 import { MemoryPanel } from "./MemoryPanel";
+import { playSound, type SoundEvent } from "@/lib/audio/sound-effects";
 
 interface SettingsPanelProps {
   onClose: () => void;
@@ -25,6 +28,13 @@ interface RemoteBridgeStatus {
   target: string | null;
   remote_port: number;
   message: string;
+}
+
+interface SoundPackInfo {
+  path: string;
+  name: string;
+  display_name: string;
+  available_events: SoundEvent[];
 }
 
 const LANG_TO_STT: Record<string, string> = { zh: "zh-CN", en: "en-US" };
@@ -47,17 +57,20 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
   const [remoteBridge, setRemoteBridge] = useState<RemoteBridgeStatus | null>(null);
   const [remoteTarget, setRemoteTarget] = useState("");
   const [remoteLoading, setRemoteLoading] = useState(false);
+  const [soundPacks, setSoundPacks] = useState<SoundPackInfo[]>([]);
+  const [soundPackLoading, setSoundPackLoading] = useState(false);
 
   useEffect(() => {
     (async () => {
       try {
-        const [cfg, status, clientList, awake, autostart, remote] = await Promise.all([
+        const [cfg, status, clientList, awake, autostart, remote, packs] = await Promise.all([
           invoke<AppConfig>("get_config"),
           invoke<Record<string, boolean>>("check_hooks_status"),
           invoke<Array<{ id: string; name: string }>>("get_supported_clients"),
           invoke<WakeGuardStatus>("get_wake_guard_status"),
           invoke<boolean>("get_launch_at_login"),
           invoke<RemoteBridgeStatus>("get_remote_bridge_status"),
+          invoke<SoundPackInfo[]>("get_sound_packs"),
         ]);
         setConfig(cfg as AppConfig);
         setLanguage((cfg as AppConfig).ui.language as "zh" | "en");
@@ -66,6 +79,7 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
         setWakeStatus(awake);
         setLaunchAtLogin(autostart);
         setRemoteBridge(remote);
+        setSoundPacks(packs);
         setRemoteTarget(remote.target ?? "");
       } catch (e) {
         console.error("Failed to load settings:", e);
@@ -190,6 +204,84 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
     }
   }, [remoteBridge?.status, remoteTarget, t]);
 
+  const chooseSoundPack = useCallback(async () => {
+    setSoundPackLoading(true);
+    setMessage(null);
+    try {
+      const selected = await open({ directory: true, multiple: false, title: t("settings.soundImport") });
+      if (!selected) return;
+      const info = await invoke<SoundPackInfo>("select_sound_pack", { path: selected });
+      setSoundPacks(await invoke<SoundPackInfo[]>("get_sound_packs"));
+      updateConfig((current) => ({
+        ...current,
+        ui: {
+          ...current.ui,
+          sounds: {
+            enabled: true,
+            processing_started: true,
+            attention_required: true,
+            task_completed: true,
+            error: true,
+            resource_limit: true,
+            ...current.ui.sounds,
+            pack_path: info.path,
+          },
+        },
+      }));
+      setMessage({ type: "success", text: t("settings.soundImported", { name: info.display_name }) });
+    } catch (error) {
+      setMessage({ type: "error", text: t("settings.soundImportFailed", { e: String(error) }) });
+    } finally {
+      setSoundPackLoading(false);
+    }
+  }, [t, updateConfig]);
+
+  const selectDiscoveredSoundPack = useCallback(async (path: string) => {
+    setSoundPackLoading(true);
+    try {
+      const info = await invoke<SoundPackInfo>("select_sound_pack", { path });
+      updateConfig((current) => ({
+        ...current,
+        ui: {
+          ...current.ui,
+          sounds: {
+            enabled: true,
+            processing_started: true,
+            attention_required: true,
+            task_completed: true,
+            error: true,
+            resource_limit: true,
+            ...current.ui.sounds,
+            pack_path: info.path,
+          },
+        },
+      }));
+    } catch (error) {
+      setMessage({ type: "error", text: t("settings.soundImportFailed", { e: String(error) }) });
+    } finally {
+      setSoundPackLoading(false);
+    }
+  }, [t, updateConfig]);
+
+  const clearSoundPack = useCallback(async () => {
+    await invoke("clear_sound_pack");
+    updateConfig((current) => ({
+      ...current,
+      ui: {
+        ...current.ui,
+        sounds: {
+          enabled: current.ui.sounds?.enabled !== false,
+          processing_started: current.ui.sounds?.processing_started !== false,
+          attention_required: current.ui.sounds?.attention_required !== false,
+          task_completed: current.ui.sounds?.task_completed !== false,
+          error: current.ui.sounds?.error !== false,
+          resource_limit: current.ui.sounds?.resource_limit !== false,
+          pack_path: undefined,
+        },
+      },
+    }));
+  }, [updateConfig]);
+
   if (loading || !config) {
     return (
       <div className="w-full h-full flex items-center justify-center settings-panel">
@@ -203,6 +295,15 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
 
   const voiceOptions = VOICE_PRESETS[config.tts.provider] ?? [];
   const connectedCount = Object.values(hookStatus).filter(Boolean).length;
+  const soundPreferences = {
+    enabled: config.ui.sounds?.enabled !== false,
+    processing_started: config.ui.sounds?.processing_started !== false,
+    attention_required: config.ui.sounds?.attention_required !== false,
+    task_completed: config.ui.sounds?.task_completed !== false,
+    error: config.ui.sounds?.error !== false,
+    resource_limit: config.ui.sounds?.resource_limit !== false,
+    pack_path: config.ui.sounds?.pack_path,
+  };
 
   return (
     <div className="w-full h-full flex flex-col settings-panel">
@@ -476,6 +577,105 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
                 </button>
               );
             })}
+          </div>
+        </KawaiiCard>
+
+        <KawaiiCard icon="♪" title={t("settings.soundTitle")} subtitle={t("settings.soundSubtitle")}>
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-xs text-white/60">{t("settings.soundEnabled")}</span>
+              <button
+                type="button"
+                onClick={() => updateConfig((current) => ({
+                  ...current,
+                  ui: {
+                    ...current.ui,
+                    sounds: { ...soundPreferences, enabled: !soundPreferences.enabled },
+                  },
+                }))}
+                className={`kawaii-toggle-btn ${soundPreferences.enabled ? "connected" : ""}`}
+                aria-pressed={soundPreferences.enabled}
+              >
+                {soundPreferences.enabled ? t("settings.soundOn") : t("settings.soundOff")}
+              </button>
+            </div>
+
+            <div className="flex gap-2">
+              <select
+                value={soundPreferences.pack_path ?? ""}
+                onChange={(event) => event.target.value
+                  ? void selectDiscoveredSoundPack(event.target.value)
+                  : void clearSoundPack()}
+                disabled={soundPackLoading}
+                className="kawaii-input min-w-0 flex-1"
+                aria-label={t("settings.soundPack")}
+              >
+                <option value="">{t("settings.soundBuiltIn")}</option>
+                {soundPacks.map((pack) => (
+                  <option key={pack.path} value={pack.path}>{pack.display_name}</option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={chooseSoundPack}
+                disabled={soundPackLoading}
+                className="kawaii-icon-btn"
+                title={t("settings.soundImport")}
+                aria-label={t("settings.soundImport")}
+              >
+                <FolderOpen size={15} />
+              </button>
+              {soundPreferences.pack_path && (
+                <button
+                  type="button"
+                  onClick={() => void clearSoundPack()}
+                  className="kawaii-icon-btn"
+                  title={t("settings.soundClear")}
+                  aria-label={t("settings.soundClear")}
+                >
+                  <X size={15} />
+                </button>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 gap-2">
+              {([
+                ["processingStarted", "processing_started", "settings.soundProcessing"],
+                ["attentionRequired", "attention_required", "settings.soundAttention"],
+                ["taskCompleted", "task_completed", "settings.soundCompleted"],
+                ["error", "error", "settings.soundError"],
+                ["resourceLimit", "resource_limit", "settings.soundResourceLimit"],
+              ] as const).map(([soundEvent, key, label]) => {
+                const enabled = soundPreferences[key];
+                return (
+                  <div key={soundEvent} className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => updateConfig((current) => ({
+                        ...current,
+                        ui: {
+                          ...current.ui,
+                          sounds: { ...soundPreferences, [key]: !enabled },
+                        },
+                      }))}
+                      className={`kawaii-chip flex-1 ${enabled ? "active" : ""}`}
+                      aria-pressed={enabled}
+                    >
+                      {t(label)}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => playSound(soundEvent, soundPreferences, true)}
+                      className="kawaii-icon-btn"
+                      title={t("settings.soundPreview")}
+                      aria-label={`${t("settings.soundPreview")} ${t(label)}`}
+                    >
+                      <Play size={14} fill="currentColor" />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </KawaiiCard>
 

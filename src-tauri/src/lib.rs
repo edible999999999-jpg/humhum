@@ -17,6 +17,7 @@ mod pi_sidecar;
 mod remote_bridge;
 mod qoder_log_watcher;
 mod session_store;
+mod sound_pack;
 mod stats_store;
 mod wake_guard;
 mod window_focus;
@@ -30,6 +31,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_store::Builder::default().build())
@@ -244,6 +246,10 @@ pub fn run() {
             commands::proxy_post_binary,
             commands::play_audio,
             commands::stop_audio,
+            commands::get_sound_packs,
+            commands::select_sound_pack,
+            commands::clear_sound_pack,
+            commands::get_sound_clip,
             commands::get_stats,
             commands::get_agent_stats,
             commands::get_hexa_readouts,

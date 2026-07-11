@@ -2611,6 +2611,79 @@ pub async fn stop_audio() -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+pub async fn get_sound_packs(
+    config: State<'_, Arc<std::sync::Mutex<AppConfig>>>,
+) -> Result<Vec<crate::sound_pack::SoundPackInfo>, String> {
+    let selected_path = config
+        .lock()
+        .map_err(|error| format!("Lock error: {error}"))?
+        .ui
+        .sounds
+        .pack_path
+        .clone();
+    let home = dirs::home_dir().ok_or("Cannot determine home directory")?;
+    Ok(crate::sound_pack::discover_packs(
+        &home,
+        selected_path.as_deref(),
+    ))
+}
+
+#[tauri::command]
+pub async fn select_sound_pack(
+    config: State<'_, Arc<std::sync::Mutex<AppConfig>>>,
+    path: String,
+) -> Result<crate::sound_pack::SoundPackInfo, String> {
+    let info = crate::sound_pack::inspect_pack(Path::new(&path))?;
+    let mut config = config
+        .lock()
+        .map_err(|error| format!("Lock error: {error}"))?;
+    config.ui.sounds.pack_path = Some(info.path.clone());
+    config.ui.sounds.enabled = true;
+    config.save()?;
+    Ok(info)
+}
+
+#[tauri::command]
+pub async fn clear_sound_pack(
+    config: State<'_, Arc<std::sync::Mutex<AppConfig>>>,
+) -> Result<(), String> {
+    let mut config = config
+        .lock()
+        .map_err(|error| format!("Lock error: {error}"))?;
+    config.ui.sounds.pack_path = None;
+    config.save()
+}
+
+#[tauri::command]
+pub async fn get_sound_clip(
+    config: State<'_, Arc<std::sync::Mutex<AppConfig>>>,
+    event: String,
+    preview: bool,
+) -> Result<Option<crate::sound_pack::SoundClipData>, String> {
+    let sounds = config
+        .lock()
+        .map_err(|error| format!("Lock error: {error}"))?
+        .ui
+        .sounds
+        .clone();
+    let event_enabled = match event.as_str() {
+        "processingStarted" => sounds.processing_started,
+        "attentionRequired" => sounds.attention_required,
+        "taskCompleted" => sounds.task_completed,
+        "error" => sounds.error,
+        "resourceLimit" => sounds.resource_limit,
+        _ => return Err(format!("Unknown sound event: {event}")),
+    };
+    if !preview && (!sounds.enabled || !event_enabled) {
+        return Ok(None);
+    }
+    let Some(path) = sounds.pack_path else {
+        return Ok(None);
+    };
+    crate::sound_pack::read_clip(Path::new(&path), &event)
+}
+
 /// Check which clients have HumHum hooks installed
 #[tauri::command]
 pub async fn check_hooks_status() -> Result<Value, String> {

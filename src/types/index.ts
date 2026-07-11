@@ -12,6 +12,7 @@ export type HookEventType =
   | "Notification"
   | "PreToolUse"
   | "PostToolUse"
+  | "PostToolUseFailure"
   | "SessionStart"
   | "SessionEnd";
 
@@ -179,6 +180,15 @@ export interface AppConfig {
       question: boolean;
       completed: boolean;
       message: boolean;
+    };
+    sounds?: {
+      enabled: boolean;
+      pack_path?: string;
+      processing_started: boolean;
+      attention_required: boolean;
+      task_completed: boolean;
+      error: boolean;
+      resource_limit: boolean;
     };
   };
 }
