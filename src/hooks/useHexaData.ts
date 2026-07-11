@@ -2,21 +2,20 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { AgentStats } from "@/types";
+import {
+  mergeHexaSessions,
+  type HexaBridgeApproval,
+  type HexaBridgeSession,
+  type HexaHookSession,
+} from "./hexaBridge";
 
-export interface HexaSession {
-  session_id: string;
-  client_type: string;
-  cwd: string | null;
-  project_name: string | null;
-  started_at: string;
-  last_event_at: string;
-  event_count: number;
-  status: "active" | "idle" | "completed";
-  last_hook_message: string | null;
-  last_tool_name: string | null;
-  recent_tools: string[];
-  event_names: string[];
-  has_pending_permission: boolean;
+export type HexaSession = HexaHookSession;
+
+export interface CodexBridgeHealth {
+  status: "starting" | "connected" | "codex_missing" | "unsupported" | "disconnected" | "error";
+  version: string | null;
+  last_connected_at: string | null;
+  message: string;
 }
 
 export interface HexaAlert {
@@ -53,6 +52,11 @@ export interface HexaSupervisorSession {
   stats: AgentStats | null;
   alerts: HexaAlert[];
   last_seen_ms: number;
+  source: "hook" | "codex_bridge";
+  bridge: HexaBridgeSession | null;
+  current_activity: string | null;
+  pending_approvals: HexaBridgeApproval[];
+  can_intervene: boolean;
 }
 
 const PRIMARY_CLIENTS = new Set(["claude-code", "codex"]);
@@ -277,28 +281,50 @@ function buildWatchouts(
 function buildSupervisorSession(
   session: HexaSession,
   statsByClient: Map<string, AgentStats>,
+  source: HexaSupervisorSession["source"] = "hook",
+  bridge: HexaBridgeSession | null = null,
 ): HexaSupervisorSession {
   const stats = statsByClient.get(session.client_type) ?? null;
   const alerts = detectAlerts(session);
   const progress_status = inferProgressStatus(session, alerts);
   const progress = progressCopy(session, progress_status);
 
+  const bridgeStatus = bridge?.status;
+  const liveProgressStatus: HexaSupervisorSession["progress_status"] = bridge?.pending_approvals.length
+    ? "waiting"
+    : bridgeStatus === "working" || bridgeStatus === "starting"
+      ? "working"
+      : bridgeStatus === "failed" || bridgeStatus === "disconnected"
+        ? "stalled"
+        : bridgeStatus === "completed"
+          ? "completed"
+          : bridgeStatus === "idle"
+            ? "idle"
+            : progress_status;
+  const liveDetail = bridge?.current_activity
+    ?? (bridgeStatus === "disconnected" ? "Codex 连接暂时中断，hook 记录仍然保留。" : progress.detail);
+
   return {
     session,
     display_name: session.project_name || `${agentLabel(session.client_type)} ${session.session_id.slice(0, 8)}`,
     agent_label: agentLabel(session.client_type),
     priority: PRIMARY_CLIENTS.has(session.client_type) ? "primary" : "compatible",
-    progress_status,
-    progress_label: progress.label,
-    progress_detail: progress.detail,
+    progress_status: liveProgressStatus,
+    progress_label: bridge ? liveProgressStatus : progress.label,
+    progress_detail: liveDetail,
     loop_status: loopStatus(alerts),
-    pending_confirmations: session.has_pending_permission ? 1 : 0,
+    pending_confirmations: bridge?.pending_approvals.length ?? (session.has_pending_permission ? 1 : 0),
     memory_locations: fallbackMemoryLocations(session),
     strong_outputs: buildStrongOutputs(session, stats),
     watchouts: buildWatchouts(session, alerts, stats),
     stats,
     alerts,
     last_seen_ms: Date.now() - new Date(session.last_event_at).getTime(),
+    source,
+    bridge,
+    current_activity: bridge?.current_activity ?? null,
+    pending_approvals: bridge?.pending_approvals ?? [],
+    can_intervene: source === "codex_bridge" && bridgeStatus !== "disconnected" && bridgeStatus !== "failed",
   };
 }
 
@@ -307,24 +333,37 @@ export function useHexaData() {
   const [agentStats, setAgentStats] = useState<AgentStats[]>([]);
   const [supervisorSessions, setSupervisorSessions] = useState<HexaSupervisorSession[]>([]);
   const [alerts, setAlerts] = useState<HexaAlert[]>([]);
+  const [bridgeHealth, setBridgeHealth] = useState<CodexBridgeHealth>({
+    status: "starting",
+    version: null,
+    last_connected_at: null,
+    message: "Connecting to local Codex",
+  });
   const intervalRef = useRef<ReturnType<typeof setInterval>>();
 
   const fetchSessions = useCallback(async () => {
     try {
-      const [sessionData, statsData] = await Promise.all([
+      const [sessionData, statsData, bridgeData, healthData] = await Promise.all([
         invoke<HexaSession[]>("get_all_sessions_history"),
         invoke<AgentStats[]>("get_agent_stats"),
+        invoke<HexaBridgeSession[]>("get_hexa_bridge_sessions"),
+        invoke<CodexBridgeHealth>("get_codex_bridge_health"),
       ]);
       const statsByClient = new Map(statsData.map((stat) => [stat.client_type, stat]));
-      const snapshots = sessionData.map((session) => buildSupervisorSession(session, statsByClient));
+      const merged = mergeHexaSessions(sessionData, bridgeData);
+      const mergedSessions = merged.map((item) => item.session);
+      const snapshots = merged.map((item) =>
+        buildSupervisorSession(item.session, statsByClient, item.source, item.bridge),
+      );
       const allAlerts = snapshots
         .filter((s) => s.session.status !== "completed")
         .flatMap((s) => s.alerts);
 
-      setSessions(sessionData);
+      setSessions(mergedSessions);
       setAgentStats(statsData);
       setSupervisorSessions(snapshots);
       setAlerts(allAlerts);
+      setBridgeHealth(healthData);
     } catch {
       // Hub may open before the backend is ready.
     }
@@ -340,11 +379,19 @@ export function useHexaData() {
     const unlistenTimeout = listen("humhum://permission-timeout", () => {
       fetchSessions();
     });
+    const unlistenBridgeSession = listen("humhum://hexa-session-changed", () => {
+      fetchSessions();
+    });
+    const unlistenBridgeHealth = listen("humhum://codex-bridge-health", () => {
+      fetchSessions();
+    });
 
     return () => {
       clearInterval(intervalRef.current);
       unlistenHook.then((fn) => fn());
       unlistenTimeout.then((fn) => fn());
+      unlistenBridgeSession.then((fn) => fn());
+      unlistenBridgeHealth.then((fn) => fn());
     };
   }, [fetchSessions]);
 
@@ -354,6 +401,30 @@ export function useHexaData() {
   const completedSupervisorSessions = supervisorSessions.filter((s) => s.session.status === "completed");
   const primarySupervisorSessions = supervisorSessions.filter((s) => s.priority === "primary");
   const compatibleSupervisorSessions = supervisorSessions.filter((s) => s.priority === "compatible");
+
+  const sendCodexMessage = useCallback(async (threadId: string, message: string) => {
+    const turnId = await invoke<string>("hexa_send_codex_message", { threadId, message });
+    await fetchSessions();
+    return turnId;
+  }, [fetchSessions]);
+
+  const interruptCodexTurn = useCallback(async (threadId: string, turnId: string) => {
+    await invoke("hexa_interrupt_codex_turn", { threadId, turnId });
+    await fetchSessions();
+  }, [fetchSessions]);
+
+  const resumeCodexThread = useCallback(async (threadId: string) => {
+    await invoke("hexa_resume_codex_thread", { threadId });
+    await fetchSessions();
+  }, [fetchSessions]);
+
+  const resolveCodexApproval = useCallback(async (
+    approvalId: string,
+    decision: "allow_once" | "deny",
+  ) => {
+    await invoke("hexa_resolve_codex_approval", { approvalId, decision });
+    await fetchSessions();
+  }, [fetchSessions]);
 
   return {
     sessions,
@@ -366,5 +437,10 @@ export function useHexaData() {
     primarySupervisorSessions,
     compatibleSupervisorSessions,
     alerts,
+    bridgeHealth,
+    sendCodexMessage,
+    interruptCodexTurn,
+    resumeCodexThread,
+    resolveCodexApproval,
   };
 }

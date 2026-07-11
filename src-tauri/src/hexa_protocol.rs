@@ -156,6 +156,7 @@ impl HexaProjectionStore {
                 if completed_turn.is_none() || completed_turn == session.current_turn_id.as_deref()
                 {
                     session.current_turn_id = None;
+                    session.current_activity = None;
                     session.status = match event.kind {
                         HexaEventKind::TurnFailed => HexaSessionStatus::Failed,
                         _ => HexaSessionStatus::Idle,
@@ -168,6 +169,7 @@ impl HexaProjectionStore {
                         .pending_approvals
                         .retain(|item| item.approval_id != approval.approval_id);
                     session.pending_approvals.push(approval);
+                    session.current_activity = Some("Waiting for your decision".to_string());
                     session.status = HexaSessionStatus::Waiting;
                 }
             }
@@ -178,12 +180,27 @@ impl HexaProjectionStore {
                         .pending_approvals
                         .retain(|item| item.approval_id != approval_id);
                     if session.pending_approvals.is_empty() {
+                        session.current_activity = None;
                         session.status = if session.current_turn_id.is_some() {
                             HexaSessionStatus::Working
                         } else {
                             HexaSessionStatus::Idle
                         };
                     }
+                }
+            }
+            HexaEventKind::ToolStarted
+            | HexaEventKind::ToolUpdated
+            | HexaEventKind::ToolCompleted
+            | HexaEventKind::FileChangeProposed
+            | HexaEventKind::FileChangeApplied
+            | HexaEventKind::AssistantTextCompleted
+            | HexaEventKind::ReasoningSummary => {
+                if let Some(activity) = string_field(&event.payload, "activity") {
+                    session.current_activity = Some(activity);
+                }
+                if session.status != HexaSessionStatus::Waiting {
+                    session.status = HexaSessionStatus::Working;
                 }
             }
             HexaEventKind::ErrorReported => session.status = HexaSessionStatus::Failed,
@@ -314,6 +331,20 @@ mod tests {
         assert_eq!(
             store.session("s1").unwrap().status,
             HexaSessionStatus::Working
+        );
+    }
+
+    #[test]
+    fn meaningful_provider_events_update_current_activity() {
+        let mut store = HexaProjectionStore::default();
+        store.apply(&event(
+            "s1",
+            HexaEventKind::ToolStarted,
+            json!({"activity": "Running tests", "item_id": "t1:item-1"}),
+        ));
+        assert_eq!(
+            store.session("s1").unwrap().current_activity.as_deref(),
+            Some("Running tests")
         );
     }
 }

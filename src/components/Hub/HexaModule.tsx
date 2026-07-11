@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { Fragment, useState, type CSSProperties } from "react";
+import { RotateCcw, Send, Square } from "lucide-react";
 import {
   useHexaData,
   type HexaSupervisorSession,
@@ -366,6 +367,204 @@ function SessionPanel({
   );
 }
 
+function CodexControls({
+  item,
+  onSend,
+  onInterrupt,
+  onResume,
+  onResolveApproval,
+}: {
+  item: HexaSupervisorSession;
+  onSend: (threadId: string, message: string) => Promise<unknown>;
+  onInterrupt: (threadId: string, turnId: string) => Promise<unknown>;
+  onResume: (threadId: string) => Promise<unknown>;
+  onResolveApproval: (approvalId: string, decision: "allow_once" | "deny") => Promise<unknown>;
+}) {
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const bridge = item.bridge;
+  if (!bridge || !item.can_intervene) return null;
+
+  const run = async (action: () => Promise<unknown>) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await action();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const send = async () => {
+    const text = message.trim();
+    if (!text) return;
+    await run(async () => {
+      await onSend(bridge.provider_thread_id ?? bridge.session_id, text);
+      setMessage("");
+    });
+  };
+
+  return (
+    <div
+      style={{
+        margin: "-5px 8px 3px",
+        padding: "10px 12px",
+        borderLeft: "1px solid rgba(34,197,94,0.2)",
+        borderRight: "1px solid rgba(34,197,94,0.2)",
+        borderBottom: "1px solid rgba(34,197,94,0.2)",
+        background: "rgba(34,197,94,0.035)",
+        borderRadius: "0 0 8px 8px",
+      }}
+    >
+      {item.pending_approvals.length > 0 && (
+        <div style={{ display: "grid", gap: 7, marginBottom: 9 }}>
+          {item.pending_approvals.map((approval) => (
+            <div
+              key={approval.approval_id}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 10,
+                paddingBottom: 7,
+                borderBottom: "1px solid rgba(255,255,255,0.055)",
+              }}
+            >
+              <div style={{ minWidth: 0 }}>
+                <div style={{ color: "rgba(255,255,255,0.76)", fontSize: 11, lineHeight: 1.4, overflowWrap: "anywhere" }}>
+                  {approval.summary}
+                </div>
+                {approval.reason && (
+                  <div style={{ color: "rgba(255,255,255,0.38)", fontSize: 10, marginTop: 2 }}>
+                    {approval.reason}
+                  </div>
+                )}
+              </div>
+              <div style={{ display: "flex", gap: 6, flex: "0 0 auto" }}>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => run(() => onResolveApproval(approval.approval_id, "deny"))}
+                  style={{
+                    border: "1px solid rgba(248,113,113,0.3)",
+                    background: "rgba(248,113,113,0.08)",
+                    color: "#fca5a5",
+                    borderRadius: 6,
+                    padding: "5px 8px",
+                    fontSize: 10,
+                    cursor: busy ? "default" : "pointer",
+                  }}
+                >
+                  Deny
+                </button>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => run(() => onResolveApproval(approval.approval_id, "allow_once"))}
+                  style={{
+                    border: "1px solid rgba(34,197,94,0.32)",
+                    background: "rgba(34,197,94,0.1)",
+                    color: "#86efac",
+                    borderRadius: 6,
+                    padding: "5px 8px",
+                    fontSize: 10,
+                    cursor: busy ? "default" : "pointer",
+                  }}
+                >
+                  Allow once
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 7 }}>
+        <input
+          value={message}
+          onChange={(event) => setMessage(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.shiftKey && !bridge.current_turn_id) {
+              event.preventDefault();
+              void send();
+            }
+          }}
+          disabled={busy || Boolean(bridge.current_turn_id)}
+          placeholder={bridge.current_turn_id ? "Codex is working" : "Send a follow-up to Codex"}
+          aria-label="Message Codex"
+          style={{
+            minWidth: 0,
+            height: 32,
+            boxSizing: "border-box",
+            border: "1px solid rgba(255,255,255,0.09)",
+            background: "rgba(0,0,0,0.18)",
+            color: "rgba(255,255,255,0.78)",
+            borderRadius: 6,
+            padding: "0 9px",
+            fontSize: 11,
+            outline: "none",
+          }}
+        />
+        <div style={{ display: "flex", gap: 6 }}>
+          {bridge.current_turn_id ? (
+            <button
+              type="button"
+              title="Interrupt current Codex turn"
+              aria-label="Interrupt current Codex turn"
+              disabled={busy}
+              onClick={() => run(() => onInterrupt(bridge.provider_thread_id ?? bridge.session_id, bridge.current_turn_id!))}
+              style={iconButtonStyle("#fca5a5", busy)}
+            >
+              <Square size={14} strokeWidth={2} />
+            </button>
+          ) : (
+            <button
+              type="button"
+              title="Resume Codex thread"
+              aria-label="Resume Codex thread"
+              disabled={busy}
+              onClick={() => run(() => onResume(bridge.provider_thread_id ?? bridge.session_id))}
+              style={iconButtonStyle("#93c5fd", busy)}
+            >
+              <RotateCcw size={14} strokeWidth={2} />
+            </button>
+          )}
+          <button
+            type="button"
+            title="Send to Codex"
+            aria-label="Send to Codex"
+            disabled={busy || Boolean(bridge.current_turn_id) || message.trim().length === 0}
+            onClick={() => void send()}
+            style={iconButtonStyle("#86efac", busy || Boolean(bridge.current_turn_id) || message.trim().length === 0)}
+          >
+            <Send size={14} strokeWidth={2} />
+          </button>
+        </div>
+      </div>
+      {error && <div style={{ color: "#fca5a5", fontSize: 10, marginTop: 6 }}>{error}</div>}
+    </div>
+  );
+}
+
+function iconButtonStyle(color: string, disabled: boolean): CSSProperties {
+  return {
+    width: 32,
+    height: 32,
+    display: "grid",
+    placeItems: "center",
+    border: `1px solid ${color}44`,
+    background: `${color}10`,
+    color,
+    borderRadius: 6,
+    cursor: disabled ? "default" : "pointer",
+    opacity: disabled ? 0.4 : 1,
+    padding: 0,
+  };
+}
+
 function EmptyState() {
   return (
     <div
@@ -394,6 +593,11 @@ export function HexaModule() {
     primarySupervisorSessions,
     compatibleSupervisorSessions,
     alerts,
+    bridgeHealth,
+    sendCodexMessage,
+    interruptCodexTurn,
+    resumeCodexThread,
+    resolveCodexApproval,
   } = useHexaData();
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
@@ -410,6 +614,17 @@ export function HexaModule() {
           <p className="hub-module-desc">
             Claude / Codex 监工台，观察每轮进度、确认点、memory 和复盘信号。
           </p>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 7, fontSize: 10, color: "rgba(255,255,255,0.38)" }}>
+            <span
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: "50%",
+                background: bridgeHealth.status === "connected" ? "#22c55e" : bridgeHealth.status === "starting" ? "#facc15" : "#f87171",
+              }}
+            />
+            <span>{bridgeHealth.message}</span>
+          </div>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
           <SummaryPill label="active" value={activeSupervisorSessions.length} color="#22c55e" />
@@ -426,14 +641,22 @@ export function HexaModule() {
           ) : (
             <>
               {activePrimary.map((item) => (
-                <SessionPanel
-                  key={`active-${item.session.session_id}`}
-                  item={item}
-                  expanded={expandedId === item.session.session_id}
-                  onToggle={() =>
-                    setExpandedId(expandedId === item.session.session_id ? null : item.session.session_id)
-                  }
-                />
+                <Fragment key={`active-${item.session.session_id}`}>
+                  <SessionPanel
+                    item={item}
+                    expanded={expandedId === item.session.session_id}
+                    onToggle={() =>
+                      setExpandedId(expandedId === item.session.session_id ? null : item.session.session_id)
+                    }
+                  />
+                  <CodexControls
+                    item={item}
+                    onSend={sendCodexMessage}
+                    onInterrupt={interruptCodexTurn}
+                    onResume={resumeCodexThread}
+                    onResolveApproval={resolveCodexApproval}
+                  />
+                </Fragment>
               ))}
               {completedPrimary.map((item) => (
                 <SessionPanel
