@@ -174,6 +174,12 @@ export interface AppConfig {
     language: "zh" | "en";
     auto_confirm?: boolean;
     awake_mode?: boolean;
+    notifications?: {
+      approval: boolean;
+      question: boolean;
+      completed: boolean;
+      message: boolean;
+    };
   };
 }
 

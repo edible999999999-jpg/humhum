@@ -1,5 +1,7 @@
 export type NativeNotificationKind = "approval" | "question" | "completed" | "message";
 
+export type NativeNotificationPreferences = Partial<Record<NativeNotificationKind, boolean>>;
+
 export function nativeNotificationKind(
   eventName: string,
   toolName: string | null,
@@ -9,4 +11,11 @@ export function nativeNotificationKind(
   if (eventName === "TaskCompleted" || eventName === "Stop") return "completed";
   if (eventName === "Notification") return "message";
   return null;
+}
+
+export function shouldSendNativeNotification(
+  kind: NativeNotificationKind,
+  preferences?: NativeNotificationPreferences,
+): boolean {
+  return preferences?.[kind] !== false;
 }

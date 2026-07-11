@@ -17,7 +17,7 @@ Status meanings:
 | Approve/deny and questions | Complete | Claude hook requests and Codex app-server approvals are session scoped. |
 | Exact jump back | Partial | Hook captures terminal, TTY, tmux pane and iTerm session. Hexa can select an exact tmux pane or iTerm session, open a Codex desktop task through its thread URL, or reopen the exact Cursor workspace. Exact Cursor chat selection and Ghostty terminal identifiers are still missing. |
 | Follow-up from supervisor | Partial | Codex app-server follow-up resumes before send and now reports sending/delivered/failed with retry-preserved text. Generic terminal inline follow-up is not enabled because typing into an unverified target is unsafe. |
-| Completion and attention notifications | Complete | Pet overlays, sounds, and native macOS notifications exist for permission, question, tool, and completion events. Notification preference granularity still trails Ping Island. |
+| Completion and attention notifications | Complete | Pet overlays and sounds remain ambient, while native macOS notifications can be enabled independently for approvals, questions, completions, and ordinary Agent messages. Legacy configs migrate with all four enabled. |
 | Transcript backfill | Complete | Local Codex JSONL and Claude stats/readouts feed history and summaries. |
 | Broad client coverage | Partial | Managed profiles now include Claude Code, Codex, Qwen Code, Gemini CLI, Kimi, QoderWork, Qoder, CodeBuddy, WorkBuddy, Cursor, GitHub Copilot CLI and OpenCode; local Pi and Wukong watchers also exist. Copilot normalization was runtime-smoked. OpenCode and Cursor still need an installed-client smoke test, and remote variants remain missing. |
 | SSH remote bridge | Partial | Settings can bootstrap Claude hooks over an already trusted, key-only SSH connection and receive events through a loopback-only reverse tunnel. The remote credential is event-only, stored separately from the local API token, and revoked locally on disconnect. A real remote-host smoke test and multi-host management are still missing. |
@@ -69,7 +69,8 @@ Status meanings:
 - Mobile pairing now records an explicit `read` or `control` scope. Existing device records migrate to read-only, read devices cannot see approval summaries or message controls, and only control credentials reach Codex action routes.
 - Mobile Codex follow-ups use the desktop durable intervention queue. Runtime HTTPS verification returned `control` and `read` scopes, control approval reached Codex and returned 409 for a synthetic missing item, read approval returned 403, control malformed message reached parsing with 400, read message returned 403, and revoked tokens returned 401.
 - Hexa lists paired devices without exposing token digests, shows each device's read/control scope, and can revoke one device without invalidating the others; revoke-all remains available.
-- Rust: 75 passed, 1 ignored. Frontend: 11 passed. Production frontend build: passed.
+- Native macOS notification preferences are independently configurable for approvals, questions, completions, and ordinary Agent messages without hiding the corresponding desktop-pet activity.
+- Rust: 75 passed, 1 ignored. Frontend: 12 passed. Production frontend build: passed.
 
 ## Next Iteration Order
 

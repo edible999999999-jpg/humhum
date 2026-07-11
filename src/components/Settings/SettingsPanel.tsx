@@ -443,6 +443,42 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
           </div>
         </KawaiiCard>
 
+        <KawaiiCard icon="!" title={t("settings.notificationsTitle")} subtitle={t("settings.notificationsSubtitle")}>
+          <div className="grid grid-cols-2 gap-2">
+            {([
+              ["approval", "settings.notificationApproval"],
+              ["question", "settings.notificationQuestion"],
+              ["completed", "settings.notificationCompleted"],
+              ["message", "settings.notificationMessage"],
+            ] as const).map(([kind, label]) => {
+              const enabled = config.ui.notifications?.[kind] !== false;
+              return (
+                <button
+                  key={kind}
+                  type="button"
+                  onClick={() => updateConfig((current) => ({
+                    ...current,
+                    ui: {
+                      ...current.ui,
+                      notifications: {
+                        approval: current.ui.notifications?.approval !== false,
+                        question: current.ui.notifications?.question !== false,
+                        completed: current.ui.notifications?.completed !== false,
+                        message: current.ui.notifications?.message !== false,
+                        [kind]: !enabled,
+                      },
+                    },
+                  }))}
+                  className={`kawaii-chip ${enabled ? "active" : ""}`}
+                  aria-pressed={enabled}
+                >
+                  {t(label)}
+                </button>
+              );
+            })}
+          </div>
+        </KawaiiCard>
+
         <KawaiiCard icon="⇄" title={t("settings.remoteTitle")} subtitle={t("settings.remoteSubtitle")}>
           <div className="space-y-2.5">
             <input

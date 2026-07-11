@@ -92,6 +92,27 @@ pub struct UiConfig {
     pub language: String,
     pub auto_confirm: bool,
     pub awake_mode: bool,
+    pub notifications: NotificationPreferences,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NotificationPreferences {
+    pub approval: bool,
+    pub question: bool,
+    pub completed: bool,
+    pub message: bool,
+}
+
+impl Default for NotificationPreferences {
+    fn default() -> Self {
+        Self {
+            approval: true,
+            question: true,
+            completed: true,
+            message: true,
+        }
+    }
 }
 
 impl Default for UiConfig {
@@ -101,6 +122,7 @@ impl Default for UiConfig {
             language: "zh".to_string(),
             auto_confirm: false,
             awake_mode: false,
+            notifications: NotificationPreferences::default(),
         }
     }
 }
@@ -180,8 +202,7 @@ impl AppConfig {
         if self.pi.url == defaults.url && self.summarizer.api_base != defaults.url {
             self.pi.url = self.summarizer.api_base.clone();
         }
-        if self.pi.model_name == defaults.model_name
-            && self.summarizer.model != defaults.model_name
+        if self.pi.model_name == defaults.model_name && self.summarizer.model != defaults.model_name
         {
             self.pi.model_name = self.summarizer.model.clone();
         }
@@ -214,6 +235,10 @@ mod tests {
         assert_eq!(config.pi.url, "https://api.openai.com/v1");
         assert_eq!(config.pi.model_name, "gpt-4o-mini");
         assert_eq!(config.pi.token, None);
+        assert!(config.ui.notifications.approval);
+        assert!(config.ui.notifications.question);
+        assert!(config.ui.notifications.completed);
+        assert!(config.ui.notifications.message);
     }
 
     #[test]
@@ -242,5 +267,6 @@ mod tests {
         assert_eq!(config.pi.url, "https://gateway.example/v1");
         assert_eq!(config.pi.model_name, "gateway-model");
         assert_eq!(config.pi.token.as_deref(), Some("legacy-token"));
+        assert!(config.ui.notifications.approval);
     }
 }

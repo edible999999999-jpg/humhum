@@ -17,7 +17,7 @@ import { useVoiceCommand } from "../../hooks/useVoiceCommand";
 import { useKeyboardShortcuts } from "../../hooks/useKeyboardShortcuts";
 import { useAudioQueue } from "../../hooks/useAudioQueue";
 import { getPipeline } from "../../lib/bootstrap";
-import { nativeNotificationKind } from "../../lib/notification-policy";
+import { nativeNotificationKind, shouldSendNativeNotification } from "../../lib/notification-policy";
 import { t } from "../../lib/i18n";
 import { setLanguage } from "../../lib/i18n";
 import type { PipelineState } from "../../lib/pipeline";
@@ -318,7 +318,10 @@ export function PetView() {
         detail = `\n${t("petview.file")}: ${(toolInput.file_path as string).split("/").pop()}`;
       }
 
-      if (nativeNotificationKind(eventName, toolName) === "approval") {
+      if (
+        nativeNotificationKind(eventName, toolName) === "approval" &&
+        shouldSendNativeNotification("approval", configRef.current?.ui.notifications)
+      ) {
         invoke("send_notification", {
           title: t("petview.needsApproval", { tool: toolName }),
           body: `${t("petview.requestExec", { client: latestEvent.client_type || "Agent", tool: toolName })}${detail}`,
@@ -338,7 +341,10 @@ export function PetView() {
         completionSpeaking.current = false;
         setPetState("idle");
       }, 8000);
-      if (nativeNotificationKind(eventName, eventToolName) === "completed") {
+      if (
+        nativeNotificationKind(eventName, eventToolName) === "completed" &&
+        shouldSendNativeNotification("completed", configRef.current?.ui.notifications)
+      ) {
         invoke("send_notification", {
           title: `${latestEvent.client_type || "Agent"} 已完成`,
           body: (payload.message as string) || "任务已经完成，可以回来查看结果。",
@@ -357,7 +363,10 @@ export function PetView() {
         type: "system",
       });
       setTimeout(() => setNotification(null), 5000);
-      if (nativeNotificationKind(eventName, eventToolName) === "message") {
+      if (
+        nativeNotificationKind(eventName, eventToolName) === "message" &&
+        shouldSendNativeNotification("message", configRef.current?.ui.notifications)
+      ) {
         invoke("send_notification", {
           title: latestEvent.client_type || "Agent",
           body: notifText,
@@ -377,10 +386,12 @@ export function PetView() {
         playSound("attentionRequired");
         setQuestionEvent(latestEvent);
         setPetState("waiting");
-        invoke("send_notification", {
-          title: t("petview.needsChoice"),
-          body: t("petview.ccWaitingChoice"),
-        });
+        if (shouldSendNativeNotification("question", configRef.current?.ui.notifications)) {
+          invoke("send_notification", {
+            title: t("petview.needsChoice"),
+            body: t("petview.ccWaitingChoice"),
+          });
+        }
         const evtRef2 = latestEvent;
         setTimeout(() => {
           setQuestionEvent((prev) => {
