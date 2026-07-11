@@ -10,6 +10,7 @@ pub struct SessionRoute {
     pub tmux: Option<String>,
     pub tmux_pane: Option<String>,
     pub iterm_session_id: Option<String>,
+    pub ghostty_terminal_id: Option<String>,
     pub parent_pid: Option<u32>,
     pub transport: Option<String>,
     pub remote_host: Option<String>,
@@ -29,6 +30,7 @@ impl SessionRoute {
         merge_text(&mut self.tmux, newer.tmux);
         merge_text(&mut self.tmux_pane, newer.tmux_pane);
         merge_text(&mut self.iterm_session_id, newer.iterm_session_id);
+        merge_text(&mut self.ghostty_terminal_id, newer.ghostty_terminal_id);
         if newer.parent_pid.is_some() {
             self.parent_pid = newer.parent_pid;
         }
@@ -44,6 +46,7 @@ impl SessionRoute {
             &mut self.tmux,
             &mut self.tmux_pane,
             &mut self.iterm_session_id,
+            &mut self.ghostty_terminal_id,
             &mut self.transport,
             &mut self.remote_host,
         ] {
@@ -65,6 +68,7 @@ impl SessionRoute {
             || self.tmux.is_some()
             || self.tmux_pane.is_some()
             || self.iterm_session_id.is_some()
+            || self.ghostty_terminal_id.is_some()
             || self.parent_pid.is_some()
             || self.transport.is_some()
             || self.remote_host.is_some()
@@ -196,7 +200,7 @@ impl SessionStore {
         }
 
         match event.hook_event_name.as_str() {
-            "Stop" | "SessionEnd" => {
+            "SessionEnd" => {
                 session.status = SessionStatus::Completed;
                 if let Some(completed) = self.sessions.remove(&event.session_id) {
                     self.completed_sessions.push(completed);
@@ -205,7 +209,7 @@ impl SessionStore {
                     }
                 }
             }
-            "TaskCompleted" => {
+            "Stop" | "TaskCompleted" => {
                 session.status = SessionStatus::Idle;
             }
             _ => {
@@ -279,6 +283,7 @@ mod tests {
                 "tty": "/dev/ttys007",
                 "tmux_pane": "%12",
                 "iterm_session_id": "w0t1p0:ABC",
+                "ghostty_terminal_id": "terminal-ABC",
                 "transport": "ssh",
                 "remote_host": "dev@example.com"
             }
@@ -294,8 +299,31 @@ mod tests {
         assert_eq!(route.tty.as_deref(), Some("ttys007"));
         assert_eq!(route.tmux_pane.as_deref(), Some("%12"));
         assert_eq!(route.iterm_session_id.as_deref(), Some("w0t1p0:ABC"));
+        assert_eq!(route.ghostty_terminal_id.as_deref(), Some("terminal-ABC"));
         assert_eq!(route.transport.as_deref(), Some("ssh"));
         assert_eq!(route.remote_host.as_deref(), Some("dev@example.com"));
+    }
+
+    #[test]
+    fn stop_is_idle_and_only_session_end_moves_history() {
+        let mut store = SessionStore::new();
+        let mut stop = event(json!({}));
+        stop.hook_event_name = "Stop".into();
+
+        store.update_from_event(&stop);
+
+        assert_eq!(
+            store.get_session("session-1").unwrap().status,
+            SessionStatus::Idle
+        );
+        assert!(store.completed_sessions.is_empty());
+
+        let mut end = stop;
+        end.hook_event_name = "SessionEnd".into();
+        store.update_from_event(&end);
+
+        assert!(store.get_session("session-1").is_none());
+        assert_eq!(store.completed_sessions.len(), 1);
     }
 
     #[test]

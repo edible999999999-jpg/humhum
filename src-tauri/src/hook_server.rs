@@ -328,13 +328,15 @@ async fn handle_event(
             ));
         }
     };
-    let payload = normalize_agent_payload(payload);
+    let mut payload = normalize_agent_payload(payload);
 
     let hook_event_name = payload
         .get("hook_event_name")
         .and_then(|v| v.as_str())
         .unwrap_or("unknown")
         .to_string();
+
+    enrich_ghostty_route(&mut payload, &hook_event_name);
 
     let event_id = Uuid::new_v4().to_string();
 
@@ -559,6 +561,35 @@ async fn handle_event(
             StatusCode::OK,
             &serde_json::json!({"status": "received"}),
         ))
+    }
+}
+
+fn enrich_ghostty_route(payload: &mut Value, hook_event_name: &str) {
+    if !matches!(hook_event_name, "SessionStart" | "UserPromptSubmit") {
+        return;
+    }
+    let Some(object) = payload.as_object_mut() else {
+        return;
+    };
+    let workspace = object
+        .get("cwd")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let Some(route) = object.get_mut("route").and_then(Value::as_object_mut) else {
+        return;
+    };
+    let is_ghostty = route
+        .get("term_program")
+        .and_then(Value::as_str)
+        .is_some_and(|value| value.to_ascii_lowercase().contains("ghostty"));
+    if !is_ghostty || route.contains_key("ghostty_terminal_id") {
+        return;
+    }
+    if let Some(terminal_id) = workspace
+        .as_deref()
+        .and_then(crate::window_focus::capture_ghostty_terminal_id)
+    {
+        route.insert("ghostty_terminal_id".into(), Value::String(terminal_id));
     }
 }
 

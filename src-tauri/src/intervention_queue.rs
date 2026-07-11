@@ -19,6 +19,7 @@ pub enum InterventionProvider {
     #[default]
     Codex,
     Claude,
+    #[serde(rename = "opencode", alias = "open_code")]
     OpenCode,
 }
 
@@ -328,13 +329,24 @@ mod tests {
             .enqueue_for(InterventionProvider::Claude, "claude-session", "continue")
             .unwrap();
         queue
-            .enqueue_for(InterventionProvider::OpenCode, "opencode-session", "continue")
+            .enqueue_for(
+                InterventionProvider::OpenCode,
+                "opencode-session",
+                "continue",
+            )
             .unwrap();
 
         assert_eq!(entry.provider, InterventionProvider::Claude);
         let reloaded = InterventionQueue::load_or_create(temp.path()).unwrap();
         assert_eq!(reloaded.entries()[0].provider, InterventionProvider::Claude);
-        assert_eq!(reloaded.entries()[1].provider, InterventionProvider::OpenCode);
+        assert_eq!(
+            reloaded.entries()[1].provider,
+            InterventionProvider::OpenCode
+        );
+        assert_eq!(
+            serde_json::to_string(&InterventionProvider::OpenCode).unwrap(),
+            "\"opencode\""
+        );
     }
 
     #[test]

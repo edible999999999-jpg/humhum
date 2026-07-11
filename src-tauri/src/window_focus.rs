@@ -19,6 +19,7 @@ const TERMINALS: &[&str] = &[
 enum FocusStrategy {
     TmuxPane(String),
     ITermSession(String),
+    GhosttyTerminal(String),
     TerminalTty(String),
     Application(String),
     GenericTerminal,
@@ -84,6 +85,20 @@ fn choose_focus_strategy(route: &SessionRoute) -> FocusStrategy {
         .term_program
         .as_deref()
         .and_then(normalize_terminal_application)
+        == Some("Ghostty")
+    {
+        if let Some(terminal_id) = route
+            .ghostty_terminal_id
+            .as_deref()
+            .filter(|value| !value.is_empty() && value.len() <= 256)
+        {
+            return FocusStrategy::GhosttyTerminal(terminal_id.to_string());
+        }
+    }
+    if route
+        .term_program
+        .as_deref()
+        .and_then(normalize_terminal_application)
         == Some("Terminal")
     {
         if let Some(tty) = route.tty.as_deref().and_then(normalize_tty) {
@@ -130,6 +145,7 @@ pub fn focus_agent_route(route: Option<&SessionRoute>) -> Result<FocusResult, St
                 exact: true,
             })
         }
+        FocusStrategy::GhosttyTerminal(terminal_id) => focus_ghostty_terminal(&terminal_id),
         FocusStrategy::TerminalTty(tty) => {
             focus_terminal_tty(&tty)?;
             Ok(FocusResult {
@@ -154,6 +170,80 @@ pub fn focus_agent_route(route: Option<&SessionRoute>) -> Result<FocusResult, St
                 exact: false,
             })
         }
+    }
+}
+
+pub fn capture_ghostty_terminal_id(workspace: &str) -> Option<String> {
+    let path = std::path::Path::new(workspace);
+    let path = (path.is_absolute() && path.is_dir())
+        .then(|| path.canonicalize().ok())
+        .flatten()?;
+    #[cfg(target_os = "macos")]
+    {
+        const SCRIPT: &str = r#"set targetPath to system attribute "HUMHUM_GHOSTTY_WORKSPACE"
+tell application id "com.mitchellh.ghostty"
+set matchingTerminalIDs to {}
+repeat with aTerminal in terminals
+try
+if (working directory of aTerminal as text) is targetPath then
+copy (id of aTerminal as text) to end of matchingTerminalIDs
+end if
+end try
+end repeat
+if (count of matchingTerminalIDs) is not 1 then return ""
+return item 1 of matchingTerminalIDs
+end tell"#;
+        let output = Command::new("osascript")
+            .env("HUMHUM_GHOSTTY_WORKSPACE", &path)
+            .args(["-e", SCRIPT])
+            .output()
+            .ok()?;
+        let terminal_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        (output.status.success() && !terminal_id.is_empty() && terminal_id.len() <= 256)
+            .then_some(terminal_id)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = path;
+        None
+    }
+}
+
+fn focus_ghostty_terminal(terminal_id: &str) -> Result<FocusResult, String> {
+    if terminal_id.is_empty() || terminal_id.len() > 256 {
+        return Err("Invalid Ghostty terminal identifier".into());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        const SCRIPT: &str = r#"set targetID to system attribute "HUMHUM_GHOSTTY_TERMINAL_ID"
+tell application id "com.mitchellh.ghostty"
+set matches to every terminal whose id is targetID
+if (count of matches) is not 1 then error "Ghostty terminal not found"
+focus item 1 of matches
+activate
+return "ok"
+end tell"#;
+        let output = Command::new("osascript")
+            .env("HUMHUM_GHOSTTY_TERMINAL_ID", terminal_id)
+            .args(["-e", SCRIPT])
+            .output()
+            .map_err(|error| format!("Could not focus Ghostty terminal: {error}"))?;
+        if !output.status.success() || String::from_utf8_lossy(&output.stdout).trim() != "ok" {
+            return Err(format!(
+                "Could not focus Ghostty terminal: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        Ok(FocusResult {
+            strategy: "ghostty_terminal".into(),
+            application: Some("Ghostty".into()),
+            exact: true,
+        })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = terminal_id;
+        Err("Ghostty terminal focus only supported on macOS".into())
     }
 }
 
@@ -197,10 +287,7 @@ fn valid_cursor_workspace(path: &std::path::Path) -> bool {
     path.is_absolute() && path.is_dir()
 }
 
-fn ghostty_workspace_target(
-    route: &SessionRoute,
-    workspace: &str,
-) -> Option<std::path::PathBuf> {
+fn ghostty_workspace_target(route: &SessionRoute, workspace: &str) -> Option<std::path::PathBuf> {
     let application = route
         .term_program
         .as_deref()
@@ -297,10 +384,7 @@ pub fn focus_cursor_workspace(workspace: &str) -> Result<FocusResult, String> {
     }
 }
 
-pub fn focus_cursor_terminal(
-    route: &SessionRoute,
-    workspace: &str,
-) -> Result<FocusResult, String> {
+pub fn focus_cursor_terminal(route: &SessionRoute, workspace: &str) -> Result<FocusResult, String> {
     let home = dirs::home_dir().ok_or("Cannot determine home directory")?;
     if !crate::cursor_focus_extension::is_installed_at(&home) {
         return Err("HUMHUM Cursor focus extension is not installed".into());
@@ -348,8 +432,8 @@ pub fn focus_cursor_terminal(
         }
         for _ in 0..40 {
             if receipt.is_file() {
-                let acknowledged = std::fs::read_to_string(&receipt)
-                    .is_ok_and(|value| value.trim() == "focused");
+                let acknowledged =
+                    std::fs::read_to_string(&receipt).is_ok_and(|value| value.trim() == "focused");
                 let _ = std::fs::remove_file(&receipt);
                 if acknowledged {
                     return Ok(FocusResult {
@@ -611,6 +695,19 @@ mod tests {
         assert_eq!(
             choose_focus_strategy(&route),
             FocusStrategy::TmuxPane("%7".into())
+        );
+    }
+
+    #[test]
+    fn exact_ghostty_terminal_has_priority_over_application_fallback() {
+        let route = SessionRoute {
+            term_program: Some("Ghostty".into()),
+            ghostty_terminal_id: Some("terminal-ABC".into()),
+            ..SessionRoute::default()
+        };
+        assert_eq!(
+            choose_focus_strategy(&route),
+            FocusStrategy::GhosttyTerminal("terminal-ABC".into())
         );
     }
 

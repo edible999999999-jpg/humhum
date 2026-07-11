@@ -154,16 +154,12 @@ mod client_hook_install_tests {
 
     #[test]
     fn opencode_plugin_bridges_permission_decisions_through_the_official_api() {
-        assert!(HUMHUM_OPENCODE_PLUGIN.contains(
-            r#""permission.asked": "PermissionRequest""#
-        ));
+        assert!(HUMHUM_OPENCODE_PLUGIN.contains(r#""permission.asked": "PermissionRequest""#));
         assert!(HUMHUM_OPENCODE_PLUGIN.contains(r#""session.deleted": "SessionEnd""#));
         assert!(HUMHUM_OPENCODE_PLUGIN.contains("postSessionIdPermissionsPermissionId"));
         assert!(HUMHUM_OPENCODE_PLUGIN.contains(r#"behavior === "deny" ? "reject" : "once""#));
         assert!(HUMHUM_OPENCODE_PLUGIN.contains("permission ? 125_000 : 3000"));
-        assert!(HUMHUM_OPENCODE_PLUGIN.contains(
-            r#"typeof properties.permission === "string""#
-        ));
+        assert!(HUMHUM_OPENCODE_PLUGIN.contains(r#"typeof properties.permission === "string""#));
     }
 }
 
@@ -334,34 +330,14 @@ pub async fn hexa_send_claude_message(
     session_id: String,
     message: String,
 ) -> Result<CodexSendReceipt, String> {
-    let workspace = claude_followup_workspace(&store, &session_id)?;
-    let entry = queue
-        .lock()
-        .map_err(|error| format!("Queue lock error: {error}"))?
-        .enqueue_for(InterventionProvider::Claude, &session_id, &message)?;
-    let is_next = queue
-        .lock()
-        .map_err(|error| format!("Queue lock error: {error}"))?
-        .is_next_for_thread(&entry.id)?;
-    if !is_next {
-        return Ok(CodexSendReceipt {
-            status: "queued".into(),
-            turn_id: None,
-            intervention_id: entry.id,
-        });
-    }
-    match deliver_queued_claude_message(&queue, &entry.id, &workspace).await {
-        Ok(()) => Ok(CodexSendReceipt {
-            status: "delivered".into(),
-            turn_id: None,
-            intervention_id: entry.id,
-        }),
-        Err(_) => Ok(CodexSendReceipt {
-            status: "queued".into(),
-            turn_id: None,
-            intervention_id: entry.id,
-        }),
-    }
+    enqueue_and_deliver_cli_message(
+        &store,
+        &queue,
+        InterventionProvider::Claude,
+        &session_id,
+        &message,
+    )
+    .await
 }
 
 #[tauri::command]
@@ -371,11 +347,33 @@ pub async fn hexa_send_opencode_message(
     session_id: String,
     message: String,
 ) -> Result<CodexSendReceipt, String> {
-    let workspace = cli_followup_workspace(&store, &session_id, "opencode", "OpenCode")?;
+    enqueue_and_deliver_cli_message(
+        &store,
+        &queue,
+        InterventionProvider::OpenCode,
+        &session_id,
+        &message,
+    )
+    .await
+}
+
+pub(crate) async fn enqueue_and_deliver_cli_message(
+    store: &std::sync::Mutex<SessionStore>,
+    queue: &std::sync::Mutex<InterventionQueue>,
+    provider: InterventionProvider,
+    session_id: &str,
+    message: &str,
+) -> Result<CodexSendReceipt, String> {
+    let (client_type, label) = match provider {
+        InterventionProvider::Claude => ("claude-code", "Claude"),
+        InterventionProvider::OpenCode => ("opencode", "OpenCode"),
+        InterventionProvider::Codex => return Err("Codex uses the app-server transport".into()),
+    };
+    let workspace = cli_followup_workspace(store, session_id, client_type, label)?;
     let entry = queue
         .lock()
         .map_err(|error| format!("Queue lock error: {error}"))?
-        .enqueue_for(InterventionProvider::OpenCode, &session_id, &message)?;
+        .enqueue_for(provider, session_id, message)?;
     let is_next = queue
         .lock()
         .map_err(|error| format!("Queue lock error: {error}"))?
@@ -387,7 +385,16 @@ pub async fn hexa_send_opencode_message(
             intervention_id: entry.id,
         });
     }
-    match deliver_queued_opencode_message(&queue, &entry.id, &workspace).await {
+    let delivered = match provider {
+        InterventionProvider::Claude => {
+            deliver_queued_claude_message(queue, &entry.id, &workspace).await
+        }
+        InterventionProvider::OpenCode => {
+            deliver_queued_opencode_message(queue, &entry.id, &workspace).await
+        }
+        InterventionProvider::Codex => unreachable!(),
+    };
+    match delivered {
         Ok(()) => Ok(CodexSendReceipt {
             status: "delivered".into(),
             turn_id: None,
@@ -642,7 +649,8 @@ async fn deliver_queued_opencode_message(
             .mark_failed(intervention_id, message)?;
         return Err(message.into());
     }
-    match crate::opencode_followup::send_followup(&entry.thread_id, workspace, &entry.message).await {
+    match crate::opencode_followup::send_followup(&entry.thread_id, workspace, &entry.message).await
+    {
         Ok(()) => queue
             .lock()
             .map_err(|error| format!("Queue lock error after delivery: {error}"))?
@@ -2315,6 +2323,14 @@ pub async fn focus_agent_session(
             if let Ok(result) = window_focus::focus_cursor_workspace(workspace) {
                 return Ok(result);
             }
+        }
+    }
+    if route
+        .as_ref()
+        .is_some_and(|route| route.ghostty_terminal_id.is_some())
+    {
+        if let Ok(result) = window_focus::focus_agent_route(route.as_ref()) {
+            return Ok(result);
         }
     }
     if let (Some(route), Some(workspace)) = (route.as_ref(), workspace.as_deref()) {

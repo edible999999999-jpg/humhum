@@ -384,7 +384,8 @@ async fn handle_mobile_request(
                         .filter(|session| !known_ids.contains(&session.session_id))
                         .take(30)
                         .map(|session| {
-                            let mut summary = MobileSessionSummary::from_hook(&session);
+                            let mut summary =
+                                MobileSessionSummary::from_hook(&session, scope.allows_control());
                             summary.pending_actions =
                                 hook_actions.remove(&session.session_id).unwrap_or_default();
                             summary.needs_attention |= !summary.pending_actions.is_empty();
@@ -413,7 +414,21 @@ async fn handle_mobile_request(
                 send_mobile_codex_message(request, &app).await
             }
         }
+        (&Method::POST, "/api/session/message") => {
+            if !request_scope(&request, &bridge).is_some_and(MobileDeviceScope::allows_control) {
+                json_error(StatusCode::FORBIDDEN, "This device is paired read-only")
+            } else {
+                send_mobile_agent_message(request, &app).await
+            }
+        }
         (&Method::POST, "/api/claude/permission") => {
+            if !request_scope(&request, &bridge).is_some_and(MobileDeviceScope::allows_control) {
+                json_error(StatusCode::FORBIDDEN, "This device is paired read-only")
+            } else {
+                resolve_mobile_claude_permission(request, &app).await
+            }
+        }
+        (&Method::POST, "/api/hook/permission") => {
             if !request_scope(&request, &bridge).is_some_and(MobileDeviceScope::allows_control) {
                 json_error(StatusCode::FORBIDDEN, "This device is paired read-only")
             } else {
@@ -569,6 +584,83 @@ async fn send_mobile_codex_message(
         &codex,
         &queue,
         &input.thread_id,
+        &input.message,
+    )
+    .await
+    {
+        Ok(receipt) => json_response(
+            StatusCode::OK,
+            &serde_json::to_value(receipt).unwrap_or_default(),
+        ),
+        Err(error) => json_error(StatusCode::BAD_REQUEST, &error),
+    }
+}
+
+#[derive(Deserialize)]
+struct MobileAgentMessageRequest {
+    session_id: String,
+    provider: String,
+    message: String,
+}
+
+async fn send_mobile_agent_message(
+    request: Request<hyper::body::Incoming>,
+    app: &tauri::AppHandle,
+) -> Response<HttpBody> {
+    let body = match request.into_body().collect().await {
+        Ok(body) => body.to_bytes(),
+        Err(_) => return json_error(StatusCode::BAD_REQUEST, "Invalid message request"),
+    };
+    if body.len() > 24_000 {
+        return json_error(StatusCode::BAD_REQUEST, "Invalid message request");
+    }
+    let input: MobileAgentMessageRequest = match serde_json::from_slice(&body) {
+        Ok(input) => input,
+        Err(_) => return json_error(StatusCode::BAD_REQUEST, "Invalid message request"),
+    };
+    if input.provider == "codex" {
+        let codex = app
+            .state::<Arc<crate::codex_bridge::CodexBridgeState>>()
+            .inner()
+            .clone();
+        let queue = app
+            .state::<Arc<std::sync::Mutex<crate::intervention_queue::InterventionQueue>>>()
+            .inner()
+            .clone();
+        return match crate::commands::enqueue_and_deliver_codex_message(
+            &codex,
+            &queue,
+            &input.session_id,
+            &input.message,
+        )
+        .await
+        {
+            Ok(receipt) => json_response(
+                StatusCode::OK,
+                &serde_json::to_value(receipt).unwrap_or_default(),
+            ),
+            Err(error) => json_error(StatusCode::BAD_REQUEST, &error),
+        };
+    }
+
+    let provider = match input.provider.as_str() {
+        "claude" | "claude-code" => crate::intervention_queue::InterventionProvider::Claude,
+        "opencode" => crate::intervention_queue::InterventionProvider::OpenCode,
+        _ => return json_error(StatusCode::BAD_REQUEST, "Unsupported Agent provider"),
+    };
+    let store = app
+        .state::<Arc<std::sync::Mutex<crate::session_store::SessionStore>>>()
+        .inner()
+        .clone();
+    let queue = app
+        .state::<Arc<std::sync::Mutex<crate::intervention_queue::InterventionQueue>>>()
+        .inner()
+        .clone();
+    match crate::commands::enqueue_and_deliver_cli_message(
+        &store,
+        &queue,
+        provider,
+        &input.session_id,
         &input.message,
     )
     .await
@@ -823,7 +915,7 @@ struct MobileApprovalSummary {
 }
 
 impl MobileSessionSummary {
-    fn from_hook(session: &crate::session_store::Session) -> Self {
+    fn from_hook(session: &crate::session_store::Session, include_actions: bool) -> Self {
         Self {
             id: session.session_id.clone(),
             agent: session.client_type.clone(),
@@ -835,7 +927,9 @@ impl MobileSessionSummary {
             last_activity_at: session.last_event_at.clone(),
             needs_attention: session.has_pending_permission,
             pending_actions: Vec::new(),
-            can_message: false,
+            can_message: include_actions
+                && matches!(session.client_type.as_str(), "claude-code" | "opencode")
+                && session.status != crate::session_store::SessionStatus::Completed,
         }
     }
 
@@ -896,7 +990,10 @@ fn mobile_hook_approval(event: &crate::event_bus::HookEvent) -> Option<MobileApp
     };
     Some(MobileApprovalSummary {
         id: event.id.clone(),
-        provider: "claude".into(),
+        provider: match event.client_type.as_str() {
+            "claude-code" => "claude".into(),
+            other => other.to_string(),
+        },
         operation: tool.to_string(),
         summary: detail
             .map(|detail| format!("{tool} · {detail}"))
@@ -1076,11 +1173,17 @@ mod tests {
             route: None,
         };
 
-        let json = serde_json::to_string(&MobileSessionSummary::from_hook(&session)).unwrap();
+        let json =
+            serde_json::to_string(&MobileSessionSummary::from_hook(&session, false)).unwrap();
         assert!(json.contains("project"));
         assert!(!json.contains("/Users"));
         assert!(!json.contains("private transcript text"));
-        assert!(!MobileSessionSummary::from_hook(&session).can_message);
+        assert!(!MobileSessionSummary::from_hook(&session, false).can_message);
+
+        let mut opencode = session.clone();
+        opencode.client_type = "opencode".into();
+        assert!(!MobileSessionSummary::from_hook(&opencode, false).can_message);
+        assert!(MobileSessionSummary::from_hook(&opencode, true).can_message);
     }
 
     #[test]
