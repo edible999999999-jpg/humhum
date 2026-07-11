@@ -20,6 +20,8 @@ export interface HexaHookSession {
     tmux_pane: string | null;
     iterm_session_id: string | null;
     parent_pid: number | null;
+    transport: string | null;
+    remote_host: string | null;
   } | null;
 }
 

@@ -16,8 +16,9 @@ set -euo pipefail
 HUMHUM_PORT="${HUMHUM_PORT:-31275}"
 HUMHUM_CLIENT="${HUMHUM_CLIENT:-}"
 HUMHUM_EVENT="${HUMHUM_EVENT:-}"
+HUMHUM_REMOTE_HOST="${HUMHUM_REMOTE_HOST:-}"
 DEBUG_LOG="${HUMHUM_DEBUG_LOG:-/tmp/humhum-hook-debug.log}"
-TOKEN_FILE="${HOME}/.humhum/local-api-token"
+TOKEN_FILE="${HUMHUM_TOKEN_FILE:-${HOME}/.humhum/local-api-token}"
 touch "$DEBUG_LOG" 2>/dev/null || true
 chmod 600 "$DEBUG_LOG" 2>/dev/null || true
 
@@ -67,7 +68,7 @@ fi
 # ask the parent process for its controlling TTY and keep environment hints too.
 PARENT_TTY=$(ps -p "$PPID" -o tty= 2>/dev/null | xargs || true)
 PAYLOAD=$(printf '%s' "$PAYLOAD" | \
-  HUMHUM_PARENT_TTY="$PARENT_TTY" HUMHUM_PARENT_PID="$PPID" HUMHUM_EVENT="$HUMHUM_EVENT" python3 -c '
+  HUMHUM_PARENT_TTY="$PARENT_TTY" HUMHUM_PARENT_PID="$PPID" HUMHUM_EVENT="$HUMHUM_EVENT" HUMHUM_REMOTE_HOST="$HUMHUM_REMOTE_HOST" python3 -c '
 import json, os, sys
 
 payload = json.load(sys.stdin)
@@ -96,6 +97,10 @@ put("tty", os.environ.get("HUMHUM_PARENT_TTY"))
 put("tmux", os.environ.get("TMUX"))
 put("tmux_pane", os.environ.get("TMUX_PANE"))
 put("iterm_session_id", os.environ.get("ITERM_SESSION_ID"))
+remote_host = os.environ.get("HUMHUM_REMOTE_HOST", "").strip()
+if remote_host:
+    route["transport"] = "ssh"
+    route["remote_host"] = remote_host
 
 parent_pid = os.environ.get("HUMHUM_PARENT_PID", "").strip()
 if parent_pid.isdigit():

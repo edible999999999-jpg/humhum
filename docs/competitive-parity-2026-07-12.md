@@ -20,7 +20,7 @@ Status meanings:
 | Completion and attention notifications | Complete | Pet overlays, sounds, and native macOS notifications exist for permission, question, tool, and completion events. Notification preference granularity still trails Ping Island. |
 | Transcript backfill | Complete | Local Codex JSONL and Claude stats/readouts feed history and summaries. |
 | Broad client coverage | Partial | Managed profiles now include Claude Code, Codex, Qwen Code, Gemini CLI, Kimi, QoderWork, Qoder, CodeBuddy, WorkBuddy, Cursor, GitHub Copilot CLI and OpenCode; local Pi and Wukong watchers also exist. Copilot normalization was runtime-smoked. OpenCode and Cursor still need an installed-client smoke test, and remote variants remain missing. |
-| SSH remote bridge | Missing | HUMHUM has no authenticated SSH event bridge yet. |
+| SSH remote bridge | Partial | Settings can bootstrap Claude hooks over an already trusted, key-only SSH connection and receive events through a loopback-only reverse tunnel. The remote credential is event-only, stored separately from the local API token, and revoked locally on disconnect. A real remote-host smoke test and multi-host management are still missing. |
 | Custom sound packs and per-agent mascot | Partial | HUMHUM has event sounds and 2D/3D pets, but no imported sound packs or per-agent mascot assignment. |
 | Launch at login | Complete | Settings exposes the native macOS LaunchAgent switch and always reads back system state. Runtime verification created `HumHum.plist` with `RunAtLoad=true`, then disabled it and confirmed clean removal. |
 
@@ -63,12 +63,15 @@ Status meanings:
 - Cursor uses its current flat `~/.cursor/hooks.json` protocol, Copilot uses a versioned user-level `~/.copilot/hooks/humhum.json`, and OpenCode receives a managed global TypeScript plugin without embedded credentials.
 - A synthetic Copilot CLI camelCase event passed through the installed shell hook and appeared as a normalized `github-copilot` session; its private prompt did not appear in the mobile summary.
 - Cursor sessions now route through the verified `com.todesktop.230313mzl4w4u92` bundle and their existing absolute workspace path; invalid or missing paths are rejected before launching.
-- Rust: 65 passed, 1 ignored. Frontend: 11 passed. Production frontend build: passed.
+- The SSH bridge validates targets before process launch, requires an existing known-host entry and SSH key, binds both sides of the reverse tunnel to loopback, and authorizes its separate SHA-256 credential only for `/event`.
+- Remote Claude installation replaces only HUMHUM-managed hook entries, preserves other hooks, labels incoming sessions with their SSH host, and revokes ingress immediately when disconnected or when tunnel exit is observed.
+- SSH bridge limitation: no suitable second host was available for a real remote smoke test; installer, argument boundaries, authorization scope, replacement behavior, and disconnect revocation are covered locally.
+- Rust: 71 passed, 1 ignored. Frontend: 11 passed. Production frontend build: passed.
 
 ## Next Iteration Order
 
 1. Ghostty/Terminal exact terminal identifiers and IDE chat routing.
 2. Real installed-client smoke tests for OpenCode and Cursor, plus OpenCode permission reply support.
 3. Scoped mobile approvals and follow-up on top of the paired read-only foundation.
-4. SSH remote bridge with explicit host trust and scoped credentials.
+4. Real-host SSH smoke testing, multi-host presence, reconnect controls, and remote cleanup.
 5. Internet E2EE relay, push, attachments and multi-machine presence.

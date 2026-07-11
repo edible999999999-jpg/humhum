@@ -11,6 +11,8 @@ pub struct SessionRoute {
     pub tmux_pane: Option<String>,
     pub iterm_session_id: Option<String>,
     pub parent_pid: Option<u32>,
+    pub transport: Option<String>,
+    pub remote_host: Option<String>,
 }
 
 impl SessionRoute {
@@ -30,6 +32,8 @@ impl SessionRoute {
         if newer.parent_pid.is_some() {
             self.parent_pid = newer.parent_pid;
         }
+        merge_text(&mut self.transport, newer.transport);
+        merge_text(&mut self.remote_host, newer.remote_host);
     }
 
     fn normalize(&mut self) {
@@ -40,6 +44,8 @@ impl SessionRoute {
             &mut self.tmux,
             &mut self.tmux_pane,
             &mut self.iterm_session_id,
+            &mut self.transport,
+            &mut self.remote_host,
         ] {
             *value = value
                 .take()
@@ -60,6 +66,8 @@ impl SessionRoute {
             || self.tmux_pane.is_some()
             || self.iterm_session_id.is_some()
             || self.parent_pid.is_some()
+            || self.transport.is_some()
+            || self.remote_host.is_some()
     }
 }
 
@@ -270,7 +278,9 @@ mod tests {
                 "term_program": "iTerm.app",
                 "tty": "/dev/ttys007",
                 "tmux_pane": "%12",
-                "iterm_session_id": "w0t1p0:ABC"
+                "iterm_session_id": "w0t1p0:ABC",
+                "transport": "ssh",
+                "remote_host": "dev@example.com"
             }
         })));
 
@@ -284,6 +294,8 @@ mod tests {
         assert_eq!(route.tty.as_deref(), Some("ttys007"));
         assert_eq!(route.tmux_pane.as_deref(), Some("%12"));
         assert_eq!(route.iterm_session_id.as_deref(), Some("w0t1p0:ABC"));
+        assert_eq!(route.transport.as_deref(), Some("ssh"));
+        assert_eq!(route.remote_host.as_deref(), Some("dev@example.com"));
     }
 
     #[test]

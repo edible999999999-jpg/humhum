@@ -20,6 +20,13 @@ interface WakeGuardStatus {
   message: string;
 }
 
+interface RemoteBridgeStatus {
+  status: "disconnected" | "connected" | "error";
+  target: string | null;
+  remote_port: number;
+  message: string;
+}
+
 const LANG_TO_STT: Record<string, string> = { zh: "zh-CN", en: "en-US" };
 
 export function SettingsPanel({ onClose }: SettingsPanelProps) {
@@ -37,16 +44,20 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
   const [wakeLoading, setWakeLoading] = useState(false);
   const [launchAtLogin, setLaunchAtLogin] = useState(false);
   const [launchAtLoginLoading, setLaunchAtLoginLoading] = useState(false);
+  const [remoteBridge, setRemoteBridge] = useState<RemoteBridgeStatus | null>(null);
+  const [remoteTarget, setRemoteTarget] = useState("");
+  const [remoteLoading, setRemoteLoading] = useState(false);
 
   useEffect(() => {
     (async () => {
       try {
-        const [cfg, status, clientList, awake, autostart] = await Promise.all([
+        const [cfg, status, clientList, awake, autostart, remote] = await Promise.all([
           invoke<AppConfig>("get_config"),
           invoke<Record<string, boolean>>("check_hooks_status"),
           invoke<Array<{ id: string; name: string }>>("get_supported_clients"),
           invoke<WakeGuardStatus>("get_wake_guard_status"),
           invoke<boolean>("get_launch_at_login"),
+          invoke<RemoteBridgeStatus>("get_remote_bridge_status"),
         ]);
         setConfig(cfg as AppConfig);
         setLanguage((cfg as AppConfig).ui.language as "zh" | "en");
@@ -54,12 +65,23 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
         setClients(clientList as Array<{ id: string; name: string }>);
         setWakeStatus(awake);
         setLaunchAtLogin(autostart);
+        setRemoteBridge(remote);
+        setRemoteTarget(remote.target ?? "");
       } catch (e) {
         console.error("Failed to load settings:", e);
       } finally {
         setLoading(false);
       }
     })();
+  }, []);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      invoke<RemoteBridgeStatus>("get_remote_bridge_status")
+        .then(setRemoteBridge)
+        .catch(() => undefined);
+    }, 3000);
+    return () => clearInterval(interval);
   }, []);
 
   const handleSave = useCallback(async () => {
@@ -151,6 +173,22 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
       setLaunchAtLoginLoading(false);
     }
   }, [launchAtLogin, t]);
+
+  const handleRemoteBridgeToggle = useCallback(async () => {
+    setRemoteLoading(true);
+    setMessage(null);
+    try {
+      const status = remoteBridge?.status === "connected"
+        ? await invoke<RemoteBridgeStatus>("disconnect_remote_bridge")
+        : await invoke<RemoteBridgeStatus>("connect_remote_bridge", { target: remoteTarget });
+      setRemoteBridge(status);
+      if (status.target) setRemoteTarget(status.target);
+    } catch (error) {
+      setMessage({ type: "error", text: t("settings.remoteFailed", { e: String(error) }) });
+    } finally {
+      setRemoteLoading(false);
+    }
+  }, [remoteBridge?.status, remoteTarget, t]);
 
   if (loading || !config) {
     return (
@@ -402,6 +440,40 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
                   ? t("settings.launchAtLoginOn")
                   : t("settings.launchAtLoginOff")}
             </button>
+          </div>
+        </KawaiiCard>
+
+        <KawaiiCard icon="⇄" title={t("settings.remoteTitle")} subtitle={t("settings.remoteSubtitle")}>
+          <div className="space-y-2.5">
+            <input
+              type="text"
+              value={remoteTarget}
+              onChange={(event) => setRemoteTarget(event.target.value)}
+              disabled={remoteLoading || remoteBridge?.status === "connected"}
+              placeholder="user@trusted-host"
+              className="kawaii-input"
+              autoCapitalize="none"
+              autoCorrect="off"
+            />
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-xs text-white/60">
+                {remoteBridge?.status === "connected"
+                  ? t("settings.remoteActive", { target: remoteBridge.target ?? remoteTarget })
+                  : t("settings.remoteDesc")}
+              </span>
+              <button
+                type="button"
+                onClick={handleRemoteBridgeToggle}
+                disabled={remoteLoading || (remoteBridge?.status !== "connected" && !remoteTarget.trim())}
+                className={`kawaii-toggle-btn ${remoteBridge?.status === "connected" ? "connected" : ""}`}
+              >
+                {remoteLoading
+                  ? t("settings.remoteChanging")
+                  : remoteBridge?.status === "connected"
+                    ? t("settings.remoteDisconnect")
+                    : t("settings.remoteConnect")}
+              </button>
+            </div>
           </div>
         </KawaiiCard>
 

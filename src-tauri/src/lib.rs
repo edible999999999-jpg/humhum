@@ -14,6 +14,7 @@ mod mobile_bridge;
 #[cfg(target_os = "macos")]
 mod mac_notification_watcher;
 mod pi_sidecar;
+mod remote_bridge;
 mod qoder_log_watcher;
 mod session_store;
 mod stats_store;
@@ -80,6 +81,7 @@ pub fn run() {
                 )
                 .map_err(std::io::Error::other)?;
                 app.manage(Arc::new(mobile_bridge));
+                app.manage(Arc::new(remote_bridge::RemoteBridgeState::default()));
             } else {
                 return Err(std::io::Error::other("Could not determine home directory").into());
             }
@@ -169,6 +171,9 @@ pub fn run() {
             commands::disable_mobile_bridge,
             commands::start_mobile_pairing,
             commands::revoke_mobile_devices,
+            commands::get_remote_bridge_status,
+            commands::connect_remote_bridge,
+            commands::disconnect_remote_bridge,
             commands::set_wake_guard_enabled,
             commands::get_hook_port,
             commands::get_codex_bridge_health,

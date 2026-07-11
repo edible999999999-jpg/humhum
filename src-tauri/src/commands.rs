@@ -13,6 +13,7 @@ use crate::intervention_queue::{InterventionQueue, QueuedIntervention};
 use crate::knowledge_store::{AgentAsset, AgentAssetRootDiagnostic, KnowledgeStore, Preference};
 use crate::mobile_bridge::{MobileBridgeState, MobileBridgeStatus, MobilePairingInfo};
 use crate::pi_sidecar::{self, PiSessionStatus, PiSidecarState, PiStartOptions};
+use crate::remote_bridge::{RemoteBridgeState, RemoteBridgeStatus};
 use crate::session_store::{Session, SessionStatus, SessionStore};
 use crate::stats_store::StatsStore;
 use crate::wake_guard::{WakeGuardState, WakeGuardStatus};
@@ -30,6 +31,33 @@ use tokio::process::Command;
 
 const HUMHUM_HOOK_SCRIPT: &str = include_str!("../../hooks/humhum-hook.sh");
 const HUMHUM_OPENCODE_PLUGIN: &str = include_str!("../../hooks/humhum-opencode-plugin.ts");
+
+#[tauri::command]
+pub async fn get_remote_bridge_status(
+    state: State<'_, Arc<RemoteBridgeState>>,
+) -> Result<RemoteBridgeStatus, String> {
+    Ok(state.status().await)
+}
+
+#[tauri::command]
+pub async fn connect_remote_bridge(
+    config: State<'_, Arc<std::sync::Mutex<AppConfig>>>,
+    state: State<'_, Arc<RemoteBridgeState>>,
+    target: String,
+) -> Result<RemoteBridgeStatus, String> {
+    let local_port = config
+        .lock()
+        .map_err(|error| format!("Lock error: {error}"))?
+        .hook_port;
+    state.connect(&target, local_port).await
+}
+
+#[tauri::command]
+pub async fn disconnect_remote_bridge(
+    state: State<'_, Arc<RemoteBridgeState>>,
+) -> Result<RemoteBridgeStatus, String> {
+    state.disconnect().await
+}
 
 #[tauri::command]
 pub async fn get_launch_at_login(app: AppHandle) -> Result<bool, String> {

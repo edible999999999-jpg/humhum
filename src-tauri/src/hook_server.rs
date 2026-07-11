@@ -1,6 +1,7 @@
 use crate::event_bus::{self, HookEvent, PermissionDecision};
 use crate::local_api_auth::{LocalApiAuth, TOKEN_HEADER};
 use crate::mobile_bridge::MobileBridgeState;
+use crate::remote_bridge::RemoteBridgeState;
 use crate::session_store::SessionStore;
 use crate::stats_store::StatsStore;
 use http_body_util::{BodyExt, Full};
@@ -129,7 +130,10 @@ async fn handle_request(
             .headers()
             .get(TOKEN_HEADER)
             .and_then(|value| value.to_str().ok());
-        if !auth.authorizes(candidate) {
+        let remote_authorized = app_handle
+            .try_state::<Arc<RemoteBridgeState>>()
+            .is_some_and(|remote| remote.authorizes_event(&path, candidate));
+        if !auth.authorizes(candidate) && !remote_authorized {
             return Ok(json_response(
                 StatusCode::UNAUTHORIZED,
                 &serde_json::json!({"error": "local API token required"}),

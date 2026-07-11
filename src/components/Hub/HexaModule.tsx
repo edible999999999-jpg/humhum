@@ -226,6 +226,11 @@ function SessionCard({
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 7 }}>
             <span style={{ color, fontSize: 11, fontWeight: 850 }}>{item.agent_label}</span>
             <StatusBadge item={item} />
+            {item.session.route?.remote_host && (
+              <span style={{ color: "#38bdf8", fontSize: 10, fontWeight: 750, overflowWrap: "anywhere" }}>
+                SSH · {item.session.route.remote_host}
+              </span>
+            )}
             {item.pending_confirmations > 0 && (
               <span
                 style={{
