@@ -23,11 +23,13 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import threading
 import urllib.request
 from pathlib import Path
 
 _STATE = {}
+_DELIVERY_QUEUE = queue.Queue()
 
 
 def _text(value):
@@ -120,6 +122,18 @@ def _deliver(payload):
         pass
 
 
+def _delivery_worker():
+    while True:
+        payload = _DELIVERY_QUEUE.get()
+        try:
+            _deliver(payload)
+        finally:
+            _DELIVERY_QUEUE.task_done()
+
+
+threading.Thread(target=_delivery_worker, daemon=True).start()
+
+
 def _emit(session_id, event_name, cwd=None, **payload):
     envelope = {
         "hook_event_name": event_name,
@@ -128,7 +142,7 @@ def _emit(session_id, event_name, cwd=None, **payload):
         "cwd": cwd,
         **payload,
     }
-    threading.Thread(target=_deliver, args=(envelope,), daemon=True).start()
+    _DELIVERY_QUEUE.put(envelope)
 
 
 def _start(session_id, kwargs, force=False):
@@ -415,5 +429,126 @@ mod tests {
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
+    }
+
+    #[test]
+    fn generated_plugin_delivers_normalized_events() {
+        assert!(
+            PYTHON_SOURCE.contains("queue.Queue"),
+            "delivery must preserve callback order"
+        );
+        let temp = tempfile::tempdir().unwrap();
+        let plugin_dir = temp.path().join("humhum");
+        install_at(&plugin_dir).unwrap();
+        let runner = temp.path().join("smoke.py");
+        let plugin_path = serde_json::to_string(&plugin_dir.join("__init__.py")).unwrap();
+        let workspace = serde_json::to_string(&temp.path().join("workspace")).unwrap();
+        let script = format!(
+            r#"
+import importlib.util
+import json
+import os
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
+
+events = []
+headers = []
+
+class Handler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        size = int(self.headers.get("Content-Length", "0"))
+        events.append(json.loads(self.rfile.read(size)))
+        headers.append(self.headers.get("X-HumHum-Token"))
+        self.send_response(204)
+        self.end_headers()
+    def log_message(self, *_args):
+        pass
+
+server = HTTPServer(("127.0.0.1", 0), Handler)
+threading.Thread(target=server.serve_forever, daemon=True).start()
+humhum = Path(os.environ["HOME"]) / ".humhum"
+humhum.mkdir(parents=True)
+(humhum / "config.json").write_text(json.dumps({{"hook_port": server.server_port}}))
+(humhum / "local-api-token").write_text("smoke-token\n")
+
+spec = importlib.util.spec_from_file_location("humhum_hermes", {plugin_path})
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+class Context:
+    def __init__(self):
+        self.hooks = {{}}
+    def register_hook(self, name, callback):
+        self.hooks[name] = callback
+
+context = Context()
+module.register(context)
+returns = [
+    context.hooks["on_session_start"](session_id="session-1", cwd={workspace}),
+    context.hooks["pre_llm_call"](session_id="session-1", user_message="build it", cwd={workspace}),
+    context.hooks["pre_tool_call"](task_id="session-1", tool_name="terminal", args={{"cmd": "false"}}, cwd={workspace}),
+    context.hooks["post_tool_call"](task_id="session-1", tool_name="terminal", args={{"cmd": "false"}}, result={{"error": "exit 1"}}, cwd={workspace}),
+    context.hooks["post_llm_call"](session_id="session-1", assistant_response="checked", cwd={workspace}),
+    context.hooks["on_session_end"](session_id="session-1", completed=True, cwd={workspace}),
+    context.hooks["on_session_finalize"](session_id="session-1", cwd={workspace}),
+]
+deadline = time.time() + 5
+while len(events) < 7 and time.time() < deadline:
+    time.sleep(0.02)
+server.shutdown()
+print(json.dumps({{"events": events, "headers": headers, "returns": returns}}))
+"#
+        );
+        std::fs::write(&runner, script).unwrap();
+
+        let output = std::process::Command::new("python3")
+            .arg(&runner)
+            .env("HOME", temp.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let events = result["events"].as_array().unwrap();
+        let names: Vec<&str> = events
+            .iter()
+            .map(|event| event["hook_event_name"].as_str().unwrap())
+            .collect();
+
+        assert_eq!(
+            names,
+            [
+                "SessionStart",
+                "UserPromptSubmit",
+                "PreToolUse",
+                "PostToolUseFailure",
+                "Notification",
+                "Stop",
+                "SessionEnd",
+            ]
+        );
+        assert!(events.iter().all(|event| {
+            event["client_type"] == "hermes"
+                && event["session_id"] == "hermes-session-1"
+                && event["cwd"] == temp.path().join("workspace").to_string_lossy().as_ref()
+        }));
+        assert_eq!(events[1]["prompt"], "build it");
+        assert_eq!(events[2]["tool_name"], "terminal");
+        assert_eq!(events[3]["error"], "exit 1");
+        assert!(result["headers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|header| header == "smoke-token"));
+        assert!(result["returns"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(serde_json::Value::is_null));
     }
 }
