@@ -95,12 +95,27 @@ pub fn run() {
                         log::warn!("Could not restore Awake Mode: {error}");
                     }
                 }
-                let mut pulse = tokio::time::interval(std::time::Duration::from_secs(180));
-                pulse.tick().await;
+                let mut pulse = tokio::time::interval(std::time::Duration::from_secs(120));
                 loop {
                     pulse.tick().await;
-                    if wake_guard.status().await.enabled {
-                        let _ = wake_handle.emit("humhum://awake-mode-pulse", ());
+                    let desired_enabled = wake_handle
+                        .state::<Arc<std::sync::Mutex<config::AppConfig>>>()
+                        .lock()
+                        .map(|config| config.ui.awake_mode)
+                        .unwrap_or(false);
+                    if let Err(error) = wake_guard
+                        .reconcile_desired_state(desired_enabled)
+                        .await
+                    {
+                        log::warn!("Could not reconcile Awake Mode: {error}");
+                        continue;
+                    }
+                    match wake_guard.pulse_user_activity().await {
+                        Ok(true) => {
+                            let _ = wake_handle.emit("humhum://awake-mode-pulse", ());
+                        }
+                        Ok(false) => {}
+                        Err(error) => log::warn!("Awake Mode activity pulse failed: {error}"),
                     }
                 }
             });

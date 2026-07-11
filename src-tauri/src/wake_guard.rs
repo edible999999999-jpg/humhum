@@ -105,6 +105,32 @@ impl WakeGuardState {
         Ok(status_from_inner(&inner, self.is_available()))
     }
 
+    pub async fn pulse_user_activity(&self) -> Result<bool, String> {
+        if !self.status().await.enabled {
+            return Ok(false);
+        }
+        let status = Command::new("/usr/bin/caffeinate")
+            .args(build_user_activity_args())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .await
+            .map_err(|error| format!("Could not pulse user activity: {error}"))?;
+        if status.success() {
+            Ok(true)
+        } else {
+            Err(format!("User activity pulse exited with {status}"))
+        }
+    }
+
+    pub async fn reconcile_desired_state(
+        &self,
+        desired_enabled: bool,
+    ) -> Result<WakeGuardStatus, String> {
+        self.set_enabled(desired_enabled).await
+    }
+
     fn is_available(&self) -> bool {
         self.fixed_args.is_some() || std::path::Path::new(&self.program).is_file()
     }
@@ -136,6 +162,10 @@ fn build_caffeinate_args(pid: u32) -> Vec<String> {
     ]
 }
 
+fn build_user_activity_args() -> Vec<String> {
+    vec!["-u".to_string(), "-t".to_string(), "5".to_string()]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -143,6 +173,7 @@ mod tests {
     #[test]
     fn wake_guard_builds_display_idle_and_parent_watch_assertions() {
         assert_eq!(build_caffeinate_args(4242), vec!["-d", "-i", "-w", "4242"]);
+        assert_eq!(build_user_activity_args(), vec!["-u", "-t", "5"]);
     }
 
     #[tokio::test]
@@ -158,6 +189,23 @@ mod tests {
 
         guard.set_enabled(false).await.unwrap();
         assert!(!guard.status().await.enabled);
+    }
+
+    #[tokio::test]
+    async fn enabled_guard_restarts_after_its_child_exits() {
+        let guard = WakeGuardState::with_program("/bin/sleep", vec!["0.05".to_string()]);
+        let first = guard.set_enabled(true).await.unwrap().process_id.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        let second = guard
+            .reconcile_desired_state(true)
+            .await
+            .unwrap()
+            .process_id
+            .unwrap();
+
+        assert_ne!(first, second);
+        guard.set_enabled(false).await.unwrap();
     }
 
     #[cfg(target_os = "macos")]

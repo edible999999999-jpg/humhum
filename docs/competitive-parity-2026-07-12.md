@@ -70,7 +70,9 @@ Status meanings:
 - Mobile Codex follow-ups use the desktop durable intervention queue. Runtime HTTPS verification returned `control` and `read` scopes, control approval reached Codex and returned 409 for a synthetic missing item, read approval returned 403, control malformed message reached parsing with 400, read message returned 403, and revoked tokens returned 401.
 - Hexa lists paired devices without exposing token digests, shows each device's read/control scope, and can revoke one device without invalidating the others; revoke-all remains available.
 - Native macOS notification preferences are independently configurable for approvals, questions, completions, and ordinary Agent messages without hiding the corresponding desktop-pet activity.
-- Rust: 75 passed, 1 ignored. Frontend: 12 passed. Production frontend build: passed.
+- Awake Mode now combines persistent display/system idle assertions with a five-second `UserIsActive` pulse every 120 seconds, restores from saved config, and restarts its long-lived guard if that child exits unexpectedly.
+- Runtime power verification observed the persistent `PreventUserIdleDisplaySleep` and `PreventUserIdleSystemSleep` assertions plus pulse PID 94482 reporting `UserIsActive` with a five-second timeout in `pmset`.
+- Rust: 76 passed, 1 ignored. Frontend: 12 passed. Production frontend build: passed.
 
 ## Next Iteration Order
 
