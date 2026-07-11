@@ -84,9 +84,50 @@ HumHum integrates with Claude Code via its [Hooks system](https://code.claude.co
 3. **Forwarding**: The script POSTs the JSON to HumHum's local HTTP server
 4. **Permission Handling**: For `PermissionRequest`, the server holds the HTTP connection until the user responds (via UI or voice), then returns the decision JSON to the hook script, which outputs it to Claude Code
 
+## Codex App-Server Integration
+
+Hexa connects to the installed Codex CLI through the official `codex app-server`
+JSON-RPC v2 protocol over local stdio.
+
+1. **Compatibility**: HUMHUM checks `codex --version` and exposes a calm bridge
+   health state when Codex is missing, unsupported, starting, connected, or
+   disconnected.
+2. **Handshake**: The bridge sends `initialize`, acknowledges with the required
+   `initialized` notification, and requests recent non-archived threads.
+3. **Projection**: Thread, turn, item, usage, error, approval, and question messages
+   are normalized into provider-neutral Hexa session projections.
+4. **Intervention**: Tauri commands expose only intentional operations: start,
+   resume, send, interrupt, allow once, deny, and answer. The UI cannot send an
+   arbitrary JSON-RPC method.
+5. **Fallback**: A bridge failure changes the visible health state but does not stop
+   Claude hooks, compatible-agent hooks, transcript statistics, Humi, or Hush.
+
+The app-server sends live notifications only for threads subscribed on its connection.
+Hexa therefore provides real-time control for threads it starts or resumes. Threads
+created by an independent Codex process can appear as recent snapshots, but they must
+be resumed through Hexa before HUMHUM treats them as live. The product must not imply
+that it can observe another process's private in-flight event stream.
+
+Approval requests are first-class server requests. HUMHUM retains the exact JSON-RPC
+request ID locally for at most 120 seconds, rejects stale responses, and maps the UI's
+`allow_once` and `deny` choices to Codex's narrow `accept` and `decline` decisions.
+Session-wide or durable approval choices are not exposed by the first release.
+
+Run the real, ignored smoke test explicitly on a machine with an installed and
+authenticated Codex CLI:
+
+```bash
+cd src-tauri
+cargo test --test codex_app_server_smoke -- --ignored --nocapture
+```
+
+The test uses an ephemeral thread in a temporary workspace and expects the exact
+marker `HUMHUM_READY` without modifying a user project.
+
 ## Security
 
 - The hook server listens on `127.0.0.1` only (localhost)
+- The Codex bridge uses a local child process and stdio; it opens no network listener
 - API keys are stored locally in `~/.humhum/config.json`
 - No data is sent to external services except the TTS/STT/LLM APIs the user configures
 - The Tauri capability system restricts filesystem access to specific directories
