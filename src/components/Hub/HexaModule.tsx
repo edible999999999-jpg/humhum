@@ -12,6 +12,11 @@ import {
   type QueuedIntervention,
 } from "../../hooks/useHexaData";
 import { initialInterventionState, interventionReducer } from "../../hooks/interventionState";
+import {
+  interventionMatches,
+  interventionProviderForClient,
+  type InterventionProvider,
+} from "../../hooks/interventionProvider";
 
 const CLIENT_COLORS: Record<string, string> = {
   "claude-code": "#f59e0b",
@@ -198,6 +203,7 @@ function SessionCard({
   const isCompleted = item.session.status === "completed";
   const showReadout = !isCompleted || reviewOpen;
   const [focusState, setFocusState] = useState<"idle" | "busy" | "exact" | "fallback" | "failed">("idle");
+  const interventionProvider = interventionProviderForClient(item.session.client_type);
 
   const focusSession = async () => {
     setFocusState("busy");
@@ -344,9 +350,10 @@ function SessionCard({
 
       {showReadout && <ReviewAction item={item} />}
 
-      {item.session.client_type === "codex" && (
+      {interventionProvider && (
         <CodexIntervention
           item={item}
+          provider={interventionProvider}
           onSend={onSend}
           onInterrupt={onInterrupt}
           onResume={onResume}
@@ -383,6 +390,7 @@ function SessionCard({
 
 function CodexIntervention({
   item,
+  provider,
   onSend,
   onInterrupt,
   onResume,
@@ -392,6 +400,7 @@ function CodexIntervention({
   onDiscardIntervention,
 }: {
   item: HexaSupervisorSession;
+  provider: InterventionProvider;
   onSend: (threadId: string, message: string) => Promise<CodexSendReceipt>;
   onInterrupt: (threadId: string, turnId: string) => Promise<void>;
   onResume: (threadId: string) => Promise<void>;
@@ -403,7 +412,10 @@ function CodexIntervention({
   const [delivery, dispatchDelivery] = useReducer(interventionReducer, initialInterventionState);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const threadId = item.bridge?.provider_thread_id ?? item.session.session_id;
+  const isClaude = provider === "claude";
+  const threadId = isClaude
+    ? item.session.session_id
+    : item.bridge?.provider_thread_id ?? item.session.session_id;
   const currentTurnId = item.bridge?.current_turn_id;
   const sending = delivery.status === "sending";
 
@@ -484,7 +496,7 @@ function CodexIntervention({
           </button>
         </div>
       ))}
-      {item.pending_approvals.map((approval) => (
+      {!isClaude && item.pending_approvals.map((approval) => (
         <div key={approval.approval_id} style={{ display: "grid", gap: 7, padding: 9, borderRadius: 8, background: "rgba(250,204,21,0.07)", border: "1px solid rgba(250,204,21,0.2)" }}>
           <div style={{ color: "rgba(255,255,255,0.66)", fontSize: 11, lineHeight: 1.45 }}>{approval.summary}</div>
           <div style={{ display: "flex", gap: 6 }}>
@@ -494,8 +506,8 @@ function CodexIntervention({
         </div>
       ))}
 
-      {item.can_intervene ? (
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto auto", gap: 7 }}>
+      {isClaude || item.can_intervene ? (
+        <div style={{ display: "grid", gridTemplateColumns: isClaude ? "minmax(0, 1fr) auto" : "minmax(0, 1fr) auto auto", gap: 7 }}>
           <input
             value={delivery.draft}
             onChange={(event) => dispatchDelivery({ type: "draft", value: event.target.value })}
@@ -504,7 +516,7 @@ function CodexIntervention({
                 void sendMessage();
               }
             }}
-            placeholder="给 Codex 发后续指令"
+            placeholder={isClaude ? "给 Claude 发后续指令" : "给 Codex 发后续指令"}
             className="kawaii-input"
           />
           <button
@@ -514,11 +526,11 @@ function CodexIntervention({
             onClick={() => void sendMessage()}
             className="kawaii-toggle-btn connected"
           ><Send size={15} /></button>
-          {currentTurnId ? (
+          {!isClaude && (currentTurnId ? (
             <button type="button" title="中断当前回合" disabled={busy} onClick={() => run(() => onInterrupt(threadId, currentTurnId))} className="kawaii-toggle-btn"><Square size={14} /></button>
           ) : (
             <button type="button" title="恢复会话" disabled={busy} onClick={() => run(() => onResume(threadId))} className="kawaii-toggle-btn"><RotateCcw size={15} /></button>
-          )}
+          ))}
         </div>
       ) : (
         <button type="button" disabled={busy} onClick={() => run(() => onResume(threadId))} className="kawaii-toggle-btn" style={{ width: "fit-content" }}>
@@ -545,7 +557,7 @@ function CodexIntervention({
           : delivery.status === "queued"
             ? "前一条指令尚未送达，当前指令已安全排队"
           : delivery.status === "delivered"
-            ? "已送达 Codex 会话"
+            ? `已送达 ${isClaude ? "Claude" : "Codex"} 会话`
             : delivery.status === "failed"
               ? `发送失败，指令已保留，可重试：${delivery.error}`
               : ""}
@@ -805,6 +817,8 @@ export function HexaModule() {
     queuedInterventions,
     sendCodexMessage,
     retryCodexMessage,
+    sendClaudeMessage,
+    retryClaudeMessage,
     discardQueuedIntervention,
     interruptCodexTurn,
     resumeCodexThread,
@@ -915,25 +929,30 @@ export function HexaModule() {
           <EmptyState />
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
-            {visibleSessions.map((item) => (
-              <SessionCard
-                key={item.session.session_id}
-                item={item}
-                reviewOpen={openReviews.has(item.session.session_id)}
-                onToggleReview={() => toggleReview(item.session.session_id)}
-                onSend={sendCodexMessage}
-                onInterrupt={interruptCodexTurn}
-                onResume={resumeCodexThread}
-                onResolveApproval={resolveCodexApproval}
-                onFocus={focusAgentSession}
-                queuedInterventions={queuedInterventions.filter((queued) => {
-                  const threadId = item.bridge?.provider_thread_id ?? item.session.session_id;
-                  return queued.thread_id === threadId;
-                })}
-                onRetryIntervention={retryCodexMessage}
-                onDiscardIntervention={discardQueuedIntervention}
-              />
-            ))}
+            {visibleSessions.map((item) => {
+              const provider = interventionProviderForClient(item.session.client_type);
+              const threadId = provider === "claude"
+                ? item.session.session_id
+                : item.bridge?.provider_thread_id ?? item.session.session_id;
+              return (
+                <SessionCard
+                  key={item.session.session_id}
+                  item={item}
+                  reviewOpen={openReviews.has(item.session.session_id)}
+                  onToggleReview={() => toggleReview(item.session.session_id)}
+                  onSend={provider === "claude" ? sendClaudeMessage : sendCodexMessage}
+                  onInterrupt={interruptCodexTurn}
+                  onResume={resumeCodexThread}
+                  onResolveApproval={resolveCodexApproval}
+                  onFocus={focusAgentSession}
+                  queuedInterventions={provider
+                    ? queuedInterventions.filter((queued) => interventionMatches(queued, provider, threadId))
+                    : []}
+                  onRetryIntervention={provider === "claude" ? retryClaudeMessage : retryCodexMessage}
+                  onDiscardIntervention={discardQueuedIntervention}
+                />
+              );
+            })}
           </div>
         )}
       </section>

@@ -56,7 +56,7 @@ export interface MobilePairingInfo {
 }
 
 export interface FocusResult {
-  strategy: "tmux_pane" | "iterm_session" | "terminal_tty" | "codex_thread" | "cursor_workspace" | "application" | "generic_terminal";
+  strategy: "tmux_pane" | "iterm_session" | "terminal_tty" | "codex_thread" | "cursor_workspace" | "ghostty_workspace" | "application" | "generic_terminal";
   application: string | null;
   exact: boolean;
 }
@@ -69,6 +69,7 @@ export interface QueuedIntervention {
   attempts: number;
   status: "pending" | "sending" | "failed";
   last_error: string | null;
+  provider?: "codex" | "claude";
 }
 
 export interface CodexSendReceipt {
@@ -597,6 +598,22 @@ export function useHexaData() {
     }
   }, [fetchSessions]);
 
+  const sendClaudeMessage = useCallback(async (sessionId: string, message: string) => {
+    try {
+      return await invoke<CodexSendReceipt>("hexa_send_claude_message", { sessionId, message });
+    } finally {
+      await fetchSessions();
+    }
+  }, [fetchSessions]);
+
+  const retryClaudeMessage = useCallback(async (interventionId: string) => {
+    try {
+      return await invoke<CodexSendReceipt>("hexa_retry_claude_message", { interventionId });
+    } finally {
+      await fetchSessions();
+    }
+  }, [fetchSessions]);
+
   const discardQueuedIntervention = useCallback(async (interventionId: string) => {
     await invoke("discard_queued_intervention", { interventionId });
     await fetchSessions();
@@ -694,6 +711,8 @@ export function useHexaData() {
     queuedInterventions,
     sendCodexMessage,
     retryCodexMessage,
+    sendClaudeMessage,
+    retryClaudeMessage,
     discardQueuedIntervention,
     interruptCodexTurn,
     resumeCodexThread,

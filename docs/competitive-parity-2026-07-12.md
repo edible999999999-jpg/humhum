@@ -16,7 +16,7 @@ Status meanings:
 | Waiting-first attention view | Complete | Hexa orders waiting, stalled/looping, working, idle, then completed; recency breaks ties. |
 | Approve/deny and questions | Complete | Claude hook requests and Codex app-server approvals are session scoped. |
 | Exact jump back | Partial | Hook captures terminal, TTY, tmux pane and iTerm session. Hexa can select an exact tmux pane, iTerm session, allow-listed Terminal.app TTY, a unique Ghostty terminal by canonical workspace, a Codex desktop task through its thread URL, or the exact Cursor workspace. Exact Cursor chat selection and stored Ghostty terminal UUIDs are still missing. |
-| Follow-up from supervisor | Partial | Codex app-server follow-up resumes before send and now reports sending/delivered/failed with retry-preserved text. Generic terminal inline follow-up is not enabled because typing into an unverified target is unsafe. |
+| Follow-up from supervisor | Partial | Codex app-server and known local Claude Code sessions accept follow-ups through provider-scoped durable queues with retry-preserved text. Claude uses its stable session UUID, verified workspace and noninteractive `--resume`; generic terminal typing remains disabled because an unverified target is unsafe. |
 | Completion and attention notifications | Complete | Pet overlays and sounds remain ambient, while native macOS notifications can be enabled independently for approvals, questions, completions, and ordinary Agent messages. Legacy configs migrate with all four enabled. |
 | Transcript backfill | Complete | Local Codex JSONL and Claude stats/readouts feed history and summaries. |
 | Broad client coverage | Partial | Managed profiles include Claude Code, Codex, Qwen Code, Gemini CLI, Kimi, QoderWork, Qoder, CodeBuddy, WorkBuddy, Cursor, GitHub Copilot CLI and OpenCode; local Pi and Wukong watchers also exist. Copilot and installed Cursor 3.10.20 now have runtime smoke evidence. OpenCode is not installed on this Mac, and remote variants remain missing. |
@@ -32,7 +32,7 @@ Status meanings:
 | iOS, Android and web clients | Partial | A responsive HUMHUM Mobile Web page works on the same LAN over HTTPS after explicit one-time read or control pairing. The first visit must trust the generated certificate and can verify its SHA-256 fingerprint in Hexa. Native iOS/Android packaging and internet access remain missing. |
 | End-to-end encrypted relay | Missing | No HUMHUM internet relay exists; an unauthenticated LAN shortcut will not be shipped. |
 | Self-hosted relay | Missing | Requires protocol, identity, storage and deployment work. |
-| Ordered/retryable outgoing messages | Partial | Desktop and mobile Codex follow-ups share an owner-only persistent queue with strict per-thread order, crash recovery, explicit queued/delivered/failed receipts, and retry/discard controls. Claude and future remote transports do not use the queue yet. |
+| Ordered/retryable outgoing messages | Partial | Desktop Claude plus desktop/mobile Codex follow-ups use an owner-only persistent queue with strict per-provider/session order, crash recovery, explicit queued/delivered/failed receipts, and retry/discard controls. Future remote transports do not use the queue yet. |
 | Push notifications | Missing | Native Mac notifications exist, but no APNs/FCM/Web Push path. |
 | Multi-machine sessions | Missing | Local multi-agent sessions work on one Mac; there is no machine registry or presence protocol. |
 | Mobile permission controls | Partial | A separately paired control device can inspect bounded Codex and Claude approval summaries and allow once or deny; read-only devices receive 403 and never receive action summaries. Internet delivery remains missing. |
@@ -52,8 +52,8 @@ Status meanings:
 - Session route data merges without later empty events erasing exact identifiers.
 - tmux pane targets are allow-listed before direct process invocation.
 - Hexa has a stable crosshair action for returning to the originating session.
-- Intervention drafts survive failure and clear only after successful Codex delivery.
-- Codex interventions persist under `~/.humhum/intervention-queue.json`, preserve per-thread order, recover interrupted sends as retryable failures, and never silently auto-repeat after a crash.
+- Intervention drafts survive failure and clear only after successful Codex or Claude delivery.
+- Codex and Claude interventions persist under `~/.humhum/intervention-queue.json`, preserve provider-scoped session order, recover interrupted sends as retryable failures, and never silently auto-repeat after a crash.
 - The localhost API now requires an owner-only token for private data and control routes, disables browser CORS, and keeps only `/health` public.
 - Hook debug logging no longer records message payloads and uses owner-only file permissions.
 - HUMHUM Mobile Web is explicitly enabled, TLS-only, protected by an expiring eight-character pairing challenge with a five-attempt lockout, and exposes redacted read-only session summaries.
@@ -82,19 +82,20 @@ Status meanings:
 - Runtime power verification observed the persistent `PreventUserIdleDisplaySleep` and `PreventUserIdleSystemSleep` assertions plus pulse PID 94482 reporting `UserIsActive` with a five-second timeout in `pmset`.
 - Claude pending permissions are projected to control-scoped mobile devices with full paths reduced to file names. Decisions reuse the desktop pending channel instead of a second execution path.
 - Runtime Claude mobile verification showed `Edit · secret-mobile.txt` without a `/Users` path, returned HTTP 200 for deny, and the blocked hook received `behavior: deny`; the test device was then revoked.
+- Hexa now resumes a known local Claude Code session through the installed Claude 2.1.185 CLI using its stable UUID and canonical workspace. Messages are argument-separated after `--`, use `dontAsk` noninteractive mode, and remain retryable in the durable queue on timeout, launch failure, or nonzero exit. The command shape and queue lifecycle are unit/build verified; no paid live Claude turn was sent during automated verification.
 - Terminal.app routes now normalize only `ttys` plus digits, reject script input, and select the matching AppleScript tab before activating the window. A locked Mac prevented the temporary real-tab smoke test, so this remains unit/build verified rather than runtime verified.
 - Ghostty 1.3+ routes now ask its native AppleScript API for terminals whose working directory matches the session's canonical workspace. HUMHUM focuses only when exactly one terminal matches; ambiguity or Automation failure falls back to ordinary app activation instead of guessing. Workspace data is passed through a child-process environment variable rather than interpolated into AppleScript.
 - Ghostty currently exposes terminal ID, name and working directory but not child PID or TTY through AppleScript. The installed Ghostty 1.3.1 process was detected, but the locked desktop blocked a runtime Apple Event, so unique-workspace focus remains unit/build verified until unlock.
 - The release arm64 `HumHum.app` built successfully. Because the locked desktop stalled only Tauri's decorative DMG Finder layout, a standard compressed read-only DMG was generated directly, verified by `hdiutil`, mounted, and its contained app passed strict deep code-sign verification.
 - Local release artifact: `src-tauri/target/release/bundle/dmg/HumHum_0.1.0_aarch64.dmg` (43 MB), SHA-256 `422479867d106e4fb318b5dff712a45c8cb8fc2562c88a39053800515105cb62`. It includes OpenPeon/CESP sound packs and per-Agent Humi themes, has a complete ad-hoc signature, passed `hdiutil verify`, and its mounted arm64 app passed strict deep code-sign verification. It is not Developer ID signed or notarized, so it is not yet a frictionless public download.
-- Rust: 87 passed, 1 ignored. Frontend: 20 passed. Production frontend build: passed.
+- Rust: 91 passed, 1 ignored. Frontend: 22 passed. Production frontend build: passed.
 
 ## Next Iteration Order
 
 1. Persist Ghostty terminal UUIDs at safe event boundaries and add IDE chat routing.
 2. Install/runtime smoke OpenCode and add OpenCode permission reply support.
-3. Durable queued Claude follow-up on top of the scoped Codex and Claude approval controls.
-4. Real-host SSH smoke testing, multi-host presence, reconnect controls, and remote cleanup.
+3. Real-host SSH smoke testing, multi-host presence, reconnect controls, and remote cleanup.
+4. Extend durable follow-up and permission replies to verified OpenCode and remote transports.
 5. Internet E2EE relay, push, attachments and multi-machine presence.
 
 ## Competitor Sources

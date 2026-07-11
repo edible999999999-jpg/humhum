@@ -1,4 +1,5 @@
 mod agent_kernel;
+mod claude_followup;
 mod client_registry;
 pub mod codex_bridge;
 mod commands;
@@ -10,12 +11,12 @@ mod hush_store;
 mod intervention_queue;
 mod knowledge_store;
 mod local_api_auth;
-mod mobile_bridge;
 #[cfg(target_os = "macos")]
 mod mac_notification_watcher;
+mod mobile_bridge;
 mod pi_sidecar;
-mod remote_bridge;
 mod qoder_log_watcher;
+mod remote_bridge;
 mod session_store;
 mod sound_pack;
 mod stats_store;
@@ -78,10 +79,9 @@ pub fn run() {
                     intervention_queue::InterventionQueue::load_or_create(&home.join(".humhum"))
                         .map_err(std::io::Error::other)?;
                 app.manage(Arc::new(std::sync::Mutex::new(intervention_queue)));
-                let mobile_bridge = mobile_bridge::MobileBridgeState::load_or_create(
-                    &home.join(".humhum"),
-                )
-                .map_err(std::io::Error::other)?;
+                let mobile_bridge =
+                    mobile_bridge::MobileBridgeState::load_or_create(&home.join(".humhum"))
+                        .map_err(std::io::Error::other)?;
                 app.manage(Arc::new(mobile_bridge));
                 app.manage(Arc::new(remote_bridge::RemoteBridgeState::default()));
             } else {
@@ -105,10 +105,7 @@ pub fn run() {
                         .lock()
                         .map(|config| config.ui.awake_mode)
                         .unwrap_or(false);
-                    if let Err(error) = wake_guard
-                        .reconcile_desired_state(desired_enabled)
-                        .await
-                    {
+                    if let Err(error) = wake_guard.reconcile_desired_state(desired_enabled).await {
                         log::warn!("Could not reconcile Awake Mode: {error}");
                         continue;
                     }
@@ -203,8 +200,10 @@ pub fn run() {
             commands::hexa_start_codex_thread,
             commands::hexa_resume_codex_thread,
             commands::hexa_send_codex_message,
+            commands::hexa_send_claude_message,
             commands::get_intervention_queue,
             commands::hexa_retry_codex_message,
+            commands::hexa_retry_claude_message,
             commands::discard_queued_intervention,
             commands::hexa_interrupt_codex_turn,
             commands::hexa_resolve_codex_approval,

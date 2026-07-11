@@ -13,6 +13,14 @@ pub enum InterventionStatus {
     Delivered,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum InterventionProvider {
+    #[default]
+    Codex,
+    Claude,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct QueuedIntervention {
     pub id: String,
@@ -22,6 +30,8 @@ pub struct QueuedIntervention {
     pub attempts: u32,
     pub status: InterventionStatus,
     pub last_error: Option<String>,
+    #[serde(default)]
+    pub provider: InterventionProvider,
 }
 
 pub struct InterventionQueue {
@@ -77,13 +87,25 @@ impl InterventionQueue {
             .position(|entry| entry.id == id)
             .ok_or_else(|| format!("Queued intervention not found: {id}"))?;
         let thread_id = &self.entries[index].thread_id;
+        let provider = self.entries[index].provider;
         Ok(!self.entries[..index].iter().any(|entry| {
-            entry.thread_id == *thread_id && entry.status != InterventionStatus::Delivered
+            entry.provider == provider
+                && entry.thread_id == *thread_id
+                && entry.status != InterventionStatus::Delivered
         }))
     }
 
     pub fn enqueue(
         &mut self,
+        thread_id: &str,
+        message: &str,
+    ) -> Result<QueuedIntervention, String> {
+        self.enqueue_for(InterventionProvider::Codex, thread_id, message)
+    }
+
+    pub fn enqueue_for(
+        &mut self,
+        provider: InterventionProvider,
         thread_id: &str,
         message: &str,
     ) -> Result<QueuedIntervention, String> {
@@ -112,6 +134,7 @@ impl InterventionQueue {
             attempts: 0,
             status: InterventionStatus::Pending,
             last_error: None,
+            provider,
         };
         self.entries.push(entry.clone());
         self.persist()?;
@@ -285,6 +308,7 @@ mod tests {
             attempts: 1,
             status: InterventionStatus::Delivered,
             last_error: None,
+            provider: InterventionProvider::Codex,
         };
         std::fs::write(&path, serde_json::to_vec(&vec![entry]).unwrap()).unwrap();
 
@@ -292,5 +316,31 @@ mod tests {
 
         assert!(queue.entries().is_empty());
         assert_eq!(std::fs::read_to_string(path).unwrap().trim(), "[]");
+    }
+
+    #[test]
+    fn records_the_transport_provider_for_new_interventions() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut queue = InterventionQueue::load_or_create(temp.path()).unwrap();
+
+        let entry = queue
+            .enqueue_for(InterventionProvider::Claude, "claude-session", "continue")
+            .unwrap();
+
+        assert_eq!(entry.provider, InterventionProvider::Claude);
+        let reloaded = InterventionQueue::load_or_create(temp.path()).unwrap();
+        assert_eq!(reloaded.entries()[0].provider, InterventionProvider::Claude);
+    }
+
+    #[test]
+    fn orders_messages_independently_for_each_provider() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut queue = InterventionQueue::load_or_create(temp.path()).unwrap();
+        queue.enqueue("same-id", "codex first").unwrap();
+        let claude = queue
+            .enqueue_for(InterventionProvider::Claude, "same-id", "claude first")
+            .unwrap();
+
+        assert!(queue.is_next_for_thread(&claude.id).unwrap());
     }
 }

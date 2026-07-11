@@ -9,7 +9,7 @@ use crate::event_bus::{self, HookEvent, PermissionDecision};
 use crate::hexa_protocol::HexaSessionProjection;
 use crate::hook_server::PendingMap;
 use crate::hush_store::{HushInboxSummary, HushStore};
-use crate::intervention_queue::{InterventionQueue, QueuedIntervention};
+use crate::intervention_queue::{InterventionProvider, InterventionQueue, QueuedIntervention};
 use crate::knowledge_store::{AgentAsset, AgentAssetRootDiagnostic, KnowledgeStore, Preference};
 use crate::mobile_bridge::{
     MobileBridgeState, MobileBridgeStatus, MobileDeviceScope, MobilePairingInfo,
@@ -103,12 +103,8 @@ mod client_hook_install_tests {
             .unwrap()
             .contains("PreCompact"));
 
-        uninstall_flat_json_hooks(
-            &path,
-            &["preToolUse", "sessionStart", "preCompact"],
-            false,
-        )
-        .unwrap();
+        uninstall_flat_json_hooks(&path, &["preToolUse", "sessionStart", "preCompact"], false)
+            .unwrap();
         let value: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(value["hooks"]["preToolUse"].as_array().unwrap().len(), 1);
         assert_eq!(value["hooks"]["preToolUse"][0]["command"], "user-hook");
@@ -317,6 +313,43 @@ pub async fn hexa_send_codex_message(
     enqueue_and_deliver_codex_message(&state, &queue, &thread_id, &message).await
 }
 
+#[tauri::command]
+pub async fn hexa_send_claude_message(
+    store: State<'_, Arc<std::sync::Mutex<SessionStore>>>,
+    queue: State<'_, Arc<std::sync::Mutex<InterventionQueue>>>,
+    session_id: String,
+    message: String,
+) -> Result<CodexSendReceipt, String> {
+    let workspace = claude_followup_workspace(&store, &session_id)?;
+    let entry = queue
+        .lock()
+        .map_err(|error| format!("Queue lock error: {error}"))?
+        .enqueue_for(InterventionProvider::Claude, &session_id, &message)?;
+    let is_next = queue
+        .lock()
+        .map_err(|error| format!("Queue lock error: {error}"))?
+        .is_next_for_thread(&entry.id)?;
+    if !is_next {
+        return Ok(CodexSendReceipt {
+            status: "queued".into(),
+            turn_id: None,
+            intervention_id: entry.id,
+        });
+    }
+    match deliver_queued_claude_message(&queue, &entry.id, &workspace).await {
+        Ok(()) => Ok(CodexSendReceipt {
+            status: "delivered".into(),
+            turn_id: None,
+            intervention_id: entry.id,
+        }),
+        Err(_) => Ok(CodexSendReceipt {
+            status: "queued".into(),
+            turn_id: None,
+            intervention_id: entry.id,
+        }),
+    }
+}
+
 pub(crate) async fn enqueue_and_deliver_codex_message(
     state: &CodexBridgeState,
     queue: &std::sync::Mutex<InterventionQueue>,
@@ -384,6 +417,31 @@ pub async fn hexa_retry_codex_message(
 }
 
 #[tauri::command]
+pub async fn hexa_retry_claude_message(
+    store: State<'_, Arc<std::sync::Mutex<SessionStore>>>,
+    queue: State<'_, Arc<std::sync::Mutex<InterventionQueue>>>,
+    intervention_id: String,
+) -> Result<CodexSendReceipt, String> {
+    let entry = queue
+        .lock()
+        .map_err(|error| format!("Queue lock error: {error}"))?
+        .entries()
+        .into_iter()
+        .find(|entry| entry.id == intervention_id)
+        .ok_or_else(|| format!("Queued intervention not found: {intervention_id}"))?;
+    if entry.provider != InterventionProvider::Claude {
+        return Err("Queued intervention is not a Claude message".into());
+    }
+    let workspace = claude_followup_workspace(&store, &entry.thread_id)?;
+    deliver_queued_claude_message(&queue, &intervention_id, &workspace).await?;
+    Ok(CodexSendReceipt {
+        status: "delivered".into(),
+        turn_id: None,
+        intervention_id,
+    })
+}
+
+#[tauri::command]
 pub async fn discard_queued_intervention(
     queue: State<'_, Arc<std::sync::Mutex<InterventionQueue>>>,
     intervention_id: String,
@@ -423,6 +481,61 @@ async fn deliver_queued_codex_message(
                 .mark_failed(intervention_id, &message)
                 .map_err(|queue_error| format!("{message}; queue update failed: {queue_error}"))?;
             Err(message)
+        }
+    }
+}
+
+fn claude_followup_workspace(
+    store: &std::sync::Mutex<SessionStore>,
+    session_id: &str,
+) -> Result<PathBuf, String> {
+    let store = store
+        .lock()
+        .map_err(|error| format!("Session lock error: {error}"))?;
+    let session = store
+        .get_all_sessions_with_history()
+        .into_iter()
+        .find(|session| session.session_id == session_id)
+        .ok_or_else(|| "Claude session is no longer known to HUMHUM".to_string())?;
+    if session.client_type != "claude-code" {
+        return Err("Only local Claude Code sessions can be resumed".into());
+    }
+    session
+        .cwd
+        .as_deref()
+        .map(PathBuf::from)
+        .ok_or_else(|| "Claude session has no known workspace".into())
+}
+
+async fn deliver_queued_claude_message(
+    queue: &std::sync::Mutex<InterventionQueue>,
+    intervention_id: &str,
+    workspace: &Path,
+) -> Result<(), String> {
+    let entry = queue
+        .lock()
+        .map_err(|error| format!("Queue lock error: {error}"))?
+        .mark_sending(intervention_id)?;
+    if entry.provider != InterventionProvider::Claude {
+        let message = "Queued intervention is not a Claude message";
+        queue
+            .lock()
+            .map_err(|error| format!("{message}; queue lock error: {error}"))?
+            .mark_failed(intervention_id, message)?;
+        return Err(message.into());
+    }
+    match crate::claude_followup::send_followup(&entry.thread_id, workspace, &entry.message).await {
+        Ok(()) => queue
+            .lock()
+            .map_err(|error| format!("Queue lock error after delivery: {error}"))?
+            .mark_delivered(intervention_id),
+        Err(error) => {
+            queue
+                .lock()
+                .map_err(|lock_error| format!("{error}; queue lock error: {lock_error}"))?
+                .mark_failed(intervention_id, &error)
+                .map_err(|queue_error| format!("{error}; queue update failed: {queue_error}"))?;
+            Err(error)
         }
     }
 }
@@ -2058,7 +2171,9 @@ pub async fn focus_agent_session(
     session_id: String,
 ) -> Result<window_focus::FocusResult, String> {
     let (route, workspace, client_type) = {
-        let store = store.lock().map_err(|error| format!("Lock error: {error}"))?;
+        let store = store
+            .lock()
+            .map_err(|error| format!("Lock error: {error}"))?;
         store
             .get_all_sessions_with_history()
             .into_iter()
@@ -2089,7 +2204,10 @@ pub async fn focus_agent_session(
     }
 
     let codex_thread = bridge.sessions().into_iter().find_map(|session| {
-        let thread_id = session.provider_thread_id.as_deref().unwrap_or(&session.session_id);
+        let thread_id = session
+            .provider_thread_id
+            .as_deref()
+            .unwrap_or(&session.session_id);
         (session.session_id == session_id || thread_id == session_id).then(|| thread_id.to_string())
     });
     if let Some(thread_id) = codex_thread {
@@ -2807,7 +2925,10 @@ fn build_hexa_readout(session: &crate::session_store::Session) -> HexaReadout {
 
     let mut evidence = Vec::new();
     if !signals.user_messages.is_empty() {
-        evidence.push(format!("读到最近 {} 条用户消息", signals.user_messages.len().min(10)));
+        evidence.push(format!(
+            "读到最近 {} 条用户消息",
+            signals.user_messages.len().min(10)
+        ));
     }
     if !signals.tool_names.is_empty() {
         evidence.push(format!(
@@ -3154,7 +3275,9 @@ pub async fn get_humi_context_tool(
                     })
                 })
                 .collect::<Vec<_>>();
-            Ok(serde_json::json!({ "tool": tool, "preferences": preferences, "memories": memories }))
+            Ok(
+                serde_json::json!({ "tool": tool, "preferences": preferences, "memories": memories }),
+            )
         }
         "get_project_context" => {
             let keyword = query.unwrap_or_default();
@@ -3189,7 +3312,9 @@ pub async fn get_humi_context_tool(
                     })
                 })
                 .collect::<Vec<_>>();
-            Ok(serde_json::json!({ "tool": tool, "query": keyword, "rules": rules, "assets": assets }))
+            Ok(
+                serde_json::json!({ "tool": tool, "query": keyword, "rules": rules, "assets": assets }),
+            )
         }
         "get_user_preferences" => {
             let knowledge = knowledge.lock().map_err(|e| format!("Lock error: {}", e))?;
