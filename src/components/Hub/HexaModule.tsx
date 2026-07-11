@@ -97,7 +97,7 @@ function StatusPill({ item }: { item: HexaSupervisorSession }) {
 
 function NoteList({ title, notes }: { title: string; notes: HexaSupervisorNote[] }) {
   return (
-    <div>
+    <div style={{ minWidth: 0 }}>
       <div style={{ fontSize: 10, color: "rgba(255,255,255,0.32)", marginBottom: 6, fontWeight: 700 }}>
         {title}
       </div>
@@ -119,7 +119,7 @@ function NoteList({ title, notes }: { title: string; notes: HexaSupervisorNote[]
               }}
             >
               <span style={{ width: 6, height: 6, marginTop: 5, borderRadius: "50%", background: color }} />
-              <span>{note.text}</span>
+              <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>{note.text}</span>
             </div>
           );
         })}
@@ -130,7 +130,7 @@ function NoteList({ title, notes }: { title: string; notes: HexaSupervisorNote[]
 
 function MemoryList({ locations }: { locations: HexaMemoryLocation[] }) {
   return (
-    <div>
+    <div style={{ minWidth: 0 }}>
       <div style={{ fontSize: 10, color: "rgba(255,255,255,0.32)", marginBottom: 6, fontWeight: 700 }}>
         Memory locations
       </div>
@@ -139,13 +139,14 @@ function MemoryList({ locations }: { locations: HexaMemoryLocation[] }) {
           <div
             key={`${location.label}-${location.path}`}
             style={{
+              minWidth: 0,
               padding: "7px 8px",
               borderRadius: 8,
               background: "rgba(255,255,255,0.025)",
               border: "1px solid rgba(255,255,255,0.055)",
             }}
           >
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 3 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 3, minWidth: 0 }}>
               <span style={{ fontSize: 11, color: "rgba(255,255,255,0.68)", fontWeight: 650 }}>
                 {location.label}
               </span>
@@ -158,15 +159,14 @@ function MemoryList({ locations }: { locations: HexaMemoryLocation[] }) {
                 fontSize: 10,
                 color: "rgba(255,255,255,0.4)",
                 fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
+                overflowWrap: "anywhere",
+                lineHeight: 1.35,
               }}
               title={location.path}
             >
               {location.path}
             </div>
-            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.28)", marginTop: 3, lineHeight: 1.35 }}>
+            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.28)", marginTop: 3, lineHeight: 1.35, overflowWrap: "anywhere" }}>
               {location.description}
             </div>
           </div>
@@ -204,6 +204,7 @@ function StatStrip({ item }: { item: HexaSupervisorSession }) {
         >
           <div style={{ fontSize: 9, color: "rgba(255,255,255,0.26)", marginBottom: 2 }}>{label}</div>
           <div
+            className="hexa-session-details"
             style={{
               fontSize: 12,
               color: "rgba(255,255,255,0.72)",
@@ -309,11 +310,11 @@ function SessionPanel({
               paddingTop: 12,
               borderTop: "1px solid rgba(255,255,255,0.06)",
               display: "grid",
-              gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
               gap: 14,
+              alignItems: "start",
             }}
           >
-            <div style={{ display: "grid", gap: 14 }}>
+            <div style={{ display: "grid", gap: 14, minWidth: 0 }}>
               <MemoryList locations={item.memory_locations} />
               {item.session.cwd && (
                 <div>
@@ -334,7 +335,7 @@ function SessionPanel({
                 </div>
               )}
             </div>
-            <div style={{ display: "grid", gap: 14 }}>
+            <div style={{ display: "grid", gap: 14, minWidth: 0 }}>
               <NoteList title="Strong outputs" notes={item.strong_outputs} />
               <NoteList title="Watchouts" notes={item.watchouts} />
               {recentEvents.length > 0 && (
@@ -342,7 +343,7 @@ function SessionPanel({
                   <div style={{ fontSize: 10, color: "rgba(255,255,255,0.32)", marginBottom: 6, fontWeight: 700 }}>
                     Event trail
                   </div>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 4, minWidth: 0 }}>
                     {recentEvents.map((eventName, index) => (
                       <span
                         key={`${eventName}-${index}`}
@@ -353,6 +354,8 @@ function SessionPanel({
                           color: "rgba(255,255,255,0.42)",
                           fontSize: 9,
                           fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                          maxWidth: "100%",
+                          overflowWrap: "anywhere",
                         }}
                       >
                         {eventName}
