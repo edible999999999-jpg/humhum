@@ -351,6 +351,51 @@ pub async fn clear_hush_inbox(
 }
 
 #[tauri::command]
+pub async fn get_hush_notification_bridge_status(app: tauri::AppHandle) -> Result<Value, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let status = app.state::<
+            Arc<std::sync::Mutex<crate::mac_notification_watcher::MacNotificationBridgeStatus>>,
+        >();
+        let status = status
+            .lock()
+            .map_err(|error| format!("Lock error: {error}"))?
+            .clone();
+        return serde_json::to_value(status).map_err(|error| error.to_string());
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        Ok(serde_json::json!({
+            "state": "source_missing",
+            "message": "The local notification bridge is available on macOS only.",
+            "last_scan_at": null,
+            "supported_apps": []
+        }))
+    }
+}
+
+#[tauri::command]
+pub async fn open_full_disk_access_settings() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let output = Command::new("open")
+            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")
+            .output()
+            .await
+            .map_err(|error| format!("Failed to open Full Disk Access settings: {error}"))?;
+        if output.status.success() {
+            return Ok(());
+        }
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    Err("Full Disk Access settings are available on macOS only.".to_string())
+}
+
+#[tauri::command]
 pub async fn import_dingtalk_local_source(
     app: tauri::AppHandle,
     store: State<'_, Arc<std::sync::Mutex<HushStore>>>,

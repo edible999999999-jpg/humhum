@@ -73,6 +73,11 @@ pub fn run() {
             let hush_store = hush_store::HushStore::new();
             app.manage(Arc::new(std::sync::Mutex::new(hush_store)));
 
+            #[cfg(target_os = "macos")]
+            app.manage(Arc::new(std::sync::Mutex::new(
+                mac_notification_watcher::MacNotificationBridgeStatus::default(),
+            )));
+
             // Pi sidecar process registry. Sessions are started only by explicit command.
             app.manage(Arc::new(pi_sidecar::PiSidecarState::default()));
 
@@ -88,6 +93,10 @@ pub fn run() {
 
             // Start Wukong r2c database watcher
             wukong_watcher::start_watcher(app_handle.clone());
+
+            // Start the read-only Hush bridge for new local macOS notifications.
+            #[cfg(target_os = "macos")]
+            mac_notification_watcher::start_watcher(app_handle.clone());
 
             // Build system tray menu
             setup_tray(app)?;
@@ -111,6 +120,8 @@ pub fn run() {
             commands::open_hush_connector,
             commands::get_hush_inbox,
             commands::clear_hush_inbox,
+            commands::get_hush_notification_bridge_status,
+            commands::open_full_disk_access_settings,
             commands::diagnose_dingtalk_local_sources,
             commands::import_dingtalk_local_source,
             commands::install_hooks,

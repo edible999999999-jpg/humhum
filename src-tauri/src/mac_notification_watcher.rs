@@ -1,9 +1,13 @@
+use crate::hush_store::HushStore;
 use chrono::{DateTime, Utc};
 use plist::{Dictionary, Value};
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::io::Cursor;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use tauri::{AppHandle, Emitter, Manager};
 
 const APPLE_UNIX_EPOCH_OFFSET_SECONDS: f64 = 978_307_200.0;
 
@@ -18,6 +22,25 @@ enum SourceError {
     PermissionDenied(String),
     Missing(String),
     Database(String),
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MacNotificationBridgeStatus {
+    pub state: String,
+    pub message: String,
+    pub last_scan_at: Option<String>,
+    pub supported_apps: Vec<String>,
+}
+
+impl Default for MacNotificationBridgeStatus {
+    fn default() -> Self {
+        Self {
+            state: "starting".to_string(),
+            message: "Preparing the local notification bridge.".to_string(),
+            last_scan_at: None,
+            supported_apps: supported_apps(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -59,6 +82,186 @@ fn initial_cursor(path: &Path) -> Result<NotificationCursor, SourceError> {
         .optional()
         .map(|cursor| cursor.unwrap_or_default())
         .map_err(|error| SourceError::Database(error.to_string()))
+}
+
+fn load_or_initialize_cursor(
+    database_path: &Path,
+    cursor_path: &Path,
+) -> Result<NotificationCursor, SourceError> {
+    if cursor_path.exists() {
+        let contents = std::fs::read_to_string(cursor_path)
+            .map_err(|error| SourceError::Database(error.to_string()))?;
+        return serde_json::from_str(&contents)
+            .map_err(|error| SourceError::Database(error.to_string()));
+    }
+
+    let cursor = initial_cursor(database_path)?;
+    save_cursor(cursor_path, &cursor)?;
+    Ok(cursor)
+}
+
+fn save_cursor(path: &Path, cursor: &NotificationCursor) -> Result<(), SourceError> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| SourceError::Database(error.to_string()))?;
+    }
+    let contents = serde_json::to_string_pretty(cursor)
+        .map_err(|error| SourceError::Database(error.to_string()))?;
+    std::fs::write(path, contents).map_err(|error| SourceError::Database(error.to_string()))
+}
+
+fn status_from_source_error(error: SourceError) -> MacNotificationBridgeStatus {
+    let (state, message) = match error {
+        SourceError::PermissionDenied(detail) => (
+            "permission_required",
+            format!("Grant HUMHUM Full Disk Access to read local notifications. {detail}"),
+        ),
+        SourceError::Missing(detail) => (
+            "source_missing",
+            format!("The macOS notification database was not found at {detail}."),
+        ),
+        SourceError::Database(detail) => (
+            "error",
+            format!("The local notification bridge could not scan the database. {detail}"),
+        ),
+    };
+    MacNotificationBridgeStatus {
+        state: state.to_string(),
+        message,
+        last_scan_at: None,
+        supported_apps: supported_apps(),
+    }
+}
+
+fn supported_apps() -> Vec<String> {
+    vec!["WeChat".to_string(), "DingTalk".to_string()]
+}
+
+fn default_database_path() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("Library/Group Containers/group.com.apple.usernoted/db2/db")
+}
+
+fn default_cursor_path() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".humhum/hush-notification-cursor.json")
+}
+
+pub fn start_watcher(app: AppHandle) {
+    let _ = std::thread::Builder::new()
+        .name("hush-macos-notifications".to_string())
+        .spawn(move || watch_notifications(app));
+}
+
+fn watch_notifications(app: AppHandle) {
+    let database_path = default_database_path();
+    let cursor_path = default_cursor_path();
+    let mut cursor = loop {
+        match load_or_initialize_cursor(&database_path, &cursor_path) {
+            Ok(cursor) => break cursor,
+            Err(error) => {
+                replace_status(&app, status_from_source_error(error));
+                std::thread::sleep(Duration::from_secs(2));
+            }
+        }
+    };
+
+    loop {
+        match fetch_new_notifications(&database_path, &cursor) {
+            Ok(batch) => {
+                let mut write_failed = false;
+                let mut imported = 0usize;
+                for notification in &batch.notifications {
+                    match import_notification(&app, notification) {
+                        Ok(true) => imported += 1,
+                        Ok(false) => {}
+                        Err(error) => {
+                            write_failed = true;
+                            replace_status(
+                                &app,
+                                MacNotificationBridgeStatus {
+                                    state: "error".to_string(),
+                                    message: format!(
+                                        "A local notification could not be saved to Hush. {error}"
+                                    ),
+                                    last_scan_at: Some(Utc::now().to_rfc3339()),
+                                    supported_apps: supported_apps(),
+                                },
+                            );
+                            break;
+                        }
+                    }
+                }
+
+                if !write_failed {
+                    if batch.cursor != cursor {
+                        if let Err(error) = save_cursor(&cursor_path, &batch.cursor) {
+                            replace_status(&app, status_from_source_error(error));
+                            std::thread::sleep(Duration::from_secs(2));
+                            continue;
+                        }
+                        cursor = batch.cursor;
+                    }
+                    let message = if batch.skipped_records > 0 {
+                        format!(
+                            "Watching WeChat and DingTalk. Imported {imported}; skipped {} unreadable notification record(s).",
+                            batch.skipped_records
+                        )
+                    } else if imported > 0 {
+                        format!("Watching WeChat and DingTalk. Imported {imported} new notification(s).")
+                    } else {
+                        "Watching new WeChat and DingTalk notifications.".to_string()
+                    };
+                    replace_status(
+                        &app,
+                        MacNotificationBridgeStatus {
+                            state: "running".to_string(),
+                            message,
+                            last_scan_at: Some(Utc::now().to_rfc3339()),
+                            supported_apps: supported_apps(),
+                        },
+                    );
+                }
+            }
+            Err(error) => replace_status(&app, status_from_source_error(error)),
+        }
+        std::thread::sleep(Duration::from_secs(2));
+    }
+}
+
+fn import_notification(
+    app: &AppHandle,
+    notification: &DecodedNotification,
+) -> Result<bool, String> {
+    let store = app.state::<Arc<Mutex<HushStore>>>();
+    let mut store = store.lock().map_err(|error| error.to_string())?;
+    if store.contains_source_id(&notification.source_id) {
+        return Ok(false);
+    }
+
+    let raw = serde_json::json!({
+        "platform": notification.platform,
+        "sender": notification.sender,
+        "chat": notification.chat,
+        "text": notification.text,
+        "received_at": notification.received_at,
+        "source_id": notification.source_id,
+        "preview_limited": notification.preview_limited,
+        "source": "macos_notification_center"
+    });
+    let message = store.add_from_value(raw)?;
+    drop(store);
+    let _ = app.emit("humhum://hush-message", &message);
+    Ok(true)
+}
+
+fn replace_status(app: &AppHandle, status: MacNotificationBridgeStatus) {
+    let managed = app.state::<Arc<Mutex<MacNotificationBridgeStatus>>>();
+    if let Ok(mut current) = managed.lock() {
+        *current = status;
+    };
 }
 
 fn fetch_new_notifications(
@@ -237,6 +440,13 @@ mod tests {
         path
     }
 
+    fn temp_file(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "humhum-notification-{label}-{}.json",
+            Uuid::new_v4()
+        ))
+    }
+
     fn insert_record(
         path: &PathBuf,
         record_id: i64,
@@ -377,5 +587,48 @@ mod tests {
         assert_eq!(batch.cursor.delivered_date, 102.0);
         assert_eq!(batch.cursor.record_id, 43);
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn missing_cursor_is_initialized_and_reused_after_restart() {
+        let database = temp_database("persist-cursor");
+        let cursor_file = temp_file("persist-cursor");
+        let existing = fixture_plist("com.tencent.xinWeChat", Some("Alice"), "existing", None);
+        insert_record(&database, 41, 1, 100.0, &existing);
+
+        let first = super::load_or_initialize_cursor(&database, &cursor_file).unwrap();
+        assert_eq!(first.record_id, 41);
+        assert!(cursor_file.exists());
+
+        let next = fixture_plist(
+            "com.tencent.xinWeChat",
+            Some("Alice"),
+            "after restart",
+            None,
+        );
+        insert_record(&database, 42, 1, 101.0, &next);
+        let resumed = super::load_or_initialize_cursor(&database, &cursor_file).unwrap();
+        assert_eq!(resumed.record_id, 41);
+        assert_eq!(
+            super::fetch_new_notifications(&database, &resumed)
+                .unwrap()
+                .notifications
+                .len(),
+            1
+        );
+
+        let _ = std::fs::remove_file(database);
+        let _ = std::fs::remove_file(cursor_file);
+    }
+
+    #[test]
+    fn permission_error_has_actionable_status() {
+        let status = super::status_from_source_error(super::SourceError::PermissionDenied(
+            "operation not permitted".to_string(),
+        ));
+
+        assert_eq!(status.state, "permission_required");
+        assert!(status.message.contains("Full Disk Access"));
+        assert_eq!(status.supported_apps, vec!["WeChat", "DingTalk"]);
     }
 }
