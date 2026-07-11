@@ -197,6 +197,75 @@ fn valid_cursor_workspace(path: &std::path::Path) -> bool {
     path.is_absolute() && path.is_dir()
 }
 
+fn ghostty_workspace_target(
+    route: &SessionRoute,
+    workspace: &str,
+) -> Option<std::path::PathBuf> {
+    let application = route
+        .term_program
+        .as_deref()
+        .and_then(normalize_terminal_application)?;
+    if application != "Ghostty" {
+        return None;
+    }
+    let path = std::path::Path::new(workspace);
+    (path.is_absolute() && path.is_dir())
+        .then(|| path.canonicalize().ok())
+        .flatten()
+}
+
+pub fn focus_ghostty_workspace(
+    route: &SessionRoute,
+    workspace: &str,
+) -> Result<FocusResult, String> {
+    let path = ghostty_workspace_target(route, workspace)
+        .ok_or("Ghostty focus requires an existing absolute workspace")?;
+    #[cfg(target_os = "macos")]
+    {
+        const SCRIPT: &str = r#"set targetPath to system attribute "HUMHUM_GHOSTTY_WORKSPACE"
+tell application id "com.mitchellh.ghostty"
+set matchingTerminalIDs to {}
+repeat with aTerminal in terminals
+try
+set terminalPath to (working directory of aTerminal as text)
+if terminalPath is targetPath or terminalPath starts with (targetPath & "/") then
+copy (id of aTerminal as text) to end of matchingTerminalIDs
+end if
+end try
+end repeat
+if (count of matchingTerminalIDs) is not 1 then
+error "Ghostty workspace is not unique"
+end if
+set targetTerminalID to item 1 of matchingTerminalIDs
+set targetTerminal to first terminal whose id is targetTerminalID
+focus targetTerminal
+activate
+return "ok"
+end tell"#;
+        let output = Command::new("osascript")
+            .env("HUMHUM_GHOSTTY_WORKSPACE", &path)
+            .args(["-e", SCRIPT])
+            .output()
+            .map_err(|error| format!("Could not focus Ghostty workspace: {error}"))?;
+        if !output.status.success() || String::from_utf8_lossy(&output.stdout).trim() != "ok" {
+            return Err(format!(
+                "Could not uniquely focus Ghostty workspace: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        Ok(FocusResult {
+            strategy: "ghostty_workspace".into(),
+            application: Some("Ghostty".into()),
+            exact: true,
+        })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = path;
+        Err("Ghostty workspace focus only supported on macOS".into())
+    }
+}
+
 pub fn focus_cursor_workspace(workspace: &str) -> Result<FocusResult, String> {
     let path = std::path::Path::new(workspace);
     if !valid_cursor_workspace(path) {
@@ -504,5 +573,30 @@ mod tests {
             "relative/project"
         )));
         assert!(!valid_cursor_workspace(&temp.path().join("missing")));
+    }
+
+    #[test]
+    fn ghostty_workspace_target_requires_a_real_directory_and_ghostty_route() {
+        let temp = tempfile::tempdir().unwrap();
+        let route = SessionRoute {
+            term_program: Some("Ghostty".into()),
+            ..SessionRoute::default()
+        };
+
+        assert_eq!(
+            ghostty_workspace_target(&route, temp.path().to_str().unwrap()),
+            Some(temp.path().canonicalize().unwrap())
+        );
+        assert_eq!(ghostty_workspace_target(&route, "relative/project"), None);
+        assert_eq!(
+            ghostty_workspace_target(
+                &SessionRoute {
+                    term_program: Some("Terminal".into()),
+                    ..SessionRoute::default()
+                },
+                temp.path().to_str().unwrap()
+            ),
+            None
+        );
     }
 }

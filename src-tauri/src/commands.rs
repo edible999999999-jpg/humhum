@@ -2069,6 +2069,11 @@ pub async fn focus_agent_session(
             }
         }
     }
+    if let (Some(route), Some(workspace)) = (route.as_ref(), workspace.as_deref()) {
+        if let Ok(result) = window_focus::focus_ghostty_workspace(route, workspace) {
+            return Ok(result);
+        }
+    }
     if route.is_some() {
         return window_focus::focus_agent_route(route.as_ref());
     }

@@ -15,7 +15,7 @@ Status meanings:
 | Live Claude/Codex supervision | Complete | Claude hooks plus Codex app-server sessions feed Hexa and the pet. |
 | Waiting-first attention view | Complete | Hexa orders waiting, stalled/looping, working, idle, then completed; recency breaks ties. |
 | Approve/deny and questions | Complete | Claude hook requests and Codex app-server approvals are session scoped. |
-| Exact jump back | Partial | Hook captures terminal, TTY, tmux pane and iTerm session. Hexa can select an exact tmux pane, iTerm session, or allow-listed Terminal.app TTY, open a Codex desktop task through its thread URL, or reopen the exact Cursor workspace. Exact Cursor chat selection and Ghostty terminal identifiers are still missing. |
+| Exact jump back | Partial | Hook captures terminal, TTY, tmux pane and iTerm session. Hexa can select an exact tmux pane, iTerm session, allow-listed Terminal.app TTY, a unique Ghostty terminal by canonical workspace, a Codex desktop task through its thread URL, or the exact Cursor workspace. Exact Cursor chat selection and stored Ghostty terminal UUIDs are still missing. |
 | Follow-up from supervisor | Partial | Codex app-server follow-up resumes before send and now reports sending/delivered/failed with retry-preserved text. Generic terminal inline follow-up is not enabled because typing into an unverified target is unsafe. |
 | Completion and attention notifications | Complete | Pet overlays and sounds remain ambient, while native macOS notifications can be enabled independently for approvals, questions, completions, and ordinary Agent messages. Legacy configs migrate with all four enabled. |
 | Transcript backfill | Complete | Local Codex JSONL and Claude stats/readouts feed history and summaries. |
@@ -80,13 +80,15 @@ Status meanings:
 - Claude pending permissions are projected to control-scoped mobile devices with full paths reduced to file names. Decisions reuse the desktop pending channel instead of a second execution path.
 - Runtime Claude mobile verification showed `Edit · secret-mobile.txt` without a `/Users` path, returned HTTP 200 for deny, and the blocked hook received `behavior: deny`; the test device was then revoked.
 - Terminal.app routes now normalize only `ttys` plus digits, reject script input, and select the matching AppleScript tab before activating the window. A locked Mac prevented the temporary real-tab smoke test, so this remains unit/build verified rather than runtime verified.
+- Ghostty 1.3+ routes now ask its native AppleScript API for terminals whose working directory matches the session's canonical workspace. HUMHUM focuses only when exactly one terminal matches; ambiguity or Automation failure falls back to ordinary app activation instead of guessing. Workspace data is passed through a child-process environment variable rather than interpolated into AppleScript.
+- Ghostty currently exposes terminal ID, name and working directory but not child PID or TTY through AppleScript. The installed Ghostty 1.3.1 process was detected, but the locked desktop blocked a runtime Apple Event, so unique-workspace focus remains unit/build verified until unlock.
 - The release arm64 `HumHum.app` built successfully. Because the locked desktop stalled only Tauri's decorative DMG Finder layout, a standard compressed read-only DMG was generated directly, verified by `hdiutil`, mounted, and its contained app passed strict deep code-sign verification.
 - Local release artifact: `src-tauri/target/release/bundle/dmg/HumHum_0.1.0_aarch64.dmg` (43 MB), SHA-256 `422479867d106e4fb318b5dff712a45c8cb8fc2562c88a39053800515105cb62`. It includes OpenPeon/CESP sound packs and per-Agent Humi themes, has a complete ad-hoc signature, passed `hdiutil verify`, and its mounted arm64 app passed strict deep code-sign verification. It is not Developer ID signed or notarized, so it is not yet a frictionless public download.
-- Rust: 84 passed, 1 ignored. Frontend: 20 passed. Production frontend build: passed.
+- Rust: 85 passed, 1 ignored. Frontend: 20 passed. Production frontend build: passed.
 
 ## Next Iteration Order
 
-1. Ghostty exact terminal identifiers and IDE chat routing.
+1. Persist Ghostty terminal UUIDs at safe event boundaries and add IDE chat routing.
 2. Real installed-client smoke tests for OpenCode and Cursor, plus OpenCode permission reply support.
 3. Durable queued Claude follow-up on top of the scoped Codex and Claude approval controls.
 4. Real-host SSH smoke testing, multi-host presence, reconnect controls, and remote cleanup.
