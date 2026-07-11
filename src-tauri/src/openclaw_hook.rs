@@ -244,9 +244,6 @@ fn set_activation(config: &mut Value, enabled: bool) -> Result<(), String> {
         .ok_or_else(|| "OpenClaw config root must be an object".to_string())?;
     let hooks = object_entry(root, "hooks")?;
     let internal = object_entry(hooks, "internal")?;
-    if enabled {
-        internal.insert("enabled".into(), Value::Bool(true));
-    }
     let entries = object_entry(internal, "entries")?;
     if enabled {
         let entry = entries
@@ -257,6 +254,15 @@ fn set_activation(config: &mut Value, enabled: bool) -> Result<(), String> {
         entry.insert("enabled".into(), Value::Bool(true));
     } else {
         entries.remove(ENTRY_NAME);
+        if entries.is_empty() {
+            internal.remove("entries");
+        }
+        if internal.is_empty() {
+            hooks.remove("internal");
+        }
+        if hooks.is_empty() {
+            root.remove("hooks");
+        }
     }
     Ok(())
 }
@@ -387,6 +393,26 @@ mod tests {
     }
 
     #[test]
+    fn uninstall_restores_config_when_humhum_created_the_hook_parents() {
+        let temp = tempfile::tempdir().unwrap();
+        let hook_dir = temp.path().join("hooks/humhum-openclaw");
+        let config_path = temp.path().join("openclaw.json");
+        let original: Value = json!({ "private": "keep" });
+        std::fs::write(
+            &config_path,
+            serde_json::to_string_pretty(&original).unwrap(),
+        )
+        .unwrap();
+
+        install_at(&hook_dir, &config_path).unwrap();
+        uninstall_at(&hook_dir, &config_path).unwrap();
+
+        let restored: Value =
+            serde_json::from_str(&std::fs::read_to_string(config_path).unwrap()).unwrap();
+        assert_eq!(restored, original);
+    }
+
+    #[test]
     fn generated_handler_delivers_ordered_authenticated_events() {
         let temp = tempfile::tempdir().unwrap();
         let hook_dir = temp.path().join("hooks/humhum-openclaw");
@@ -486,5 +512,24 @@ console.log(JSON.stringify({{ events, headers, returns }}));
             .unwrap()
             .iter()
             .all(Value::is_null));
+    }
+
+    #[test]
+    #[ignore = "writes to an explicitly supplied OpenClaw home"]
+    fn installs_into_an_explicit_openclaw_home() {
+        let home = std::env::var_os("HUMHUM_OPENCLAW_LIVE_HOME")
+            .expect("HUMHUM_OPENCLAW_LIVE_HOME is required");
+        let home = std::path::PathBuf::from(home);
+
+        install_at(
+            &home.join("hooks/humhum-openclaw"),
+            &home.join("openclaw.json"),
+        )
+        .unwrap();
+
+        assert!(is_installed_at(
+            &home.join("hooks/humhum-openclaw"),
+            &home.join("openclaw.json"),
+        ));
     }
 }
