@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { useTranslation } from "../../lib/i18n/react";
 
 const PLATFORM_ICONS: Record<string, string> = {
@@ -40,6 +41,15 @@ interface HushInboxMessage {
   importance: number;
   suggested_reply?: string | null;
   received_at: string;
+  source_id?: string | null;
+  preview_limited?: boolean;
+}
+
+interface NotificationBridgeStatus {
+  state: "starting" | "running" | "permission_required" | "source_missing" | "error";
+  message: string;
+  last_scan_at: string | null;
+  supported_apps: string[];
 }
 
 interface HushInboxSummary {
@@ -96,6 +106,7 @@ export function HushModule() {
   const [collapsedTiers, setCollapsedTiers] = useState<Set<string>>(new Set());
   const [connectors, setConnectors] = useState<HushConnectorStatus[]>([]);
   const [inbox, setInbox] = useState<HushInboxSummary | null>(null);
+  const [notificationBridge, setNotificationBridge] = useState<NotificationBridgeStatus | null>(null);
   const [dingTalkReport, setDingTalkReport] = useState<DingTalkLocalSourceReport | null>(null);
   const [dingTalkImportReport, setDingTalkImportReport] = useState<DingTalkImportReport | null>(null);
   const [dingTalkImportPath, setDingTalkImportPath] = useState("");
@@ -132,6 +143,47 @@ export function HushModule() {
     const interval = setInterval(fetchInbox, 4000);
     return () => clearInterval(interval);
   }, [fetchInbox]);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    listen("humhum://hush-message", () => fetchInbox()).then((stop) => {
+      if (disposed) stop();
+      else unlisten = stop;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [fetchInbox]);
+
+  const fetchNotificationBridge = useCallback(async () => {
+    try {
+      const status = await invoke<NotificationBridgeStatus>("get_hush_notification_bridge_status");
+      setNotificationBridge(status);
+    } catch (error) {
+      setNotificationBridge({
+        state: "error",
+        message: String(error),
+        last_scan_at: null,
+        supported_apps: ["WeChat", "DingTalk"],
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchNotificationBridge();
+    const interval = setInterval(fetchNotificationBridge, 5000);
+    return () => clearInterval(interval);
+  }, [fetchNotificationBridge]);
+
+  const openFullDiskAccess = useCallback(async () => {
+    try {
+      await invoke("open_full_disk_access_settings");
+    } catch (error) {
+      setConnectorError(String(error));
+    }
+  }, []);
 
   const openConnector = useCallback(async (connectorId: string) => {
     setOpeningConnector(connectorId);
@@ -264,6 +316,7 @@ export function HushModule() {
           <HushConnectorCard
             key={connector.id}
             connector={connector}
+            notificationActive={notificationBridge?.state === "running"}
             busy={openingConnector === connector.id}
             onOpen={() => openConnector(connector.id)}
           />
@@ -274,7 +327,8 @@ export function HushModule() {
           {connectorError}
         </div>
       )}
-      <HushTruthPanel connectors={connectors} inbox={inbox} />
+      <NotificationBridgePanel status={notificationBridge} onOpenSettings={openFullDiskAccess} />
+      <HushTruthPanel connectors={connectors} inbox={inbox} bridge={notificationBridge} />
 
       <DingTalkSourcePanel
         report={dingTalkReport}
@@ -424,6 +478,11 @@ export function HushModule() {
                         <div style={{ fontSize: 12, color: "#334155", lineHeight: 1.5 }}>
                           {msg.text}
                         </div>
+                        {msg.preview_limited && (
+                          <div style={{ marginTop: 5, fontSize: 10, color: "#b7791f", lineHeight: 1.4 }}>
+                            {t("hub.hush.bridge.limitedPreview")}
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -433,7 +492,7 @@ export function HushModule() {
                 {(() => {
                   const withReply = [...selectedContact.messages]
                     .reverse()
-                    .find((m) => m.suggested_reply);
+                    .find((m) => m.suggested_reply && !m.preview_limited);
                   if (!withReply?.suggested_reply) return null;
                   return (
                     <div>
@@ -473,20 +532,91 @@ export function HushModule() {
   );
 }
 
+function NotificationBridgePanel({
+  status,
+  onOpenSettings,
+}: {
+  status: NotificationBridgeStatus | null;
+  onOpenSettings: () => void;
+}) {
+  const { t } = useTranslation();
+  const state = status?.state ?? "starting";
+  const stateColor = state === "running" ? "#15803d" : state === "starting" ? "#64748b" : "#b45309";
+  const lastScan = status?.last_scan_at
+    ? new Date(status.last_scan_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+    : null;
+
+  return (
+    <div
+      style={{
+        marginBottom: 14,
+        padding: "11px 13px",
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        borderRadius: 8,
+        background: "rgba(255,255,255,0.58)",
+        border: "1px solid rgba(116,143,165,0.16)",
+      }}
+    >
+      <span
+        aria-hidden="true"
+        style={{
+          width: 8,
+          height: 8,
+          flex: "0 0 auto",
+          borderRadius: "50%",
+          background: stateColor,
+          boxShadow: `0 0 0 3px ${stateColor}20`,
+        }}
+      />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 12, fontWeight: 850, color: "#334155" }}>
+            {t("hub.hush.bridge.title")}
+          </span>
+          <span style={{ fontSize: 10, fontWeight: 800, color: stateColor }}>
+            {t(`hub.hush.bridge.${state}`)}
+          </span>
+          {(status?.supported_apps ?? ["WeChat", "DingTalk"]).map((app) => (
+            <span key={app} style={{ fontSize: 9, color: "#64748b" }}>{app}</span>
+          ))}
+        </div>
+        <div style={{ marginTop: 3, fontSize: 10, color: "#64748b", lineHeight: 1.4 }}>
+          {t(`hub.hush.bridge.${state}Desc`)}
+          {lastScan ? ` · ${t("hub.hush.bridge.lastScan", { time: lastScan })}` : ""}
+        </div>
+      </div>
+      {state === "permission_required" && (
+        <button className="kawaii-tab" onClick={onOpenSettings} style={{ fontSize: 10, padding: "5px 9px" }}>
+          {t("hub.hush.bridge.openSettings")}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function HushTruthPanel({
   connectors,
   inbox,
+  bridge,
 }: {
   connectors: HushConnectorStatus[];
   inbox: HushInboxSummary | null;
+  bridge: NotificationBridgeStatus | null;
 }) {
   const dingTalk = connectors.find((connector) => connector.id === "dingtalk");
-  const state = dingTalk?.bridge_ready
+  const notificationActive = bridge?.state === "running";
+  const state = notificationActive
+    ? "Local notifications connected"
+    : dingTalk?.bridge_ready
     ? "Connected"
     : dingTalk?.installed
       ? "App found, messages not indexed"
       : "Not connected";
-  const detail = dingTalk?.bridge_ready
+  const detail = notificationActive
+    ? "Hush is reading new WeChat and DingTalk notifications delivered by macOS. Private chat databases remain untouched."
+    : dingTalk?.bridge_ready
     ? "Hush can summarize approved local messages."
     : dingTalk?.installed
       ? "Opening DingTalk is not enough. Scan local sources, then choose a read-only export/log path for HUMHUM to index."
@@ -709,6 +839,7 @@ function LiveInboxPanel({
   onRefresh: () => void;
   onClear: () => void;
 }) {
+  const { t } = useTranslation();
   const messages = inbox?.messages ?? [];
   return (
     <div
@@ -772,7 +903,12 @@ function LiveInboxPanel({
                 </span>
               </div>
               <div style={{ fontSize: 12, color: "rgba(255,255,255,0.68)", lineHeight: 1.5 }}>{message.text}</div>
-              {message.suggested_reply && (
+              {message.preview_limited && (
+                <div style={{ marginTop: 5, fontSize: 10, color: "#fbbf24", lineHeight: 1.4 }}>
+                  {t("hub.hush.bridge.limitedPreview")}
+                </div>
+              )}
+              {message.suggested_reply && !message.preview_limited && (
                 <div style={{ marginTop: 6, fontSize: 11, color: "rgba(148,239,244,0.72)", lineHeight: 1.45 }}>
                   Suggested: {message.suggested_reply}
                 </div>
@@ -796,16 +932,18 @@ function MiniInboxStat({ label, value }: { label: string; value: number }) {
 
 function HushConnectorCard({
   connector,
+  notificationActive,
   busy,
   onOpen,
 }: {
   connector: HushConnectorStatus;
+  notificationActive: boolean;
   busy: boolean;
   onOpen: () => void;
 }) {
   const icon = connector.id === "dingtalk" ? "🔷" : "💬";
-  const statusColor = connector.bridge_ready ? "#34d399" : connector.installed ? "#fbbf24" : "#fb7185";
-  const statusLabel = connector.bridge_ready ? "Message bridge ready" : connector.installed ? "App launch ready" : "Not installed";
+  const statusColor = notificationActive ? "#34d399" : connector.bridge_ready ? "#34d399" : connector.installed ? "#fbbf24" : "#fb7185";
+  const statusLabel = notificationActive ? "Notification bridge active" : connector.bridge_ready ? "Message bridge ready" : connector.installed ? "App launch ready" : "Not installed";
 
   return (
     <div

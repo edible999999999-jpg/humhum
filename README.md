@@ -158,7 +158,8 @@ scripts/                # Edge TTS bridge, etc.
 
 - [ ] Remote approval and status from your phone (scan to connect, no app to install)
 - [ ] Cross-device preference and context sync
-- [ ] Real Hush message bridges (currently read-only import + demo contacts)
+- [x] Read-only macOS notification bridge for new WeChat and DingTalk messages
+- [ ] Rich Hush history bridges for user-approved chat exports
 - [ ] Smart permission policies (learning your approval habits)
 - [ ] More Agent integrations and an open hook-protocol standard
 - [ ] Full Windows / Linux support
