@@ -56,7 +56,7 @@ export interface MobilePairingInfo {
 }
 
 export interface FocusResult {
-  strategy: "tmux_pane" | "iterm_session" | "codex_thread" | "cursor_workspace" | "application" | "generic_terminal";
+  strategy: "tmux_pane" | "iterm_session" | "terminal_tty" | "codex_thread" | "cursor_workspace" | "application" | "generic_terminal";
   application: string | null;
   exact: boolean;
 }

@@ -19,6 +19,7 @@ const TERMINALS: &[&str] = &[
 enum FocusStrategy {
     TmuxPane(String),
     ITermSession(String),
+    TerminalTty(String),
     Application(String),
     GenericTerminal,
 }
@@ -56,6 +57,14 @@ fn is_valid_tmux_pane(value: &str) -> bool {
         .is_some_and(|digits| !digits.is_empty() && digits.chars().all(|ch| ch.is_ascii_digit()))
 }
 
+fn normalize_tty(value: &str) -> Option<String> {
+    let value = value.trim();
+    let suffix = value.strip_prefix("/dev/").unwrap_or(value);
+    let digits = suffix.strip_prefix("ttys")?;
+    (!digits.is_empty() && digits.chars().all(|character| character.is_ascii_digit()))
+        .then(|| format!("/dev/{suffix}"))
+}
+
 fn choose_focus_strategy(route: &SessionRoute) -> FocusStrategy {
     if let Some(pane) = route
         .tmux_pane
@@ -70,6 +79,16 @@ fn choose_focus_strategy(route: &SessionRoute) -> FocusStrategy {
         .filter(|value| !value.is_empty())
     {
         return FocusStrategy::ITermSession(session.to_string());
+    }
+    if route
+        .term_program
+        .as_deref()
+        .and_then(normalize_terminal_application)
+        == Some("Terminal")
+    {
+        if let Some(tty) = route.tty.as_deref().and_then(normalize_tty) {
+            return FocusStrategy::TerminalTty(tty);
+        }
     }
     if let Some(application) = route
         .term_program
@@ -108,6 +127,14 @@ pub fn focus_agent_route(route: Option<&SessionRoute>) -> Result<FocusResult, St
             Ok(FocusResult {
                 strategy: "iterm_session".into(),
                 application: Some("iTerm2".into()),
+                exact: true,
+            })
+        }
+        FocusStrategy::TerminalTty(tty) => {
+            focus_terminal_tty(&tty)?;
+            Ok(FocusResult {
+                strategy: "terminal_tty".into(),
+                application: Some("Terminal".into()),
                 exact: true,
             })
         }
@@ -290,6 +317,42 @@ end tell"#
     }
 }
 
+fn focus_terminal_tty(tty: &str) -> Result<(), String> {
+    let tty = normalize_tty(tty).ok_or("Invalid Terminal TTY identifier")?;
+    #[cfg(target_os = "macos")]
+    {
+        let script = format!(
+            r#"tell application "Terminal"
+repeat with aWindow in windows
+repeat with aTab in tabs of aWindow
+if (tty of aTab as text) is "{tty}" then
+set selected tab of aWindow to aTab
+set index of aWindow to 1
+activate
+return
+end if
+end repeat
+end repeat
+error "Terminal TTY not found"
+end tell"#
+        );
+        let output = Command::new("osascript")
+            .args(["-e", &script])
+            .output()
+            .map_err(|error| format!("Could not focus Terminal TTY: {error}"))?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = tty;
+        Err("Terminal TTY focus only supported on macOS".into())
+    }
+}
+
 pub fn focus_terminal_app() -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
@@ -408,6 +471,21 @@ mod tests {
     }
 
     #[test]
+    fn terminal_tty_is_exact_and_rejects_script_input() {
+        let route = SessionRoute {
+            term_program: Some("Terminal.app".into()),
+            tty: Some("ttys007".into()),
+            ..SessionRoute::default()
+        };
+        assert_eq!(
+            choose_focus_strategy(&route),
+            FocusStrategy::TerminalTty("/dev/ttys007".into())
+        );
+        assert_eq!(normalize_tty("/dev/ttys12"), Some("/dev/ttys12".into()));
+        assert_eq!(normalize_tty("ttys12\"; do shell script \"bad"), None);
+    }
+
+    #[test]
     fn codex_thread_urls_accept_only_stable_thread_identifiers() {
         assert_eq!(
             codex_thread_url("019f26d2-b29e-7b50-a232-520d8a1a9d49"),
@@ -422,7 +500,9 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
 
         assert!(valid_cursor_workspace(temp.path()));
-        assert!(!valid_cursor_workspace(std::path::Path::new("relative/project")));
+        assert!(!valid_cursor_workspace(std::path::Path::new(
+            "relative/project"
+        )));
         assert!(!valid_cursor_workspace(&temp.path().join("missing")));
     }
 }
