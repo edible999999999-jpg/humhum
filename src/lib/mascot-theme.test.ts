@@ -6,6 +6,7 @@ describe("resolveMascotTheme", () => {
     expect(resolveMascotTheme("codex").id).toBe("codex");
     expect(resolveMascotTheme("github-copilot").id).toBe("github-copilot");
     expect(resolveMascotTheme("hermes").id).toBe("hermes");
+    expect(resolveMascotTheme("openclaw").id).toBe("openclaw");
   });
 
   it("applies a valid per-Agent override", () => {

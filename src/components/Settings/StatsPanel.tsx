@@ -38,6 +38,7 @@ const CLIENT_LABELS: Record<string, string> = {
   "kimi-k1": "Kimi K1",
   qoderwork: "QoderWork",
   hermes: "Hermes Agent",
+  openclaw: "OpenClaw",
   wukong: "Wukong",
 };
 
@@ -49,6 +50,7 @@ const CLIENT_COLORS: Record<string, string> = {
   "kimi-k1": "bg-purple-500/80",
   qoderwork: "bg-rose-400/80",
   hermes: "bg-teal-500/80",
+  openclaw: "bg-red-500/80",
   wukong: "bg-yellow-500/80",
 };
 

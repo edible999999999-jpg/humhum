@@ -18,6 +18,7 @@ pub enum ConfigFormat {
     CopilotJson,
     OpenCodePlugin,
     HermesPlugin,
+    OpenClawHook,
 }
 
 pub const CLIENTS: &[ClientProfile] = &[
@@ -218,6 +219,13 @@ pub const CLIENTS: &[ClientProfile] = &[
             "on_session_reset",
         ],
     },
+    ClientProfile {
+        id: "openclaw",
+        name: "OpenClaw",
+        config_format: ConfigFormat::OpenClawHook,
+        config_path: ".openclaw/hooks/humhum-openclaw",
+        hook_events: &["command", "message", "session"],
+    },
 ];
 
 pub fn get_client(id: &str) -> Option<&'static ClientProfile> {
@@ -255,6 +263,15 @@ mod tests {
         assert_eq!(profile.config_path, ".hermes/plugins/humhum");
         assert!(profile.hook_events.contains(&"pre_tool_call"));
         assert!(profile.hook_events.contains(&"on_session_finalize"));
+    }
+
+    #[test]
+    fn includes_openclaw_internal_hook_profile() {
+        let profile = get_client("openclaw").expect("missing OpenClaw client profile");
+
+        assert!(matches!(profile.config_format, ConfigFormat::OpenClawHook));
+        assert_eq!(profile.config_path, ".openclaw/hooks/humhum-openclaw");
+        assert_eq!(profile.hook_events, ["command", "message", "session"]);
     }
 
     #[test]

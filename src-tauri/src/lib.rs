@@ -17,6 +17,7 @@ mod local_api_auth;
 #[cfg(target_os = "macos")]
 mod mac_notification_watcher;
 mod mobile_bridge;
+mod openclaw_hook;
 mod opencode_followup;
 mod pi_sidecar;
 mod qoder_log_watcher;

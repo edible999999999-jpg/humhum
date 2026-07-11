@@ -2464,7 +2464,7 @@ pub async fn install_hooks_for_client(
 
     let hook_cmd = if matches!(
         profile.config_format,
-        ConfigFormat::OpenCodePlugin | ConfigFormat::HermesPlugin
+        ConfigFormat::OpenCodePlugin | ConfigFormat::HermesPlugin | ConfigFormat::OpenClawHook
     ) {
         None
     } else {
@@ -2529,6 +2529,9 @@ fn install_client_format(
         ConfigFormat::CopilotJson => install_flat_json_hooks(config_path, command()?, events, true),
         ConfigFormat::OpenCodePlugin => install_opencode_plugin(config_path, port),
         ConfigFormat::HermesPlugin => crate::hermes_plugin::install_at(config_path),
+        ConfigFormat::OpenClawHook => {
+            crate::openclaw_hook::install_at(config_path, &openclaw_activation_path(config_path)?)
+        }
     }
 }
 
@@ -2544,6 +2547,9 @@ fn uninstall_client_format(
         ConfigFormat::CopilotJson => uninstall_flat_json_hooks(config_path, events, true),
         ConfigFormat::OpenCodePlugin => uninstall_opencode_plugin(config_path),
         ConfigFormat::HermesPlugin => crate::hermes_plugin::uninstall_at(config_path),
+        ConfigFormat::OpenClawHook => {
+            crate::openclaw_hook::uninstall_at(config_path, &openclaw_activation_path(config_path)?)
+        }
     }
 }
 
@@ -2551,7 +2557,20 @@ fn client_format_is_installed(format: &ConfigFormat, config_path: &Path) -> bool
     if matches!(format, ConfigFormat::HermesPlugin) {
         return crate::hermes_plugin::is_installed_at(config_path);
     }
+    if matches!(format, ConfigFormat::OpenClawHook) {
+        return openclaw_activation_path(config_path).is_ok_and(|activation_path| {
+            crate::openclaw_hook::is_installed_at(config_path, &activation_path)
+        });
+    }
     std::fs::read_to_string(config_path).is_ok_and(|content| content.contains("humhum"))
+}
+
+fn openclaw_activation_path(hook_dir: &Path) -> Result<PathBuf, String> {
+    hook_dir
+        .parent()
+        .and_then(Path::parent)
+        .map(|openclaw_dir| openclaw_dir.join("openclaw.json"))
+        .ok_or_else(|| "Invalid OpenClaw hook directory".to_string())
 }
 
 fn install_json_hooks(

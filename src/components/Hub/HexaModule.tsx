@@ -34,6 +34,7 @@ const CLIENT_COLORS: Record<string, string> = {
   "gemini-cli": "#38bdf8",
   "kimi-k1": "#f97316",
   hermes: "#0f9f8f",
+  openclaw: "#e85d4a",
   wukong: "#eab308",
 };
 

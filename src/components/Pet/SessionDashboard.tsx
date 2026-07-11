@@ -22,6 +22,7 @@ const CLIENT_COLORS: Record<string, string> = {
   "kimi-k1": "bg-purple-500/80",
   qoderwork: "bg-rose-400/80",
   hermes: "bg-teal-500/80",
+  openclaw: "bg-red-500/80",
 };
 
 const CLIENT_LABELS: Record<string, string> = {
@@ -32,6 +33,7 @@ const CLIENT_LABELS: Record<string, string> = {
   "kimi-k1": "Kimi",
   qoderwork: "Qoder",
   hermes: "Hermes Agent",
+  openclaw: "OpenClaw",
 };
 
 const STATUS_DOTS: Record<string, string> = {

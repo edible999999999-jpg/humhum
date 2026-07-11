@@ -153,6 +153,7 @@ const CLIENT_LABELS: Record<string, string> = {
   "gemini-cli": "Gemini CLI",
   "kimi-k1": "Kimi K1",
   hermes: "Hermes Agent",
+  openclaw: "OpenClaw",
   wukong: "Wukong",
 };
 
