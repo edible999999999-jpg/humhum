@@ -38,3 +38,5 @@ base64 = "0.22"
 cocoa = "0.26"
 objc = "0.2"
 dispatch = "0.2"
+plist = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }

@@ -6,6 +6,8 @@ mod event_bus;
 mod hook_server;
 mod hush_store;
 mod knowledge_store;
+#[cfg(target_os = "macos")]
+mod mac_notification_watcher;
 mod pi_sidecar;
 mod qoder_log_watcher;
 mod session_store;
