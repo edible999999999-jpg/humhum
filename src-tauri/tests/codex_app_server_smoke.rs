@@ -16,12 +16,29 @@ async fn observes_a_disposable_codex_thread() {
                     "title": "HUMHUM smoke test",
                     "version": env!("CARGO_PKG_VERSION")
                 },
-                "capabilities": {"experimentalApi": false}
+                "capabilities": {"experimentalApi": true}
             }),
         )
         .await
         .unwrap();
     transport.notify("initialized", json!({})).await.unwrap();
+
+    let remote = transport
+        .request("remoteControl/status/read", json!({}))
+        .await
+        .unwrap();
+    assert!(
+        remote["status"].is_string(),
+        "missing remote status: {remote}"
+    );
+    assert!(
+        remote["serverName"].is_string(),
+        "missing remote server name: {remote}"
+    );
+    assert!(
+        remote["installationId"].is_string(),
+        "missing remote installation: {remote}"
+    );
 
     let started = transport
         .request(

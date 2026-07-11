@@ -1,7 +1,9 @@
 import { Fragment, useState, type CSSProperties } from "react";
-import { RotateCcw, Send, Square } from "lucide-react";
+import { Link as LinkIcon, Power, RotateCcw, Send, Smartphone, Square } from "lucide-react";
 import {
   useHexaData,
+  type CodexRemoteControlState,
+  type CodexRemotePairing,
   type HexaSupervisorSession,
   type HexaMemoryLocation,
   type HexaSupervisorNote,
@@ -565,6 +567,120 @@ function iconButtonStyle(color: string, disabled: boolean): CSSProperties {
   };
 }
 
+function RemoteControlPanel({
+  state,
+  pairing,
+  onEnable,
+  onDisable,
+  onPair,
+}: {
+  state: CodexRemoteControlState;
+  pairing: CodexRemotePairing | null;
+  onEnable: () => Promise<void>;
+  onDisable: () => Promise<void>;
+  onPair: () => Promise<CodexRemotePairing>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const enabled = state.status === "connected" || state.status === "connecting";
+  const pairingActive = pairing && pairing.expires_at * 1000 > Date.now();
+
+  const run = async (action: () => Promise<unknown>) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await action();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div
+      style={{
+        borderRadius: 8,
+        background: "rgba(255,255,255,0.022)",
+        border: "1px solid rgba(255,255,255,0.06)",
+        padding: 12,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+          <Smartphone size={15} color="#93c5fd" aria-hidden="true" />
+          <div>
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.74)", fontWeight: 800 }}>
+              Codex mobile
+            </div>
+            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.36)", marginTop: 2 }}>
+              {state.message}
+            </div>
+          </div>
+        </div>
+        <span
+          title={state.status}
+          style={{
+            width: 7,
+            height: 7,
+            borderRadius: "50%",
+            flex: "0 0 auto",
+            background: state.status === "connected" ? "#22c55e" : state.status === "connecting" ? "#facc15" : "rgba(255,255,255,0.26)",
+          }}
+        />
+      </div>
+
+      {pairingActive && (
+        <div style={{ marginTop: 10, padding: "9px 10px", borderRadius: 6, background: "rgba(147,197,253,0.08)", border: "1px solid rgba(147,197,253,0.18)" }}>
+          <div style={{ color: "#bfdbfe", fontSize: 18, fontWeight: 800, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}>
+            {pairing.manual_pairing_code ?? pairing.pairing_code}
+          </div>
+          <div style={{ color: "rgba(255,255,255,0.34)", fontSize: 9, marginTop: 4 }}>
+            Expires {new Date(pairing.expires_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+          </div>
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 7, marginTop: 10, flexWrap: "wrap" }}>
+        {!enabled ? (
+          <button type="button" disabled={busy || state.status === "unavailable"} onClick={() => void run(onEnable)} style={remoteButtonStyle("#93c5fd", busy || state.status === "unavailable") }>
+            <Power size={13} aria-hidden="true" /> Enable mobile access
+          </button>
+        ) : (
+          <>
+            <button type="button" disabled={busy} onClick={() => void run(onPair)} style={remoteButtonStyle("#86efac", busy)}>
+              <LinkIcon size={13} aria-hidden="true" /> Create pairing code
+            </button>
+            <button type="button" disabled={busy} onClick={() => void run(onDisable)} style={remoteButtonStyle("#fca5a5", busy)}>
+              <Power size={13} aria-hidden="true" /> Disable
+            </button>
+          </>
+        )}
+      </div>
+      {state.server_name && <div style={{ fontSize: 9, color: "rgba(255,255,255,0.24)", marginTop: 8 }}>{state.server_name}</div>}
+      {error && <div style={{ color: "#fca5a5", fontSize: 10, marginTop: 8, lineHeight: 1.4 }}>{error}</div>}
+    </div>
+  );
+}
+
+function remoteButtonStyle(color: string, disabled: boolean): CSSProperties {
+  return {
+    minHeight: 30,
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    border: `1px solid ${color}3d`,
+    background: `${color}0d`,
+    color,
+    borderRadius: 6,
+    padding: "0 9px",
+    fontSize: 10,
+    fontWeight: 750,
+    cursor: disabled ? "default" : "pointer",
+    opacity: disabled ? 0.45 : 1,
+  };
+}
+
 function EmptyState() {
   return (
     <div
@@ -594,10 +710,15 @@ export function HexaModule() {
     compatibleSupervisorSessions,
     alerts,
     bridgeHealth,
+    remoteControl,
+    remotePairing,
     sendCodexMessage,
     interruptCodexTurn,
     resumeCodexThread,
     resolveCodexApproval,
+    enableCodexRemoteControl,
+    disableCodexRemoteControl,
+    startCodexRemotePairing,
   } = useHexaData();
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
@@ -673,6 +794,13 @@ export function HexaModule() {
         </div>
 
         <aside style={{ display: "grid", gap: 10, alignContent: "start" }}>
+          <RemoteControlPanel
+            state={remoteControl}
+            pairing={remotePairing}
+            onEnable={enableCodexRemoteControl}
+            onDisable={disableCodexRemoteControl}
+            onPair={startCodexRemotePairing}
+          />
           <ReviewPanel
             title="Needs attention"
             rows={[

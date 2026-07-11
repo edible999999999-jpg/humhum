@@ -1,6 +1,9 @@
 use crate::agent_kernel::{self, AgentKernelStatus};
 use crate::client_registry::{self, ConfigFormat};
-use crate::codex_bridge::{ApprovalDecision, CodexBridgeHealth, CodexBridgeState};
+use crate::codex_bridge::{
+    ApprovalDecision, CodexBridgeHealth, CodexBridgeState, CodexRemoteControlState,
+    CodexRemotePairing,
+};
 use crate::config::AppConfig;
 use crate::event_bus::{self, HookEvent, PermissionDecision};
 use crate::hexa_protocol::HexaSessionProjection;
@@ -36,6 +39,43 @@ pub async fn get_hexa_bridge_sessions(
     state: State<'_, Arc<CodexBridgeState>>,
 ) -> Result<Vec<HexaSessionProjection>, String> {
     Ok(state.sessions())
+}
+
+#[tauri::command]
+pub async fn get_codex_remote_control(
+    state: State<'_, Arc<CodexBridgeState>>,
+) -> Result<CodexRemoteControlState, String> {
+    Ok(state.remote_control())
+}
+
+#[tauri::command]
+pub async fn hexa_enable_codex_remote_control(
+    state: State<'_, Arc<CodexBridgeState>>,
+) -> Result<CodexRemoteControlState, String> {
+    state
+        .enable_remote_control()
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn hexa_disable_codex_remote_control(
+    state: State<'_, Arc<CodexBridgeState>>,
+) -> Result<CodexRemoteControlState, String> {
+    state
+        .disable_remote_control()
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn hexa_start_codex_remote_pairing(
+    state: State<'_, Arc<CodexBridgeState>>,
+) -> Result<CodexRemotePairing, String> {
+    state
+        .start_remote_pairing()
+        .await
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]

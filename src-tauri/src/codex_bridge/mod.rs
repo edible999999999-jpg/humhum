@@ -34,6 +34,51 @@ pub struct CodexBridgeHealth {
     pub message: String,
 }
 
+#[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CodexRemoteControlStatus {
+    Unavailable,
+    Disabled,
+    Connecting,
+    Connected,
+    Errored,
+}
+
+#[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
+pub struct CodexRemoteControlState {
+    pub status: CodexRemoteControlStatus,
+    pub server_name: String,
+    pub installation_id: String,
+    pub environment_id: Option<String>,
+    pub message: String,
+}
+
+impl Default for CodexRemoteControlState {
+    fn default() -> Self {
+        Self {
+            status: CodexRemoteControlStatus::Unavailable,
+            server_name: String::new(),
+            installation_id: String::new(),
+            environment_id: None,
+            message: "Codex mobile access is unavailable".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
+pub struct CodexRemotePairing {
+    pub pairing_code: String,
+    pub manual_pairing_code: Option<String>,
+    pub environment_id: String,
+    pub expires_at: i64,
+}
+
+impl CodexRemotePairing {
+    fn is_expired_at(&self, unix_seconds: i64) -> bool {
+        unix_seconds >= self.expires_at
+    }
+}
+
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalDecision {
@@ -99,6 +144,7 @@ pub struct CodexBridgeState {
     projections: Mutex<HexaProjectionStore>,
     transport: AsyncRwLock<Option<Arc<JsonRpcTransport>>>,
     pending_requests: Mutex<std::collections::HashMap<String, PendingCodexRequest>>,
+    remote_control: RwLock<CodexRemoteControlState>,
 }
 
 impl Default for CodexBridgeState {
@@ -108,6 +154,7 @@ impl Default for CodexBridgeState {
             projections: Mutex::new(HexaProjectionStore::default()),
             transport: AsyncRwLock::new(None),
             pending_requests: Mutex::new(std::collections::HashMap::new()),
+            remote_control: RwLock::new(CodexRemoteControlState::default()),
         }
     }
 }
@@ -154,6 +201,59 @@ impl CodexBridgeState {
             .lock()
             .map(|store| store.sessions())
             .unwrap_or_default()
+    }
+
+    pub fn remote_control(&self) -> CodexRemoteControlState {
+        self.remote_control
+            .read()
+            .map(|state| state.clone())
+            .unwrap_or_default()
+    }
+
+    pub async fn read_remote_control(&self) -> Result<CodexRemoteControlState, CodexBridgeError> {
+        self.request_remote_control("remoteControl/status/read", json!({}))
+            .await
+    }
+
+    pub async fn enable_remote_control(&self) -> Result<CodexRemoteControlState, CodexBridgeError> {
+        self.request_remote_control("remoteControl/enable", json!({"ephemeral": false}))
+            .await
+    }
+
+    pub async fn disable_remote_control(
+        &self,
+    ) -> Result<CodexRemoteControlState, CodexBridgeError> {
+        self.request_remote_control("remoteControl/disable", json!({"ephemeral": false}))
+            .await
+    }
+
+    pub async fn start_remote_pairing(&self) -> Result<CodexRemotePairing, CodexBridgeError> {
+        let response = self
+            .connected_transport()
+            .await?
+            .request("remoteControl/pairing/start", json!({"manualCode": true}))
+            .await
+            .map_err(|error| CodexBridgeError::Transport(error.to_string()))?;
+        parse_remote_pairing(&response).map_err(CodexBridgeError::InvalidResponse)
+    }
+
+    async fn request_remote_control(
+        &self,
+        method: &str,
+        params: Value,
+    ) -> Result<CodexRemoteControlState, CodexBridgeError> {
+        let response = self
+            .connected_transport()
+            .await?
+            .request(method, params)
+            .await
+            .map_err(|error| CodexBridgeError::Transport(error.to_string()))?;
+        let state =
+            parse_remote_control_state(&response).map_err(CodexBridgeError::InvalidResponse)?;
+        if let Ok(mut stored) = self.remote_control.write() {
+            *stored = state.clone();
+        }
+        Ok(state)
     }
 
     pub async fn start_thread(&self, workspace: &str) -> Result<String, CodexBridgeError> {
@@ -430,7 +530,7 @@ impl CodexBridgeState {
                         "title": "HUMHUM Hexa",
                         "version": env!("CARGO_PKG_VERSION"),
                     },
-                    "capabilities": {"experimentalApi": false}
+                    "capabilities": {"experimentalApi": true}
                 }),
             )
             .await
@@ -464,6 +564,15 @@ impl CodexBridgeState {
             "Reading live Codex sessions".to_string(),
         );
 
+        if let Ok(response) = transport
+            .request("remoteControl/status/read", json!({}))
+            .await
+        {
+            if let Ok(remote) = parse_remote_control_state(&response) {
+                self.set_remote_control(app, remote);
+            }
+        }
+
         while let Some(message) = transport.next_incoming().await {
             match message {
                 IncomingMessage::Request { id, method, params } => {
@@ -490,6 +599,12 @@ impl CodexBridgeState {
                     }
                 }
                 IncomingMessage::Notification { method, params } => {
+                    if method == "remoteControl/status/changed" {
+                        if let Ok(remote) = parse_remote_control_state(&params) {
+                            self.set_remote_control(app, remote);
+                        }
+                        continue;
+                    }
                     if let Some(event) = normalize_codex_message(&method, params) {
                         self.apply_event(app, event);
                     }
@@ -534,6 +649,62 @@ impl CodexBridgeState {
         }
         let _ = app.emit("humhum://codex-bridge-health", health);
     }
+
+    fn set_remote_control(&self, app: &tauri::AppHandle, state: CodexRemoteControlState) {
+        if let Ok(mut stored) = self.remote_control.write() {
+            *stored = state.clone();
+        }
+        let _ = app.emit("humhum://codex-remote-control-changed", state);
+    }
+}
+
+fn parse_remote_control_state(value: &Value) -> Result<CodexRemoteControlState, String> {
+    let status = match string_at(value, "status") {
+        Some("disabled") => CodexRemoteControlStatus::Disabled,
+        Some("connecting") => CodexRemoteControlStatus::Connecting,
+        Some("connected") => CodexRemoteControlStatus::Connected,
+        Some("errored") => CodexRemoteControlStatus::Errored,
+        Some(other) => return Err(format!("Codex returned an unknown remote status: {other}")),
+        None => return Err("Codex did not return a remote status".to_string()),
+    };
+    let message = match status {
+        CodexRemoteControlStatus::Disabled => "Codex mobile access is off",
+        CodexRemoteControlStatus::Connecting => "Connecting Codex mobile access",
+        CodexRemoteControlStatus::Connected => "Codex mobile access is ready",
+        CodexRemoteControlStatus::Errored => "Codex mobile access needs attention",
+        CodexRemoteControlStatus::Unavailable => "Codex mobile access is unavailable",
+    };
+    Ok(CodexRemoteControlState {
+        status,
+        server_name: string_at(value, "serverName")
+            .unwrap_or_default()
+            .to_string(),
+        installation_id: string_at(value, "installationId")
+            .unwrap_or_default()
+            .to_string(),
+        environment_id: string_at(value, "environmentId").map(String::from),
+        message: message.to_string(),
+    })
+}
+
+fn parse_remote_pairing(value: &Value) -> Result<CodexRemotePairing, String> {
+    let pairing = CodexRemotePairing {
+        pairing_code: string_at(value, "pairingCode")
+            .ok_or_else(|| "Codex did not return a pairing code".to_string())?
+            .to_string(),
+        manual_pairing_code: string_at(value, "manualPairingCode").map(String::from),
+        environment_id: string_at(value, "environmentId")
+            .ok_or_else(|| "Codex did not return a pairing environment".to_string())?
+            .to_string(),
+        expires_at: value
+            .get("expiresAt")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| "Codex did not return a pairing expiry".to_string())?,
+    };
+    if pairing.is_expired_at(chrono::Utc::now().timestamp()) {
+        return Err("The Codex pairing code already expired".to_string());
+    }
+    Ok(pairing)
 }
 
 fn thread_list_events(response: &Value) -> Vec<HexaEvent> {
@@ -877,5 +1048,37 @@ mod tests {
 
         let error = state.interrupt("thread-1", "turn-old").await.unwrap_err();
         assert!(matches!(error, CodexBridgeError::StaleTurn));
+    }
+
+    #[test]
+    fn remote_control_parses_status_snapshots() {
+        let state = parse_remote_control_state(&json!({
+            "status": "connected",
+            "serverName": "Yun's Mac",
+            "installationId": "install-1",
+            "environmentId": "env-1"
+        }))
+        .unwrap();
+
+        assert_eq!(state.status, CodexRemoteControlStatus::Connected);
+        assert_eq!(state.server_name, "Yun's Mac");
+        assert_eq!(state.installation_id, "install-1");
+        assert_eq!(state.environment_id.as_deref(), Some("env-1"));
+    }
+
+    #[test]
+    fn remote_control_parses_manual_pairing_artifact() {
+        let pairing = parse_remote_pairing(&json!({
+            "pairingCode": "pair-opaque",
+            "manualPairingCode": "HUM-HUM",
+            "environmentId": "env-1",
+            "expiresAt": 2_000_000_000
+        }))
+        .unwrap();
+
+        assert_eq!(pairing.manual_pairing_code.as_deref(), Some("HUM-HUM"));
+        assert_eq!(pairing.environment_id, "env-1");
+        assert!(!pairing.is_expired_at(1_999_999_999));
+        assert!(pairing.is_expired_at(2_000_000_000));
     }
 }

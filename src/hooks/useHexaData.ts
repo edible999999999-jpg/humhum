@@ -18,6 +18,21 @@ export interface CodexBridgeHealth {
   message: string;
 }
 
+export interface CodexRemoteControlState {
+  status: "unavailable" | "disabled" | "connecting" | "connected" | "errored";
+  server_name: string;
+  installation_id: string;
+  environment_id: string | null;
+  message: string;
+}
+
+export interface CodexRemotePairing {
+  pairing_code: string;
+  manual_pairing_code: string | null;
+  environment_id: string;
+  expires_at: number;
+}
+
 export interface HexaAlert {
   session_id: string;
   type: "stalled" | "looping" | "permission" | "low_signal";
@@ -339,15 +354,24 @@ export function useHexaData() {
     last_connected_at: null,
     message: "Connecting to local Codex",
   });
+  const [remoteControl, setRemoteControl] = useState<CodexRemoteControlState>({
+    status: "unavailable",
+    server_name: "",
+    installation_id: "",
+    environment_id: null,
+    message: "Codex mobile access is unavailable",
+  });
+  const [remotePairing, setRemotePairing] = useState<CodexRemotePairing | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval>>();
 
   const fetchSessions = useCallback(async () => {
     try {
-      const [sessionData, statsData, bridgeData, healthData] = await Promise.all([
+      const [sessionData, statsData, bridgeData, healthData, remoteData] = await Promise.all([
         invoke<HexaSession[]>("get_all_sessions_history"),
         invoke<AgentStats[]>("get_agent_stats"),
         invoke<HexaBridgeSession[]>("get_hexa_bridge_sessions"),
         invoke<CodexBridgeHealth>("get_codex_bridge_health"),
+        invoke<CodexRemoteControlState>("get_codex_remote_control"),
       ]);
       const statsByClient = new Map(statsData.map((stat) => [stat.client_type, stat]));
       const merged = mergeHexaSessions(sessionData, bridgeData);
@@ -364,6 +388,7 @@ export function useHexaData() {
       setSupervisorSessions(snapshots);
       setAlerts(allAlerts);
       setBridgeHealth(healthData);
+      setRemoteControl(remoteData);
     } catch {
       // Hub may open before the backend is ready.
     }
@@ -385,6 +410,10 @@ export function useHexaData() {
     const unlistenBridgeHealth = listen("humhum://codex-bridge-health", () => {
       fetchSessions();
     });
+    const unlistenRemoteControl = listen<CodexRemoteControlState>(
+      "humhum://codex-remote-control-changed",
+      (event) => setRemoteControl(event.payload),
+    );
 
     return () => {
       clearInterval(intervalRef.current);
@@ -392,6 +421,7 @@ export function useHexaData() {
       unlistenTimeout.then((fn) => fn());
       unlistenBridgeSession.then((fn) => fn());
       unlistenBridgeHealth.then((fn) => fn());
+      unlistenRemoteControl.then((fn) => fn());
     };
   }, [fetchSessions]);
 
@@ -426,6 +456,24 @@ export function useHexaData() {
     await fetchSessions();
   }, [fetchSessions]);
 
+  const enableCodexRemoteControl = useCallback(async () => {
+    const state = await invoke<CodexRemoteControlState>("hexa_enable_codex_remote_control");
+    setRemoteControl(state);
+    setRemotePairing(null);
+  }, []);
+
+  const disableCodexRemoteControl = useCallback(async () => {
+    const state = await invoke<CodexRemoteControlState>("hexa_disable_codex_remote_control");
+    setRemoteControl(state);
+    setRemotePairing(null);
+  }, []);
+
+  const startCodexRemotePairing = useCallback(async () => {
+    const pairing = await invoke<CodexRemotePairing>("hexa_start_codex_remote_pairing");
+    setRemotePairing(pairing);
+    return pairing;
+  }, []);
+
   return {
     sessions,
     activeSessions,
@@ -438,9 +486,14 @@ export function useHexaData() {
     compatibleSupervisorSessions,
     alerts,
     bridgeHealth,
+    remoteControl,
+    remotePairing,
     sendCodexMessage,
     interruptCodexTurn,
     resumeCodexThread,
     resolveCodexApproval,
+    enableCodexRemoteControl,
+    disableCodexRemoteControl,
+    startCodexRemotePairing,
   };
 }

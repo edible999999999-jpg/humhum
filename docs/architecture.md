@@ -124,6 +124,21 @@ cargo test --test codex_app_server_smoke -- --ignored --nocapture
 The test uses an ephemeral thread in a temporary workspace and expects the exact
 marker `HUMHUM_READY` without modifying a user project.
 
+### Codex Mobile Remote Control
+
+Hexa can intentionally enable Codex's experimental mobile remote-control path,
+request a short-lived manual pairing code, show connection state, and disable the
+current app-server client scope. These actions use the official
+`remoteControl/status/read`, `remoteControl/enable`, `remoteControl/disable`, and
+`remoteControl/pairing/start` methods. Pairing artifacts remain in memory and are
+never written to HUMHUM storage.
+
+This is a Codex provider capability, not HUMHUM's provider-neutral Web relay. It
+does not make Claude hooks, Hush messages, or unrelated local Agent sessions
+available remotely. Local Hexa continues working when mobile access is disabled,
+unsupported, or disconnected. Disabling the app-server scope also must not be
+described as revoking controller devices already enrolled with the provider.
+
 ## Security
 
 - The hook server listens on `127.0.0.1` only (localhost)
