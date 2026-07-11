@@ -100,6 +100,6 @@
 - [ ] Run `cargo fmt --check --manifest-path src-tauri/Cargo.toml`.
 - [x] Run `cargo test --manifest-path src-tauri/Cargo.toml`.
 - [x] Run `npm test` and `npm run build`.
-- [ ] Launch `npm run tauri dev`, inject a synthetic routed hook event, and verify Hexa rendering plus focus result.
-- [ ] Record completed, partial, and missing capabilities without calling the Codex-only remote panel a HUMHUM mobile app.
-- [ ] Commit the verified tranche and leave the app running on the latest commit.
+- [x] Launch `npm run tauri dev`, inject a synthetic routed hook event, and verify the running pet, hook route ingestion, and focus strategy tests. Full Hexa visual automation remains blocked by the transparent accessory window not being exposed to the UI automation layer.
+- [x] Record completed, partial, and missing capabilities without calling the Codex-only remote panel a HUMHUM mobile app.
+- [x] Commit the verified tranche and leave the app running on the latest commit.
