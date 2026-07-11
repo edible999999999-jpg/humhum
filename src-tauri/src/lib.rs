@@ -8,6 +8,7 @@ mod hexa_protocol;
 mod hook_server;
 mod hush_store;
 mod knowledge_store;
+mod local_api_auth;
 #[cfg(target_os = "macos")]
 mod mac_notification_watcher;
 mod pi_sidecar;
@@ -61,6 +62,11 @@ pub fn run() {
                 if let Err(error) = commands::ensure_hook_script_installed(&home) {
                     log::warn!("Could not refresh HUMHUM hook script: {error}");
                 }
+                let auth = local_api_auth::LocalApiAuth::load_or_create(&home.join(".humhum"))
+                    .map_err(std::io::Error::other)?;
+                app.manage(Arc::new(auth));
+            } else {
+                return Err(std::io::Error::other("Could not determine home directory").into());
             }
 
             let wake_guard = Arc::new(wake_guard::WakeGuardState::default());

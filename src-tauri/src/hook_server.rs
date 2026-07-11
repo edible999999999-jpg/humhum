@@ -1,4 +1,5 @@
 use crate::event_bus::{self, HookEvent, PermissionDecision};
+use crate::local_api_auth::{LocalApiAuth, TOKEN_HEADER};
 use crate::session_store::SessionStore;
 use crate::stats_store::StatsStore;
 use http_body_util::{BodyExt, Full};
@@ -93,12 +94,14 @@ pub async fn start_server(app_handle: tauri::AppHandle) {
 
         let app = app_handle.clone();
         let pending = pending.clone();
+        let auth = app_handle.state::<Arc<LocalApiAuth>>().inner().clone();
 
         tokio::task::spawn(async move {
             let service = service_fn(move |req| {
                 let app = app.clone();
                 let pending = pending.clone();
-                async move { handle_request(req, app, pending).await }
+                let auth = auth.clone();
+                async move { handle_request(req, app, pending, auth).await }
             });
 
             let io = TokioIo::new(stream);
@@ -113,14 +116,31 @@ async fn handle_request(
     req: Request<hyper::body::Incoming>,
     app_handle: tauri::AppHandle,
     pending: PendingMap,
+    auth: Arc<LocalApiAuth>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     let path = req.uri().path().to_string();
     let method = req.method().clone();
 
     log::debug!("{} {}", method, path);
 
+    if path != "/health" {
+        let candidate = req
+            .headers()
+            .get(TOKEN_HEADER)
+            .and_then(|value| value.to_str().ok());
+        if !auth.authorizes(candidate) {
+            return Ok(json_response(
+                StatusCode::UNAUTHORIZED,
+                &serde_json::json!({"error": "local API token required"}),
+            ));
+        }
+    }
+
     match (method.as_str(), path.as_str()) {
-        ("OPTIONS", _) => Ok(cors_preflight_response()),
+        ("OPTIONS", _) => Ok(json_response(
+            StatusCode::METHOD_NOT_ALLOWED,
+            &serde_json::json!({"error": "browser access is disabled"}),
+        )),
         ("POST", "/event") => handle_event(req, app_handle, pending).await,
         ("GET", "/health") => Ok(json_response(
             StatusCode::OK,
@@ -584,17 +604,6 @@ async fn handle_hush_inbox_post(
     ))
 }
 
-fn cors_preflight_response() -> Response<Full<Bytes>> {
-    Response::builder()
-        .status(StatusCode::NO_CONTENT)
-        .header("access-control-allow-origin", "*")
-        .header("access-control-allow-methods", "GET, POST, OPTIONS")
-        .header("access-control-allow-headers", "content-type")
-        .header("access-control-max-age", "86400")
-        .body(Full::new(Bytes::new()))
-        .unwrap()
-}
-
 /// GET /knowledge?q=<keyword> — query the knowledge base
 async fn handle_knowledge_query(
     req: Request<hyper::body::Incoming>,
@@ -643,9 +652,6 @@ fn json_response(status: StatusCode, body: &Value) -> Response<Full<Bytes>> {
     Response::builder()
         .status(status)
         .header("content-type", "application/json")
-        .header("access-control-allow-origin", "*")
-        .header("access-control-allow-methods", "GET, POST, OPTIONS")
-        .header("access-control-allow-headers", "content-type")
         .body(Full::new(Bytes::from(json)))
         .unwrap()
 }

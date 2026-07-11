@@ -15,7 +15,10 @@ set -euo pipefail
 
 HUMHUM_PORT="${HUMHUM_PORT:-31275}"
 HUMHUM_CLIENT="${HUMHUM_CLIENT:-}"
-DEBUG_LOG="/tmp/humhum-hook-debug.log"
+DEBUG_LOG="${HUMHUM_DEBUG_LOG:-/tmp/humhum-hook-debug.log}"
+TOKEN_FILE="${HOME}/.humhum/local-api-token"
+touch "$DEBUG_LOG" 2>/dev/null || true
+chmod 600 "$DEBUG_LOG" 2>/dev/null || true
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -84,14 +87,17 @@ json.dump(payload, sys.stdout, ensure_ascii=False, separators=(",", ":"))
 ')
 
 HOOK_EVENT=$(echo "$PAYLOAD" | python3 -c "import sys,json; print(json.load(sys.stdin).get('hook_event_name',''))" 2>/dev/null || echo "unknown")
+SESSION_ID=$(echo "$PAYLOAD" | python3 -c "import sys,json; print(json.load(sys.stdin).get('session_id',''))" 2>/dev/null || echo "unknown")
 log_debug "=== Hook invoked: $HOOK_EVENT ==="
 log_debug "Client: ${HUMHUM_CLIENT:-default}"
-log_debug "STDIN payload (first 200 chars): ${PAYLOAD:0:200}"
+log_debug "Session: ${SESSION_ID:-unknown}"
 
 # Forward to HumHum server
+HUMHUM_TOKEN=$(cat "$TOKEN_FILE" 2>/dev/null | tr -d '\r\n' || true)
 RESPONSE=$(curl -s -w "\n%{http_code}" \
   -X POST \
   -H "Content-Type: application/json" \
+  -H "X-HumHum-Token: ${HUMHUM_TOKEN}" \
   -d "$PAYLOAD" \
   "$HUMHUM_URL" \
   --max-time 120 \

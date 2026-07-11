@@ -53,7 +53,9 @@ Status meanings:
 - tmux pane targets are allow-listed before direct process invocation.
 - Hexa has a stable crosshair action for returning to the originating session.
 - Intervention drafts survive failure and clear only after successful Codex delivery.
-- Rust: 47 passed, 1 ignored. Frontend: 10 passed. Production frontend build: passed.
+- The localhost API now requires an owner-only token for private data and control routes, disables browser CORS, and keeps only `/health` public.
+- Hook debug logging no longer records message payloads and uses owner-only file permissions.
+- Rust: 49 passed, 1 ignored. Frontend: 10 passed. Production frontend build: passed.
 
 ## Next Iteration Order
 
