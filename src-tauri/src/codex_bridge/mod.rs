@@ -3,12 +3,13 @@ use crate::hexa_protocol::{
     HexaSessionProjection,
 };
 use serde_json::{json, Value};
+use std::collections::HashSet;
 use std::fmt;
 use std::path::Path;
 use std::sync::{Arc, Mutex, RwLock};
 use tauri::Emitter;
 use tokio::process::Command;
-use tokio::sync::RwLock as AsyncRwLock;
+use tokio::sync::{Mutex as AsyncMutex, RwLock as AsyncRwLock};
 
 use transport::{IncomingMessage, JsonRpcTransport};
 
@@ -143,6 +144,7 @@ pub struct CodexBridgeState {
     health: RwLock<CodexBridgeHealth>,
     projections: Mutex<HexaProjectionStore>,
     transport: AsyncRwLock<Option<Arc<JsonRpcTransport>>>,
+    attached_threads: AsyncMutex<HashSet<String>>,
     pending_requests: Mutex<std::collections::HashMap<String, PendingCodexRequest>>,
     remote_control: RwLock<CodexRemoteControlState>,
 }
@@ -153,6 +155,7 @@ impl Default for CodexBridgeState {
             health: RwLock::new(CodexBridgeHealth::default()),
             projections: Mutex::new(HexaProjectionStore::default()),
             transport: AsyncRwLock::new(None),
+            attached_threads: AsyncMutex::new(HashSet::new()),
             pending_requests: Mutex::new(std::collections::HashMap::new()),
             remote_control: RwLock::new(CodexRemoteControlState::default()),
         }
@@ -274,13 +277,15 @@ impl CodexBridgeState {
             )
             .await
             .map_err(|error| CodexBridgeError::Transport(error.to_string()))?;
-        response
+        let thread_id = response
             .get("thread")
             .and_then(|thread| string_at(thread, "id"))
             .map(String::from)
             .ok_or_else(|| {
                 CodexBridgeError::InvalidResponse("Codex did not return a thread".into())
-            })
+            })?;
+        self.attached_threads.lock().await.insert(thread_id.clone());
+        Ok(thread_id)
     }
 
     pub async fn resume_thread(&self, thread_id: &str) -> Result<String, CodexBridgeError> {
@@ -294,6 +299,19 @@ impl CodexBridgeState {
             return Err(CodexBridgeError::SessionNotFound);
         }
         let transport = self.connected_transport().await?;
+        self.ensure_thread_attached(&transport, thread_id).await
+    }
+
+    async fn ensure_thread_attached(
+        &self,
+        transport: &Arc<JsonRpcTransport>,
+        thread_id: &str,
+    ) -> Result<String, CodexBridgeError> {
+        let mut attached = self.attached_threads.lock().await;
+        if attached.contains(thread_id) {
+            return Ok(thread_id.to_string());
+        }
+
         let response = transport
             .request(
                 "thread/resume",
@@ -305,13 +323,15 @@ impl CodexBridgeState {
             )
             .await
             .map_err(|error| CodexBridgeError::Transport(error.to_string()))?;
-        response
+        let resumed_id = response
             .get("thread")
             .and_then(|thread| string_at(thread, "id"))
             .map(String::from)
             .ok_or_else(|| {
                 CodexBridgeError::InvalidResponse("Codex did not resume the thread".into())
-            })
+            })?;
+        attached.insert(resumed_id.clone());
+        Ok(resumed_id)
     }
 
     pub async fn send_message(
@@ -333,6 +353,7 @@ impl CodexBridgeState {
             return Err(CodexBridgeError::SessionNotFound);
         }
         let transport = self.connected_transport().await?;
+        self.ensure_thread_attached(&transport, thread_id).await?;
         let response = transport
             .request(
                 "turn/start",
@@ -539,6 +560,7 @@ impl CodexBridgeState {
             .notify("initialized", json!({}))
             .await
             .map_err(|error| error.to_string())?;
+        self.attached_threads.lock().await.clear();
 
         let listed = transport
             .request(
@@ -613,6 +635,7 @@ impl CodexBridgeState {
         }
 
         *self.transport.write().await = None;
+        self.attached_threads.lock().await.clear();
         Err("app-server stopped".to_string())
     }
 
@@ -1048,6 +1071,53 @@ mod tests {
 
         let error = state.interrupt("thread-1", "turn-old").await.unwrap_err();
         assert!(matches!(error, CodexBridgeError::StaleTurn));
+    }
+
+    #[tokio::test]
+    async fn sending_to_a_listed_thread_resumes_it_before_starting_a_turn() {
+        let transport = Arc::new(
+            JsonRpcTransport::spawn_command(
+                "/bin/sh",
+                &[
+                    "-c",
+                    r#"
+                    read first
+                    case "$first" in
+                      *'"method":"thread/resume"'*)
+                        printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"thread":{"id":"thread-1"}}}'
+                        read second
+                        case "$second" in
+                          *'"method":"turn/start"'*)
+                            printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"turn":{"id":"turn-1"}}}'
+                            ;;
+                        esac
+                        ;;
+                      *)
+                        printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32600,"message":"thread not found: thread-1"}}'
+                        ;;
+                    esac
+                    sleep 1
+                    "#,
+                ],
+            )
+            .await
+            .unwrap(),
+        );
+        let state = CodexBridgeState::default();
+        let listed = thread_list_events(&json!({
+            "data": [{
+                "id": "thread-1",
+                "cwd": "/tmp/humhum",
+                "name": "Listed session",
+                "preview": "Previous work"
+            }]
+        }));
+        state.projections.lock().unwrap().apply(&listed[0]);
+        *state.transport.write().await = Some(transport);
+
+        let turn_id = state.send_message("thread-1", "continue").await.unwrap();
+
+        assert_eq!(turn_id, "turn-1");
     }
 
     #[test]
