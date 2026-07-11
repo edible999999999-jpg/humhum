@@ -151,6 +151,19 @@ mod client_hook_install_tests {
         uninstall_opencode_plugin(&path).unwrap();
         assert!(!path.exists());
     }
+
+    #[test]
+    fn opencode_plugin_bridges_permission_decisions_through_the_official_api() {
+        assert!(HUMHUM_OPENCODE_PLUGIN.contains(
+            r#""permission.asked": "PermissionRequest""#
+        ));
+        assert!(HUMHUM_OPENCODE_PLUGIN.contains("postSessionIdPermissionsPermissionId"));
+        assert!(HUMHUM_OPENCODE_PLUGIN.contains(r#"behavior === "deny" ? "reject" : "once""#));
+        assert!(HUMHUM_OPENCODE_PLUGIN.contains("permission ? 125_000 : 3000"));
+        assert!(HUMHUM_OPENCODE_PLUGIN.contains(
+            r#"typeof properties.permission === "string""#
+        ));
+    }
 }
 
 #[tauri::command]
