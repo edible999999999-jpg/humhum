@@ -37,6 +37,24 @@ pub struct MobilePairingInfo {
     pub expires_at: i64,
     pub url: String,
     pub certificate_fingerprint: String,
+    pub scope: MobileDeviceScope,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MobileDeviceScope {
+    Read,
+    Control,
+}
+
+impl MobileDeviceScope {
+    fn allows_control(self) -> bool {
+        self == Self::Control
+    }
+}
+
+fn default_mobile_scope() -> MobileDeviceScope {
+    MobileDeviceScope::Read
 }
 
 struct MobileRuntime {
@@ -154,14 +172,14 @@ impl MobileBridgeState {
         Ok(self.status())
     }
 
-    pub fn create_pairing(&self) -> Result<MobilePairingInfo, String> {
+    pub fn create_pairing(&self, scope: MobileDeviceScope) -> Result<MobilePairingInfo, String> {
         let mut runtime = self.runtime.lock().map_err(|error| error.to_string())?;
         if !runtime.enabled {
             return Err("Enable mobile access before pairing a device".into());
         }
         let now = chrono::Utc::now().timestamp();
         let code = uuid::Uuid::new_v4().simple().to_string()[..8].to_ascii_uppercase();
-        let challenge = PairingChallenge::new(&code, now);
+        let challenge = PairingChallenge::new(&code, now, scope);
         let info = MobilePairingInfo {
             code,
             expires_at: challenge.expires_at,
@@ -170,6 +188,7 @@ impl MobileBridgeState {
                 .certificate_fingerprint
                 .clone()
                 .ok_or("Mobile certificate fingerprint is unavailable")?,
+            scope,
         };
         runtime.pairing = Some(challenge);
         Ok(info)
@@ -307,33 +326,54 @@ async fn handle_mobile_request(
         (&Method::GET, "/") => html_response(MOBILE_HTML),
         (&Method::POST, "/api/pair") => pair_device(request, &bridge).await,
         (&Method::GET, "/api/sessions") => {
-            if !request_is_authorized(&request, &bridge) {
+            let scope = request_scope(&request, &bridge);
+            if scope.is_none() {
                 json_error(StatusCode::UNAUTHORIZED, "Pair this device first")
             } else {
+                let scope = scope.unwrap_or(MobileDeviceScope::Read);
                 let store = app.state::<Arc<Mutex<crate::session_store::SessionStore>>>();
-                let mut sessions = store
-                    .lock()
-                    .unwrap_or_else(|error| error.into_inner())
-                    .get_all_sessions_with_history()
-                    .into_iter()
-                    .take(30)
-                    .map(MobileSessionSummary::from)
+                let codex = app.state::<Arc<crate::codex_bridge::CodexBridgeState>>();
+                let mut sessions = codex
+                    .sessions()
+                    .iter()
+                    .map(|session| {
+                        MobileSessionSummary::from_codex(session, scope.allows_control())
+                    })
                     .collect::<Vec<_>>();
                 let known_ids = sessions
                     .iter()
                     .map(|session| session.id.clone())
                     .collect::<std::collections::HashSet<_>>();
-                let codex = app.state::<Arc<crate::codex_bridge::CodexBridgeState>>();
                 sessions.extend(
-                    codex
-                        .sessions()
-                        .iter()
+                    store
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner())
+                        .get_all_sessions_with_history()
+                        .into_iter()
                         .filter(|session| !known_ids.contains(&session.session_id))
-                        .map(MobileSessionSummary::from),
+                        .take(30)
+                        .map(|session| MobileSessionSummary::from_hook(&session)),
                 );
                 sessions.sort_by(|left, right| right.last_activity_at.cmp(&left.last_activity_at));
                 sessions.truncate(30);
-                json_response(StatusCode::OK, &serde_json::json!({ "sessions": sessions }))
+                json_response(
+                    StatusCode::OK,
+                    &serde_json::json!({ "scope": scope, "sessions": sessions }),
+                )
+            }
+        }
+        (&Method::POST, "/api/codex/approval") => {
+            if !request_scope(&request, &bridge).is_some_and(MobileDeviceScope::allows_control) {
+                json_error(StatusCode::FORBIDDEN, "This device is paired read-only")
+            } else {
+                resolve_mobile_codex_approval(request, &app).await
+            }
+        }
+        (&Method::POST, "/api/codex/message") => {
+            if !request_scope(&request, &bridge).is_some_and(MobileDeviceScope::allows_control) {
+                json_error(StatusCode::FORBIDDEN, "This device is paired read-only")
+            } else {
+                send_mobile_codex_message(request, &app).await
             }
         }
         _ => json_error(StatusCode::NOT_FOUND, "Not found"),
@@ -362,7 +402,7 @@ async fn pair_device(
         Ok(input) => input,
         Err(_) => return json_error(StatusCode::BAD_REQUEST, "Invalid pairing request"),
     };
-    {
+    let challenge_scope = {
         let mut runtime = match bridge.runtime.lock() {
             Ok(runtime) => runtime,
             Err(_) => return json_error(StatusCode::INTERNAL_SERVER_ERROR, "Pairing unavailable"),
@@ -373,8 +413,10 @@ async fn pair_device(
         if let Err(error) = challenge.verify(&input.code, chrono::Utc::now().timestamp()) {
             return json_error(StatusCode::UNAUTHORIZED, &error);
         }
+        let scope = challenge.scope;
         runtime.pairing = None;
-    }
+        scope
+    };
     let token = format!(
         "{}{}",
         uuid::Uuid::new_v4().simple(),
@@ -385,7 +427,7 @@ async fn pair_device(
         .devices
         .lock()
         .map_err(|error| error.to_string())
-        .and_then(|mut devices| devices.add_device(name, &token))
+        .and_then(|mut devices| devices.add_device(name, &token, challenge_scope))
         .is_err()
     {
         return json_error(
@@ -393,25 +435,106 @@ async fn pair_device(
             "Could not save this device",
         );
     }
-    json_response(StatusCode::OK, &serde_json::json!({ "token": token }))
+    json_response(
+        StatusCode::OK,
+        &serde_json::json!({ "token": token, "scope": challenge_scope }),
+    )
 }
 
-fn request_is_authorized(
+fn request_scope(
     request: &Request<hyper::body::Incoming>,
     bridge: &MobileBridgeState,
-) -> bool {
+) -> Option<MobileDeviceScope> {
     let token = request
         .headers()
         .get(hyper::header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.strip_prefix("Bearer "));
-    token.is_some_and(|token| {
+    token.and_then(|token| {
         bridge
             .devices
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .authorize(token)
     })
+}
+
+#[derive(Deserialize)]
+struct MobileApprovalRequest {
+    approval_id: String,
+    decision: String,
+}
+
+async fn resolve_mobile_codex_approval(
+    request: Request<hyper::body::Incoming>,
+    app: &tauri::AppHandle,
+) -> Response<HttpBody> {
+    let body = match request.into_body().collect().await {
+        Ok(body) => body.to_bytes(),
+        Err(_) => return json_error(StatusCode::BAD_REQUEST, "Invalid approval request"),
+    };
+    if body.len() > 4096 {
+        return json_error(StatusCode::BAD_REQUEST, "Invalid approval request");
+    }
+    let input: MobileApprovalRequest = match serde_json::from_slice(&body) {
+        Ok(input) => input,
+        Err(_) => return json_error(StatusCode::BAD_REQUEST, "Invalid approval request"),
+    };
+    let decision = match input.decision.as_str() {
+        "allow_once" => crate::codex_bridge::ApprovalDecision::AllowOnce,
+        "deny" => crate::codex_bridge::ApprovalDecision::Deny,
+        _ => return json_error(StatusCode::BAD_REQUEST, "Unsupported approval decision"),
+    };
+    let codex = app.state::<Arc<crate::codex_bridge::CodexBridgeState>>();
+    match codex.resolve_approval(&input.approval_id, decision).await {
+        Ok(()) => json_response(StatusCode::OK, &serde_json::json!({ "status": "resolved" })),
+        Err(error) => json_error(StatusCode::CONFLICT, &error.to_string()),
+    }
+}
+
+#[derive(Deserialize)]
+struct MobileMessageRequest {
+    thread_id: String,
+    message: String,
+}
+
+async fn send_mobile_codex_message(
+    request: Request<hyper::body::Incoming>,
+    app: &tauri::AppHandle,
+) -> Response<HttpBody> {
+    let body = match request.into_body().collect().await {
+        Ok(body) => body.to_bytes(),
+        Err(_) => return json_error(StatusCode::BAD_REQUEST, "Invalid message request"),
+    };
+    if body.len() > 24_000 {
+        return json_error(StatusCode::BAD_REQUEST, "Invalid message request");
+    }
+    let input: MobileMessageRequest = match serde_json::from_slice(&body) {
+        Ok(input) => input,
+        Err(_) => return json_error(StatusCode::BAD_REQUEST, "Invalid message request"),
+    };
+    let codex = app
+        .state::<Arc<crate::codex_bridge::CodexBridgeState>>()
+        .inner()
+        .clone();
+    let queue = app
+        .state::<Arc<std::sync::Mutex<crate::intervention_queue::InterventionQueue>>>()
+        .inner()
+        .clone();
+    match crate::commands::enqueue_and_deliver_codex_message(
+        &codex,
+        &queue,
+        &input.thread_id,
+        &input.message,
+    )
+    .await
+    {
+        Ok(receipt) => json_response(
+            StatusCode::OK,
+            &serde_json::to_value(receipt).unwrap_or_default(),
+        ),
+        Err(error) => json_error(StatusCode::BAD_REQUEST, &error),
+    }
 }
 
 fn json_response(status: StatusCode, value: &serde_json::Value) -> Response<HttpBody> {
@@ -458,14 +581,16 @@ struct PairingChallenge {
     code: String,
     expires_at: i64,
     failed_attempts: u8,
+    scope: MobileDeviceScope,
 }
 
 impl PairingChallenge {
-    fn new(code: &str, now: i64) -> Self {
+    fn new(code: &str, now: i64, scope: MobileDeviceScope) -> Self {
         Self {
             code: code.to_ascii_uppercase(),
             expires_at: now + PAIRING_TTL_SECONDS,
             failed_attempts: 0,
+            scope,
         }
     }
 
@@ -493,6 +618,8 @@ struct MobileDevice {
     name: String,
     token_digest: String,
     paired_at: String,
+    #[serde(default = "default_mobile_scope")]
+    scope: MobileDeviceScope,
 }
 
 struct MobileDeviceStore {
@@ -520,23 +647,30 @@ impl MobileDeviceStore {
         Ok(Self { path, devices })
     }
 
-    fn add_device(&mut self, name: &str, raw_token: &str) -> Result<MobileDevice, String> {
+    fn add_device(
+        &mut self,
+        name: &str,
+        raw_token: &str,
+        scope: MobileDeviceScope,
+    ) -> Result<MobileDevice, String> {
         let device = MobileDevice {
             id: uuid::Uuid::new_v4().to_string(),
             name: sanitize_device_name(name),
             token_digest: digest_token(raw_token),
             paired_at: chrono::Utc::now().to_rfc3339(),
+            scope,
         };
         self.devices.push(device.clone());
         self.persist()?;
         Ok(device)
     }
 
-    fn authorize(&self, raw_token: &str) -> bool {
+    fn authorize(&self, raw_token: &str) -> Option<MobileDeviceScope> {
         let candidate = digest_token(raw_token);
         self.devices
             .iter()
-            .any(|device| constant_time_eq(device.token_digest.as_bytes(), candidate.as_bytes()))
+            .find(|device| constant_time_eq(device.token_digest.as_bytes(), candidate.as_bytes()))
+            .map(|device| device.scope)
     }
 
     fn revoke_all(&mut self) -> Result<(), String> {
@@ -565,10 +699,19 @@ struct MobileSessionSummary {
     status: String,
     last_activity_at: String,
     needs_attention: bool,
+    pending_actions: Vec<MobileApprovalSummary>,
+    can_message: bool,
 }
 
-impl From<&crate::session_store::Session> for MobileSessionSummary {
-    fn from(session: &crate::session_store::Session) -> Self {
+#[derive(Debug, Clone, Serialize)]
+struct MobileApprovalSummary {
+    id: String,
+    operation: String,
+    summary: String,
+}
+
+impl MobileSessionSummary {
+    fn from_hook(session: &crate::session_store::Session) -> Self {
         Self {
             id: session.session_id.clone(),
             agent: session.client_type.clone(),
@@ -579,12 +722,15 @@ impl From<&crate::session_store::Session> for MobileSessionSummary {
             status: format!("{:?}", session.status).to_ascii_lowercase(),
             last_activity_at: session.last_event_at.clone(),
             needs_attention: session.has_pending_permission,
+            pending_actions: Vec::new(),
+            can_message: false,
         }
     }
-}
 
-impl From<&crate::hexa_protocol::HexaSessionProjection> for MobileSessionSummary {
-    fn from(session: &crate::hexa_protocol::HexaSessionProjection) -> Self {
+    fn from_codex(
+        session: &crate::hexa_protocol::HexaSessionProjection,
+        include_actions: bool,
+    ) -> Self {
         Self {
             id: session.session_id.clone(),
             agent: session.provider.clone(),
@@ -595,6 +741,20 @@ impl From<&crate::hexa_protocol::HexaSessionProjection> for MobileSessionSummary
             status: format!("{:?}", session.status).to_ascii_lowercase(),
             last_activity_at: session.last_activity_at.clone(),
             needs_attention: !session.pending_approvals.is_empty(),
+            pending_actions: if include_actions {
+                session
+                    .pending_approvals
+                    .iter()
+                    .map(|approval| MobileApprovalSummary {
+                        id: approval.approval_id.clone(),
+                        operation: format!("{:?}", approval.operation).to_ascii_lowercase(),
+                        summary: approval.summary.chars().take(240).collect(),
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            },
+            can_message: include_actions,
         }
     }
 }
@@ -645,12 +805,12 @@ mod tests {
     #[test]
     fn pairing_code_expires_and_locks_after_five_failures() {
         let now = 1_800_000_000;
-        let mut pairing = PairingChallenge::new("ABCD1234", now);
+        let mut pairing = PairingChallenge::new("ABCD1234", now, MobileDeviceScope::Read);
 
         assert!(pairing.verify("ABCD1234", now + 299).is_ok());
         assert!(pairing.verify("ABCD1234", now + 301).is_err());
 
-        let mut locked = PairingChallenge::new("ABCD1234", now);
+        let mut locked = PairingChallenge::new("ABCD1234", now, MobileDeviceScope::Read);
         for _ in 0..5 {
             assert!(locked.verify("WRONG", now + 1).is_err());
         }
@@ -663,23 +823,46 @@ mod tests {
         let mut store = MobileDeviceStore::load_or_create(temp.path()).unwrap();
         let raw_token = "private-mobile-token";
 
-        store.add_device("My phone", raw_token).unwrap();
+        store
+            .add_device("My phone", raw_token, MobileDeviceScope::Read)
+            .unwrap();
 
         let content = std::fs::read_to_string(temp.path().join("mobile-devices.json")).unwrap();
         assert!(!content.contains(raw_token));
-        assert!(store.authorize(raw_token));
-        assert!(!store.authorize("wrong-token"));
+        assert_eq!(store.authorize(raw_token), Some(MobileDeviceScope::Read));
+        assert_eq!(store.authorize("wrong-token"), None);
+    }
+
+    #[test]
+    fn read_only_devices_cannot_use_control_routes() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut store = MobileDeviceStore::load_or_create(temp.path()).unwrap();
+        store
+            .add_device("Reader", "read-token", MobileDeviceScope::Read)
+            .unwrap();
+        store
+            .add_device("Controller", "control-token", MobileDeviceScope::Control)
+            .unwrap();
+
+        assert!(!store
+            .authorize("read-token")
+            .is_some_and(MobileDeviceScope::allows_control));
+        assert!(store
+            .authorize("control-token")
+            .is_some_and(MobileDeviceScope::allows_control));
     }
 
     #[test]
     fn revoking_devices_invalidates_existing_tokens() {
         let temp = tempfile::tempdir().unwrap();
         let mut store = MobileDeviceStore::load_or_create(temp.path()).unwrap();
-        store.add_device("My phone", "token-1").unwrap();
+        store
+            .add_device("My phone", "token-1", MobileDeviceScope::Read)
+            .unwrap();
 
         store.revoke_all().unwrap();
 
-        assert!(!store.authorize("token-1"));
+        assert_eq!(store.authorize("token-1"), None);
         assert_eq!(store.devices.len(), 0);
     }
 
@@ -726,9 +909,41 @@ mod tests {
             route: None,
         };
 
-        let json = serde_json::to_string(&MobileSessionSummary::from(&session)).unwrap();
+        let json = serde_json::to_string(&MobileSessionSummary::from_hook(&session)).unwrap();
         assert!(json.contains("project"));
         assert!(!json.contains("/Users"));
         assert!(!json.contains("private transcript text"));
+        assert!(!MobileSessionSummary::from_hook(&session).can_message);
+    }
+
+    #[test]
+    fn only_control_summaries_expose_codex_actions() {
+        let session = crate::hexa_protocol::HexaSessionProjection {
+            session_id: "thread-1".into(),
+            provider: "codex".into(),
+            provider_thread_id: Some("thread-1".into()),
+            workspace: None,
+            project_name: Some("Mobile control".into()),
+            status: crate::hexa_protocol::HexaSessionStatus::Waiting,
+            current_turn_id: None,
+            current_activity: None,
+            pending_approvals: vec![crate::hexa_protocol::HexaApproval {
+                approval_id: "approval-1".into(),
+                operation: crate::hexa_protocol::HexaApprovalOperation::Command,
+                summary: "Run tests".into(),
+                reason: None,
+                expires_at: None,
+            }],
+            started_at: "2026-07-12T00:00:00Z".into(),
+            last_activity_at: "2026-07-12T00:01:00Z".into(),
+        };
+
+        let read = MobileSessionSummary::from_codex(&session, false);
+        let control = MobileSessionSummary::from_codex(&session, true);
+
+        assert!(!read.can_message);
+        assert!(read.pending_actions.is_empty());
+        assert!(control.can_message);
+        assert_eq!(control.pending_actions.len(), 1);
     }
 }

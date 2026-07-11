@@ -163,7 +163,7 @@ async fn handle_request(
         ("GET", "/mobile/status") => handle_mobile_status(app_handle).await,
         ("POST", "/mobile/enable") => handle_mobile_enable(app_handle).await,
         ("POST", "/mobile/disable") => handle_mobile_disable(app_handle).await,
-        ("POST", "/mobile/pair") => handle_mobile_pairing(app_handle).await,
+        ("POST", "/mobile/pair") => handle_mobile_pairing(req, app_handle).await,
         ("POST", "/mobile/revoke") => handle_mobile_revoke(app_handle).await,
         ("GET", "/autostart/status") => handle_autostart_status(app_handle).await,
         ("POST", "/autostart/enable") => handle_autostart_change(app_handle, true).await,
@@ -254,10 +254,11 @@ async fn handle_mobile_disable(
 }
 
 async fn handle_mobile_pairing(
+    req: Request<hyper::body::Incoming>,
     app_handle: tauri::AppHandle,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     let state = app_handle.state::<Arc<MobileBridgeState>>();
-    match state.create_pairing() {
+    match state.create_pairing(mobile_pairing_scope(req.uri().query())) {
         Ok(pairing) => Ok(json_response(
             StatusCode::OK,
             &serde_json::to_value(pairing).unwrap_or_default(),
@@ -266,6 +267,18 @@ async fn handle_mobile_pairing(
             StatusCode::BAD_REQUEST,
             &serde_json::json!({ "error": error }),
         )),
+    }
+}
+
+fn mobile_pairing_scope(query: Option<&str>) -> crate::mobile_bridge::MobileDeviceScope {
+    let control = query.unwrap_or_default().split('&').any(|pair| {
+        pair.split_once('=')
+            .is_some_and(|(key, value)| key == "scope" && value == "control")
+    });
+    if control {
+        crate::mobile_bridge::MobileDeviceScope::Control
+    } else {
+        crate::mobile_bridge::MobileDeviceScope::Read
     }
 }
 
@@ -777,4 +790,25 @@ fn json_response(status: StatusCode, body: &Value) -> Response<Full<Bytes>> {
         .header("content-type", "application/json")
         .body(Full::new(Bytes::from(json)))
         .unwrap()
+}
+
+#[cfg(test)]
+mod mobile_pairing_scope_tests {
+    use super::*;
+
+    #[test]
+    fn control_scope_requires_an_explicit_query_value() {
+        assert_eq!(
+            mobile_pairing_scope(Some("scope=control")),
+            crate::mobile_bridge::MobileDeviceScope::Control
+        );
+        assert_eq!(
+            mobile_pairing_scope(Some("scope=read")),
+            crate::mobile_bridge::MobileDeviceScope::Read
+        );
+        assert_eq!(
+            mobile_pairing_scope(None),
+            crate::mobile_bridge::MobileDeviceScope::Read
+        );
+    }
 }

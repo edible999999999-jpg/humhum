@@ -46,6 +46,7 @@ export interface MobilePairingInfo {
   expires_at: number;
   url: string;
   certificate_fingerprint: string;
+  scope: "read" | "control";
 }
 
 export interface FocusResult {
@@ -648,8 +649,8 @@ export function useHexaData() {
     return state;
   }, []);
 
-  const startMobilePairing = useCallback(async () => {
-    const pairing = await invoke<MobilePairingInfo>("start_mobile_pairing");
+  const startMobilePairing = useCallback(async (scope: "read" | "control" = "read") => {
+    const pairing = await invoke<MobilePairingInfo>("start_mobile_pairing", { scope });
     setMobilePairing(pairing);
     return pairing;
   }, []);

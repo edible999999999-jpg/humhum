@@ -11,7 +11,9 @@ use crate::hook_server::PendingMap;
 use crate::hush_store::{HushInboxSummary, HushStore};
 use crate::intervention_queue::{InterventionQueue, QueuedIntervention};
 use crate::knowledge_store::{AgentAsset, AgentAssetRootDiagnostic, KnowledgeStore, Preference};
-use crate::mobile_bridge::{MobileBridgeState, MobileBridgeStatus, MobilePairingInfo};
+use crate::mobile_bridge::{
+    MobileBridgeState, MobileBridgeStatus, MobileDeviceScope, MobilePairingInfo,
+};
 use crate::pi_sidecar::{self, PiSessionStatus, PiSidecarState, PiStartOptions};
 use crate::remote_bridge::{RemoteBridgeState, RemoteBridgeStatus};
 use crate::session_store::{Session, SessionStatus, SessionStore};
@@ -182,8 +184,9 @@ pub async fn disable_mobile_bridge(
 #[tauri::command]
 pub async fn start_mobile_pairing(
     state: State<'_, Arc<MobileBridgeState>>,
+    scope: MobileDeviceScope,
 ) -> Result<MobilePairingInfo, String> {
-    state.create_pairing()
+    state.create_pairing(scope)
 }
 
 #[tauri::command]
@@ -293,10 +296,19 @@ pub async fn hexa_send_codex_message(
     thread_id: String,
     message: String,
 ) -> Result<CodexSendReceipt, String> {
+    enqueue_and_deliver_codex_message(&state, &queue, &thread_id, &message).await
+}
+
+pub(crate) async fn enqueue_and_deliver_codex_message(
+    state: &CodexBridgeState,
+    queue: &std::sync::Mutex<InterventionQueue>,
+    thread_id: &str,
+    message: &str,
+) -> Result<CodexSendReceipt, String> {
     let entry = queue
         .lock()
         .map_err(|error| format!("Queue lock error: {error}"))?
-        .enqueue(&thread_id, &message)?;
+        .enqueue(thread_id, message)?;
     let is_next = queue
         .lock()
         .map_err(|error| format!("Queue lock error: {error}"))?
@@ -308,7 +320,7 @@ pub async fn hexa_send_codex_message(
             intervention_id: entry.id,
         });
     }
-    match deliver_queued_codex_message(&state, &queue, &entry.id).await {
+    match deliver_queued_codex_message(state, queue, &entry.id).await {
         Ok(turn_id) => Ok(CodexSendReceipt {
             status: "delivered".into(),
             turn_id: Some(turn_id),

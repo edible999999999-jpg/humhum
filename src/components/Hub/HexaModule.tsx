@@ -1,5 +1,5 @@
 import { useReducer, useState } from "react";
-import { Crosshair, Link, Power, RefreshCw, RotateCcw, Send, Smartphone, Square, Trash2 } from "lucide-react";
+import { Crosshair, Link, Power, RefreshCw, RotateCcw, Send, ShieldCheck, Smartphone, Square, Trash2 } from "lucide-react";
 import {
   useHexaData,
   type CodexRemoteControlState,
@@ -608,7 +608,7 @@ function HumHumMobilePanel({
   pairing: MobilePairingInfo | null;
   onEnable: () => Promise<MobileBridgeStatus>;
   onDisable: () => Promise<MobileBridgeStatus>;
-  onPair: () => Promise<MobilePairingInfo>;
+  onPair: (scope?: "read" | "control") => Promise<MobilePairingInfo>;
   onRevoke: () => Promise<MobileBridgeStatus>;
 }) {
   const [busy, setBusy] = useState(false);
@@ -619,7 +619,7 @@ function HumHumMobilePanel({
     try { await action(); } catch (cause) { setError(String(cause)); } finally { setBusy(false); }
   };
   const detail = pairing
-    ? `配对码 ${pairing.code} · 5 分钟内有效`
+    ? `配对码 ${pairing.code} · ${pairing.scope === "control" ? "可控制" : "只读"} · 5 分钟内有效`
     : state.enabled
       ? `${state.url} · ${state.paired_devices} 台设备`
       : "默认关闭；开启后仅同一局域网可见";
@@ -639,7 +639,8 @@ function HumHumMobilePanel({
       <div style={{ display: "flex", gap: 6 }}>
         {state.enabled ? (
           <>
-            <button type="button" title="生成一次性配对码" aria-label="生成一次性配对码" disabled={busy} onClick={() => run(onPair)} className="kawaii-toggle-btn connected"><Link size={15} /></button>
+            <button type="button" title="生成只读配对码" aria-label="生成只读配对码" disabled={busy} onClick={() => run(() => onPair("read"))} className="kawaii-toggle-btn connected"><Link size={15} /></button>
+            <button type="button" title="生成可控制配对码" aria-label="生成可控制配对码" disabled={busy} onClick={() => run(() => onPair("control"))} className="kawaii-toggle-btn"><ShieldCheck size={15} /></button>
             {state.paired_devices > 0 && <button type="button" title="撤销全部移动设备" aria-label="撤销全部移动设备" disabled={busy} onClick={() => run(onRevoke)} className="kawaii-toggle-btn"><Trash2 size={15} /></button>}
             <button type="button" title="关闭 HUMHUM 移动访问" aria-label="关闭 HUMHUM 移动访问" disabled={busy} onClick={() => run(onDisable)} className="kawaii-toggle-btn"><Power size={15} /></button>
           </>

@@ -28,14 +28,14 @@ Status meanings:
 
 | Capability | Status | HUMHUM evidence / next gap |
 | --- | --- | --- |
-| Remote Codex from phone | Partial | Official Codex Remote Control can pair ChatGPT mobile. HUMHUM Mobile Web now provides a separate read-only view across local hook and Codex sessions; remote follow-up is not enabled yet. |
-| iOS, Android and web clients | Partial | A responsive HUMHUM Mobile Web page works on the same LAN over HTTPS after explicit one-time pairing. The first visit must trust the generated certificate and can verify its SHA-256 fingerprint in Hexa. Native iOS/Android packaging and internet access remain missing. |
+| Remote Codex from phone | Partial | Official Codex Remote Control can pair ChatGPT mobile. HUMHUM Mobile Web now shows redacted local sessions, resolves scoped Codex approvals, and sends follow-ups through the same durable ordered queue as Hexa. Internet access remains missing. |
+| iOS, Android and web clients | Partial | A responsive HUMHUM Mobile Web page works on the same LAN over HTTPS after explicit one-time read or control pairing. The first visit must trust the generated certificate and can verify its SHA-256 fingerprint in Hexa. Native iOS/Android packaging and internet access remain missing. |
 | End-to-end encrypted relay | Missing | No HUMHUM internet relay exists; an unauthenticated LAN shortcut will not be shipped. |
 | Self-hosted relay | Missing | Requires protocol, identity, storage and deployment work. |
-| Ordered/retryable outgoing messages | Partial | Codex now has an owner-only persistent queue, strict per-thread order, crash recovery, explicit queued/delivered/failed receipts, and retry/discard controls. Claude and future remote transports do not use the queue yet. |
+| Ordered/retryable outgoing messages | Partial | Desktop and mobile Codex follow-ups share an owner-only persistent queue with strict per-thread order, crash recovery, explicit queued/delivered/failed receipts, and retry/discard controls. Claude and future remote transports do not use the queue yet. |
 | Push notifications | Missing | Native Mac notifications exist, but no APNs/FCM/Web Push path. |
 | Multi-machine sessions | Missing | Local multi-agent sessions work on one Mac; there is no machine registry or presence protocol. |
-| Mobile permission controls | Missing | Desktop permission controls work; there is no HUMHUM remote permission surface. |
+| Mobile permission controls | Partial | A separately paired control device can inspect bounded Codex approval summaries and allow once or deny; read-only devices receive 403 and never receive the action summaries. Claude mobile decisions and internet delivery remain missing. |
 | Voice control | Partial | HUMHUM has local STT/TTS and voice commands, but voice is not connected to a remote session client. |
 | Attachments and file review | Missing | Hexa summarizes tools and transcript evidence but has no encrypted remote attachment or changed-file review flow. |
 
@@ -66,12 +66,14 @@ Status meanings:
 - The SSH bridge validates targets before process launch, requires an existing known-host entry and SSH key, binds both sides of the reverse tunnel to loopback, and authorizes its separate SHA-256 credential only for `/event`.
 - Remote Claude installation replaces only HUMHUM-managed hook entries, preserves other hooks, labels incoming sessions with their SSH host, and revokes ingress immediately when disconnected or when tunnel exit is observed.
 - SSH bridge limitation: no suitable second host was available for a real remote smoke test; installer, argument boundaries, authorization scope, replacement behavior, and disconnect revocation are covered locally.
-- Rust: 71 passed, 1 ignored. Frontend: 11 passed. Production frontend build: passed.
+- Mobile pairing now records an explicit `read` or `control` scope. Existing device records migrate to read-only, read devices cannot see approval summaries or message controls, and only control credentials reach Codex action routes.
+- Mobile Codex follow-ups use the desktop durable intervention queue. Runtime HTTPS verification returned `control` and `read` scopes, control approval reached Codex and returned 409 for a synthetic missing item, read approval returned 403, control malformed message reached parsing with 400, read message returned 403, and revoked tokens returned 401.
+- Rust: 74 passed, 1 ignored. Frontend: 11 passed. Production frontend build: passed.
 
 ## Next Iteration Order
 
 1. Ghostty/Terminal exact terminal identifiers and IDE chat routing.
 2. Real installed-client smoke tests for OpenCode and Cursor, plus OpenCode permission reply support.
-3. Scoped mobile approvals and follow-up on top of the paired read-only foundation.
+3. Claude mobile approvals, queued follow-up, and per-device management on top of the scoped Codex controls.
 4. Real-host SSH smoke testing, multi-host presence, reconnect controls, and remote cleanup.
 5. Internet E2EE relay, push, attachments and multi-machine presence.
