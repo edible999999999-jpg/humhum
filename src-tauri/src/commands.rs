@@ -31,6 +31,24 @@ use tokio::process::Command;
 const HUMHUM_HOOK_SCRIPT: &str = include_str!("../../hooks/humhum-hook.sh");
 
 #[tauri::command]
+pub async fn get_launch_at_login(app: AppHandle) -> Result<bool, String> {
+    use tauri_plugin_autostart::ManagerExt;
+    app.autolaunch().is_enabled().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn set_launch_at_login(app: AppHandle, enabled: bool) -> Result<bool, String> {
+    use tauri_plugin_autostart::ManagerExt;
+    let manager = app.autolaunch();
+    if enabled {
+        manager.enable().map_err(|error| error.to_string())?;
+    } else {
+        manager.disable().map_err(|error| error.to_string())?;
+    }
+    manager.is_enabled().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 pub async fn get_mobile_bridge_status(
     state: State<'_, Arc<MobileBridgeState>>,
 ) -> Result<MobileBridgeStatus, String> {

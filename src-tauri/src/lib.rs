@@ -32,6 +32,10 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_store::Builder::default().build())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .setup(|app| {
             let app_handle = app.handle().clone();
 
@@ -158,6 +162,8 @@ pub fn run() {
             commands::get_config,
             commands::save_config,
             commands::get_wake_guard_status,
+            commands::get_launch_at_login,
+            commands::set_launch_at_login,
             commands::get_mobile_bridge_status,
             commands::enable_mobile_bridge,
             commands::disable_mobile_bridge,

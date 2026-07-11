@@ -22,7 +22,7 @@ Status meanings:
 | Broad client coverage | Partial | Managed profiles: Claude Code, Codex, Qwen Code, Gemini CLI, Kimi, QoderWork, Qoder, CodeBuddy and WorkBuddy; local Pi and Wukong watchers also exist. Claude-compatible profile structure is tested, while each third-party runtime still needs a real installed-client smoke test. Ping Island also supports OpenCode, Copilot, Cursor and remote variants. |
 | SSH remote bridge | Missing | HUMHUM has no authenticated SSH event bridge yet. |
 | Custom sound packs and per-agent mascot | Partial | HUMHUM has event sounds and 2D/3D pets, but no imported sound packs or per-agent mascot assignment. |
-| Launch at login | Missing | No verified user-facing launch-at-login setting. |
+| Launch at login | Complete | Settings exposes the native macOS LaunchAgent switch and always reads back system state. Runtime verification created `HumHum.plist` with `RunAtLoad=true`, then disabled it and confirmed clean removal. |
 
 ## Happy
 
@@ -59,6 +59,7 @@ Status meanings:
 - HUMHUM Mobile Web is explicitly enabled, TLS-only, protected by an expiring eight-character pairing challenge with a five-attempt lockout, and exposes redacted read-only session summaries.
 - Mobile device credentials are 64-character random tokens; only SHA-256 digests persist in an owner-only store, and Hexa can revoke all paired devices.
 - Runtime mobile verification: Wi-Fi HTTPS URL returned 200, unpaired/wrong tokens returned 401, pairing succeeded, 23 sessions loaded, and neither local paths nor a private message sentinel appeared in the response.
+- Launch at Login uses Tauri's native LaunchAgent backend. Enable/status/disable were verified against `~/Library/LaunchAgents/HumHum.plist`; the development-path test entry was removed afterward.
 - Rust: 61 passed, 1 ignored. Frontend: 11 passed. Production frontend build: passed.
 
 ## Next Iteration Order

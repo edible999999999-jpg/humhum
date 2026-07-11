@@ -35,21 +35,25 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
   const [activeTab, setActiveTab] = useState<"settings" | "stats" | "memory">("settings");
   const [wakeStatus, setWakeStatus] = useState<WakeGuardStatus | null>(null);
   const [wakeLoading, setWakeLoading] = useState(false);
+  const [launchAtLogin, setLaunchAtLogin] = useState(false);
+  const [launchAtLoginLoading, setLaunchAtLoginLoading] = useState(false);
 
   useEffect(() => {
     (async () => {
       try {
-        const [cfg, status, clientList, awake] = await Promise.all([
+        const [cfg, status, clientList, awake, autostart] = await Promise.all([
           invoke<AppConfig>("get_config"),
           invoke<Record<string, boolean>>("check_hooks_status"),
           invoke<Array<{ id: string; name: string }>>("get_supported_clients"),
           invoke<WakeGuardStatus>("get_wake_guard_status"),
+          invoke<boolean>("get_launch_at_login"),
         ]);
         setConfig(cfg as AppConfig);
         setLanguage((cfg as AppConfig).ui.language as "zh" | "en");
         setHookStatus(status as Record<string, boolean>);
         setClients(clientList as Array<{ id: string; name: string }>);
         setWakeStatus(awake);
+        setLaunchAtLogin(autostart);
       } catch (e) {
         console.error("Failed to load settings:", e);
       } finally {
@@ -132,6 +136,21 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
       setWakeLoading(false);
     }
   }, [wakeStatus, updateConfig, t]);
+
+  const handleLaunchAtLoginToggle = useCallback(async () => {
+    setLaunchAtLoginLoading(true);
+    setMessage(null);
+    try {
+      const enabled = await invoke<boolean>("set_launch_at_login", {
+        enabled: !launchAtLogin,
+      });
+      setLaunchAtLogin(enabled);
+    } catch (error) {
+      setMessage({ type: "error", text: t("settings.launchAtLoginFailed", { e: String(error) }) });
+    } finally {
+      setLaunchAtLoginLoading(false);
+    }
+  }, [launchAtLogin, t]);
 
   if (loading || !config) {
     return (
@@ -362,6 +381,26 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
                 : wakeStatus?.enabled
                   ? t("settings.awakeOn")
                   : t("settings.awakeOff")}
+            </button>
+          </div>
+        </KawaiiCard>
+
+        <KawaiiCard icon="↻" title={t("settings.launchAtLoginTitle")} subtitle={t("settings.launchAtLoginSubtitle")}>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs text-white/60">
+              {launchAtLogin ? t("settings.launchAtLoginActive") : t("settings.launchAtLoginDesc")}
+            </span>
+            <button
+              type="button"
+              onClick={handleLaunchAtLoginToggle}
+              disabled={launchAtLoginLoading}
+              className={`kawaii-toggle-btn ${launchAtLogin ? "connected" : ""}`}
+            >
+              {launchAtLoginLoading
+                ? t("settings.launchAtLoginChanging")
+                : launchAtLogin
+                  ? t("settings.launchAtLoginOn")
+                  : t("settings.launchAtLoginOff")}
             </button>
           </div>
         </KawaiiCard>

@@ -161,11 +161,50 @@ async fn handle_request(
         ("POST", "/mobile/disable") => handle_mobile_disable(app_handle).await,
         ("POST", "/mobile/pair") => handle_mobile_pairing(app_handle).await,
         ("POST", "/mobile/revoke") => handle_mobile_revoke(app_handle).await,
+        ("GET", "/autostart/status") => handle_autostart_status(app_handle).await,
+        ("POST", "/autostart/enable") => handle_autostart_change(app_handle, true).await,
+        ("POST", "/autostart/disable") => handle_autostart_change(app_handle, false).await,
         _ => Ok(json_response(
             StatusCode::NOT_FOUND,
             &serde_json::json!({"error": "not found"}),
         )),
     }
+}
+
+async fn handle_autostart_status(
+    app_handle: tauri::AppHandle,
+) -> Result<Response<Full<Bytes>>, Infallible> {
+    use tauri_plugin_autostart::ManagerExt;
+    match app_handle.autolaunch().is_enabled() {
+        Ok(enabled) => Ok(json_response(
+            StatusCode::OK,
+            &serde_json::json!({ "enabled": enabled }),
+        )),
+        Err(error) => Ok(json_response(
+            StatusCode::BAD_REQUEST,
+            &serde_json::json!({ "error": error.to_string() }),
+        )),
+    }
+}
+
+async fn handle_autostart_change(
+    app_handle: tauri::AppHandle,
+    enabled: bool,
+) -> Result<Response<Full<Bytes>>, Infallible> {
+    use tauri_plugin_autostart::ManagerExt;
+    let manager = app_handle.autolaunch();
+    let result = if enabled {
+        manager.enable()
+    } else {
+        manager.disable()
+    };
+    if let Err(error) = result {
+        return Ok(json_response(
+            StatusCode::BAD_REQUEST,
+            &serde_json::json!({ "error": error.to_string() }),
+        ));
+    }
+    handle_autostart_status(app_handle).await
 }
 
 async fn handle_mobile_status(
