@@ -328,6 +328,7 @@ async fn handle_event(
             ));
         }
     };
+    let payload = normalize_agent_payload(payload);
 
     let hook_event_name = payload
         .get("hook_event_name")
@@ -559,6 +560,65 @@ async fn handle_event(
             &serde_json::json!({"status": "received"}),
         ))
     }
+}
+
+fn normalize_agent_payload(mut payload: Value) -> Value {
+    let Some(object) = payload.as_object_mut() else {
+        return payload;
+    };
+    let has_session = object
+        .get("session_id")
+        .and_then(Value::as_str)
+        .is_some_and(|value| !value.trim().is_empty());
+    if !has_session {
+        let session_id = [
+            "sessionId",
+            "conversation_id",
+            "conversationId",
+            "task_id",
+            "taskId",
+            "generation_id",
+        ]
+        .into_iter()
+        .find_map(|key| {
+            object
+                .get(key)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+        });
+        if let Some(session_id) = session_id {
+            object.insert("session_id".into(), Value::String(session_id));
+        }
+    }
+
+    let has_cwd = object
+        .get("cwd")
+        .and_then(Value::as_str)
+        .is_some_and(|value| !value.trim().is_empty());
+    if !has_cwd {
+        let cwd = ["workspace_roots", "workspaceRoots"]
+            .into_iter()
+            .find_map(|key| object.get(key).and_then(Value::as_array))
+            .and_then(|roots| roots.first())
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                ["working_directory", "workspace_path", "project_dir"]
+                    .into_iter()
+                    .find_map(|key| object.get(key).and_then(Value::as_str))
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            });
+        if let Some(cwd) = cwd {
+            object.insert("cwd".into(), Value::String(cwd));
+        }
+    }
+    payload
 }
 
 /// GET /pending — list all pending permission requests
@@ -810,5 +870,37 @@ mod mobile_pairing_scope_tests {
             mobile_pairing_scope(None),
             crate::mobile_bridge::MobileDeviceScope::Read
         );
+    }
+}
+
+#[cfg(test)]
+mod agent_payload_tests {
+    use super::*;
+
+    #[test]
+    fn cursor_conversation_and_workspace_fields_become_a_stable_session() {
+        let payload = normalize_agent_payload(serde_json::json!({
+            "conversation_id": "cursor-conversation-42",
+            "generation_id": "cursor-turn-7",
+            "workspace_roots": ["/Users/test/project"],
+            "prompt": "private prompt"
+        }));
+
+        assert_eq!(payload["session_id"], "cursor-conversation-42");
+        assert_eq!(payload["cwd"], "/Users/test/project");
+        assert_eq!(payload["prompt"], "private prompt");
+    }
+
+    #[test]
+    fn existing_normalized_fields_take_priority() {
+        let payload = normalize_agent_payload(serde_json::json!({
+            "session_id": "native-session",
+            "conversation_id": "cursor-session",
+            "cwd": "/native/project",
+            "workspace_roots": ["/cursor/project"]
+        }));
+
+        assert_eq!(payload["session_id"], "native-session");
+        assert_eq!(payload["cwd"], "/native/project");
     }
 }

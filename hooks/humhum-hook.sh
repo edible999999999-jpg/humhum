@@ -78,11 +78,19 @@ if event_name and not payload.get("hook_event_name"):
 
 for source, target in (
     ("sessionId", "session_id"),
+    ("conversation_id", "session_id"),
+    ("conversationId", "session_id"),
+    ("task_id", "session_id"),
+    ("generation_id", "session_id"),
     ("toolName", "tool_name"),
     ("toolArgs", "tool_input"),
 ):
     if target not in payload and source in payload:
         payload[target] = payload[source]
+if not payload.get("cwd"):
+    roots = payload.get("workspace_roots") or payload.get("workspaceRoots")
+    if isinstance(roots, list) and roots and isinstance(roots[0], str):
+        payload["cwd"] = roots[0]
 route = payload.get("route") if isinstance(payload.get("route"), dict) else {}
 
 def put(name, value):

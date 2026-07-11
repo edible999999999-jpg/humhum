@@ -86,7 +86,7 @@ mod client_hook_install_tests {
         install_flat_json_hooks(
             &path,
             "'/tmp/humhum-hook.sh' --client 'cursor'",
-            &["preToolUse", "sessionStart"],
+            &["preToolUse", "sessionStart", "preCompact"],
             false,
         )
         .unwrap();
@@ -96,9 +96,19 @@ mod client_hook_install_tests {
         assert_eq!(value["hooks"]["preToolUse"].as_array().unwrap().len(), 2);
         let managed = &value["hooks"]["preToolUse"][1];
         assert_eq!(managed["matcher"], "*");
+        assert!(managed.get("type").is_none());
         assert!(managed["command"].as_str().unwrap().contains("PreToolUse"));
+        assert!(value["hooks"]["preCompact"][0]["command"]
+            .as_str()
+            .unwrap()
+            .contains("PreCompact"));
 
-        uninstall_flat_json_hooks(&path, &["preToolUse", "sessionStart"], false).unwrap();
+        uninstall_flat_json_hooks(
+            &path,
+            &["preToolUse", "sessionStart", "preCompact"],
+            false,
+        )
+        .unwrap();
         let value: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(value["hooks"]["preToolUse"].as_array().unwrap().len(), 1);
         assert_eq!(value["hooks"]["preToolUse"][0]["command"], "user-hook");
@@ -2260,6 +2270,7 @@ fn normalized_hook_event(event: &str) -> &str {
         "agentStop" | "stop" => "Stop",
         "subagentStart" => "SubagentStart",
         "subagentStop" => "SubagentStop",
+        "preCompact" => "PreCompact",
         "errorOccurred" => "PostToolUseFailure",
         other => other,
     }
@@ -2301,7 +2312,11 @@ fn install_flat_json_hooks(
         }) {
             continue;
         }
-        let mut entry = serde_json::json!({ "type": "command" });
+        let mut entry = if copilot {
+            serde_json::json!({ "type": "command" })
+        } else {
+            serde_json::json!({})
+        };
         if copilot {
             entry["bash"] = Value::String(command);
             entry["timeoutSec"] = serde_json::json!(10);

@@ -168,6 +168,7 @@ pub const CLIENTS: &[ClientProfile] = &[
             "stop",
             "subagentStart",
             "subagentStop",
+            "preCompact",
         ],
     },
     ClientProfile {
