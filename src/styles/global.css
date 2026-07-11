@@ -1170,6 +1170,87 @@ option {
   box-shadow: 0 0 10px rgba(251, 191, 36, 0.12);
 }
 
+.completion-bubble {
+  position: relative;
+  display: inline-flex;
+  width: fit-content;
+  max-width: 230px;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 12px 10px;
+  border: 1px solid rgba(116, 143, 165, 0.14);
+  border-radius: 20px 20px 20px 8px;
+  background: #fffaf7;
+  color: #263241;
+  box-shadow: 0 12px 26px rgba(90, 115, 150, 0.16);
+}
+
+.completion-bubble-icon {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+}
+
+.completion-bubble-copy {
+  min-width: 0;
+}
+
+.completion-bubble-title {
+  color: #334155;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.completion-bubble-detail {
+  max-width: 160px;
+  margin-top: 2px;
+  overflow: hidden;
+  color: #64748b;
+  font-size: 10px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.completion-bubble-close {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #94a3b8;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.completion-bubble-close:hover {
+  background: rgba(116, 143, 165, 0.08);
+  color: #64748b;
+}
+
+.completion-bubble-tail {
+  position: absolute;
+  bottom: -4px;
+  left: 28px;
+  width: 9px;
+  height: 9px;
+  border-right: 1px solid rgba(116, 143, 165, 0.14);
+  border-bottom: 1px solid rgba(116, 143, 165, 0.14);
+  background: #fffaf7;
+  transform: rotate(45deg);
+}
+
 .confirm-tag {
   padding: 2px 8px;
   border-radius: 9999px;

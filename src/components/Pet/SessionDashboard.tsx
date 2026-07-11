@@ -74,11 +74,13 @@ export function SessionDashboard({ visible }: SessionDashboardProps) {
 
   return (
     <div
-      className="w-full rounded-[22px] overflow-hidden"
+      className="inline-flex w-fit min-w-[220px] max-w-[300px] flex-col rounded-[18px] overflow-hidden"
       style={{
-        background: "rgba(255,250,247,0.96)",
+        background: "rgba(255,250,247,0.88)",
+        backdropFilter: "blur(16px) saturate(150%)",
+        WebkitBackdropFilter: "blur(16px) saturate(150%)",
         border: "1px solid rgba(116,143,165,0.16)",
-        boxShadow: "0 18px 44px rgba(90,115,150,0.2)",
+        boxShadow: "0 14px 34px rgba(90,115,150,0.18)",
         color: "#263241",
       }}
     >

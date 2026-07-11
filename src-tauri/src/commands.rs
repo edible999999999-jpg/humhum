@@ -1428,6 +1428,7 @@ fn parse_codex_session_file(path: &Path) -> Option<Session> {
     Some(Session {
         session_id,
         client_type: "codex".to_string(),
+        transcript_path: Some(path.to_string_lossy().to_string()),
         cwd: cwd.clone(),
         project_name: cwd
             .as_deref()
@@ -1982,6 +1983,317 @@ pub async fn get_agent_stats(
     let store = store.lock().map_err(|e| format!("Lock error: {}", e))?;
     let stats = store.get_per_agent_stats();
     serde_json::to_value(stats).map_err(|e| format!("Serialize error: {}", e))
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct HexaReadout {
+    pub session_id: String,
+    pub project_intent: String,
+    pub recent_user_intent: String,
+    pub agent_current_work: String,
+    pub performance_read: String,
+    pub fit_score: u8,
+    pub suggested_nudge: String,
+    pub evidence: Vec<String>,
+}
+
+#[derive(Debug, Default)]
+struct TranscriptSignals {
+    user_messages: Vec<String>,
+    assistant_messages: Vec<String>,
+    tool_names: Vec<String>,
+}
+
+/// Build Hexa's human-readable readouts from local Claude/Codex transcripts when available.
+#[tauri::command]
+pub async fn get_hexa_readouts(
+    store: State<'_, Arc<std::sync::Mutex<SessionStore>>>,
+) -> Result<Value, String> {
+    let sessions = {
+        let store = store.lock().map_err(|e| format!("Lock error: {}", e))?;
+        store
+            .get_all_sessions_with_history()
+            .into_iter()
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+
+    let readouts: Vec<HexaReadout> = sessions
+        .iter()
+        .map(|session| build_hexa_readout(session))
+        .collect();
+
+    serde_json::to_value(readouts).map_err(|e| format!("Serialize error: {}", e))
+}
+
+fn build_hexa_readout(session: &crate::session_store::Session) -> HexaReadout {
+    let signals = session
+        .transcript_path
+        .as_ref()
+        .and_then(|path| parse_transcript_signals(path).ok())
+        .unwrap_or_default();
+
+    let project_intent = session
+        .project_name
+        .as_ref()
+        .map(|name| format!("{} 项目里的 AI 编程会话", name))
+        .unwrap_or_else(|| "本地 AI 编程会话，项目名暂未从 hook 中识别".to_string());
+
+    let recent_user_intent = summarize_recent_user_intent(&signals.user_messages);
+    let agent_current_work = if let Some(tool) = session.last_tool_name.as_ref() {
+        format!("正在围绕 {} 推进，最近工具是 {}", project_intent, tool)
+    } else if let Some(msg) = signals.assistant_messages.last() {
+        format!("最近在回应: {}", truncate_text(msg, 90))
+    } else {
+        "已有 hook 事件，但还缺少 transcript 里的具体动作描述".to_string()
+    };
+
+    let mut evidence = Vec::new();
+    if !signals.user_messages.is_empty() {
+        evidence.push(format!("读到最近 {} 条用户消息", signals.user_messages.len().min(10)));
+    }
+    if !signals.tool_names.is_empty() {
+        evidence.push(format!(
+            "最近工具: {}",
+            signals
+                .tool_names
+                .iter()
+                .rev()
+                .take(4)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    evidence.push(format!("hook 事件数 {}", session.event_count));
+
+    let recent_events = &session.event_names;
+    let completed = recent_events
+        .iter()
+        .rev()
+        .take(10)
+        .filter(|e| matches!(e.as_str(), "TaskCompleted" | "Stop" | "SessionEnd"))
+        .count();
+    let tool_events = recent_events
+        .iter()
+        .rev()
+        .take(10)
+        .filter(|e| matches!(e.as_str(), "PreToolUse" | "PostToolUse"))
+        .count();
+    let repeated_tool = session.recent_tools.len() >= 6
+        && session
+            .recent_tools
+            .iter()
+            .rev()
+            .take(6)
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+            == 1;
+
+    let mut score: i32 = 48
+        + (completed as i32 * 18).min(24)
+        + (tool_events as i32 * 4).min(20)
+        + (signals.user_messages.len() as i32 * 2).min(8);
+    if session.has_pending_permission {
+        score -= 22;
+    }
+    if repeated_tool {
+        score -= 20;
+    }
+    if session.status == crate::session_store::SessionStatus::Completed {
+        score += 12;
+    }
+    score = score.clamp(8, 96);
+
+    let performance_read = if session.has_pending_permission {
+        "当前主要卡点是等待用户确认，agent 本身还不能继续推进。".to_string()
+    } else if repeated_tool {
+        "看起来在重复调用同一类工具，需要留意是否进入局部循环。".to_string()
+    } else if completed > 0 {
+        "最近有完成信号，整体是在回应用户需求并收口。".to_string()
+    } else if tool_events >= 3 {
+        "最近工具推进比较密集，像是在认真执行，但还没有明确完成信号。".to_string()
+    } else if signals.user_messages.is_empty() {
+        "缺少最近用户消息，只能从 hook 事件判断，感官反馈偏弱。".to_string()
+    } else {
+        "已捕捉到用户意图和部分执行信号，当前处于推进中。".to_string()
+    };
+
+    let suggested_nudge = if session.has_pending_permission {
+        "提醒用户先处理确认请求。".to_string()
+    } else if repeated_tool {
+        "提醒 agent 总结当前阻塞点，换策略而不是继续重复工具调用。".to_string()
+    } else if completed > 0 {
+        "可以要求 agent 给出简短验收结果和下一步。".to_string()
+    } else if signals.user_messages.is_empty() {
+        "补充 transcript 读取或让 agent 明确复述用户目标。".to_string()
+    } else {
+        "让 agent 对照最近用户目标说明当前改动是否满足。".to_string()
+    };
+
+    HexaReadout {
+        session_id: session.session_id.clone(),
+        project_intent,
+        recent_user_intent,
+        agent_current_work,
+        performance_read,
+        fit_score: score as u8,
+        suggested_nudge,
+        evidence,
+    }
+}
+
+fn parse_transcript_signals(path: &str) -> Result<TranscriptSignals, String> {
+    let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    let mut signals = TranscriptSignals::default();
+    let mut recent_lines = content.lines().rev().take(500).collect::<Vec<_>>();
+    recent_lines.reverse();
+
+    for line in recent_lines {
+        let Ok(value) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+
+        if is_user_entry(&value) {
+            if let Some(text) = extract_text(&value) {
+                push_limited(&mut signals.user_messages, text, 10);
+            }
+        } else if is_assistant_entry(&value) {
+            if let Some(text) = extract_text(&value) {
+                push_limited(&mut signals.assistant_messages, text, 6);
+            }
+        }
+
+        for tool in extract_tool_names(&value) {
+            push_limited(&mut signals.tool_names, tool, 12);
+        }
+    }
+
+    Ok(signals)
+}
+
+fn is_user_entry(value: &Value) -> bool {
+    value.get("type").and_then(|v| v.as_str()) == Some("user")
+        || value
+            .get("message")
+            .and_then(|m| m.get("role"))
+            .and_then(|v| v.as_str())
+            == Some("user")
+        || value.get("role").and_then(|v| v.as_str()) == Some("user")
+}
+
+fn is_assistant_entry(value: &Value) -> bool {
+    value.get("type").and_then(|v| v.as_str()) == Some("assistant")
+        || value
+            .get("message")
+            .and_then(|m| m.get("role"))
+            .and_then(|v| v.as_str())
+            == Some("assistant")
+        || value.get("role").and_then(|v| v.as_str()) == Some("assistant")
+}
+
+fn extract_text(value: &Value) -> Option<String> {
+    let candidates = [
+        value.pointer("/message/content"),
+        value.pointer("/content"),
+        value.pointer("/payload/message"),
+        value.pointer("/payload/content"),
+    ];
+
+    for candidate in candidates.into_iter().flatten() {
+        if let Some(text) = text_from_value(candidate) {
+            return Some(truncate_text(&text, 220));
+        }
+    }
+    None
+}
+
+fn text_from_value(value: &Value) -> Option<String> {
+    if let Some(text) = value.as_str() {
+        return clean_text(text);
+    }
+    if let Some(arr) = value.as_array() {
+        let parts = arr
+            .iter()
+            .filter_map(|item| {
+                item.get("text")
+                    .and_then(|v| v.as_str())
+                    .or_else(|| item.get("content").and_then(|v| v.as_str()))
+            })
+            .filter_map(clean_text)
+            .collect::<Vec<_>>();
+        if !parts.is_empty() {
+            return Some(parts.join(" "));
+        }
+    }
+    None
+}
+
+fn extract_tool_names(value: &Value) -> Vec<String> {
+    let mut names = Vec::new();
+    if let Some(name) = value.pointer("/payload/name").and_then(|v| v.as_str()) {
+        names.push(name.to_string());
+    }
+    if let Some(name) = value.get("tool_name").and_then(|v| v.as_str()) {
+        names.push(name.to_string());
+    }
+    if let Some(content) = value.pointer("/message/content").and_then(|v| v.as_array()) {
+        for item in content {
+            if item.get("type").and_then(|v| v.as_str()) == Some("tool_use") {
+                if let Some(name) = item.get("name").and_then(|v| v.as_str()) {
+                    names.push(name.to_string());
+                }
+            }
+        }
+    }
+    names
+}
+
+fn summarize_recent_user_intent(messages: &[String]) -> String {
+    if messages.is_empty() {
+        return "暂未从 transcript 读到最近用户消息，只能依赖 hook 事件。".to_string();
+    }
+    let recent = messages
+        .iter()
+        .rev()
+        .take(3)
+        .cloned()
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<Vec<_>>();
+    format!("最近用户主要在说: {}", recent.join(" / "))
+}
+
+fn push_limited(items: &mut Vec<String>, value: String, limit: usize) {
+    if value.trim().is_empty() {
+        return;
+    }
+    items.push(value);
+    if items.len() > limit {
+        items.remove(0);
+    }
+}
+
+fn clean_text(text: &str) -> Option<String> {
+    let compact = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if compact.is_empty() {
+        None
+    } else {
+        Some(compact)
+    }
+}
+
+fn truncate_text(text: &str, max_chars: usize) -> String {
+    let mut out = String::new();
+    for (idx, ch) in text.chars().enumerate() {
+        if idx >= max_chars {
+            out.push('…');
+            return out;
+        }
+        out.push(ch);
+    }
+    out
 }
 
 // ===== Knowledge Base commands =====

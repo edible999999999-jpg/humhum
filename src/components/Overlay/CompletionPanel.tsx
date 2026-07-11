@@ -25,51 +25,39 @@ export function CompletionPanel({ event, onDismiss }: CompletionPanelProps) {
   const eventName = event.hook_event_name;
 
   const isCompleted = eventName === "TaskCompleted";
-  const statusLabel = isCompleted
-    ? t("completion.completed")
-    : eventName === "Stop"
-      ? t("completion.stopped")
-      : t("completion.notification");
+  const statusLabel = isCompleted ? t("completion.bubbleDone") : t("completion.bubbleStopped");
+  const detail = message || `${clientLabel} ${isCompleted ? t("completion.completed") : t("completion.stopped")}`;
 
   const accent = isCompleted
-    ? { border: "rgba(52, 211, 153, 0.12)", glow: "rgba(52, 211, 153, 0.03)", icon: "rgba(52, 211, 153, 0.8)", bg: "rgba(52, 211, 153, 0.08)" }
-    : { border: "rgba(148, 239, 244, 0.12)", glow: "rgba(148, 239, 244, 0.03)", icon: "rgba(148, 239, 244, 0.8)", bg: "rgba(148, 239, 244, 0.08)" };
+    ? { border: "rgba(52, 211, 153, 0.16)", icon: "#10b981", bg: "rgba(52, 211, 153, 0.1)" }
+    : { border: "rgba(148, 163, 184, 0.18)", icon: "#64748b", bg: "rgba(148, 163, 184, 0.11)" };
 
   return (
     <div
-      className="confirm-card toast-enter pointer-events-auto"
-      style={{ borderColor: accent.border, boxShadow: "0 18px 44px rgba(90,115,150,0.18)" }}
+      className="completion-bubble toast-enter pointer-events-auto"
+      style={{ borderColor: accent.border }}
     >
-      {/* Header */}
-      <div className="flex items-center justify-between px-3 pt-2.5 pb-1.5">
-        <div className="flex items-center gap-2">
-          <div
-            className="w-5 h-5 rounded-full flex items-center justify-center"
-            style={{ background: accent.bg, color: accent.icon }}
-          >
-            {isCompleted ? (
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="20 6 9 17 4 12" />
-              </svg>
-            ) : (
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="12" r="10" />
-                <rect x="9" y="9" width="6" height="6" rx="1" />
-              </svg>
-            )}
-          </div>
-          <span className="font-semibold text-[13px]" style={{ color: "#334155" }}>{statusLabel}</span>
-          <span className="confirm-tag confirm-tag-client">{clientLabel}</span>
-        </div>
-        <button onClick={onDismiss} className="text-xs transition-colors leading-none" style={{ color: "#94a3b8" }}>✕</button>
+      <div
+        className="completion-bubble-icon"
+        style={{ background: accent.bg, color: accent.icon }}
+      >
+        {isCompleted ? (
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="20 6 9 17 4 12" />
+          </svg>
+        ) : (
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="9" />
+            <path d="M8 12h8" />
+          </svg>
+        )}
       </div>
-
-      {/* Content */}
-      <div className="px-3 pb-2.5">
-        <p className="text-[12px] leading-snug line-clamp-3" style={{ color: "#64748b" }}>
-          {message || t("completion.fallback", { client: clientLabel, status: statusLabel })}
-        </p>
+      <div className="completion-bubble-copy">
+        <div className="completion-bubble-title">{statusLabel}</div>
+        <div className="completion-bubble-detail">{detail}</div>
       </div>
+      <button onClick={onDismiss} className="completion-bubble-close" aria-label="Dismiss">×</button>
+      <span className="completion-bubble-tail" />
     </div>
   );
 }

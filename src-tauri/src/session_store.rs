@@ -6,6 +6,7 @@ use std::collections::HashMap;
 pub struct Session {
     pub session_id: String,
     pub client_type: String,
+    pub transcript_path: Option<String>,
     pub cwd: Option<String>,
     pub project_name: Option<String>,
     pub started_at: String,
@@ -63,6 +64,7 @@ impl SessionStore {
             .or_insert_with(|| Session {
                 session_id: event.session_id.clone(),
                 client_type: client_type.clone(),
+                transcript_path: event.transcript_path.clone(),
                 cwd: event.cwd.clone(),
                 project_name: project_name.clone(),
                 started_at: event.timestamp.clone(),
@@ -78,6 +80,10 @@ impl SessionStore {
 
         session.last_event_at = event.timestamp.clone();
         session.event_count += 1;
+
+        if event.transcript_path.is_some() {
+            session.transcript_path = event.transcript_path.clone();
+        }
 
         session.event_names.push(event.hook_event_name.clone());
         if session.event_names.len() > MAX_EVENT_NAMES {

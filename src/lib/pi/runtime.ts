@@ -5,12 +5,16 @@ import {
 import {
   createModels,
   createProvider,
+  createAssistantMessageEventStream,
   type Model,
+  type AssistantMessage,
+  type AssistantMessageEvent,
 } from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import type { AppConfig } from "../../types";
 import { buildHumiTools } from "./tools";
 import type { HumiPiCallbacks, HumiPiConfig, HumiPiRuntime } from "./types";
+import { invoke } from "@tauri-apps/api/core";
 
 const PROVIDER_ID = "humi-custom";
 
@@ -57,6 +61,31 @@ function progressForEvent(event: AgentEvent, callbacks?: HumiPiCallbacks): void 
   }
 }
 
+function proxyErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function createProxyError(error: unknown, model: Model<"openai-completions">): AssistantMessage {
+  return {
+    role: "assistant",
+    content: [],
+    api: model.api,
+    provider: model.provider,
+    model: model.id,
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+    stopReason: "error",
+    errorMessage: proxyErrorMessage(error),
+    timestamp: Date.now(),
+  };
+}
+
 export function createHumiPiRuntime(
   config: AppConfig,
   callbacks?: HumiPiCallbacks,
@@ -83,6 +112,44 @@ export function createHumiPiRuntime(
   const models = createModels();
   models.setProvider(provider);
 
+  const streamThroughTauriProxy = (requestedModel: Model<"openai-completions">, context: Parameters<typeof models.streamSimple>[1], options: Parameters<typeof models.streamSimple>[2]) => {
+    const output = createAssistantMessageEventStream();
+    void (async () => {
+      const nativeFetch = globalThis.fetch;
+      globalThis.fetch = async (input, init) => {
+        const requestUrl = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        const requestHeaders = Object.fromEntries(new Headers(init?.headers).entries());
+        const requestBody = typeof init?.body === "string" ? init.body : "";
+        const responseText = await invoke<string>("proxy_post", {
+          url: requestUrl,
+          headers: requestHeaders,
+          body: requestBody,
+        });
+        return new Response(responseText, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        });
+      };
+
+      try {
+        const source = models.streamSimple(requestedModel, context, options);
+        for await (const event of source) {
+          output.push(event as AssistantMessageEvent);
+        }
+      } catch (error) {
+        output.push({
+          type: "error",
+          reason: "error",
+          error: createProxyError(error, requestedModel),
+        });
+      } finally {
+        globalThis.fetch = nativeFetch;
+        output.end();
+      }
+    })();
+    return output;
+  };
+
   const agent = new Agent({
     initialState: {
       model,
@@ -98,7 +165,8 @@ export function createHumiPiRuntime(
       ].join("\n"),
       tools: buildHumiTools((label, tool) => callbacks?.onProgress?.({ label, tool })),
     },
-    streamFn: (requestedModel, context, options) => models.streamSimple(requestedModel, context, options),
+    streamFn: (requestedModel, context, options) =>
+      streamThroughTauriProxy(requestedModel as Model<"openai-completions">, context, options),
   });
 
   agent.subscribe((event) => progressForEvent(event, callbacks));

@@ -132,6 +132,7 @@ pub fn run() {
             commands::stop_audio,
             commands::get_stats,
             commands::get_agent_stats,
+            commands::get_hexa_readouts,
             commands::type_in_terminal,
             commands::toggle_hub,
             commands::get_knowledge,
