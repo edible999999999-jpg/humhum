@@ -29,11 +29,92 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::process::Command;
 
 const HUMHUM_HOOK_SCRIPT: &str = include_str!("../../hooks/humhum-hook.sh");
+const HUMHUM_OPENCODE_PLUGIN: &str = include_str!("../../hooks/humhum-opencode-plugin.ts");
 
 #[tauri::command]
 pub async fn get_launch_at_login(app: AppHandle) -> Result<bool, String> {
     use tauri_plugin_autostart::ManagerExt;
-    app.autolaunch().is_enabled().map_err(|error| error.to_string())
+    app.autolaunch()
+        .is_enabled()
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(test)]
+mod client_hook_install_tests {
+    use super::*;
+
+    #[test]
+    fn cursor_hooks_are_flat_and_preserve_existing_entries() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("hooks.json");
+        std::fs::write(
+            &path,
+            r#"{"hooks":{"preToolUse":[{"command":"user-hook"}]}}"#,
+        )
+        .unwrap();
+
+        install_flat_json_hooks(
+            &path,
+            "'/tmp/humhum-hook.sh' --client 'cursor'",
+            &["preToolUse", "sessionStart"],
+            false,
+        )
+        .unwrap();
+
+        let value: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(value["version"], 1);
+        assert_eq!(value["hooks"]["preToolUse"].as_array().unwrap().len(), 2);
+        let managed = &value["hooks"]["preToolUse"][1];
+        assert_eq!(managed["matcher"], "*");
+        assert!(managed["command"].as_str().unwrap().contains("PreToolUse"));
+
+        uninstall_flat_json_hooks(&path, &["preToolUse", "sessionStart"], false).unwrap();
+        let value: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(value["hooks"]["preToolUse"].as_array().unwrap().len(), 1);
+        assert_eq!(value["hooks"]["preToolUse"][0]["command"], "user-hook");
+    }
+
+    #[test]
+    fn copilot_hooks_use_versioned_bash_entries() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("humhum.json");
+
+        install_flat_json_hooks(
+            &path,
+            "'/tmp/humhum-hook.sh' --client 'github-copilot'",
+            &["userPromptSubmitted", "errorOccurred"],
+            true,
+        )
+        .unwrap();
+
+        let value: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(value["version"], 1);
+        assert!(value["hooks"]["userPromptSubmitted"][0]["bash"]
+            .as_str()
+            .unwrap()
+            .contains("UserPromptSubmit"));
+        assert!(value["hooks"]["errorOccurred"][0]["bash"]
+            .as_str()
+            .unwrap()
+            .contains("PostToolUseFailure"));
+        assert_eq!(value["hooks"]["errorOccurred"][0]["timeoutSec"], 10);
+    }
+
+    #[test]
+    fn opencode_plugin_uses_runtime_token_without_embedding_it() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("plugins/humhum.ts");
+
+        install_opencode_plugin(&path, 31_275).unwrap();
+
+        let source = std::fs::read_to_string(&path).unwrap();
+        assert!(source.contains("HUMHUM_OPENCODE_PLUGIN"));
+        assert!(source.contains("127.0.0.1:31275"));
+        assert!(source.contains("local-api-token"));
+        assert!(!source.contains("__HUMHUM_PORT__"));
+        uninstall_opencode_plugin(&path).unwrap();
+        assert!(!path.exists());
+    }
 }
 
 #[tauri::command]
@@ -1953,7 +2034,7 @@ pub async fn install_hooks_for_client(
     let profile = client_registry::get_client(&client_id)
         .ok_or_else(|| format!("Unknown client: {}", client_id))?;
 
-    let _port = {
+    let port = {
         let config = config.lock().map_err(|e| format!("Lock error: {}", e))?;
         config.hook_port
     };
@@ -1975,6 +2056,13 @@ pub async fn install_hooks_for_client(
     match profile.config_format {
         ConfigFormat::Json => install_json_hooks(&config_path, &hook_cmd, profile.hook_events)?,
         ConfigFormat::Toml => install_toml_hooks(&config_path, &hook_cmd, profile.hook_events)?,
+        ConfigFormat::FlatJson => {
+            install_flat_json_hooks(&config_path, &hook_cmd, profile.hook_events, false)?
+        }
+        ConfigFormat::CopilotJson => {
+            install_flat_json_hooks(&config_path, &hook_cmd, profile.hook_events, true)?
+        }
+        ConfigFormat::OpenCodePlugin => install_opencode_plugin(&config_path, port)?,
     }
 
     Ok(format!(
@@ -1999,6 +2087,13 @@ pub async fn uninstall_hooks_for_client(client_id: String) -> Result<String, Str
     match profile.config_format {
         ConfigFormat::Json => uninstall_json_hooks(&config_path, profile.hook_events)?,
         ConfigFormat::Toml => uninstall_toml_hooks(&config_path, profile.hook_events)?,
+        ConfigFormat::FlatJson => {
+            uninstall_flat_json_hooks(&config_path, profile.hook_events, false)?
+        }
+        ConfigFormat::CopilotJson => {
+            uninstall_flat_json_hooks(&config_path, profile.hook_events, true)?
+        }
+        ConfigFormat::OpenCodePlugin => uninstall_opencode_plugin(&config_path)?,
     }
 
     Ok(format!("Hooks removed for {}", profile.name))
@@ -2076,6 +2171,123 @@ fn install_json_hooks(
     std::fs::write(config_path, content).map_err(|e| format!("Write error: {}", e))?;
 
     Ok(())
+}
+
+fn normalized_hook_event(event: &str) -> &str {
+    match event {
+        "sessionStart" => "SessionStart",
+        "sessionEnd" => "SessionEnd",
+        "userPromptSubmitted" | "beforeSubmitPrompt" => "UserPromptSubmit",
+        "preToolUse" => "PreToolUse",
+        "postToolUse" => "PostToolUse",
+        "agentStop" | "stop" => "Stop",
+        "subagentStart" => "SubagentStart",
+        "subagentStop" => "SubagentStop",
+        "errorOccurred" => "PostToolUseFailure",
+        other => other,
+    }
+}
+
+fn install_flat_json_hooks(
+    config_path: &Path,
+    hook_cmd: &str,
+    events: &[&str],
+    copilot: bool,
+) -> Result<(), String> {
+    let mut config: Value = if config_path.exists() {
+        serde_json::from_str(&std::fs::read_to_string(config_path).map_err(|e| e.to_string())?)
+            .unwrap_or_else(|_| serde_json::json!({}))
+    } else {
+        serde_json::json!({})
+    };
+    config["version"] = serde_json::json!(1);
+    if !config.get("hooks").is_some_and(Value::is_object) {
+        config["hooks"] = serde_json::json!({});
+    }
+    let hooks = config["hooks"].as_object_mut().unwrap();
+    for event in events {
+        let command = format!(
+            "{} --event {}",
+            hook_cmd,
+            shell_quote(normalized_hook_event(event))
+        );
+        let entries = hooks
+            .entry((*event).to_string())
+            .or_insert_with(|| Value::Array(Vec::new()))
+            .as_array_mut()
+            .ok_or_else(|| format!("Invalid hook array for {event}"))?;
+        if entries.iter().any(|entry| {
+            entry
+                .get(if copilot { "bash" } else { "command" })
+                .and_then(Value::as_str)
+                .is_some_and(|command| command.contains("humhum"))
+        }) {
+            continue;
+        }
+        let mut entry = serde_json::json!({ "type": "command" });
+        if copilot {
+            entry["bash"] = Value::String(command);
+            entry["timeoutSec"] = serde_json::json!(10);
+        } else {
+            entry["command"] = Value::String(command);
+            if matches!(*event, "preToolUse" | "postToolUse") {
+                entry["matcher"] = Value::String("*".into());
+            }
+        }
+        entries.push(entry);
+    }
+    write_json_config(config_path, &config)
+}
+
+fn uninstall_flat_json_hooks(
+    config_path: &Path,
+    events: &[&str],
+    copilot: bool,
+) -> Result<(), String> {
+    let mut config: Value = serde_json::from_str(
+        &std::fs::read_to_string(config_path).map_err(|error| error.to_string())?,
+    )
+    .unwrap_or_else(|_| serde_json::json!({}));
+    if let Some(hooks) = config.get_mut("hooks").and_then(Value::as_object_mut) {
+        for event in events {
+            if let Some(entries) = hooks.get_mut(*event).and_then(Value::as_array_mut) {
+                entries.retain(|entry| {
+                    !entry
+                        .get(if copilot { "bash" } else { "command" })
+                        .and_then(Value::as_str)
+                        .is_some_and(|command| command.contains("humhum"))
+                });
+                if entries.is_empty() {
+                    hooks.remove(*event);
+                }
+            }
+        }
+    }
+    write_json_config(config_path, &config)
+}
+
+fn write_json_config(path: &Path, value: &Value) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let content = serde_json::to_string_pretty(value).map_err(|error| error.to_string())?;
+    std::fs::write(path, content).map_err(|error| error.to_string())
+}
+
+fn install_opencode_plugin(config_path: &Path, port: u16) -> Result<(), String> {
+    if let Some(parent) = config_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let source = HUMHUM_OPENCODE_PLUGIN.replace("__HUMHUM_PORT__", &port.to_string());
+    std::fs::write(config_path, source).map_err(|error| error.to_string())
+}
+
+fn uninstall_opencode_plugin(config_path: &Path) -> Result<(), String> {
+    let source = std::fs::read_to_string(config_path).map_err(|error| error.to_string())?;
+    if !source.contains("HUMHUM_OPENCODE_PLUGIN") {
+        return Err("Refusing to remove an unmanaged OpenCode plugin".into());
+    }
+    std::fs::remove_file(config_path).map_err(|error| error.to_string())
 }
 
 pub(crate) fn ensure_hook_script_installed(

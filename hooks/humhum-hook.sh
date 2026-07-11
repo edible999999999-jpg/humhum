@@ -15,6 +15,7 @@ set -euo pipefail
 
 HUMHUM_PORT="${HUMHUM_PORT:-31275}"
 HUMHUM_CLIENT="${HUMHUM_CLIENT:-}"
+HUMHUM_EVENT="${HUMHUM_EVENT:-}"
 DEBUG_LOG="${HUMHUM_DEBUG_LOG:-/tmp/humhum-hook-debug.log}"
 TOKEN_FILE="${HOME}/.humhum/local-api-token"
 touch "$DEBUG_LOG" 2>/dev/null || true
@@ -28,6 +29,14 @@ while [ "$#" -gt 0 ]; do
       ;;
     --client=*)
       HUMHUM_CLIENT="${1#--client=}"
+      shift
+      ;;
+    --event)
+      HUMHUM_EVENT="${2:-}"
+      shift 2
+      ;;
+    --event=*)
+      HUMHUM_EVENT="${1#--event=}"
       shift
       ;;
     *)
@@ -58,10 +67,21 @@ fi
 # ask the parent process for its controlling TTY and keep environment hints too.
 PARENT_TTY=$(ps -p "$PPID" -o tty= 2>/dev/null | xargs || true)
 PAYLOAD=$(printf '%s' "$PAYLOAD" | \
-  HUMHUM_PARENT_TTY="$PARENT_TTY" HUMHUM_PARENT_PID="$PPID" python3 -c '
+  HUMHUM_PARENT_TTY="$PARENT_TTY" HUMHUM_PARENT_PID="$PPID" HUMHUM_EVENT="$HUMHUM_EVENT" python3 -c '
 import json, os, sys
 
 payload = json.load(sys.stdin)
+event_name = os.environ.get("HUMHUM_EVENT", "").strip()
+if event_name and not payload.get("hook_event_name"):
+    payload["hook_event_name"] = event_name
+
+for source, target in (
+    ("sessionId", "session_id"),
+    ("toolName", "tool_name"),
+    ("toolArgs", "tool_input"),
+):
+    if target not in payload and source in payload:
+        payload[target] = payload[source]
 route = payload.get("route") if isinstance(payload.get("route"), dict) else {}
 
 def put(name, value):

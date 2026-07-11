@@ -14,6 +14,9 @@ pub struct ClientProfile {
 pub enum ConfigFormat {
     Json,
     Toml,
+    FlatJson,
+    CopilotJson,
+    OpenCodePlugin,
 }
 
 pub const CLIENTS: &[ClientProfile] = &[
@@ -151,6 +154,52 @@ pub const CLIENTS: &[ClientProfile] = &[
             "PreCompact",
         ],
     },
+    ClientProfile {
+        id: "cursor",
+        name: "Cursor",
+        config_format: ConfigFormat::FlatJson,
+        config_path: ".cursor/hooks.json",
+        hook_events: &[
+            "sessionStart",
+            "sessionEnd",
+            "beforeSubmitPrompt",
+            "preToolUse",
+            "postToolUse",
+            "stop",
+            "subagentStart",
+            "subagentStop",
+        ],
+    },
+    ClientProfile {
+        id: "github-copilot",
+        name: "GitHub Copilot CLI",
+        config_format: ConfigFormat::CopilotJson,
+        config_path: ".copilot/hooks/humhum.json",
+        hook_events: &[
+            "sessionStart",
+            "sessionEnd",
+            "userPromptSubmitted",
+            "preToolUse",
+            "postToolUse",
+            "agentStop",
+            "subagentStop",
+            "errorOccurred",
+        ],
+    },
+    ClientProfile {
+        id: "opencode",
+        name: "OpenCode",
+        config_format: ConfigFormat::OpenCodePlugin,
+        config_path: ".config/opencode/plugins/humhum.ts",
+        hook_events: &[
+            "session.created",
+            "session.idle",
+            "session.error",
+            "permission.asked",
+            "tool.execute.before",
+            "tool.execute.after",
+        ],
+    },
 ];
 
 pub fn get_client(id: &str) -> Option<&'static ClientProfile> {
@@ -167,7 +216,15 @@ mod tests {
 
     #[test]
     fn includes_verified_claude_compatible_clients() {
-        for id in ["claude-code", "qoder", "codebuddy", "workbuddy"] {
+        for id in [
+            "claude-code",
+            "qoder",
+            "codebuddy",
+            "workbuddy",
+            "cursor",
+            "github-copilot",
+            "opencode",
+        ] {
             assert!(get_client(id).is_some(), "missing client profile: {id}");
         }
     }

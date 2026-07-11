@@ -19,7 +19,7 @@ Status meanings:
 | Follow-up from supervisor | Partial | Codex app-server follow-up resumes before send and now reports sending/delivered/failed with retry-preserved text. Generic terminal inline follow-up is not enabled because typing into an unverified target is unsafe. |
 | Completion and attention notifications | Complete | Pet overlays, sounds, and native macOS notifications exist for permission, question, tool, and completion events. Notification preference granularity still trails Ping Island. |
 | Transcript backfill | Complete | Local Codex JSONL and Claude stats/readouts feed history and summaries. |
-| Broad client coverage | Partial | Managed profiles: Claude Code, Codex, Qwen Code, Gemini CLI, Kimi, QoderWork, Qoder, CodeBuddy and WorkBuddy; local Pi and Wukong watchers also exist. Claude-compatible profile structure is tested, while each third-party runtime still needs a real installed-client smoke test. Ping Island also supports OpenCode, Copilot, Cursor and remote variants. |
+| Broad client coverage | Partial | Managed profiles now include Claude Code, Codex, Qwen Code, Gemini CLI, Kimi, QoderWork, Qoder, CodeBuddy, WorkBuddy, Cursor, GitHub Copilot CLI and OpenCode; local Pi and Wukong watchers also exist. Copilot normalization was runtime-smoked. OpenCode and Cursor still need an installed-client smoke test, and remote variants remain missing. |
 | SSH remote bridge | Missing | HUMHUM has no authenticated SSH event bridge yet. |
 | Custom sound packs and per-agent mascot | Partial | HUMHUM has event sounds and 2D/3D pets, but no imported sound packs or per-agent mascot assignment. |
 | Launch at login | Complete | Settings exposes the native macOS LaunchAgent switch and always reads back system state. Runtime verification created `HumHum.plist` with `RunAtLoad=true`, then disabled it and confirmed clean removal. |
@@ -60,12 +60,14 @@ Status meanings:
 - Mobile device credentials are 64-character random tokens; only SHA-256 digests persist in an owner-only store, and Hexa can revoke all paired devices.
 - Runtime mobile verification: Wi-Fi HTTPS URL returned 200, unpaired/wrong tokens returned 401, pairing succeeded, 23 sessions loaded, and neither local paths nor a private message sentinel appeared in the response.
 - Launch at Login uses Tauri's native LaunchAgent backend. Enable/status/disable were verified against `~/Library/LaunchAgents/HumHum.plist`; the development-path test entry was removed afterward.
-- Rust: 61 passed, 1 ignored. Frontend: 11 passed. Production frontend build: passed.
+- Cursor uses its current flat `~/.cursor/hooks.json` protocol, Copilot uses a versioned user-level `~/.copilot/hooks/humhum.json`, and OpenCode receives a managed global TypeScript plugin without embedded credentials.
+- A synthetic Copilot CLI camelCase event passed through the installed shell hook and appeared as a normalized `github-copilot` session; its private prompt did not appear in the mobile summary.
+- Rust: 64 passed, 1 ignored. Frontend: 11 passed. Production frontend build: passed.
 
 ## Next Iteration Order
 
 1. Ghostty/Terminal exact terminal identifiers and IDE chat routing.
-2. Verified OpenCode, Copilot and Cursor ingestion profiles.
+2. Real installed-client smoke tests for OpenCode and Cursor, plus OpenCode permission reply support.
 3. Scoped mobile approvals and follow-up on top of the paired read-only foundation.
 4. SSH remote bridge with explicit host trust and scoped credentials.
 5. Internet E2EE relay, push, attachments and multi-machine presence.
