@@ -33,3 +33,6 @@ pnpm-debug.log*
 # Temp files
 *.tmp
 *.bak
+
+# Local feature worktrees
+.worktrees/
