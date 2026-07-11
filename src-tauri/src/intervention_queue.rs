@@ -19,6 +19,7 @@ pub enum InterventionProvider {
     #[default]
     Codex,
     Claude,
+    OpenCode,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -326,10 +327,14 @@ mod tests {
         let entry = queue
             .enqueue_for(InterventionProvider::Claude, "claude-session", "continue")
             .unwrap();
+        queue
+            .enqueue_for(InterventionProvider::OpenCode, "opencode-session", "continue")
+            .unwrap();
 
         assert_eq!(entry.provider, InterventionProvider::Claude);
         let reloaded = InterventionQueue::load_or_create(temp.path()).unwrap();
         assert_eq!(reloaded.entries()[0].provider, InterventionProvider::Claude);
+        assert_eq!(reloaded.entries()[1].provider, InterventionProvider::OpenCode);
     }
 
     #[test]

@@ -16,7 +16,7 @@ Status meanings:
 | Waiting-first attention view | Complete | Hexa orders waiting, stalled/looping, working, idle, then completed; recency breaks ties. |
 | Approve/deny and questions | Complete | Claude hook requests, Codex app-server approvals, and OpenCode `permission.asked` decisions are session scoped. OpenCode replies through its official permission API and preserves the native prompt when HUMHUM is unavailable. |
 | Exact jump back | Partial | Hook captures terminal, PID, TTY, tmux pane and iTerm session. Hexa can select an exact tmux pane, iTerm session, allow-listed Terminal.app TTY, unique Ghostty workspace, Codex desktop task, or a Cursor integrated terminal verified by a one-time extension receipt. Cursor workspace fallback is correctly reported as inexact; exact Cursor chat selection and stored Ghostty terminal UUIDs are still missing. |
-| Follow-up from supervisor | Partial | Codex app-server and known local Claude Code sessions accept follow-ups through provider-scoped durable queues with retry-preserved text. Claude uses its stable session UUID, verified workspace and noninteractive `--resume`; generic terminal typing remains disabled because an unverified target is unsafe. |
+| Follow-up from supervisor | Partial | Codex app-server plus known local Claude Code and OpenCode sessions accept follow-ups through provider-scoped durable queues with retry-preserved text. CLI transports use stable session IDs, verified workspaces and noninteractive resume commands; generic terminal typing remains disabled because an unverified target is unsafe. |
 | Completion and attention notifications | Complete | Pet overlays and sounds remain ambient, while native macOS notifications can be enabled independently for approvals, questions, completions, and ordinary Agent messages. Legacy configs migrate with all four enabled. |
 | Transcript backfill | Complete | Local Codex JSONL and Claude stats/readouts feed history and summaries. |
 | Broad client coverage | Partial | Managed profiles include Claude Code, Codex, Qwen Code, Gemini CLI, Kimi, QoderWork, Qoder, CodeBuddy, WorkBuddy, Cursor, GitHub Copilot CLI and OpenCode; local Pi and Wukong watchers also exist. Copilot, Cursor 3.10.20 and OpenCode 1.17.18 now have runtime smoke evidence. Remote variants remain incomplete. |
@@ -32,7 +32,7 @@ Status meanings:
 | iOS, Android and web clients | Partial | A responsive HUMHUM Mobile Web page works on the same LAN over HTTPS after explicit one-time read or control pairing. The first visit must trust the generated certificate and can verify its SHA-256 fingerprint in Hexa. Native iOS/Android packaging and internet access remain missing. |
 | End-to-end encrypted relay | Missing | No HUMHUM internet relay exists; an unauthenticated LAN shortcut will not be shipped. |
 | Self-hosted relay | Missing | Requires protocol, identity, storage and deployment work. |
-| Ordered/retryable outgoing messages | Partial | Desktop Claude plus desktop/mobile Codex follow-ups use an owner-only persistent queue with strict per-provider/session order, crash recovery, explicit queued/delivered/failed receipts, and retry/discard controls. Future remote transports do not use the queue yet. |
+| Ordered/retryable outgoing messages | Partial | Desktop Claude/OpenCode plus desktop/mobile Codex follow-ups use an owner-only persistent queue with strict per-provider/session order, crash recovery, explicit queued/delivered/failed receipts, and retry/discard controls. Future remote transports do not use the queue yet. |
 | Push notifications | Missing | Native Mac notifications exist, but no APNs/FCM/Web Push path. |
 | Multi-machine sessions | Missing | Local multi-agent sessions work on one Mac; there is no machine registry or presence protocol. |
 | Mobile permission controls | Partial | A separately paired control device can inspect bounded Codex, Claude and OpenCode approval summaries and allow once or deny; read-only devices receive 403 and never receive action summaries. Internet delivery remains missing. |
@@ -52,8 +52,8 @@ Status meanings:
 - Session route data merges without later empty events erasing exact identifiers.
 - tmux pane targets are allow-listed before direct process invocation.
 - Hexa has a stable crosshair action for returning to the originating session.
-- Intervention drafts survive failure and clear only after successful Codex or Claude delivery.
-- Codex and Claude interventions persist under `~/.humhum/intervention-queue.json`, preserve provider-scoped session order, recover interrupted sends as retryable failures, and never silently auto-repeat after a crash.
+- Intervention drafts survive failure and clear only after successful Codex, Claude or OpenCode delivery.
+- Codex, Claude and OpenCode interventions persist under `~/.humhum/intervention-queue.json`, preserve provider-scoped session order, recover interrupted sends as retryable failures, and never silently auto-repeat after a crash.
 - The localhost API now requires an owner-only token for private data and control routes, disables browser CORS, and keeps only `/health` public.
 - Hook debug logging no longer records message payloads and uses owner-only file permissions.
 - HUMHUM Mobile Web is explicitly enabled, TLS-only, protected by an expiring eight-character pairing challenge with a five-attempt lockout, and exposes redacted read-only session summaries.
@@ -68,6 +68,8 @@ Status meanings:
 - OpenCode 1.17.18 is installed from its official npm package. Its resolved config reported the managed global TypeScript plugin, and a zero-cost official server `POST /session` smoke emitted a real `SessionStart` with the expected session ID, workspace, runtime token and OpenCode user agent; the disposable session was deleted afterward.
 - OpenCode `permission.asked` now blocks through HUMHUM's existing scoped pending channel for up to 125 seconds, then maps allow/deny to the official `once`/`reject` session permission API. Missing HUMHUM responses leave OpenCode's native prompt intact instead of guessing.
 - Runtime OpenCode permission verification used the listed free `north-mini-code-free` model with `bash: ask`: allow returned HTTP 200 through HUMHUM and completed `printf humhum-approval-ok`; deny produced OpenCode's user-rejected tool error and did not create the sentinel file. Both sessions, the temporary server and pending requests were removed.
+- OpenCode follow-ups now use `opencode run --session <stable-id> --format json -- <message>` only for HUMHUM-known local sessions and canonical workspaces. A runtime transport smoke created a free, zero-cost session, received `OPENCODE-FIRST`, resumed the same ID and received `OPENCODE-RESUMED`, then deleted the disposable session.
+- `session.deleted` now maps to `SessionEnd`, preventing removed OpenCode sessions from remaining as live Hexa cards. The installed global plugin was refreshed after verification.
 - A synthetic Copilot CLI camelCase event passed through the installed shell hook and appeared as a normalized `github-copilot` session; its private prompt did not appear in the mobile summary.
 - Cursor sessions now route through the verified `com.todesktop.230313mzl4w4u92` bundle and their existing absolute workspace path; invalid or missing paths are rejected before launching.
 - The SSH bridge validates targets before process launch, requires an existing known-host entry and SSH key, binds both sides of the reverse tunnel to loopback, and authorizes its separate SHA-256 credential only for `/event`.
@@ -92,12 +94,12 @@ Status meanings:
 - Ghostty currently exposes terminal ID, name and working directory but not child PID or TTY through AppleScript. The installed Ghostty 1.3.1 process was detected, but the locked desktop blocked a runtime Apple Event, so unique-workspace focus remains unit/build verified until unlock.
 - The release arm64 `HumHum.app` built successfully. Because the locked desktop stalled only Tauri's decorative DMG Finder layout, a standard compressed read-only DMG was generated directly, verified by `hdiutil`, mounted, and its contained app passed strict deep code-sign verification.
 - Local release artifact: `src-tauri/target/release/bundle/dmg/HumHum_0.1.0_aarch64.dmg` (43 MB), SHA-256 `82543fcb0094cbf155bc7ab5c7044b670b8775c2174743ec0049225b706da8a2`. It includes verified OpenCode permissions, Cursor terminal focus, the provider-scoped Claude/Codex queue, OpenPeon/CESP sound packs and per-Agent Humi themes, has a complete ad-hoc signature, passed `hdiutil verify`, and its mounted arm64 app passed strict deep code-sign verification. It is not Developer ID signed or notarized, so it is not yet a frictionless public download.
-- Rust: 95 passed, 1 ignored. Frontend: 22 passed. Production frontend build: passed.
+- Rust: 97 passed, 1 ignored. Frontend: 22 passed. Production frontend build: passed.
 
 ## Next Iteration Order
 
 1. Persist Ghostty terminal UUIDs at safe event boundaries and add exact IDE chat routing.
-2. Add durable OpenCode follow-up on top of its now verified session and permission bridge.
+2. Add exact IDE chat routing where the host exposes a stable conversation command.
 3. Real-host SSH smoke testing, multi-host presence, reconnect controls, and remote cleanup.
 4. Extend durable follow-up and permission replies to other verified transports.
 5. Internet E2EE relay, push, attachments and multi-machine presence.

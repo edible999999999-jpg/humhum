@@ -157,6 +157,7 @@ mod client_hook_install_tests {
         assert!(HUMHUM_OPENCODE_PLUGIN.contains(
             r#""permission.asked": "PermissionRequest""#
         ));
+        assert!(HUMHUM_OPENCODE_PLUGIN.contains(r#""session.deleted": "SessionEnd""#));
         assert!(HUMHUM_OPENCODE_PLUGIN.contains("postSessionIdPermissionsPermissionId"));
         assert!(HUMHUM_OPENCODE_PLUGIN.contains(r#"behavior === "deny" ? "reject" : "once""#));
         assert!(HUMHUM_OPENCODE_PLUGIN.contains("permission ? 125_000 : 3000"));
@@ -363,6 +364,43 @@ pub async fn hexa_send_claude_message(
     }
 }
 
+#[tauri::command]
+pub async fn hexa_send_opencode_message(
+    store: State<'_, Arc<std::sync::Mutex<SessionStore>>>,
+    queue: State<'_, Arc<std::sync::Mutex<InterventionQueue>>>,
+    session_id: String,
+    message: String,
+) -> Result<CodexSendReceipt, String> {
+    let workspace = cli_followup_workspace(&store, &session_id, "opencode", "OpenCode")?;
+    let entry = queue
+        .lock()
+        .map_err(|error| format!("Queue lock error: {error}"))?
+        .enqueue_for(InterventionProvider::OpenCode, &session_id, &message)?;
+    let is_next = queue
+        .lock()
+        .map_err(|error| format!("Queue lock error: {error}"))?
+        .is_next_for_thread(&entry.id)?;
+    if !is_next {
+        return Ok(CodexSendReceipt {
+            status: "queued".into(),
+            turn_id: None,
+            intervention_id: entry.id,
+        });
+    }
+    match deliver_queued_opencode_message(&queue, &entry.id, &workspace).await {
+        Ok(()) => Ok(CodexSendReceipt {
+            status: "delivered".into(),
+            turn_id: None,
+            intervention_id: entry.id,
+        }),
+        Err(_) => Ok(CodexSendReceipt {
+            status: "queued".into(),
+            turn_id: None,
+            intervention_id: entry.id,
+        }),
+    }
+}
+
 pub(crate) async fn enqueue_and_deliver_codex_message(
     state: &CodexBridgeState,
     queue: &std::sync::Mutex<InterventionQueue>,
@@ -455,6 +493,31 @@ pub async fn hexa_retry_claude_message(
 }
 
 #[tauri::command]
+pub async fn hexa_retry_opencode_message(
+    store: State<'_, Arc<std::sync::Mutex<SessionStore>>>,
+    queue: State<'_, Arc<std::sync::Mutex<InterventionQueue>>>,
+    intervention_id: String,
+) -> Result<CodexSendReceipt, String> {
+    let entry = queue
+        .lock()
+        .map_err(|error| format!("Queue lock error: {error}"))?
+        .entries()
+        .into_iter()
+        .find(|entry| entry.id == intervention_id)
+        .ok_or_else(|| format!("Queued intervention not found: {intervention_id}"))?;
+    if entry.provider != InterventionProvider::OpenCode {
+        return Err("Queued intervention is not an OpenCode message".into());
+    }
+    let workspace = cli_followup_workspace(&store, &entry.thread_id, "opencode", "OpenCode")?;
+    deliver_queued_opencode_message(&queue, &intervention_id, &workspace).await?;
+    Ok(CodexSendReceipt {
+        status: "delivered".into(),
+        turn_id: None,
+        intervention_id,
+    })
+}
+
+#[tauri::command]
 pub async fn discard_queued_intervention(
     queue: State<'_, Arc<std::sync::Mutex<InterventionQueue>>>,
     intervention_id: String,
@@ -502,6 +565,15 @@ fn claude_followup_workspace(
     store: &std::sync::Mutex<SessionStore>,
     session_id: &str,
 ) -> Result<PathBuf, String> {
+    cli_followup_workspace(store, session_id, "claude-code", "Claude")
+}
+
+fn cli_followup_workspace(
+    store: &std::sync::Mutex<SessionStore>,
+    session_id: &str,
+    client_type: &str,
+    label: &str,
+) -> Result<PathBuf, String> {
     let store = store
         .lock()
         .map_err(|error| format!("Session lock error: {error}"))?;
@@ -509,15 +581,15 @@ fn claude_followup_workspace(
         .get_all_sessions_with_history()
         .into_iter()
         .find(|session| session.session_id == session_id)
-        .ok_or_else(|| "Claude session is no longer known to HUMHUM".to_string())?;
-    if session.client_type != "claude-code" {
-        return Err("Only local Claude Code sessions can be resumed".into());
+        .ok_or_else(|| format!("{label} session is no longer known to HUMHUM"))?;
+    if session.client_type != client_type {
+        return Err(format!("Only local {label} sessions can be resumed"));
     }
     session
         .cwd
         .as_deref()
         .map(PathBuf::from)
-        .ok_or_else(|| "Claude session has no known workspace".into())
+        .ok_or_else(|| format!("{label} session has no known workspace"))
 }
 
 async fn deliver_queued_claude_message(
@@ -538,6 +610,39 @@ async fn deliver_queued_claude_message(
         return Err(message.into());
     }
     match crate::claude_followup::send_followup(&entry.thread_id, workspace, &entry.message).await {
+        Ok(()) => queue
+            .lock()
+            .map_err(|error| format!("Queue lock error after delivery: {error}"))?
+            .mark_delivered(intervention_id),
+        Err(error) => {
+            queue
+                .lock()
+                .map_err(|lock_error| format!("{error}; queue lock error: {lock_error}"))?
+                .mark_failed(intervention_id, &error)
+                .map_err(|queue_error| format!("{error}; queue update failed: {queue_error}"))?;
+            Err(error)
+        }
+    }
+}
+
+async fn deliver_queued_opencode_message(
+    queue: &std::sync::Mutex<InterventionQueue>,
+    intervention_id: &str,
+    workspace: &Path,
+) -> Result<(), String> {
+    let entry = queue
+        .lock()
+        .map_err(|error| format!("Queue lock error: {error}"))?
+        .mark_sending(intervention_id)?;
+    if entry.provider != InterventionProvider::OpenCode {
+        let message = "Queued intervention is not an OpenCode message";
+        queue
+            .lock()
+            .map_err(|error| format!("{message}; queue lock error: {error}"))?
+            .mark_failed(intervention_id, message)?;
+        return Err(message.into());
+    }
+    match crate::opencode_followup::send_followup(&entry.thread_id, workspace, &entry.message).await {
         Ok(()) => queue
             .lock()
             .map_err(|error| format!("Queue lock error after delivery: {error}"))?

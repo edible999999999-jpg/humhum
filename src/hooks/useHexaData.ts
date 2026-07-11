@@ -69,7 +69,7 @@ export interface QueuedIntervention {
   attempts: number;
   status: "pending" | "sending" | "failed";
   last_error: string | null;
-  provider?: "codex" | "claude";
+  provider?: "codex" | "claude" | "opencode";
 }
 
 export interface CodexSendReceipt {
@@ -614,6 +614,22 @@ export function useHexaData() {
     }
   }, [fetchSessions]);
 
+  const sendOpenCodeMessage = useCallback(async (sessionId: string, message: string) => {
+    try {
+      return await invoke<CodexSendReceipt>("hexa_send_opencode_message", { sessionId, message });
+    } finally {
+      await fetchSessions();
+    }
+  }, [fetchSessions]);
+
+  const retryOpenCodeMessage = useCallback(async (interventionId: string) => {
+    try {
+      return await invoke<CodexSendReceipt>("hexa_retry_opencode_message", { interventionId });
+    } finally {
+      await fetchSessions();
+    }
+  }, [fetchSessions]);
+
   const discardQueuedIntervention = useCallback(async (interventionId: string) => {
     await invoke("discard_queued_intervention", { interventionId });
     await fetchSessions();
@@ -713,6 +729,8 @@ export function useHexaData() {
     retryCodexMessage,
     sendClaudeMessage,
     retryClaudeMessage,
+    sendOpenCodeMessage,
+    retryOpenCodeMessage,
     discardQueuedIntervention,
     interruptCodexTurn,
     resumeCodexThread,

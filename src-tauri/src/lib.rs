@@ -15,6 +15,7 @@ mod local_api_auth;
 #[cfg(target_os = "macos")]
 mod mac_notification_watcher;
 mod mobile_bridge;
+mod opencode_followup;
 mod pi_sidecar;
 mod qoder_log_watcher;
 mod remote_bridge;
@@ -205,9 +206,11 @@ pub fn run() {
             commands::hexa_resume_codex_thread,
             commands::hexa_send_codex_message,
             commands::hexa_send_claude_message,
+            commands::hexa_send_opencode_message,
             commands::get_intervention_queue,
             commands::hexa_retry_codex_message,
             commands::hexa_retry_claude_message,
+            commands::hexa_retry_opencode_message,
             commands::discard_queued_intervention,
             commands::hexa_interrupt_codex_turn,
             commands::hexa_resolve_codex_approval,

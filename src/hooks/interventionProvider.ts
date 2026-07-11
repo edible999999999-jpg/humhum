@@ -1,8 +1,9 @@
-export type InterventionProvider = "codex" | "claude";
+export type InterventionProvider = "codex" | "claude" | "opencode";
 
 export function interventionProviderForClient(clientType: string): InterventionProvider | null {
   if (clientType === "codex") return "codex";
   if (clientType === "claude-code") return "claude";
+  if (clientType === "opencode") return "opencode";
   return null;
 }
 

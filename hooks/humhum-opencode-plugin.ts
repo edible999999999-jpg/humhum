@@ -71,6 +71,7 @@ function humhumBehavior(response) {
 
 const eventNames = {
   "session.created": "SessionStart",
+  "session.deleted": "SessionEnd",
   "session.idle": "Stop",
   "session.error": "PostToolUseFailure",
   "permission.asked": "PermissionRequest",
