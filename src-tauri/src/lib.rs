@@ -3,6 +3,7 @@ mod client_registry;
 mod commands;
 mod config;
 mod event_bus;
+mod hexa_protocol;
 mod hook_server;
 mod hush_store;
 mod knowledge_store;
