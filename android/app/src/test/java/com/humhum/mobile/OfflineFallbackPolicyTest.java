@@ -42,6 +42,19 @@ public class OfflineFallbackPolicyTest {
     }
 
     @Test
+    public void recognizesOnlyAuthenticationStatusesAsRevokedPairing() {
+        assertTrue(OfflineFallbackPolicy.isAuthorizationRevoked(
+                new MobileProtocol.HttpStatusException(401, "pair first")));
+        assertTrue(OfflineFallbackPolicy.isAuthorizationRevoked(
+                new MobileProtocol.HttpStatusException(403, "revoked")));
+        assertFalse(OfflineFallbackPolicy.isAuthorizationRevoked(
+                new MobileProtocol.HttpStatusException(404, "missing route")));
+        assertFalse(OfflineFallbackPolicy.isAuthorizationRevoked(
+                new MobileProtocol.HttpStatusException(503, "unavailable")));
+        assertFalse(OfflineFallbackPolicy.isAuthorizationRevoked(new IOException("offline")));
+    }
+
+    @Test
     public void traversesNestedCausesButExplicitDenialsWin() {
         assertTrue(OfflineFallbackPolicy.canUseSnapshot(
                 new IOException("request failed", new ConnectException("refused"))));

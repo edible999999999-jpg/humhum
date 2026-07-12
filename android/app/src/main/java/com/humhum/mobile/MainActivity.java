@@ -113,7 +113,13 @@ public final class MainActivity extends Activity {
             DurableConnectionTransitionCoordinator.State transitionState = TRANSITIONS.state();
             adoptTransitionState();
             if (transitionState == DurableConnectionTransitionCoordinator.State.IDLE) {
-                reconcileDurableConnection(null);
+                DurableConnectionTransitionCoordinator.Completion completion =
+                        TRANSITIONS.claimCompletion();
+                if (completion == null) {
+                    reconcileDurableConnection(null);
+                } else {
+                    handleTransitionCompletion(completion);
+                }
             }
         }
         pushPreferences.registerOnSharedPreferenceChangeListener(pushStateListener);
@@ -435,6 +441,11 @@ public final class MainActivity extends Activity {
                     renderSessions(page.sessions());
                 });
             } catch (Exception error) {
+                if (OfflineFallbackPolicy.isAuthorizationRevoked(error)) {
+                    clearRevokedConnection(
+                            refreshGeneration, current, currentConnection);
+                    return;
+                }
                 long nowMillis = System.currentTimeMillis();
                 SessionSnapshot snapshot = OfflineFallbackPolicy.canUseSnapshot(error)
                         ? snapshotGenerationGate.callIfCurrent(
@@ -450,6 +461,7 @@ public final class MainActivity extends Activity {
                     refreshButton.setEnabled(true);
                     if (snapshot == null) {
                         statusText.setText(safeError(error));
+                        renderUnavailableSessions();
                         return;
                     }
                     statusText.setText(
@@ -457,6 +469,29 @@ public final class MainActivity extends Activity {
                     renderSessions(snapshot.sessions());
                 });
             }
+        });
+    }
+
+    private void clearRevokedConnection(
+            long generation,
+            MobileProtocol expectedProtocol,
+            ConnectionStore.Connection expectedConnection) {
+        boolean cleared = snapshotGenerationGate.callIfCurrent(generation, () -> {
+            if (!isCurrentConnection(expectedProtocol, expectedConnection)) return false;
+            clearSnapshotSafely();
+            connectionStore.clear();
+            return true;
+        }, false);
+        if (!cleared) {
+            postStaleRefreshReset(generation, expectedProtocol, expectedConnection);
+            return;
+        }
+        postRefreshIfCurrent(generation, expectedProtocol, expectedConnection, () -> {
+            refreshInFlight = false;
+            refreshButton.setEnabled(true);
+            PushRegistration.cancel(this);
+            showConnect();
+            connectError.setText("移动连接已失效，请重新配对");
         });
     }
 
@@ -530,7 +565,13 @@ public final class MainActivity extends Activity {
         DurableConnectionTransitionCoordinator.State state = TRANSITIONS.state();
         adoptTransitionState();
         if (state == DurableConnectionTransitionCoordinator.State.IDLE) {
-            reconcileDurableConnection(null);
+            DurableConnectionTransitionCoordinator.Completion completion =
+                    TRANSITIONS.claimCompletion();
+            if (completion == null) {
+                reconcileDurableConnection(null);
+            } else {
+                handleTransitionCompletion(completion);
+            }
         }
     }
 
@@ -539,7 +580,10 @@ public final class MainActivity extends Activity {
         STARTED_ACTIVITIES.dispatch(activity -> activity.main.post(() -> {
             if (!STARTED_ACTIVITIES.isCurrent(activity)) return;
             if (!activity.snapshotGenerationGate.isLatestOwner()) return;
-            activity.handleTransitionCompletion(completion);
+            DurableConnectionTransitionCoordinator.Completion claimed =
+                    TRANSITIONS.claimCompletion(completion);
+            if (claimed == null) return;
+            activity.handleTransitionCompletion(claimed);
         }));
     }
 
@@ -687,6 +731,14 @@ public final class MainActivity extends Activity {
         }
     }
 
+    private void renderUnavailableSessions() {
+        sessionsContainer.removeAllViews();
+        TextView unavailable = text("无法确认当前会话状态，请恢复连接后重试", 14, color(R.color.muted));
+        unavailable.setGravity(android.view.Gravity.CENTER);
+        unavailable.setPadding(0, dp(48), 0, dp(48));
+        sessionsContainer.addView(unavailable);
+    }
+
     private View sessionCard(Models.Session session) {
         LinearLayout card = vertical();
         LinearLayout.LayoutParams cardParams = matchWidthWrap();
@@ -776,6 +828,10 @@ public final class MainActivity extends Activity {
                 current.resolveApproval(action, decision);
                 postIfCurrent(generation, current, currentConnection, () -> refreshSessions(true));
             } catch (Exception error) {
+                if (OfflineFallbackPolicy.isAuthorizationRevoked(error)) {
+                    clearRevokedConnection(generation, current, currentConnection);
+                    return;
+                }
                 postIfCurrent(generation, current, currentConnection, () -> {
                     first.setEnabled(true);
                     second.setEnabled(true);
@@ -802,6 +858,10 @@ public final class MainActivity extends Activity {
                     refreshSessions(false);
                 });
             } catch (Exception error) {
+                if (OfflineFallbackPolicy.isAuthorizationRevoked(error)) {
+                    clearRevokedConnection(generation, current, currentConnection);
+                    return;
+                }
                 postIfCurrent(generation, current, currentConnection, () -> {
                     send.setEnabled(true);
                     statusText.setText(safeError(error));
@@ -843,9 +903,7 @@ public final class MainActivity extends Activity {
         Button button = new Button(this);
         button.setText(label);
         button.setAllCaps(false);
-        button.setMinHeight(0);
-        button.setMinimumHeight(0);
-        button.setHeight(dp(42));
+        button.setMinHeight(dp(48));
         if (primary) {
             button.setBackgroundTintList(android.content.res.ColorStateList.valueOf(color(R.color.primary)));
             button.setTextColor(color(R.color.surface));
@@ -857,7 +915,7 @@ public final class MainActivity extends Activity {
     }
 
     private LinearLayout.LayoutParams weightedButton() {
-        return new LinearLayout.LayoutParams(0, dp(42), 1);
+        return new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1);
     }
 
     private LinearLayout.LayoutParams matchWidthWrap() {

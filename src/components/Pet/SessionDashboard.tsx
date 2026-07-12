@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { PanelTopOpen } from "lucide-react";
 
 interface Session {
   session_id: string;
@@ -53,9 +54,10 @@ function timeAgo(dateStr: string): string {
 
 interface SessionDashboardProps {
   visible: boolean;
+  onOpenHub?: () => void;
 }
 
-export function SessionDashboard({ visible }: SessionDashboardProps) {
+export function SessionDashboard({ visible, onOpenHub }: SessionDashboardProps) {
   const [sessions, setSessions] = useState<Session[]>([]);
 
   const fetchSessions = useCallback(async () => {
@@ -93,11 +95,28 @@ export function SessionDashboard({ visible }: SessionDashboardProps) {
         <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: "#64748b" }}>
           Sessions
         </span>
-        {sessions.length > 0 && (
-          <span className="kawaii-badge text-[9px]">
-            {sessions.length}
-          </span>
-        )}
+        <div className="flex items-center gap-2">
+          {sessions.length > 0 && (
+            <span className="kawaii-badge text-[9px]">
+              {sessions.length}
+            </span>
+          )}
+          <button
+            type="button"
+            aria-label="打开 HUMHUM Hub"
+            title="打开 HUMHUM Hub"
+            onClick={onOpenHub}
+            className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-[10px] font-semibold"
+            style={{
+              border: "1px solid rgba(116,143,165,0.16)",
+              background: "rgba(255,255,255,0.66)",
+              color: "#475569",
+            }}
+          >
+            <PanelTopOpen size={13} aria-hidden="true" />
+            Hub
+          </button>
+        </div>
       </div>
 
       {/* Session list */}

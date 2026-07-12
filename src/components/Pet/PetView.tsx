@@ -6,6 +6,10 @@ import { Bubble } from "./Bubble";
 import { PetCanvas } from "./PetCanvas";
 import { BubbleParticles, useBubbleTrail } from "./BubbleTrail";
 import { SessionDashboard } from "./SessionDashboard";
+import {
+  drainLatestPetWindowResize,
+  resizePetWindow,
+} from "./petWindowResize";
 import { ConfirmToast } from "../Overlay/ConfirmToast";
 import { NotificationToast } from "../Overlay/NotificationToast";
 import { CompletionPanel } from "../Overlay/CompletionPanel";
@@ -157,6 +161,7 @@ export function PetView() {
 
   // --- Dynamic window sizing ---
   const currentWindowHeight = useRef(COMPACT_HEIGHT);
+  const requestedWindowHeight = useRef(COMPACT_HEIGHT);
   const resizeLock = useRef(false);
 
   const hasActiveOverlay = showDashboard || !!notification || !!completionEvent || !!questionEvent || !!contextMenu;
@@ -167,34 +172,49 @@ export function PetView() {
       : COMPACT_HEIGHT;
 
   useEffect(() => {
+    requestedWindowHeight.current = targetHeight;
     if (resizeLock.current) return;
-    const prevH = currentWindowHeight.current;
-    if (Math.abs(targetHeight - prevH) < 10) {
-      if (targetHeight > COMPACT_HEIGHT) setWindowReady(true);
-      return;
-    }
-
     resizeLock.current = true;
-    setWindowReady(false);
 
     (async () => {
-      try {
-        const pos = await appWindow.outerPosition();
-        const sf = (await appWindow.scaleFactor()) || 1;
-        const dy = Math.round((targetHeight - prevH) * sf);
+      await drainLatestPetWindowResize(
+        targetHeight,
+        () => requestedWindowHeight.current,
+        async (height) => {
+          const prevH = currentWindowHeight.current;
+          if (Math.abs(height - prevH) < 10) {
+            if (requestedWindowHeight.current === height) {
+              setWindowReady(height > COMPACT_HEIGHT);
+            }
+            return;
+          }
+          setWindowReady(false);
+          const ready = await resizePetWindow(
+            async () => {
+              const pos = await appWindow.outerPosition();
+              const sf = (await appWindow.scaleFactor()) || 1;
+              const dy = Math.round((height - prevH) * sf);
 
-        await appWindow.setSize(new LogicalSize(280, targetHeight));
-        await appWindow.setPosition(
-          new PhysicalPosition(pos.x, Math.max(0, pos.y - dy)),
-        );
-
-        currentWindowHeight.current = targetHeight;
-        if (targetHeight > COMPACT_HEIGHT) setWindowReady(true);
-      } catch (e) {
-        console.error("[PetView] Resize failed:", e);
-      } finally {
-        resizeLock.current = false;
-      }
+              await appWindow.setSize(new LogicalSize(280, height));
+              currentWindowHeight.current = height;
+              await appWindow.setPosition(
+                new PhysicalPosition(pos.x, Math.max(0, pos.y - dy)),
+              );
+            },
+            height > COMPACT_HEIGHT,
+            (error) => console.error("[PetView] Resize failed:", error),
+          );
+          if (requestedWindowHeight.current === height) {
+            setWindowReady(ready);
+          }
+        },
+        () => {
+          resizeLock.current = false;
+        },
+        () => {
+          resizeLock.current = true;
+        },
+      );
     })();
   }, [targetHeight]);
 
@@ -514,7 +534,7 @@ export function PetView() {
         <div
           className="inline-flex w-fit max-w-[calc(100vw-24px)] pb-2 pointer-events-auto"
         >
-          <SessionDashboard visible={showDashboard} />
+          <SessionDashboard visible={showDashboard} onOpenHub={handleOpenHub} />
         </div>
       )}
 

@@ -118,6 +118,28 @@ public class DurableConnectionTransitionCoordinatorTest {
         }
     }
 
+    @Test
+    public void completionWaitsForAStartedActivityToClaimIt() throws Exception {
+        BlockingQueue<DurableConnectionTransitionCoordinator.Completion> notifications =
+                new LinkedBlockingQueue<>();
+        DurableConnectionTransitionCoordinator coordinator =
+                new DurableConnectionTransitionCoordinator(notifications::add);
+        try {
+            assertTrue(coordinator.begin(
+                    DurableConnectionTransitionCoordinator.State.DISCONNECTING,
+                    () -> "Mac 未确认撤销"));
+            DurableConnectionTransitionCoordinator.Completion notified =
+                    notifications.poll(1, TimeUnit.SECONDS);
+            assertNotNull(notified);
+
+            assertSame(notified, coordinator.claimCompletion(notified));
+            assertEquals(null, coordinator.claimCompletion());
+            assertEquals(null, coordinator.claimCompletion(notified));
+        } finally {
+            coordinator.close();
+        }
+    }
+
     private static void await(CountDownLatch latch) {
         try {
             if (!latch.await(1, TimeUnit.SECONDS)) {

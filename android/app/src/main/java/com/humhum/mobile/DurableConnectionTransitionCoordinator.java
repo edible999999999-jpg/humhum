@@ -36,6 +36,7 @@ final class DurableConnectionTransitionCoordinator implements AutoCloseable {
     private final ExecutorService executor;
     private final Consumer<Completion> observer;
     private State state = State.IDLE;
+    private Completion pendingCompletion;
 
     DurableConnectionTransitionCoordinator(Consumer<Completion> observer) {
         this(Executors.newSingleThreadExecutor(), observer);
@@ -49,6 +50,18 @@ final class DurableConnectionTransitionCoordinator implements AutoCloseable {
 
     synchronized State state() {
         return state;
+    }
+
+    synchronized Completion claimCompletion() {
+        Completion completion = pendingCompletion;
+        pendingCompletion = null;
+        return completion;
+    }
+
+    synchronized Completion claimCompletion(Completion expected) {
+        if (pendingCompletion != expected) return null;
+        pendingCompletion = null;
+        return expected;
     }
 
     boolean begin(State requested, Work work) {
@@ -84,6 +97,7 @@ final class DurableConnectionTransitionCoordinator implements AutoCloseable {
             Completion completion = new Completion(runningState, notice, failure);
             synchronized (this) {
                 state = State.IDLE;
+                pendingCompletion = completion;
             }
             observer.accept(completion);
         }

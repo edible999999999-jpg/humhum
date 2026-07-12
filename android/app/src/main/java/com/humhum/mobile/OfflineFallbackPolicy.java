@@ -17,6 +17,12 @@ final class OfflineFallbackPolicy {
 
     private OfflineFallbackPolicy() {}
 
+    static boolean isAuthorizationRevoked(Throwable error) {
+        if (!(error instanceof MobileProtocol.HttpStatusException)) return false;
+        int status = ((MobileProtocol.HttpStatusException) error).status();
+        return status == 401 || status == 403;
+    }
+
     static boolean canUseSnapshot(Throwable error) {
         Set<Throwable> visited = Collections.newSetFromMap(new IdentityHashMap<>());
         Throwable current = error;

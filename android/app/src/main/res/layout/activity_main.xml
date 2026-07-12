@@ -67,7 +67,8 @@
             <Button
                 android:id="@+id/pasteSetupButton"
                 android:layout_width="match_parent"
-                android:layout_height="44dp"
+                android:layout_height="wrap_content"
+                android:minHeight="44dp"
                 android:layout_marginTop="14dp"
                 android:background="@drawable/button_secondary"
                 android:text="从剪贴板粘贴 Android 配对资料"
@@ -77,7 +78,8 @@
             <EditText
                 android:id="@+id/urlInput"
                 android:layout_width="match_parent"
-                android:layout_height="50dp"
+                android:layout_height="wrap_content"
+                android:minHeight="50dp"
                 android:layout_marginTop="10dp"
                 android:autofillHints=""
                 android:background="@drawable/input_background"
@@ -90,7 +92,8 @@
             <EditText
                 android:id="@+id/codeInput"
                 android:layout_width="match_parent"
-                android:layout_height="50dp"
+                android:layout_height="wrap_content"
+                android:minHeight="50dp"
                 android:layout_marginTop="10dp"
                 android:background="@drawable/input_background"
                 android:hint="8 位配对码"
@@ -103,7 +106,8 @@
             <EditText
                 android:id="@+id/fingerprintInput"
                 android:layout_width="match_parent"
-                android:layout_height="72dp"
+                android:layout_height="wrap_content"
+                android:minHeight="72dp"
                 android:layout_marginTop="10dp"
                 android:background="@drawable/input_background"
                 android:gravity="top"
@@ -117,7 +121,8 @@
             <EditText
                 android:id="@+id/deviceNameInput"
                 android:layout_width="match_parent"
-                android:layout_height="50dp"
+                android:layout_height="wrap_content"
+                android:minHeight="50dp"
                 android:layout_marginTop="10dp"
                 android:background="@drawable/input_background"
                 android:hint="设备名称（例如 Xiaomi 14）"
@@ -130,7 +135,8 @@
             <Button
                 android:id="@+id/connectButton"
                 android:layout_width="match_parent"
-                android:layout_height="48dp"
+                android:layout_height="wrap_content"
+                android:minHeight="48dp"
                 android:layout_marginTop="14dp"
                 android:backgroundTint="@color/primary"
                 android:text="安全配对"
@@ -171,7 +177,8 @@
                 <Button
                     android:id="@+id/refreshButton"
                     android:layout_width="wrap_content"
-                    android:layout_height="42dp"
+                    android:layout_height="wrap_content"
+                    android:minHeight="42dp"
                     android:background="@drawable/button_secondary"
                     android:text="刷新"
                     android:textAllCaps="false"
@@ -180,7 +187,8 @@
                 <Button
                     android:id="@+id/disconnectButton"
                     android:layout_width="wrap_content"
-                    android:layout_height="42dp"
+                    android:layout_height="wrap_content"
+                    android:minHeight="42dp"
                     android:layout_marginLeft="8dp"
                     android:background="@drawable/button_secondary"
                     android:text="断开"
@@ -190,7 +198,8 @@
 
             <LinearLayout
                 android:layout_width="match_parent"
-                android:layout_height="56dp"
+                android:layout_height="wrap_content"
+                android:minHeight="56dp"
                 android:layout_marginTop="10dp"
                 android:background="@drawable/panel_background"
                 android:gravity="center_vertical"
@@ -272,14 +281,16 @@
 
                 <LinearLayout
                     android:layout_width="match_parent"
-                    android:layout_height="42dp"
+                    android:layout_height="wrap_content"
+                    android:minHeight="42dp"
                     android:layout_marginTop="10dp"
                     android:orientation="horizontal">
 
                     <Button
                         android:id="@+id/batterySettingsButton"
                         android:layout_width="0dp"
-                        android:layout_height="42dp"
+                        android:layout_height="wrap_content"
+                        android:minHeight="42dp"
                         android:layout_weight="1"
                         android:background="@drawable/button_secondary"
                         android:text="电池设置"
@@ -289,7 +300,8 @@
                     <Button
                         android:id="@+id/autostartSettingsButton"
                         android:layout_width="0dp"
-                        android:layout_height="42dp"
+                        android:layout_height="wrap_content"
+                        android:minHeight="42dp"
                         android:layout_marginLeft="8dp"
                         android:layout_weight="1"
                         android:background="@drawable/button_secondary"

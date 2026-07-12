@@ -137,6 +137,128 @@ public class ManifestContractTest {
     }
 
     @Test
+    public void textBearingControlsGrowWithAccessibilityFontScale() throws Exception {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        factory.setNamespaceAware(true);
+        Document document = factory.newDocumentBuilder()
+                .parse(Path.of("src/main/res/layout/activity_main.xml").toFile());
+
+        assertScalableHeight(document, "pasteSetupButton", "44dp");
+        assertScalableHeight(document, "urlInput", "50dp");
+        assertScalableHeight(document, "codeInput", "50dp");
+        assertScalableHeight(document, "fingerprintInput", "72dp");
+        assertScalableHeight(document, "deviceNameInput", "50dp");
+        assertScalableHeight(document, "connectButton", "48dp");
+        assertScalableHeight(document, "refreshButton", "42dp");
+        assertScalableHeight(document, "disconnectButton", "42dp");
+        assertScalableHeight(document, "batterySettingsButton", "42dp");
+        assertScalableHeight(document, "autostartSettingsButton", "42dp");
+
+        Element monitorSwitch = elementById(document, "monitorSwitch");
+        Element monitorRow = (Element) monitorSwitch.getParentNode();
+        assertEquals("wrap_content", monitorRow.getAttributeNS(ANDROID, "layout_height"));
+        assertEquals("56dp", monitorRow.getAttributeNS(ANDROID, "minHeight"));
+
+        String source = new String(Files.readAllBytes(
+                Path.of("src/main/java/com/humhum/mobile/MainActivity.java")),
+                StandardCharsets.UTF_8);
+        String button = methodSource(source, "private Button button(", "private LinearLayout.LayoutParams weightedButton()");
+        assertFalse(button.contains("setHeight("));
+        assertTrue(button.contains("setMinHeight(dp(48))"));
+        String weighted = methodSource(source, "private LinearLayout.LayoutParams weightedButton()", "private LinearLayout.LayoutParams matchWidthWrap()");
+        assertTrue(weighted.contains("LinearLayout.LayoutParams.WRAP_CONTENT"));
+    }
+
+    @Test
+    public void failedRefreshWithoutSnapshotRemovesStaleSessionActions() throws Exception {
+        String source = new String(Files.readAllBytes(
+                Path.of("src/main/java/com/humhum/mobile/MainActivity.java")),
+                StandardCharsets.UTF_8);
+        String refresh = methodSource(
+                source,
+                "private void refreshSessions(boolean userInitiated)",
+                "private void postRefreshIfCurrent(");
+        int noSnapshot = refresh.indexOf("if (snapshot == null)");
+        int staleClear = refresh.indexOf("renderUnavailableSessions();", noSnapshot);
+        int branchReturn = refresh.indexOf("return;", noSnapshot);
+
+        assertTrue(noSnapshot >= 0);
+        assertTrue(staleClear > noSnapshot);
+        assertTrue(staleClear < branchReturn);
+    }
+
+    @Test
+    public void revokedPairingReturnsToConnectScreen() throws Exception {
+        String source = new String(Files.readAllBytes(
+                Path.of("src/main/java/com/humhum/mobile/MainActivity.java")),
+                StandardCharsets.UTF_8);
+        String refresh = methodSource(
+                source,
+                "private void refreshSessions(boolean userInitiated)",
+                "private void postRefreshIfCurrent(");
+        assertTrue(refresh.contains("OfflineFallbackPolicy.isAuthorizationRevoked(error)"));
+        assertTrue(refresh.contains("clearRevokedConnection("));
+
+        String clear = methodSource(
+                source,
+                "private void clearRevokedConnection(",
+                "private void postRefreshIfCurrent(");
+        assertOrdered(
+                clear,
+                "clearSnapshotSafely();",
+                "connectionStore.clear();",
+                "showConnect();",
+                "connectError.setText(\"移动连接已失效，请重新配对\")");
+
+        String resolve = methodSource(
+                source, "private void resolve(", "private void send(");
+        assertOrdered(
+                resolve,
+                "OfflineFallbackPolicy.isAuthorizationRevoked(error)",
+                "clearRevokedConnection(");
+        String send = methodSource(
+                source, "private void send(", "private void setPairing(");
+        assertOrdered(
+                send,
+                "OfflineFallbackPolicy.isAuthorizationRevoked(error)",
+                "clearRevokedConnection(");
+    }
+
+    @Test
+    public void fallbackActivityClaimsPendingTransitionCompletion() throws Exception {
+        String source = new String(Files.readAllBytes(
+                Path.of("src/main/java/com/humhum/mobile/MainActivity.java")),
+                StandardCharsets.UTF_8);
+        String reclaim = methodSource(
+                source,
+                "private void reclaimStartedOwnershipAndReconcile()",
+                "private static void notifyStartedActivityOfTransitionCompletion(");
+        assertOrdered(
+                reclaim,
+                "TRANSITIONS.state()",
+                "TRANSITIONS.claimCompletion()",
+                "handleTransitionCompletion(completion)");
+    }
+
+    private static void assertScalableHeight(
+            Document document, String id, String expectedMinimum) {
+        Element element = elementById(document, id);
+        assertEquals("wrap_content", element.getAttributeNS(ANDROID, "layout_height"));
+        assertEquals(expectedMinimum, element.getAttributeNS(ANDROID, "minHeight"));
+    }
+
+    private static Element elementById(Document document, String id) {
+        NodeList elements = document.getElementsByTagName("*");
+        for (int index = 0; index < elements.getLength(); index++) {
+            Element element = (Element) elements.item(index);
+            if (("@+id/" + id).equals(element.getAttributeNS(ANDROID, "id"))) {
+                return element;
+            }
+        }
+        throw new AssertionError("Missing Android view: " + id);
+    }
+
+    @Test
     public void encryptedSnapshotLifecycleUsesPolicyAndGenerationGuard() throws Exception {
         String source = new String(Files.readAllBytes(
                 Path.of("src/main/java/com/humhum/mobile/MainActivity.java")), StandardCharsets.UTF_8);
