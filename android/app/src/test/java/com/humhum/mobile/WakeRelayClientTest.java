@@ -47,6 +47,48 @@ public class WakeRelayClientTest {
     }
 
     @Test
+    public void pushRegistrationUsesSubscriberCredentialAndExactBody() throws Exception {
+        WakeRelayClient.RequestSpec request = WakeRelayClient.pushRequest(
+                relay(), "fcm:opaque-registration-token");
+
+        assertEquals("PUT", request.method());
+        assertEquals(
+                "https://relay.example.com/v1/channels/" + "11".repeat(32) + "/push",
+                request.url());
+        assertEquals("Bearer " + "22".repeat(32), request.authorization());
+        assertEquals(10_000, request.readTimeoutMillis());
+        assertEquals(
+                new JSONObject()
+                        .put("provider", "fcm")
+                        .put("token", "fcm:opaque-registration-token")
+                        .toString(),
+                request.body());
+    }
+
+    @Test
+    public void pushRegistrationAcceptsOnlyNoContentAndHonorsCancellation() throws Exception {
+        final int[] executions = {0};
+        WakeRelayClient accepted = new WakeRelayClient(request -> {
+            executions[0]++;
+            return new WakeRelayClient.TransportResponse(204, new byte[0]);
+        });
+        accepted.putPushToken(relay(), "fcm:token");
+        assertEquals(1, executions[0]);
+
+        WakeRelayClient redirect = new WakeRelayClient(request ->
+                new WakeRelayClient.TransportResponse(302, new byte[0]));
+        assertThrows(WakeRelayClient.RelayStatusException.class,
+                () -> redirect.putPushToken(relay(), "fcm:token"));
+
+        WakeRelayClient cancelled = new WakeRelayClient(request -> {
+            throw new AssertionError("cancelled registration executed");
+        });
+        cancelled.cancel();
+        assertThrows(IOException.class,
+                () -> cancelled.putPushToken(relay(), "fcm:token"));
+    }
+
+    @Test
     public void parserAcceptsOnlyOrderedMinimalEncryptedEnvelopes() throws Exception {
         JSONObject first = new JSONObject()
                 .put("version", 1)

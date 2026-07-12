@@ -99,13 +99,13 @@
 - `PushRegistration.plan(configured, paired, relayConfigured, token) -> REGISTER | SKIP`
 - `HumHumMessagingService` delegates all start decisions to `PushWakePolicy`.
 
-- [ ] **Step 1: Write failing tests** for strict registration URL/body/auth, no registration before pairing or without complete Firebase configuration, token rotation replacement, timeout/cancellation and no persisted FCM token.
-- [ ] **Step 2: Run focused JVM tests** and require missing registration APIs.
-- [ ] **Step 3: Implement `PushRegistration` and `WakeRelayClient.putPushToken`** using platform TLS, subscriber bearer auth, bounded body/status handling and no redirects.
-- [ ] **Step 4: Implement `HumHumApplication`** to initialize Firebase only for complete public client configuration, disable automatic analytics/data collection and request/register a token after pairing or process start.
-- [ ] **Step 5: Implement the non-exported messaging service** with exact policy validation; high-priority valid wakes start the existing foreground monitor through one explicit action, while malformed/normal/disabled messages do nothing.
-- [ ] **Step 6: Add lifecycle tests** proving teardown rejects late registration/start effects and disconnect clears the relay channel before local connection state.
-- [ ] **Step 7: Run all Android JVM tests and lint**, then commit `feat(android): receive privacy-minimal FCM wakes`.
+- [x] **Step 1: Write failing tests** for strict registration URL/body/auth, no registration before pairing or without complete Firebase configuration, token rotation replacement, timeout/cancellation and no persisted FCM token.
+- [x] **Step 2: Run focused JVM tests** and require missing registration APIs.
+- [x] **Step 3: Implement `PushRegistration` and `WakeRelayClient.putPushToken`** using platform TLS, subscriber bearer auth, bounded body/status handling and no redirects.
+- [x] **Step 4: Implement `HumHumApplication`** to initialize Firebase only for complete public client configuration, disable automatic analytics/data collection and request/register a token after pairing or process start.
+- [x] **Step 5: Implement the non-exported messaging service** with exact policy validation; high-priority valid wakes start the existing foreground monitor through one explicit action, while malformed/normal/disabled messages do nothing.
+- [x] **Step 6: Add lifecycle tests** proving teardown rejects late registration/start effects and disconnect clears the relay channel before local connection state.
+- [x] **Step 7: Run all Android JVM tests and lint**, then commit `feat(android): receive privacy-minimal FCM wakes`.
 
 ### Task 5: Release And Runtime Evidence
 

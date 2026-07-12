@@ -3,6 +3,7 @@ package com.humhum.mobile;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -79,7 +80,27 @@ public final class WakeRelayClient {
                 config.baseUrl() + "/v1/channels/" + config.channelId()
                         + "/messages?after=" + after + "&wait=20",
                 "Bearer " + config.subscriberToken(),
-                LONG_POLL_READ_TIMEOUT_MILLIS);
+                LONG_POLL_READ_TIMEOUT_MILLIS,
+                null);
+    }
+
+    static RequestSpec pushRequest(Models.WakeRelayConfig config, String token)
+            throws JSONException {
+        if (config == null
+                || token == null
+                || !token.matches("[\\x21-\\x7e]{1,4096}")) {
+            throw new IllegalArgumentException("Push registration is invalid");
+        }
+        String body = new JSONObject()
+                .put("provider", "fcm")
+                .put("token", token)
+                .toString();
+        return new RequestSpec(
+                "PUT",
+                config.baseUrl() + "/v1/channels/" + config.channelId() + "/push",
+                "Bearer " + config.subscriberToken(),
+                10_000,
+                body);
     }
 
     static List<WakeEnvelope> parseMessages(String payload, long expectedAfter)
@@ -179,6 +200,17 @@ public final class WakeRelayClient {
         return authenticate(config, expectedAfter, messages, nowSeconds);
     }
 
+    public void putPushToken(Models.WakeRelayConfig config, String token)
+            throws IOException, JSONException {
+        if (cancelled.get()) throw new IOException("Relay request was cancelled");
+        TransportResponse response = transport.execute(pushRequest(config, token));
+        if (cancelled.get()) throw new IOException("Relay request was cancelled");
+        if (response.status() != HttpURLConnection.HTTP_NO_CONTENT) {
+            throw new RelayStatusException(response.status());
+        }
+        if (response.body().length != 0) throw new IOException("Relay response is invalid");
+    }
+
     public void cancel() {
         cancelled.set(true);
         transport.cancel();
@@ -235,6 +267,15 @@ public final class WakeRelayClient {
             connection.setUseCaches(false);
             connection.setRequestProperty("Accept", "application/json");
             connection.setRequestProperty("Authorization", request.authorization());
+            if (request.body() != null) {
+                byte[] payload = request.body().getBytes(StandardCharsets.UTF_8);
+                connection.setDoOutput(true);
+                connection.setFixedLengthStreamingMode(payload.length);
+                connection.setRequestProperty("Content-Type", "application/json");
+                try (OutputStream output = connection.getOutputStream()) {
+                    output.write(payload);
+                }
+            }
             try {
                 int status = connection.getResponseCode();
                 InputStream input = status >= 200 && status < 400
@@ -277,17 +318,29 @@ public final class WakeRelayClient {
         private final String url;
         private final String authorization;
         private final int readTimeoutMillis;
+        private final String body;
 
         RequestSpec(String method, String url, String authorization, int readTimeoutMillis) {
+            this(method, url, authorization, readTimeoutMillis, null);
+        }
+
+        RequestSpec(
+                String method,
+                String url,
+                String authorization,
+                int readTimeoutMillis,
+                String body) {
             this.method = method;
             this.url = url;
             this.authorization = authorization;
             this.readTimeoutMillis = readTimeoutMillis;
+            this.body = body;
         }
 
         String method() { return method; }
         String url() { return url; }
         String authorization() { return authorization; }
         int readTimeoutMillis() { return readTimeoutMillis; }
+        String body() { return body; }
     }
 }

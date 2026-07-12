@@ -8,6 +8,8 @@ import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
+import android.content.pm.PackageManager;
+import android.Manifest;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.os.Build;
@@ -49,6 +51,14 @@ public final class AgentMonitorService extends Service {
         } else {
             context.startService(intent);
         }
+    }
+
+    public static void startFromPush(Context context) {
+        boolean notificationsAllowed = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
+                || context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                        == PackageManager.PERMISSION_GRANTED;
+        if (!notificationsAllowed || !monitorStore(context).isEnabled()) return;
+        start(context);
     }
 
     public static void stop(Context context) {

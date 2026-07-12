@@ -221,6 +221,7 @@ public final class MainActivity extends Activity {
         statusText.setText("正在同步");
         syncMonitorState();
         reportForegroundPresence();
+        PushRegistration.refresh(this);
         refreshSessions(true);
     }
 

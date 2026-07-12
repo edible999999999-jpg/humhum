@@ -49,6 +49,16 @@ public class ManifestContractTest {
         assertEquals("false", service.getAttributeNS(ANDROID, "exported"));
         assertEquals("remoteMessaging", service.getAttributeNS(ANDROID, "foregroundServiceType"));
 
+        Element messaging = component(document, "service", ".HumHumMessagingService");
+        assertEquals("false", messaging.getAttributeNS(ANDROID, "exported"));
+        assertEquals(
+                "com.google.firebase.MESSAGING_EVENT",
+                ((Element) messaging.getElementsByTagName("action").item(0))
+                        .getAttributeNS(ANDROID, "name"));
+
+        Element application = (Element) document.getElementsByTagName("application").item(0);
+        assertEquals(".HumHumApplication", application.getAttributeNS(ANDROID, "name"));
+
         Element receiver = component(document, "receiver", ".MonitorBootReceiver");
         assertEquals("false", receiver.getAttributeNS(ANDROID, "exported"));
         assertNotNull(receiver.getElementsByTagName("intent-filter").item(0));
