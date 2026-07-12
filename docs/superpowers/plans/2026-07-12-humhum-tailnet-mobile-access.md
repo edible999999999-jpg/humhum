@@ -30,11 +30,11 @@
 - `discover_tailnet_ipv4() -> Option<Ipv4Addr>`.
 - Internal `discover_from_candidates(paths: &[PathBuf], timeout: Duration)` supports deterministic tests.
 
-- [ ] **Step 1: Write failing tests** for one valid CGNAT address, both range boundaries, public/RFC1918/reserved-Quad100/multiple/noisy output rejection, and official candidate paths.
-- [ ] **Step 2: Run focused Rust tests** and require failure because the tailnet module is absent.
-- [ ] **Step 3: Implement strict parsing and candidate ordering** with deduplication and `TAILSCALE_BE_CLI=1`.
-- [ ] **Step 4: Add executable fixture tests** proving valid output succeeds, nonzero exit is ignored, and a sleeping fixture is killed by the total timeout.
-- [ ] **Step 5: Run focused tests and commit** `feat(mobile): discover bounded tailnet addresses`.
+- [x] **Step 1: Write failing tests** for one valid CGNAT address, both range boundaries, public/RFC1918/reserved-Quad100/multiple/noisy output rejection, and official candidate paths.
+- [x] **Step 2: Run focused Rust tests** and require failure because the tailnet module is absent.
+- [x] **Step 3: Implement strict parsing and candidate ordering** with deduplication and `TAILSCALE_BE_CLI=1`.
+- [x] **Step 4: Add executable fixture tests** proving valid output succeeds, nonzero exit is ignored, and a sleeping fixture is killed by the total timeout.
+- [x] **Step 5: Run focused tests and commit** `feat(mobile): discover bounded tailnet addresses`.
 
 ### Task 2: Dual-Address Bridge And Stable Identity
 
@@ -49,12 +49,12 @@
 - `MobilePairingInfo` adds `network`.
 - `create_pairing_on(scope, network)`; existing `create_pairing(scope)` delegates to LAN.
 
-- [ ] **Step 1: Add failing tests** for legacy LAN selection, valid tailnet selection, unavailable-tailnet rejection, `network=tailnet` query parsing, and unchanged Android setup privacy.
-- [ ] **Step 2: Add failing certificate test**: generating/reusing identity across two different LAN addresses must retain the same fingerprint and files.
-- [ ] **Step 3: Run focused tests** and require missing enum/selection/stable-identity failures.
-- [ ] **Step 4: Extend runtime state and status**, discover tailnet during enable, keep listener unchanged, select URL explicitly during pairing, and retain backwards-compatible LAN defaults.
-- [ ] **Step 5: Rework certificate creation** to reuse an existing cert/key pair without IP-triggered rotation; new certificates use ten-year validity. Malformed pairs fail later TLS loading rather than silently rotating.
-- [ ] **Step 6: Run Rust tests and commit** `feat(mobile): pair through optional tailnet`.
+- [x] **Step 1: Add failing tests** for legacy LAN selection, valid tailnet selection, unavailable-tailnet rejection, `network=tailnet` query parsing, and unchanged Android setup privacy.
+- [x] **Step 2: Add failing certificate test**: generating/reusing identity across two different LAN addresses must retain the same fingerprint and files.
+- [x] **Step 3: Run focused tests** and require missing enum/selection/stable-identity failures.
+- [x] **Step 4: Extend runtime state and status**, discover tailnet during enable, keep listener unchanged, select URL explicitly during pairing, and retain backwards-compatible LAN defaults.
+- [x] **Step 5: Rework certificate creation** to reuse an existing cert/key pair without IP-triggered rotation; new certificates use ten-year validity. Malformed pairs fail later TLS loading rather than silently rotating.
+- [x] **Step 6: Run Rust tests and commit** `feat(mobile): pair through optional tailnet`.
 
 ### Task 3: Android Durable-Pin Routing
 
@@ -69,11 +69,11 @@
 - `BridgeConfig.isTailnet(): boolean`.
 - `PinnedTlsClient.hostMatchesConfig(String hostname, BridgeConfig config): boolean`.
 
-- [ ] **Step 1: Write failing tests** for CGNAT classification boundaries, private/public rejection, exact configured-host acceptance and alternate private-host rejection.
-- [ ] **Step 2: Run focused JVM tests** and require missing APIs.
-- [ ] **Step 3: Implement classification and install a hostname verifier** that accepts only the immutable parsed config host while the existing trust manager independently checks date and exact leaf fingerprint.
-- [ ] **Step 4: Label paired status as `Tailnet` only for CGNAT destinations**, run all Android tests/lint/release builds and inspect unchanged permissions.
-- [ ] **Step 5: Commit** `feat(android): support pinned tailnet routes`.
+- [x] **Step 1: Write failing tests** for CGNAT classification boundaries, private/public rejection, exact configured-host acceptance and alternate private-host rejection.
+- [x] **Step 2: Run focused JVM tests** and require missing APIs.
+- [x] **Step 3: Implement classification and install a hostname verifier** that accepts only the immutable parsed config host while the existing trust manager independently checks date and exact leaf fingerprint.
+- [x] **Step 4: Label paired status as `Tailnet` only for CGNAT destinations**, run all Android tests/lint/release builds and inspect unchanged permissions.
+- [x] **Step 5: Commit** `feat(android): support pinned tailnet routes`.
 
 ### Task 4: Hexa Selection, Runtime And Release
 
@@ -90,9 +90,9 @@
 - `startMobilePairing(scope, network)` sends both values.
 - Hexa shows LAN/Tailnet segmented selection only when `tailnet_url` is non-null.
 
-- [ ] **Step 1: Extend TypeScript contracts and initial state**, then wire selected transport into both read/control pairing commands.
-- [ ] **Step 2: Add a compact segmented control when tailnet exists**; keep the LAN-only layout unchanged when unavailable.
-- [ ] **Step 3: Build/relaunch desktop on this no-Tailscale Mac**, require `url == lan_url`, `tailnet_url == null`, unchanged fingerprint, LAN HTTPS 200, and successful Android visible pairing/realtime approval/follow-up smoke.
-- [ ] **Step 4: Use executable CLI fixtures in tests to prove valid tailnet discovery and timeout**, while explicitly recording that physical remote routing remains unverified.
-- [ ] **Step 5: Run frontend tests/build,  Android tests/lint/release build, Rust tests, signatures, exact permissions, revocation cleanup and zero-device checks.**
-- [ ] **Step 6: Copy verified artifacts, update hashes/docs, stop emulator, and commit** `docs(mobile): verify optional tailnet access`.
+- [x] **Step 1: Extend TypeScript contracts and initial state**, then wire selected transport into both read/control pairing commands.
+- [x] **Step 2: Add a compact segmented control when tailnet exists**; keep the LAN-only layout unchanged when unavailable.
+- [x] **Step 3: Build/relaunch desktop on this no-Tailscale Mac**, require `url == lan_url`, `tailnet_url == null`, unchanged fingerprint, LAN HTTPS 200, and successful Android visible pairing/realtime approval/follow-up smoke.
+- [x] **Step 4: Use executable CLI fixtures in tests to prove valid tailnet discovery and timeout**, while explicitly recording that physical remote routing remains unverified.
+- [x] **Step 5: Run frontend tests/build, Android tests/lint/release build, Rust tests, signatures, exact permissions, revocation cleanup and zero-device checks.**
+- [x] **Step 6: Copy verified artifacts, update hashes/docs, stop emulator, and commit** `docs(mobile): verify optional tailnet access`.

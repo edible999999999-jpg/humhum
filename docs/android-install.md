@@ -1,6 +1,6 @@
 # HUMHUM Android 0.1.0
 
-HUMHUM Android is a native LAN client for the desktop Mobile Bridge. It supports Android 8.0 and newer, including current Xiaomi and Redmi phones.
+HUMHUM Android is a native private-network client for the desktop Mobile Bridge. It supports Android 8.0 and newer, including current Xiaomi and Redmi phones. Pair on the same LAN by default, or use an optional Tailscale tailnet when the Mac and phone are on different networks.
 
 ## Installable APK
 
@@ -8,8 +8,8 @@ HUMHUM Android is a native LAN client for the desktop Mobile Bridge. It supports
 - Play-compatible bundle: `build/releases/HUMHUM-Android-0.1.0.aab`
 - Package: `com.humhum.mobile`
 - Version: `0.1.0` (`versionCode 1`)
-- APK SHA-256: `65500cc86cca6cd0751c4c307ce4077e545b32963baa34d5b7131962d2c35c0b`
-- AAB SHA-256: `41b1d0d171d31bb6aaa2e65c1dc8d0fd09f788b77a08f52860bf86dc9ed8f584`
+- APK SHA-256: `f9136b29b446991d4dbac3e397c6fb1a28ed68d3bf7fd319466ef517b6cc60da`
+- AAB SHA-256: `2e29ab9e8b90aa909b76513f1ccd084b9a281c8a4c7782d45b73fa38e3a602d7`
 - Release certificate SHA-256: `C2:8C:FF:BE:03:98:B2:DB:58:DB:B7:14:DD:39:4F:06:36:CB:55:A6:90:EE:FE:6F:DA:20:2A:78:ED:4E:12:F8`
 
 The APK and AAB use HUMHUM's durable local release certificate. They are installable and update-compatible with later builds signed by the same key, but they have not been published to Xiaomi GetApps or Google Play.
@@ -42,6 +42,16 @@ Connect an authorized phone, then run:
 5. In the Android app, paste the setup, name the phone, and pair within five minutes.
 
 After pairing, the app stores its token in app-private storage and verifies the exact TLS certificate fingerprint on every connection. Pressing **Disconnect** revokes that device on the Mac before clearing the local credential. If the Mac is unreachable, the app clears the phone and asks the user to revoke the stale device from Hexa.
+
+## Use Away From Home With Tailnet
+
+1. Install Tailscale on both the Mac and phone, sign both into the same tailnet, and confirm they can reach each other. HUMHUM never installs Tailscale or reads its credentials.
+2. Restart HUMHUM Mobile access. When Hexa detects the Mac's current `100.64.0.0/10` address, it shows **同网 LAN / 外出 Tailnet**.
+3. Select **外出 Tailnet**, generate a fresh read-only or control setup, and paste it into Android as usual.
+
+The Android app accepts only a bounded assignable tailnet IPv4 address, the exact configured host, and the exact pinned HUMHUM certificate. Pairing codes, hashed device tokens, read/control scope, revocation, realtime wake, approvals and follow-ups remain the same. Port `31276` is not exposed as a public internet service.
+
+If the Tailnet choice is absent, Tailscale is unavailable or not connected on the Mac; LAN pairing continues to work. The current release was fallback-tested on a Mac without Tailscale, so actual cross-network routing still requires physical verification with both devices joined to one tailnet.
 
 ## Background Monitoring On Xiaomi
 
@@ -77,14 +87,14 @@ This proves Android platform lifecycle behavior, not Xiaomi-specific battery-man
 - Allow-once/deny for supported Agent approvals.
 - Text follow-ups for known Codex, Claude Code, and OpenCode sessions.
 - Foreground session refresh every 10 seconds.
-- Optional background monitoring with a persistent notification, authenticated realtime LAN wake, legacy 15-second polling fallback, bounded retry, approval deduplication, and opt-in reboot restoration.
+- Optional background monitoring with a persistent notification, authenticated realtime private-network wake, legacy 15-second polling fallback, bounded retry, approval deduplication, and opt-in reboot restoration.
 - Immediate monitoring recovery when Android reports that the default network has returned.
 - In-app battery-settings access and Xiaomi-family autostart-settings routing with safe standard fallbacks.
 - HTTPS only, certificate fingerprint pinning, and no backup of app credentials.
 
 The APK requests only network state, internet, foreground remote messaging, notification, and opt-in boot restoration permissions. It does not request direct battery exemption, all-package visibility, wake lock, location, nearby-device, contacts, files, camera, microphone, overlay, or accessibility access.
 
-Not yet included: FCM server push, guaranteed Xiaomi process survival, an internet relay, attachments, iOS packaging, store distribution, or automatic updates.
+Not yet included: FCM server push, guaranteed Xiaomi process survival, a HUMHUM-hosted public/E2EE relay, attachments, iOS packaging, store distribution, or automatic updates.
 
 ## Build Locally
 
