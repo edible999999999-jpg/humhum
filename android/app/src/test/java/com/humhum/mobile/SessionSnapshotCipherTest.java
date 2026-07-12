@@ -2,6 +2,7 @@ package com.humhum.mobile;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertThrows;
 
 import java.nio.charset.StandardCharsets;
@@ -33,6 +34,22 @@ public class SessionSnapshotCipherTest {
         assertEquals("AAECAwQFBgcICQoL", json.getString("nonce"));
         assertArrayEquals(PAYLOAD, decrypted.payload());
         assertEquals(SAVED_AT_MILLIS, decrypted.savedAtMillis());
+    }
+
+    @Test
+    public void providerGeneratesFreshTwelveByteNonces() throws Exception {
+        byte[] first = SessionSnapshotCipher.encrypt(PAYLOAD, BINDING, KEY, SAVED_AT_MILLIS);
+        byte[] second = SessionSnapshotCipher.encrypt(PAYLOAD, BINDING, KEY, SAVED_AT_MILLIS);
+        JSONObject firstJson = new JSONObject(new String(first, StandardCharsets.UTF_8));
+        JSONObject secondJson = new JSONObject(new String(second, StandardCharsets.UTF_8));
+
+        assertEquals(16, firstJson.getString("nonce").length());
+        assertEquals(16, secondJson.getString("nonce").length());
+        assertNotEquals(firstJson.getString("nonce"), secondJson.getString("nonce"));
+        assertArrayEquals(PAYLOAD, SessionSnapshotCipher.decrypt(
+                first, BINDING, KEY, NOW_MILLIS).payload());
+        assertArrayEquals(PAYLOAD, SessionSnapshotCipher.decrypt(
+                second, BINDING, KEY, NOW_MILLIS).payload());
     }
 
     @Test

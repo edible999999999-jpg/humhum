@@ -43,7 +43,7 @@ android {
         versionCode = 5
         versionName = "0.3.2"
 
-        testInstrumentationRunner = "android.test.InstrumentationTestRunner"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "FIREBASE_APPLICATION_ID", quotedBuildValue(
                 "HUMHUM_FIREBASE_APPLICATION_ID"))
         buildConfigField("String", "FIREBASE_API_KEY", quotedBuildValue(
@@ -109,6 +109,8 @@ if (!releaseSigningConfigured) {
 
 dependencies {
     implementation("com.google.firebase:firebase-messaging:25.1.0")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20250517")
 }

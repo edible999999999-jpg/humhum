@@ -23,17 +23,36 @@ public final class SessionSnapshotCipher {
     private SessionSnapshotCipher() {}
 
     public static byte[] encrypt(
+            byte[] payload, String binding, SecretKey key, long savedAtMillis)
+            throws GeneralSecurityException {
+        validateEncryptionInputs(payload, binding, key, savedAtMillis);
+        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+        cipher.init(Cipher.ENCRYPT_MODE, key);
+        byte[] nonce = cipher.getIV();
+        if (nonce == null || nonce.length != NONCE_BYTES) {
+            throw new GeneralSecurityException("Snapshot nonce is invalid");
+        }
+        return finishEncryption(payload, binding, cipher, nonce, savedAtMillis);
+    }
+
+    public static byte[] encrypt(
             byte[] payload, String binding, SecretKey key, byte[] nonce, long savedAtMillis)
             throws GeneralSecurityException {
-        if (payload == null || payload.length > MAX_ENVELOPE_BYTES) {
-            throw new GeneralSecurityException("Snapshot payload is invalid");
-        }
-        requireBindingAndKey(binding, key);
-        if (nonce == null || nonce.length != NONCE_BYTES || savedAtMillis <= 0) {
+        validateEncryptionInputs(payload, binding, key, savedAtMillis);
+        if (nonce == null || nonce.length != NONCE_BYTES) {
             throw new GeneralSecurityException("Snapshot encryption inputs are invalid");
         }
         Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
         cipher.init(Cipher.ENCRYPT_MODE, key, new GCMParameterSpec(128, nonce));
+        return finishEncryption(payload, binding, cipher, nonce, savedAtMillis);
+    }
+
+    private static byte[] finishEncryption(
+            byte[] payload,
+            String binding,
+            Cipher cipher,
+            byte[] nonce,
+            long savedAtMillis) throws GeneralSecurityException {
         cipher.updateAAD(aad(binding, savedAtMillis));
         byte[] ciphertext = cipher.doFinal(payload);
         byte[] envelope = canonicalEnvelope(
@@ -44,6 +63,18 @@ public final class SessionSnapshotCipher {
             throw new GeneralSecurityException("Snapshot envelope is too large");
         }
         return envelope;
+    }
+
+    private static void validateEncryptionInputs(
+            byte[] payload, String binding, SecretKey key, long savedAtMillis)
+            throws GeneralSecurityException {
+        if (payload == null || payload.length > MAX_ENVELOPE_BYTES) {
+            throw new GeneralSecurityException("Snapshot payload is invalid");
+        }
+        requireBindingAndKey(binding, key);
+        if (savedAtMillis <= 0) {
+            throw new GeneralSecurityException("Snapshot encryption inputs are invalid");
+        }
     }
 
     public static Decrypted decrypt(byte[] envelope, String binding, SecretKey key, long nowMillis)

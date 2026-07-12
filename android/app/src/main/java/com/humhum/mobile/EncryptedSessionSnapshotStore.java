@@ -14,7 +14,6 @@ import java.security.GeneralSecurityException;
 import java.security.Key;
 import java.security.KeyStore;
 import java.security.MessageDigest;
-import java.security.SecureRandom;
 import java.util.List;
 import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
@@ -23,27 +22,22 @@ public final class EncryptedSessionSnapshotStore {
     private static final String KEYSTORE_PROVIDER = "AndroidKeyStore";
     private static final String SNAPSHOT_KEY_ALIAS = "humhum-session-snapshot-v1";
     private static final String SNAPSHOT_FILE_NAME = "humhum-session-snapshot-v1.json";
-    private static final int NONCE_BYTES = 12;
     private static final int MAX_ENVELOPE_BYTES = 256 * 1024;
 
     private final AtomicFile snapshotFile;
-    private final SecureRandom secureRandom;
 
     public EncryptedSessionSnapshotStore(Context context) {
         if (context == null) throw new IllegalArgumentException("Context is missing");
         this.snapshotFile = new AtomicFile(new File(
                 context.getNoBackupFilesDir(), SNAPSHOT_FILE_NAME));
-        this.secureRandom = new SecureRandom();
     }
 
     public void write(
             ConnectionStore.Connection connection, List<Models.Session> sessions, long savedAtMillis) {
         try {
             byte[] payload = SessionSnapshotCodec.encode(new SessionSnapshot(savedAtMillis, sessions));
-            byte[] nonce = new byte[NONCE_BYTES];
-            secureRandom.nextBytes(nonce);
             byte[] envelope = SessionSnapshotCipher.encrypt(
-                    payload, binding(connection), keyForWrite(), nonce, savedAtMillis);
+                    payload, binding(connection), keyForWrite(), savedAtMillis);
             writeAtomically(envelope);
         } catch (Exception error) {
             clear();
