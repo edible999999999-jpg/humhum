@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -114,6 +114,20 @@ impl PublisherState {
             .min()
     }
 
+    fn has_pending(&self, device_id: &str) -> bool {
+        self.devices
+            .get(device_id)
+            .is_some_and(|state| state.pending_cursor.is_some())
+    }
+
+    fn exhaust(&mut self, device_id: &str) {
+        let Some(state) = self.devices.get_mut(device_id) else {
+            return;
+        };
+        state.failures = RETRY_MILLIS.len();
+        state.due_at = u64::MAX;
+    }
+
     pub(crate) fn remove(&mut self, device_id: &str) {
         self.devices.remove(device_id);
     }
@@ -188,6 +202,7 @@ pub(crate) struct WakePublisher {
 struct PublisherLifecycle {
     stopping: AtomicBool,
     clearing: AtomicBool,
+    barriers: AtomicUsize,
     revoked: Mutex<HashSet<String>>,
 }
 
@@ -247,29 +262,41 @@ impl WakePublisher {
     }
 
     pub(crate) fn revoke(&self, device_id: &str) -> Result<(), String> {
+        self.lifecycle.barriers.fetch_add(1, Ordering::AcqRel);
         self.lifecycle
             .revoked
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .insert(device_id.to_string());
         let (complete, completed) = std::sync::mpsc::sync_channel(0);
-        self.commands
+        if self
+            .commands
             .send(PublisherCommand::Revoke {
                 device_id: device_id.to_string(),
                 complete,
             })
-            .map_err(|_| "Wake publisher is unavailable".to_string())?;
+            .is_err()
+        {
+            self.lifecycle.barriers.fetch_sub(1, Ordering::AcqRel);
+            return Err("Wake publisher is unavailable".into());
+        }
         completed
             .recv()
             .map_err(|_| "Wake publisher stopped during revocation".to_string())
     }
 
     pub(crate) fn clear(&self) -> Result<(), String> {
+        self.lifecycle.barriers.fetch_add(1, Ordering::AcqRel);
         self.lifecycle.clearing.store(true, Ordering::Release);
         let (complete, completed) = std::sync::mpsc::sync_channel(0);
-        self.commands
+        if self
+            .commands
             .send(PublisherCommand::Clear { complete })
-            .map_err(|_| "Wake publisher is unavailable".to_string())?;
+            .is_err()
+        {
+            self.lifecycle.barriers.fetch_sub(1, Ordering::AcqRel);
+            return Err("Wake publisher is unavailable".into());
+        }
         completed
             .recv()
             .map_err(|_| "Wake publisher stopped during revocation".to_string())
@@ -319,6 +346,7 @@ async fn run_publisher(
     let coalesce = duration_millis(timing.coalesce);
     let retries = timing.retries.map(duration_millis);
     let mut state = PublisherState::default();
+    let mut envelopes = BTreeMap::<String, crate::wake_crypto::WakeEnvelope>::new();
 
     loop {
         let now = elapsed_millis(started);
@@ -327,6 +355,7 @@ async fn run_publisher(
             .map(|due| Duration::from_millis(due.saturating_sub(now)))
             .unwrap_or(Duration::from_secs(86_400));
         tokio::select! {
+            biased;
             command = commands.recv() => {
                 match command {
                     Some(PublisherCommand::Observe { device_id, cursor }) => {
@@ -342,21 +371,30 @@ async fn run_publisher(
                                 elapsed_millis(started),
                                 coalesce,
                             );
+                            if !state.has_pending(&device_id) {
+                                envelopes.remove(&device_id);
+                            }
                         } else {
                             state.remove(&device_id);
+                            envelopes.remove(&device_id);
                         }
                     }
                     Some(PublisherCommand::Revoke { device_id, complete }) => {
                         state.remove(&device_id);
+                        envelopes.remove(&device_id);
+                        lifecycle.barriers.fetch_sub(1, Ordering::AcqRel);
                         let _ = complete.send(());
                     }
                     Some(PublisherCommand::Clear { complete }) => {
                         state.clear();
+                        envelopes.clear();
                         lifecycle.clearing.store(false, Ordering::Release);
+                        lifecycle.barriers.fetch_sub(1, Ordering::AcqRel);
                         let _ = complete.send(());
                     }
                     Some(PublisherCommand::Stop) | None => {
                         state.clear();
+                        envelopes.clear();
                         set_publisher_status(&status, RelayPublisherStatus::Disabled);
                         break;
                     }
@@ -365,11 +403,12 @@ async fn run_publisher(
             }
             _ = tokio::time::sleep(wait) => {
                 let ready_at = elapsed_millis(started);
-                for pending in state.ready(ready_at) {
+                if let Some(pending) = state.ready(ready_at).into_iter().next() {
                     if lifecycle.stopping.load(Ordering::Acquire) {
-                        break;
-                    }
-                    if lifecycle.clearing.load(Ordering::Acquire)
+                        state.clear();
+                        envelopes.clear();
+                    } else if lifecycle.barriers.load(Ordering::Acquire) > 0 {
+                    } else if lifecycle.clearing.load(Ordering::Acquire)
                         || lifecycle
                             .revoked
                             .lock()
@@ -377,50 +416,74 @@ async fn run_publisher(
                             .contains(&pending.device_id)
                     {
                         state.remove(&pending.device_id);
-                        continue;
-                    }
-                    let secret = secrets
-                        .lock()
-                        .unwrap_or_else(|error| error.into_inner())
-                        .get(&pending.device_id)
-                        .cloned();
-                    let Some(secret) = secret else {
-                        state.remove(&pending.device_id);
-                        continue;
-                    };
-                    let result = create_wake_envelope(&secret).and_then(|envelope| {
-                        RelayBaseUrl::parse(&secret.base_url)
-                            .and_then(RelayClient::new)
-                            .map(|client| (client, envelope))
-                    });
-                    let result = match result {
-                        Ok((client, envelope)) => client.publish(&secret, &envelope).await,
-                        Err(error) => Err(error),
-                    };
-                    if result.is_ok()
-                        && secrets
+                        envelopes.remove(&pending.device_id);
+                    } else {
+                        let secret = secrets
                             .lock()
                             .unwrap_or_else(|error| error.into_inner())
-                            .advance_sequence(&pending.device_id, secret.next_sequence)
-                            .is_ok()
-                    {
-                        state.succeeded(&pending.device_id, &pending.cursor);
-                    } else {
-                        state.failed_after(
-                            &pending.device_id,
-                            elapsed_millis(started),
-                            retries,
-                        );
+                            .get(&pending.device_id)
+                            .cloned();
+                        if let Some(secret) = secret {
+                            if secret.next_sequence >= MAX_RELAY_SEQUENCE {
+                                state.exhaust(&pending.device_id);
+                                envelopes.remove(&pending.device_id);
+                                set_publisher_status(&status, state.status(true));
+                                continue;
+                            }
+                            if envelopes
+                                .get(&pending.device_id)
+                                .is_some_and(|envelope| envelope.sequence != secret.next_sequence)
+                            {
+                                envelopes.remove(&pending.device_id);
+                            }
+                            let envelope = match envelopes.get(&pending.device_id).cloned() {
+                                Some(envelope) => Ok(envelope),
+                                None => create_wake_envelope(&secret).inspect(|envelope| {
+                                    envelopes
+                                        .insert(pending.device_id.clone(), envelope.clone());
+                                }),
+                            };
+                            let result = envelope.and_then(|envelope| {
+                                RelayBaseUrl::parse(&secret.base_url)
+                                    .and_then(RelayClient::new)
+                                    .map(|client| (client, envelope))
+                            });
+                            let result = match result {
+                                Ok((client, envelope)) => client.publish(&secret, &envelope).await,
+                                Err(error) => Err(error),
+                            };
+                            if result.is_ok()
+                                && secrets
+                                    .lock()
+                                    .unwrap_or_else(|error| error.into_inner())
+                                    .advance_sequence(&pending.device_id, secret.next_sequence)
+                                    .is_ok()
+                            {
+                                state.succeeded(&pending.device_id, &pending.cursor);
+                                envelopes.remove(&pending.device_id);
+                            } else {
+                                state.failed_after(
+                                    &pending.device_id,
+                                    elapsed_millis(started),
+                                    retries,
+                                );
+                            }
+                        } else {
+                            state.remove(&pending.device_id);
+                            envelopes.remove(&pending.device_id);
+                        }
                     }
                     set_publisher_status(&status, state.status(true));
                 }
                 if lifecycle.stopping.load(Ordering::Acquire) {
                     state.clear();
+                    envelopes.clear();
                     set_publisher_status(&status, RelayPublisherStatus::Disabled);
                     break;
                 }
                 if lifecycle.clearing.load(Ordering::Acquire) {
                     state.clear();
+                    envelopes.clear();
                     set_publisher_status(&status, RelayPublisherStatus::Connected);
                 }
             }
@@ -573,7 +636,7 @@ impl RelayClient {
         secret.validate()?;
         if secret.base_url != self.base_url.as_str()
             || envelope.sequence != secret.next_sequence
-            || envelope.sequence > MAX_RELAY_SEQUENCE
+            || envelope.sequence >= MAX_RELAY_SEQUENCE
         {
             return Err("Relay publication is invalid".into());
         }
@@ -1389,6 +1452,33 @@ mod tests {
         assert!(secret.validate().is_err());
     }
 
+    #[test]
+    fn maximum_sequence_is_a_persisted_exhausted_terminal() {
+        let base_url = "https://relay.example.com";
+        let client = RelayClient::new(RelayBaseUrl::parse(base_url).unwrap()).unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        let mut store = MobileRelaySecretStore::load_or_create(temp.path()).unwrap();
+        let mut secret = relay_secret(base_url);
+        secret.next_sequence = MAX_RELAY_SEQUENCE - 1;
+        store.put(secret.clone()).unwrap();
+
+        assert!(client
+            .publication_request(&secret, &wake_envelope(MAX_RELAY_SEQUENCE - 1))
+            .is_ok());
+        store
+            .advance_sequence("device-phone", MAX_RELAY_SEQUENCE - 1)
+            .unwrap();
+        let exhausted = store.get("device-phone").unwrap();
+        assert_eq!(exhausted.next_sequence, MAX_RELAY_SEQUENCE);
+        assert!(exhausted.validate().is_ok());
+        assert!(client
+            .publication_request(exhausted, &wake_envelope(MAX_RELAY_SEQUENCE))
+            .is_err());
+        assert!(store
+            .advance_sequence("device-phone", MAX_RELAY_SEQUENCE)
+            .is_err());
+    }
+
     #[tokio::test]
     async fn live_publisher_finishes_inflight_before_processing_newest_change() {
         let (base_url, mut requests, server) = slow_relay().await;
@@ -1450,6 +1540,34 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(failed_at.elapsed() >= Duration::from_millis(50));
+        second
+            .respond
+            .send((201, r#"{"sequence":7}"#.into()))
+            .unwrap();
+        stop_publisher(publisher).await;
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn live_publisher_reuses_the_exact_envelope_after_response_loss() {
+        let (base_url, mut requests, server) = slow_relay().await;
+        let (_temp, store) = publisher_store(&base_url);
+        let publisher = WakePublisher::start(store, fast_timing());
+        publisher.observe("device-phone", "cursor-a");
+        publisher.observe("device-phone", "cursor-b");
+
+        let first = tokio::time::timeout(Duration::from_secs(1), requests.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let first_envelope = first.envelope.clone();
+        drop(first.respond);
+
+        let second = tokio::time::timeout(Duration::from_secs(1), requests.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(second.envelope, first_envelope);
         second
             .respond
             .send((201, r#"{"sequence":7}"#.into()))
@@ -1589,6 +1707,89 @@ mod tests {
             .respond
             .send((201, r#"{"sequence":7}"#.into()))
             .unwrap();
+        stop_publisher(publisher).await;
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn live_publisher_revoke_does_not_wait_for_the_next_ready_device() {
+        let (base_url, mut requests, server) = slow_relay().await;
+        let (_temp, store) = publisher_store(&base_url);
+        let mut tablet = relay_secret(&base_url);
+        tablet.device_id = "device-tablet".into();
+        tablet.channel_id = "44".repeat(32);
+        store.lock().unwrap().put(tablet).unwrap();
+        let publisher = WakePublisher::start(store, fast_timing());
+        for device in ["device-phone", "device-tablet"] {
+            publisher.observe(device, "cursor-a");
+            publisher.observe(device, "cursor-b");
+        }
+        let first = tokio::time::timeout(Duration::from_secs(1), requests.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(first.envelope.sequence, 7);
+
+        let revoking = Arc::clone(&publisher);
+        let mut revoked = tokio::task::spawn_blocking(move || revoking.revoke("device-phone"));
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if publisher
+                    .lifecycle
+                    .revoked
+                    .lock()
+                    .unwrap()
+                    .contains("device-phone")
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        first
+            .respond
+            .send((201, r#"{"sequence":7}"#.into()))
+            .unwrap();
+
+        let revoke_completed = tokio::time::timeout(Duration::from_millis(100), &mut revoked)
+            .await
+            .is_ok();
+        let next_request = tokio::time::timeout(Duration::from_millis(100), requests.recv()).await;
+        match next_request {
+            Ok(Some(request)) => {
+                let _ = request.respond.send((201, r#"{"sequence":7}"#.into()));
+            }
+            Ok(None) | Err(_) => {}
+        }
+        stop_publisher(publisher).await;
+        server.abort();
+
+        assert!(revoke_completed, "revoke waited beyond the current request");
+    }
+
+    #[tokio::test]
+    async fn live_publisher_never_sends_an_exhausted_maximum_sequence() {
+        let (base_url, mut requests, server) = slow_relay().await;
+        let (_temp, store) = publisher_store(&base_url);
+        let mut exhausted = store.lock().unwrap().get("device-phone").unwrap().clone();
+        exhausted.next_sequence = MAX_RELAY_SEQUENCE;
+        store.lock().unwrap().put(exhausted).unwrap();
+        let publisher = WakePublisher::start(store, fast_timing());
+        publisher.observe("device-phone", "cursor-a");
+        publisher.observe("device-phone", "cursor-b");
+
+        let request = tokio::time::timeout(Duration::from_secs(1), requests.recv()).await;
+        if let Ok(Some(request)) = request {
+            let _ = request
+                .respond
+                .send((201, format!(r#"{{"sequence":{MAX_RELAY_SEQUENCE}}}"#)));
+            stop_publisher(publisher).await;
+            server.abort();
+            panic!("published exhausted maximum sequence");
+        }
+        assert_eq!(publisher.status(), RelayPublisherStatus::Errored);
         stop_publisher(publisher).await;
         server.abort();
     }

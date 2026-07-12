@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { connect } from "node:net";
 import { afterEach, test } from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { createRelayServer } from "../src/server.mjs";
@@ -48,6 +49,46 @@ async function publish(baseUrl, channel, token, body) {
     },
     body: JSON.stringify(body),
   });
+}
+
+async function publishAndDropResponse(baseUrl, channel, token, body) {
+  const url = new URL(baseUrl);
+  const payload = JSON.stringify(body);
+  await new Promise((resolve, reject) => {
+    const socket = connect(Number(url.port), url.hostname, () => {
+      const request = [
+        `POST /v1/channels/${channel}/messages HTTP/1.1`,
+        `Host: ${url.host}`,
+        `Authorization: Bearer ${token}`,
+        "Content-Type: application/json",
+        `Content-Length: ${Buffer.byteLength(payload)}`,
+        "Connection: close",
+        "",
+        payload,
+      ].join("\r\n");
+      socket.write(request, () => {
+        socket.destroy();
+        resolve();
+      });
+    });
+    socket.on("error", reject);
+  });
+}
+
+async function waitForSequence(databasePath, channelId, sequence) {
+  const database = new DatabaseSync(databasePath);
+  try {
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      const row = database.prepare(
+        "SELECT last_sequence FROM channels WHERE id = ?",
+      ).get(channelId);
+      if (row?.last_sequence === sequence) return;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  } finally {
+    database.close();
+  }
+  assert.fail(`sequence ${sequence} was not committed`);
 }
 
 test("health and channel creation expose no secrets through headers or storage", async () => {
@@ -122,6 +163,35 @@ test("sequences are monotonic and a waiting subscriber wakes for new ciphertext"
   const response = await waiting;
   assert.equal(response.status, 200);
   assert.deepEqual((await response.json()).messages, [envelope(1)]);
+});
+
+test("identical publication retry is idempotent after the first response is lost", async () => {
+  const { baseUrl, databasePath } = await relay();
+  const channel = await createChannel(baseUrl);
+  const first = envelope(1);
+
+  await publishAndDropResponse(
+    baseUrl,
+    channel.channel_id,
+    channel.publisher_token,
+    first,
+  );
+  await waitForSequence(databasePath, channel.channel_id, 1);
+
+  const retried = await publish(
+    baseUrl,
+    channel.channel_id,
+    channel.publisher_token,
+    first,
+  );
+  assert.equal(retried.status, 201);
+  assert.deepEqual(await retried.json(), { sequence: 1 });
+  assert.equal((await publish(
+    baseUrl,
+    channel.channel_id,
+    channel.publisher_token,
+    envelope(1, "DIFFERENT"),
+  )).status, 409);
 });
 
 test("mailboxes retain only 128 bounded envelopes", async () => {

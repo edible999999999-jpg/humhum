@@ -66,6 +66,11 @@ export class RelayStore {
       WHERE channel_id = ? AND sequence > ?
       ORDER BY sequence ASC LIMIT 128
     `);
+    this.selectMessage = this.database.prepare(`
+      SELECT version, nonce, ciphertext
+      FROM messages
+      WHERE channel_id = ? AND sequence = ?
+    `);
     this.deleteExpired = this.database.prepare(
       "DELETE FROM messages WHERE channel_id = ? AND created_at < ?",
     );
@@ -108,7 +113,14 @@ export class RelayStore {
   publish(channelId, token, envelope) {
     if (!this.authorize(channelId, token, "publisher")) return "unauthorized";
     const channel = this.selectChannel.get(channelId);
-    if (envelope.sequence !== channel.last_sequence + 1) return "sequence";
+    if (envelope.sequence !== channel.last_sequence + 1) {
+      const existing = this.selectMessage.get(channelId, envelope.sequence);
+      if (existing
+          && existing.version === envelope.version
+          && existing.nonce === envelope.nonce
+          && existing.ciphertext === envelope.ciphertext) return "duplicate";
+      return "sequence";
+    }
     const now = this.clock();
     this.database.exec("BEGIN IMMEDIATE");
     try {
