@@ -54,6 +54,7 @@ export interface MobilePairingInfo {
   url: string;
   certificate_fingerprint: string;
   scope: "read" | "control";
+  android_setup: string;
 }
 
 export interface FocusResult {

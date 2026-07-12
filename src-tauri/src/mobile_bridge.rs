@@ -39,6 +39,7 @@ pub struct MobilePairingInfo {
     pub url: String,
     pub certificate_fingerprint: String,
     pub scope: MobileDeviceScope,
+    pub android_setup: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -189,15 +190,19 @@ impl MobileBridgeState {
         let now = chrono::Utc::now().timestamp();
         let code = uuid::Uuid::new_v4().simple().to_string()[..8].to_ascii_uppercase();
         let challenge = PairingChallenge::new(&code, now, scope);
+        let url = runtime.url.clone().ok_or("Mobile URL is unavailable")?;
+        let fingerprint = runtime
+            .certificate_fingerprint
+            .clone()
+            .ok_or("Mobile certificate fingerprint is unavailable")?;
+        let android_setup = android_setup_payload(&url, &code, scope, &fingerprint);
         let info = MobilePairingInfo {
             code,
             expires_at: challenge.expires_at,
-            url: runtime.url.clone().ok_or("Mobile URL is unavailable")?,
-            certificate_fingerprint: runtime
-                .certificate_fingerprint
-                .clone()
-                .ok_or("Mobile certificate fingerprint is unavailable")?,
+            url,
+            certificate_fingerprint: fingerprint,
             scope,
+            android_setup,
         };
         runtime.pairing = Some(challenge);
         Ok(info)
@@ -218,6 +223,27 @@ impl MobileBridgeState {
             .revoke_device(device_id)?;
         Ok(self.status())
     }
+}
+
+fn android_setup_payload(
+    url: &str,
+    code: &str,
+    scope: MobileDeviceScope,
+    fingerprint: &str,
+) -> String {
+    let normalized_fingerprint: String = fingerprint
+        .chars()
+        .filter(|character| character.is_ascii_hexdigit())
+        .flat_map(char::to_uppercase)
+        .collect();
+    serde_json::json!({
+        "version": 1,
+        "url": url,
+        "code": code,
+        "scope": scope,
+        "fingerprint": normalized_fingerprint,
+    })
+    .to_string()
 }
 
 struct MobileCertificate {
@@ -1057,6 +1083,24 @@ mod tests {
             assert!(locked.verify("WRONG", now + 1).is_err());
         }
         assert!(locked.verify("ABCD1234", now + 1).is_err());
+    }
+
+    #[test]
+    fn android_setup_contains_only_expiring_pairing_material() {
+        let setup = android_setup_payload(
+            "https://192.168.1.20:31276",
+            "ABCD1234",
+            MobileDeviceScope::Control,
+            "AA:BB:CC",
+        );
+        let value: serde_json::Value = serde_json::from_str(&setup).unwrap();
+
+        assert_eq!(value["version"], 1);
+        assert_eq!(value["url"], "https://192.168.1.20:31276");
+        assert_eq!(value["code"], "ABCD1234");
+        assert_eq!(value["scope"], "control");
+        assert_eq!(value["fingerprint"], "AABBCC");
+        assert_eq!(value.as_object().unwrap().len(), 5);
     }
 
     #[test]

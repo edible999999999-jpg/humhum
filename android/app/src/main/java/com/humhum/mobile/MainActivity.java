@@ -1,6 +1,9 @@
 package com.humhum.mobile;
 
 import android.app.Activity;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -9,7 +12,6 @@ import android.os.Handler;
 import android.os.Looper;
 import android.view.View;
 import android.view.inputmethod.InputMethodManager;
-import android.content.Context;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
@@ -52,6 +54,7 @@ public final class MainActivity extends Activity {
         bindViews();
         connectionStore = new ConnectionStore(getSharedPreferences("humhum_connection", MODE_PRIVATE));
         connectButton.setOnClickListener(view -> pair());
+        findViewById(R.id.pasteSetupButton).setOnClickListener(view -> pasteSetup());
         refreshButton.setOnClickListener(view -> refreshSessions(true));
         findViewById(R.id.disconnectButton).setOnClickListener(view -> disconnect());
 
@@ -128,6 +131,27 @@ public final class MainActivity extends Activity {
                 });
             }
         });
+    }
+
+    private void pasteSetup() {
+        ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+        ClipData data = clipboard.getPrimaryClip();
+        if (data == null || data.getItemCount() == 0) {
+            connectError.setText("剪贴板为空");
+            return;
+        }
+        CharSequence text = data.getItemAt(0).coerceToText(this);
+        try {
+            PairingSetup setup = PairingSetup.parse(text == null ? "" : text.toString());
+            urlInput.setText(setup.url());
+            codeInput.setText(setup.code());
+            fingerprintInput.setText(setup.fingerprint());
+            connectError.setText(setup.scope() == Models.Scope.CONTROL
+                    ? "已填入可控制配对资料，请点击安全配对"
+                    : "已填入只读配对资料，请点击安全配对");
+        } catch (IllegalArgumentException error) {
+            connectError.setText(error.getMessage());
+        }
     }
 
     private void activate(ConnectionStore.Connection saved) {

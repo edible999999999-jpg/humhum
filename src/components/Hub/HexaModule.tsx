@@ -1,6 +1,6 @@
 import { useEffect, useReducer, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Crosshair, FileDiff, Flame, Link, Power, RefreshCw, RotateCcw, Send, ShieldCheck, Smartphone, Square, Trash2 } from "lucide-react";
+import { Copy, Crosshair, FileDiff, Flame, Link, Power, RefreshCw, RotateCcw, Send, ShieldCheck, Smartphone, Square, Trash2 } from "lucide-react";
 import {
   useHexaData,
   type CodexRemoteControlState,
@@ -763,13 +763,14 @@ function HumHumMobilePanel({
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
   const run = async (action: () => Promise<unknown>) => {
     setBusy(true);
     setError(null);
     try { await action(); } catch (cause) { setError(String(cause)); } finally { setBusy(false); }
   };
   const detail = pairing
-    ? `配对码 ${pairing.code} · ${pairing.scope === "control" ? "可控制" : "只读"} · 5 分钟内有效`
+    ? `${copied ? "Android 配对资料已复制 · " : ""}配对码 ${pairing.code} · ${pairing.scope === "control" ? "可控制" : "只读"} · 5 分钟内有效`
     : state.enabled
       ? `${state.url} · ${state.paired_devices} 台设备`
       : "默认关闭；开启后仅同一局域网可见";
@@ -797,6 +798,20 @@ function HumHumMobilePanel({
       <div style={{ display: "flex", gap: 6 }}>
         {state.enabled ? (
           <>
+            {pairing?.android_setup && (
+              <button
+                type="button"
+                title="复制 Android 配对资料"
+                aria-label="复制 Android 配对资料"
+                disabled={busy}
+                onClick={() => run(async () => {
+                  await navigator.clipboard.writeText(pairing.android_setup);
+                  setCopied(true);
+                  window.setTimeout(() => setCopied(false), 3000);
+                })}
+                className="kawaii-toggle-btn"
+              ><Copy size={15} /></button>
+            )}
             <button type="button" title="生成只读配对码" aria-label="生成只读配对码" disabled={busy} onClick={() => run(() => onPair("read"))} className="kawaii-toggle-btn connected"><Link size={15} /></button>
             <button type="button" title="生成可控制配对码" aria-label="生成可控制配对码" disabled={busy} onClick={() => run(() => onPair("control"))} className="kawaii-toggle-btn"><ShieldCheck size={15} /></button>
             {state.paired_devices > 0 && <button type="button" title="撤销全部移动设备" aria-label="撤销全部移动设备" disabled={busy} onClick={() => run(onRevoke)} className="kawaii-toggle-btn"><Trash2 size={15} /></button>}

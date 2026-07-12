@@ -64,11 +64,21 @@
                 android:textColor="@color/muted"
                 android:textSize="13sp" />
 
+            <Button
+                android:id="@+id/pasteSetupButton"
+                android:layout_width="match_parent"
+                android:layout_height="44dp"
+                android:layout_marginTop="14dp"
+                android:background="@drawable/button_secondary"
+                android:text="从剪贴板粘贴 Android 配对资料"
+                android:textAllCaps="false"
+                android:textColor="@color/primary" />
+
             <EditText
                 android:id="@+id/urlInput"
                 android:layout_width="match_parent"
                 android:layout_height="50dp"
-                android:layout_marginTop="18dp"
+                android:layout_marginTop="10dp"
                 android:autofillHints=""
                 android:background="@drawable/input_background"
                 android:hint="https://192.168.x.x:31276"
