@@ -9,6 +9,7 @@ import { createRelayServer } from "../src/server.mjs";
 
 const cleanups = [];
 const PUSH_TOKEN_KEY = "11".repeat(32);
+const NOOP_PUSH_PROVIDER = { async sendWake() {} };
 afterEach(async () => {
   while (cleanups.length) await cleanups.pop()();
 });
@@ -207,7 +208,10 @@ test("identical publication retry is idempotent after the first response is lost
 });
 
 test("push subscription is subscriber-only and encrypted at rest", async () => {
-  const { baseUrl, databasePath } = await relay({ pushTokenKey: PUSH_TOKEN_KEY });
+  const { baseUrl, databasePath } = await relay({
+    pushTokenKey: PUSH_TOKEN_KEY,
+    pushProvider: NOOP_PUSH_PROVIDER,
+  });
   const channel = await createChannel(baseUrl);
   const token = "fcm:opaque-registration-token-123";
 
@@ -237,7 +241,10 @@ test("push subscription is subscriber-only and encrypted at rest", async () => {
 });
 
 test("push subscription replaces, deletes, and cascades with its channel", async () => {
-  const { baseUrl, databasePath } = await relay({ pushTokenKey: PUSH_TOKEN_KEY });
+  const { baseUrl, databasePath } = await relay({
+    pushTokenKey: PUSH_TOKEN_KEY,
+    pushProvider: NOOP_PUSH_PROVIDER,
+  });
   const first = await createChannel(baseUrl);
   const second = await createChannel(baseUrl);
 
@@ -280,7 +287,10 @@ test("push subscription rejects disabled, malformed, and oversized requests", as
     { provider: "fcm", token: "fcm:token" },
   )).status, 503);
 
-  const { baseUrl } = await relay({ pushTokenKey: PUSH_TOKEN_KEY });
+  const { baseUrl } = await relay({
+    pushTokenKey: PUSH_TOKEN_KEY,
+    pushProvider: NOOP_PUSH_PROVIDER,
+  });
   const channel = await createChannel(baseUrl);
   for (const body of [
     { provider: "other", token: "fcm:token" },
@@ -297,6 +307,47 @@ test("push subscription rejects disabled, malformed, and oversized requests", as
     channel.subscriber_token,
     { provider: "fcm", token: "A".repeat(4_097) },
   )).status, 413);
+});
+
+test("push delivery retries the same durable envelope after provider failure", async () => {
+  const calls = [];
+  const pushProvider = {
+    async sendWake(token, channel, sequence) {
+      calls.push({ token, channel, sequence });
+      if (calls.length === 1) throw new Error("provider unavailable");
+    },
+  };
+  const { baseUrl, databasePath } = await relay({
+    pushTokenKey: PUSH_TOKEN_KEY,
+    pushProvider,
+  });
+  const channel = await createChannel(baseUrl);
+  assert.equal((await putPush(
+    baseUrl,
+    channel.channel_id,
+    channel.subscriber_token,
+    { provider: "fcm", token: "fcm:retry-token" },
+  )).status, 204);
+  const first = envelope(1);
+
+  assert.equal((await publish(
+    baseUrl, channel.channel_id, channel.publisher_token, first,
+  )).status, 503);
+  await waitForSequence(databasePath, channel.channel_id, 1);
+  assert.equal((await publish(
+    baseUrl, channel.channel_id, channel.publisher_token, first,
+  )).status, 201);
+  assert.deepEqual(calls, [
+    { token: "fcm:retry-token", channel: channel.channel_id, sequence: 1 },
+    { token: "fcm:retry-token", channel: channel.channel_id, sequence: 1 },
+  ]);
+  assert.equal((await publish(
+    baseUrl,
+    channel.channel_id,
+    channel.publisher_token,
+    envelope(1, "DIFFERENT"),
+  )).status, 409);
+  assert.equal(calls.length, 2);
 });
 
 test("mailboxes retain only 128 bounded envelopes", async () => {

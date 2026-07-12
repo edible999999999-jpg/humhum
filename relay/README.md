@@ -39,10 +39,26 @@ For network use, place the container behind a TLS reverse proxy such as Caddy or
 
 The relay cannot decrypt, forge or execute a HUMHUM command. Android still uses the separately authenticated, certificate-pinned Mobile Bridge after receiving a wake.
 
+## Optional FCM Wake
+
+FCM can wake an Android process that the operating system reclaimed. It remains disabled unless all three server variables are present:
+
+```bash
+export HUMHUM_PUSH_TOKEN_KEY="$(openssl rand -hex 32)"
+export HUMHUM_FCM_PROJECT_ID="your-firebase-project-id"
+export GOOGLE_APPLICATION_CREDENTIALS="/run/secrets/firebase-service-account.json"
+```
+
+Keep the token key stable with the SQLite volume and store both secrets outside the repository. The service account needs permission to send Firebase Cloud Messaging HTTP v1 messages to the target project. HUMHUM signs short-lived OAuth assertions in memory and never stores access tokens.
+
+Android registers one opaque FCM token per relay channel. The token is AES-256-GCM encrypted in SQLite under `HUMHUM_PUSH_TOKEN_KEY`. FCM receives only a high-priority data wake containing `kind`, opaque channel ID and sequence; it never receives session, project, Agent, approval or message text. If FCM rejects a wake, the relay returns `503` so desktop retries the exact already-stored encrypted envelope.
+
+FCM requires a release APK built with the matching public Firebase Android client identifiers. Without them, existing encrypted long polling and pinned private-network wake continue normally.
+
 ## Test
 
 ```bash
-node --test relay/test/relay.test.mjs
+node --test relay/test/*.test.mjs
 ```
 
-Tests start a real HTTP server and SQLite database, then inspect persistence to prove raw publisher and subscriber tokens are absent.
+Tests start a real HTTP server and SQLite database, then inspect persistence to prove raw publisher, subscriber and FCM registration tokens are absent. The FCM tests use an ephemeral RSA service account and injected HTTP transport; they do not contact Google.

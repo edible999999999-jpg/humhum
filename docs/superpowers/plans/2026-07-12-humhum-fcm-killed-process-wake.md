@@ -52,12 +52,12 @@
 - `loadFcmProviderFromEnvironment(env, readFile, fetchImpl, clock) -> provider | null`
 - `provider.sendWake(...)` resolves only for accepted HTTP v1 delivery and otherwise throws a credential-free bounded error.
 
-- [ ] **Step 1: Write failing provider tests** for strict service-account shape, RS256 OAuth assertion claims, messaging scope, cached access-token expiry, five-second abort, exact FCM URL/body, Android high priority, channel collapse key and generic non-2xx errors.
-- [ ] **Step 2: Run** `node --test relay/test/fcm.test.mjs`; require module-not-found failure.
-- [ ] **Step 3: Implement `fcm.mjs` using Node built-ins** (`crypto.sign`, `fetch`, `AbortController`) with no service-account, OAuth-token or registration-token logging.
-- [ ] **Step 4: Write the failing relay retry test**: first publish stores sequence 1 but fake provider fails and returns `503`; an identical retry calls the provider again and returns idempotent `201`; a differing envelope remains `409`.
-- [ ] **Step 5: Wire optional provider delivery after durable publish**, returning `201` when absent/no subscription, `503` on provider failure and retrying push for an identical stored envelope.
-- [ ] **Step 6: Document the three environment variables and key generation**, run `npm run test:relay`, and commit `feat(relay): deliver generic FCM wakes`.
+- [x] **Step 1: Write failing provider tests** for strict service-account shape, RS256 OAuth assertion claims, messaging scope, cached access-token expiry, five-second abort, exact FCM URL/body, Android high priority, channel collapse key and generic non-2xx errors.
+- [x] **Step 2: Run** `node --test relay/test/fcm.test.mjs`; require module-not-found failure.
+- [x] **Step 3: Implement `fcm.mjs` using Node built-ins** (`crypto.sign`, `fetch`, `AbortController`) with no service-account, OAuth-token or registration-token logging.
+- [x] **Step 4: Write the failing relay retry test**: first publish stores sequence 1 but fake provider fails and returns `503`; an identical retry calls the provider again and returns idempotent `201`; a differing envelope remains `409`.
+- [x] **Step 5: Wire optional provider delivery after durable publish**, returning `201` when absent/no subscription, `503` on provider failure and retrying push for an identical stored envelope.
+- [x] **Step 6: Document the three environment variables and key generation**, run `npm run test:relay`, and commit `feat(relay): deliver generic FCM wakes`.
 
 ### Task 3: Android Push Configuration And Wake Policy
 

@@ -1,5 +1,6 @@
 import { createServer } from "node:http";
 import { pathToFileURL } from "node:url";
+import { loadFcmProviderFromEnvironment } from "./fcm.mjs";
 import { RelayStore } from "./store.mjs";
 
 const CHANNEL_PATH = /^\/v1\/channels\/([a-f0-9]{64})$/;
@@ -97,7 +98,12 @@ function limiter(clock) {
   };
 }
 
-export function createRelayServer({ databasePath, clock = Date.now, pushTokenKey = null }) {
+export function createRelayServer({
+  databasePath,
+  clock = Date.now,
+  pushTokenKey = null,
+  pushProvider = null,
+}) {
   if (!databasePath) throw new Error("databasePath is required");
   const store = new RelayStore(databasePath, clock, pushTokenKey);
   const allow = limiter(clock);
@@ -136,6 +142,14 @@ export function createRelayServer({ databasePath, clock = Date.now, pushTokenKey
         const result = store.publish(messageMatch[1], token, body);
         if (result === "unauthorized") return unauthorized(response);
         if (result === "sequence") return send(response, 409, { error: "Invalid sequence" });
+        const subscription = store.pushSubscription(messageMatch[1]);
+        if (subscription && pushProvider && subscription.provider === "fcm") {
+          try {
+            await pushProvider.sendWake(subscription.token, messageMatch[1], body.sequence);
+          } catch {
+            return send(response, 503, { error: "Push unavailable" });
+          }
+        }
         return send(response, 201, { sequence: body.sequence });
       }
       if (request.method === "GET" && messageMatch) {
@@ -174,6 +188,7 @@ export function createRelayServer({ databasePath, clock = Date.now, pushTokenKey
             error: "Invalid push subscription",
           });
         }
+        if (!pushProvider) return send(response, 503, { error: "Push unavailable" });
         const result = store.putPush(pushMatch[1], token, body.provider, body.token);
         if (result === "unauthorized") return unauthorized(response);
         if (result === "disabled") {
@@ -210,7 +225,18 @@ export function createRelayServer({ databasePath, clock = Date.now, pushTokenKey
 if (import.meta.url === pathToFileURL(process.argv[1] || "").href) {
   const databasePath = process.env.HUMHUM_RELAY_DB || "./humhum-relay.sqlite";
   const port = Number(process.env.PORT || 3005);
-  const server = createRelayServer({ databasePath });
+  let pushProvider = null;
+  try {
+    pushProvider = loadFcmProviderFromEnvironment(process.env);
+  } catch {
+    process.stderr.write("HUMHUM Wake Relay push configuration is invalid\n");
+    process.exit(1);
+  }
+  const server = createRelayServer({
+    databasePath,
+    pushProvider,
+    pushTokenKey: pushProvider ? process.env.HUMHUM_PUSH_TOKEN_KEY : null,
+  });
   server.listen(port, "0.0.0.0", () => {
     process.stdout.write(`HUMHUM Wake Relay listening on ${port}\n`);
   });
