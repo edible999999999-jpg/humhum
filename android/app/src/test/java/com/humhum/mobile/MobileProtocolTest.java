@@ -61,6 +61,16 @@ public class MobileProtocolTest {
     }
 
     @Test
+    public void disconnectRevokesTheCurrentPairedDevice() {
+        MobileProtocol.RequestSpec request = MobileProtocol.disconnectRequest();
+
+        assertEquals("DELETE", request.method());
+        assertEquals("/api/device", request.path());
+        assertTrue(request.requiresToken());
+        assertEquals("", request.body());
+    }
+
+    @Test
     public void parsingIsBoundedAndReadScopeRemovesControls() throws Exception {
         JSONArray sessions = new JSONArray();
         for (int index = 0; index < 35; index++) {

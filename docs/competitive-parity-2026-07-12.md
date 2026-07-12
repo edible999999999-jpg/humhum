@@ -32,8 +32,8 @@ Status meanings:
 
 | Capability | Status | HUMHUM evidence / next gap |
 | --- | --- | --- |
-| Remote Codex from phone | Partial | Official Codex Remote Control can pair ChatGPT mobile. HUMHUM Mobile Web now shows redacted local Codex, Claude and OpenCode sessions, resolves scoped approvals, and sends provider-verified follow-ups through the same durable ordered queues as Hexa. Internet access remains missing. |
-| iOS, Android and web clients | Partial | A responsive HUMHUM Mobile Web page works on the same LAN over HTTPS after explicit one-time read or control pairing. The first visit must trust the generated certificate and can verify its SHA-256 fingerprint in Hexa. Native iOS/Android packaging and internet access remain missing. |
+| Remote Codex from phone | Partial | HUMHUM Mobile Web and the native Android APK show redacted local Codex, Claude and OpenCode sessions, resolve scoped approvals, and send provider-verified follow-ups through the same durable ordered queues as Hexa. The Android client pins the Mac certificate and can revoke its own token. Internet access remains missing. |
+| iOS, Android and web clients | Partial | Mobile Web works over same-LAN HTTPS, and a native Android 8+ APK now provides secure setup paste, device pairing, foreground session polling, approvals, follow-ups and self-revocation. The APK is debug-signed and verified locally; no Xiaomi phone was attached for a physical install. Native iOS, background push, release signing, stores and internet access remain missing. |
 | End-to-end encrypted relay | Missing | No HUMHUM internet relay exists; an unauthenticated LAN shortcut will not be shipped. |
 | Self-hosted relay | Missing | Requires protocol, identity, storage and deployment work. |
 | Ordered/retryable outgoing messages | Partial | Desktop and mobile Codex, Claude and OpenCode follow-ups use an owner-only persistent queue with strict per-provider/session order, crash recovery, explicit queued/delivered/failed receipts, and retry/discard controls. Future internet transports do not use the queue yet. |
@@ -60,6 +60,10 @@ Status meanings:
 
 ## Current Verified Tranche
 
+- Native Android 0.1.0 builds as a 904 KB APK for package `com.humhum.mobile`, min SDK 26 and target/compile SDK 36. APK inspection found only `INTERNET` and `ACCESS_NETWORK_STATE`, cleartext is disabled, backups are disabled, and APK Signature Scheme v2 verification passed. The debug APK SHA-256 is `d8f99d6ed184c3846932e67cef03d52b930f36965635633c34c99050caa1dfac`.
+- Android has 18 passing JVM tests across setup validation, exact certificate fingerprint matching, bounded protocol parsing, credential persistence and device self-revocation. `lintDebug` and `assembleDebug` pass. `adb devices -l` found no attached phone, so physical Xiaomi installation is not claimed.
+- A fresh release desktop build served the Android protocol over HTTPS. Runtime verification observed unauthenticated self-revoke `401`, control pairing `200`, 23 bounded sessions with no path/transcript fields, a non-destructive missing approval `409`, self-revoke `200`, and reuse of the revoked token `401`. The disposable smoke device was removed by the tested route.
+- The Android app polls only while foregrounded, stores no pairing code, pins the exact Mac leaf certificate, omits controls for read-only scope, and clears drafts only after successful delivery. Push, Xiaomi background keepalive, public relay, release signing, stores and iOS remain explicitly incomplete.
 - Hook route enrichment uses structured JSON serialization and refreshes on app startup.
 - Session route data merges without later empty events erasing exact identifiers.
 - tmux pane targets are allow-listed before direct process invocation.

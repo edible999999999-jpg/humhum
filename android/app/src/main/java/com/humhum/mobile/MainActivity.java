@@ -46,6 +46,7 @@ public final class MainActivity extends Activity {
     private EditText deviceNameInput;
     private Button connectButton;
     private Button refreshButton;
+    private Button disconnectButton;
 
     @Override
     protected void onCreate(Bundle state) {
@@ -56,7 +57,7 @@ public final class MainActivity extends Activity {
         connectButton.setOnClickListener(view -> pair());
         findViewById(R.id.pasteSetupButton).setOnClickListener(view -> pasteSetup());
         refreshButton.setOnClickListener(view -> refreshSessions(true));
-        findViewById(R.id.disconnectButton).setOnClickListener(view -> disconnect());
+        disconnectButton.setOnClickListener(view -> disconnect());
 
         connection = connectionStore.load();
         if (connection == null) {
@@ -98,6 +99,7 @@ public final class MainActivity extends Activity {
         deviceNameInput = findViewById(R.id.deviceNameInput);
         connectButton = findViewById(R.id.connectButton);
         refreshButton = findViewById(R.id.refreshButton);
+        disconnectButton = findViewById(R.id.disconnectButton);
     }
 
     private void pair() {
@@ -178,9 +180,26 @@ public final class MainActivity extends Activity {
     }
 
     private void disconnect() {
-        connectionStore.clear();
-        codeInput.setText("");
-        showConnect();
+        MobileProtocol current = protocol;
+        if (current == null) return;
+        disconnectButton.setEnabled(false);
+        statusText.setText("正在安全断开");
+        network.execute(() -> {
+            String warning = "";
+            try {
+                current.disconnect();
+            } catch (Exception error) {
+                warning = "本机连接已清除；Mac 未确认撤销，请在 Hexa 中撤销旧设备。";
+            }
+            String finalWarning = warning;
+            connectionStore.clear();
+            main.post(() -> {
+                disconnectButton.setEnabled(true);
+                codeInput.setText("");
+                showConnect();
+                connectError.setText(finalWarning.isEmpty() ? "已安全断开并撤销此设备" : finalWarning);
+            });
+        });
     }
 
     private void refreshSessions(boolean userInitiated) {

@@ -51,11 +51,19 @@ public final class MobileProtocol {
         return bounded(response.optString("status", "queued"), 32);
     }
 
+    public void disconnect() throws IOException, JSONException {
+        execute(disconnectRequest());
+    }
+
     static RequestSpec pairRequest(BridgeConfig config) throws JSONException {
         JSONObject body = new JSONObject()
                 .put("code", config.pairingCode())
                 .put("device_name", config.deviceName());
         return new RequestSpec("POST", "/api/pair", body.toString(), false);
+    }
+
+    static RequestSpec disconnectRequest() {
+        return new RequestSpec("DELETE", "/api/device", "", true);
     }
 
     static RequestSpec approvalRequest(Models.Action action, String decision, Models.Scope scope)

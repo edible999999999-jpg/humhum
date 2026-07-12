@@ -368,6 +368,7 @@ async fn handle_mobile_request(
     let response = match (request.method(), request.uri().path()) {
         (&Method::GET, "/") => html_response(MOBILE_HTML),
         (&Method::POST, "/api/pair") => pair_device(request, &bridge).await,
+        (&Method::DELETE, "/api/device") => revoke_mobile_device(&request, &bridge),
         (&Method::GET, "/api/sessions") => {
             let scope = request_scope(&request, &bridge);
             if scope.is_none() {
@@ -466,6 +467,30 @@ async fn handle_mobile_request(
     Ok(with_security_headers(response))
 }
 
+fn revoke_mobile_device(
+    request: &Request<hyper::body::Incoming>,
+    bridge: &MobileBridgeState,
+) -> Response<HttpBody> {
+    let Some(token) = request_token(request) else {
+        return json_error(StatusCode::UNAUTHORIZED, "Pair this device first");
+    };
+    match bridge
+        .devices
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .revoke_token(token)
+    {
+        Ok(()) => json_response(StatusCode::OK, &serde_json::json!({ "status": "revoked" })),
+        Err(error) if error == "Paired mobile device not found" => {
+            json_error(StatusCode::UNAUTHORIZED, "Pair this device first")
+        }
+        Err(_) => json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Could not revoke this device",
+        ),
+    }
+}
+
 #[derive(Deserialize)]
 struct PairRequest {
     code: String,
@@ -530,18 +555,22 @@ fn request_scope(
     request: &Request<hyper::body::Incoming>,
     bridge: &MobileBridgeState,
 ) -> Option<MobileDeviceScope> {
-    let token = request
-        .headers()
-        .get(hyper::header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "));
-    token.and_then(|token| {
+    request_token(request).and_then(|token| {
         bridge
             .devices
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .authorize(token)
     })
+}
+
+fn request_token(request: &Request<hyper::body::Incoming>) -> Option<&str> {
+    request
+        .headers()
+        .get(hyper::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .filter(|token| !token.is_empty())
 }
 
 #[derive(Deserialize)]
@@ -902,6 +931,18 @@ impl MobileDeviceStore {
         self.persist()
     }
 
+    fn revoke_token(&mut self, raw_token: &str) -> Result<(), String> {
+        let candidate = digest_token(raw_token);
+        let before = self.devices.len();
+        self.devices.retain(|device| {
+            !constant_time_eq(device.token_digest.as_bytes(), candidate.as_bytes())
+        });
+        if self.devices.len() == before {
+            return Err("Paired mobile device not found".into());
+        }
+        self.persist()
+    }
+
     fn revoke_all(&mut self) -> Result<(), String> {
         self.devices.clear();
         self.persist()
@@ -1150,6 +1191,28 @@ mod tests {
             .unwrap();
 
         store.revoke_device(&first.id).unwrap();
+
+        assert_eq!(store.authorize("phone-token"), None);
+        assert_eq!(
+            store.authorize("tablet-token"),
+            Some(MobileDeviceScope::Read)
+        );
+        assert_eq!(store.summaries().len(), 1);
+        assert_eq!(store.summaries()[0].name, "Tablet");
+    }
+
+    #[test]
+    fn device_can_revoke_itself_with_its_raw_token() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut store = MobileDeviceStore::load_or_create(temp.path()).unwrap();
+        store
+            .add_device("Phone", "phone-token", MobileDeviceScope::Control)
+            .unwrap();
+        store
+            .add_device("Tablet", "tablet-token", MobileDeviceScope::Read)
+            .unwrap();
+
+        store.revoke_token("phone-token").unwrap();
 
         assert_eq!(store.authorize("phone-token"), None);
         assert_eq!(
