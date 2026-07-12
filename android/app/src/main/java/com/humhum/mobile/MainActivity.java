@@ -134,8 +134,8 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onStop() {
-        STARTED_ACTIVITIES.stop(this);
-        notifyPreviousStartedActivity();
+        MainActivity fallback = STARTED_ACTIVITIES.stop(this);
+        if (fallback != null) notifyPreviousStartedActivity(fallback);
         pushPreferences.unregisterOnSharedPreferenceChangeListener(pushStateListener);
         main.removeCallbacks(poll);
         super.onStop();
@@ -423,8 +423,12 @@ public final class MainActivity extends Activity {
                     writeSnapshotSafely(currentConnection, page.sessions(), savedAtMillis);
                     return true;
                 }, false);
-                if (!written) return;
-                postIfCurrent(refreshGeneration, current, currentConnection, () -> {
+                if (!written) {
+                    postStaleRefreshReset(
+                            refreshGeneration, current, currentConnection);
+                    return;
+                }
+                postRefreshIfCurrent(refreshGeneration, current, currentConnection, () -> {
                     refreshInFlight = false;
                     refreshButton.setEnabled(true);
                     statusText.setText("刚刚同步");
@@ -441,7 +445,7 @@ public final class MainActivity extends Activity {
                                 },
                                 null)
                         : null;
-                postIfCurrent(refreshGeneration, current, currentConnection, () -> {
+                postRefreshIfCurrent(refreshGeneration, current, currentConnection, () -> {
                     refreshInFlight = false;
                     refreshButton.setEnabled(true);
                     if (snapshot == null) {
@@ -454,6 +458,43 @@ public final class MainActivity extends Activity {
                 });
             }
         });
+    }
+
+    private void postRefreshIfCurrent(
+            long generation,
+            MobileProtocol expectedProtocol,
+            ConnectionStore.Connection expectedConnection,
+            Runnable action) {
+        main.post(() -> {
+            if (!snapshotGenerationGate.isLatestOwner()
+                    || !snapshotGenerationGate.isCurrent(generation)
+                    || TRANSITIONS.state() != DurableConnectionTransitionCoordinator.State.IDLE
+                    || !isCurrentConnection(expectedProtocol, expectedConnection)) {
+                resetStaleRefreshState(generation, expectedProtocol, expectedConnection);
+                return;
+            }
+            action.run();
+        });
+    }
+
+    private void postStaleRefreshReset(
+            long generation,
+            MobileProtocol expectedProtocol,
+            ConnectionStore.Connection expectedConnection) {
+        main.post(() -> resetStaleRefreshState(
+                generation, expectedProtocol, expectedConnection));
+    }
+
+    private void resetStaleRefreshState(
+            long generation,
+            MobileProtocol expectedProtocol,
+            ConnectionStore.Connection expectedConnection) {
+        refreshInFlight = false;
+        if (!snapshotGenerationGate.isLatestOwner()) return;
+        if (!snapshotGenerationGate.isCurrent(generation)) return;
+        if (TRANSITIONS.state() != DurableConnectionTransitionCoordinator.State.IDLE) return;
+        if (!isCurrentConnection(expectedProtocol, expectedConnection)) return;
+        refreshButton.setEnabled(true);
     }
 
     private boolean isCurrentConnection(
@@ -476,11 +517,11 @@ public final class MainActivity extends Activity {
         });
     }
 
-    private static void notifyPreviousStartedActivity() {
-        STARTED_ACTIVITIES.dispatch(activity -> activity.main.post(() -> {
-            if (!STARTED_ACTIVITIES.isCurrent(activity)) return;
-            activity.reclaimStartedOwnershipAndReconcile();
-        }));
+    private static void notifyPreviousStartedActivity(MainActivity fallback) {
+        fallback.main.post(() -> {
+            if (!STARTED_ACTIVITIES.isCurrent(fallback)) return;
+            fallback.reclaimStartedOwnershipAndReconcile();
+        });
     }
 
     private void reclaimStartedOwnershipAndReconcile() {
@@ -542,6 +583,8 @@ public final class MainActivity extends Activity {
         setPairing(false);
         hideKeyboard();
         if (!sameConnection(connection, saved)) {
+            refreshInFlight = false;
+            refreshButton.setEnabled(true);
             activate(saved);
         } else if (notice != null) {
             refreshInFlight = false;

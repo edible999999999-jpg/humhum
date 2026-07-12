@@ -160,8 +160,9 @@ public class ManifestContractTest {
         String stop = methodSource(source, "protected void onStop()", "protected void onDestroy()");
         assertOrdered(
                 stop,
-                "STARTED_ACTIVITIES.stop(this);",
-                "notifyPreviousStartedActivity();");
+                "MainActivity fallback = STARTED_ACTIVITIES.stop(this);",
+                "if (fallback != null)",
+                "notifyPreviousStartedActivity(fallback);");
 
         String destruction = methodSource(
                 source, "protected void onDestroy()", "private void bindViews()");
@@ -193,7 +194,7 @@ public class ManifestContractTest {
 
         String refresh = methodSource(
                 source, "private void refreshSessions(boolean userInitiated)",
-                "private void renderSessions(List<Models.Session> sessions)");
+                "private void postRefreshIfCurrent(");
         assertOrdered(
                 refresh,
                 "long refreshGeneration = snapshotGenerationGate.capture();",
@@ -201,7 +202,7 @@ public class ManifestContractTest {
                 "snapshotGenerationGate.callIfCurrent(",
                 "isCurrentConnection(current, currentConnection)",
                 "writeSnapshotSafely(",
-                "postIfCurrent(refreshGeneration, current, currentConnection");
+                "postRefreshIfCurrent(refreshGeneration, current, currentConnection");
         assertOrdered(
                 refresh,
                 "} catch (Exception error) {",
@@ -209,8 +210,10 @@ public class ManifestContractTest {
                 "snapshotGenerationGate.callIfCurrent(",
                 "isCurrentConnection(current, currentConnection)",
                 "readSnapshotSafely(currentConnection, nowMillis)",
-                "postIfCurrent(refreshGeneration, current, currentConnection");
+                "postRefreshIfCurrent(refreshGeneration, current, currentConnection");
         assertTrue(refresh.contains("statusText.setText(safeError(error));"));
+        assertTrue(refresh.contains("postStaleRefreshReset("));
+        assertFalse(refresh.contains("postIfCurrent("));
 
         String callback = methodSource(
                 source, "private void postIfCurrent(", "private void writeSnapshotSafely(");
@@ -231,10 +234,9 @@ public class ManifestContractTest {
 
         String fallback = methodSource(
                 source,
-                "private static void notifyPreviousStartedActivity()",
+                "private static void notifyPreviousStartedActivity(MainActivity fallback)",
                 "private void reclaimStartedOwnershipAndReconcile()");
-        assertTrue(fallback.contains("STARTED_ACTIVITIES.dispatch("));
-        assertTrue(fallback.contains("STARTED_ACTIVITIES.isCurrent(activity)"));
+        assertTrue(fallback.contains("STARTED_ACTIVITIES.isCurrent(fallback)"));
 
         String reclaim = methodSource(
                 source,
@@ -267,6 +269,21 @@ public class ManifestContractTest {
                 "PushRegistration.cancel(this)",
                 "showConnect()");
         assertTrue(reconciliation.contains("activate(saved)"));
+        assertOrdered(
+                reconciliation,
+                "refreshInFlight = false;",
+                "refreshButton.setEnabled(true);",
+                "activate(saved)");
+
+        String staleReset = methodSource(
+                source,
+                "private void resetStaleRefreshState(",
+                "private boolean isCurrentConnection(");
+        assertOrdered(
+                staleReset,
+                "refreshInFlight = false;",
+                "snapshotGenerationGate.isCurrent(generation)",
+                "refreshButton.setEnabled(true);");
     }
 
     private static Element component(Document document, String tag, String name) {

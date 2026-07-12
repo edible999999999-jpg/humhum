@@ -2,6 +2,8 @@ package com.humhum.mobile;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 import java.util.ArrayList;
@@ -69,5 +71,54 @@ public class StartedOwnerRegistryTest {
         assertEquals(List.of(previous), notified);
         assertTrue(registry.isCurrent(previous));
         assertFalse(registry.isCurrent(replacement));
+    }
+
+    @Test
+    public void olderStopDoesNotInvalidateCurrentOwnersGeneration() {
+        StartedOwnerRegistry<GateOwner> registry = new StartedOwnerRegistry<>();
+        GateOwner first = new GateOwner();
+        GateOwner replacement = new GateOwner();
+        long replacementGeneration = replacement.gate.capture();
+        try {
+            registry.start(first);
+            registry.start(replacement);
+            GateOwner fallback = registry.stop(first);
+            if (fallback != null && !fallback.gate.isLatestOwner()) {
+                fallback.gate.claimLatestOwner();
+            }
+
+            assertNull(fallback);
+            assertTrue(registry.isCurrent(replacement));
+            assertTrue(replacement.gate.isCurrent(replacementGeneration));
+        } finally {
+            first.gate.close();
+            replacement.gate.close();
+        }
+    }
+
+    @Test
+    public void currentStopReturnsPreviousOwnerForReclaimAndReconciliation() {
+        StartedOwnerRegistry<GateOwner> registry = new StartedOwnerRegistry<>();
+        GateOwner first = new GateOwner();
+        GateOwner replacement = new GateOwner();
+        try {
+            registry.start(first);
+            registry.start(replacement);
+            GateOwner fallback = registry.stop(replacement);
+            if (fallback != null && !fallback.gate.isLatestOwner()) {
+                fallback.gate.claimLatestOwner();
+            }
+
+            assertSame(first, fallback);
+            assertTrue(registry.isCurrent(first));
+            assertTrue(first.gate.isCurrent(first.gate.capture()));
+        } finally {
+            first.gate.close();
+            replacement.gate.close();
+        }
+    }
+
+    private static final class GateOwner {
+        final SessionSnapshotGenerationGate gate = SessionSnapshotGenerationGate.open();
     }
 }

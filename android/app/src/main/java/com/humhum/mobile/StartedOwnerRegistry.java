@@ -15,8 +15,11 @@ final class StartedOwnerRegistry<T> {
         started.add(new WeakReference<>(checked));
     }
 
-    synchronized void stop(T owner) {
+    synchronized T stop(T owner) {
+        T previous = currentOwner();
         removeDeadAnd(owner);
+        T current = currentOwner();
+        return previous == owner && current != owner ? current : null;
     }
 
     synchronized boolean isCurrent(T owner) {
