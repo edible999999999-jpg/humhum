@@ -8,6 +8,10 @@ plugins {
 val signingPropertyNames = setOf("storeFile", "storePassword", "keyAlias", "keyPassword")
 val signingPropertiesFile = file("${System.getProperty("user.home")}/.humhum/android-signing.properties")
 val signingProperties = Properties()
+fun quotedBuildValue(name: String): String {
+    val value = providers.environmentVariable(name).orNull ?: ""
+    return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+}
 val releaseSigningConfigured = signingPropertiesFile.isFile.also { exists ->
     if (exists) {
         FileInputStream(signingPropertiesFile).use(signingProperties::load)
@@ -40,6 +44,14 @@ android {
         versionName = "0.2.0"
 
         testInstrumentationRunner = "android.test.InstrumentationTestRunner"
+        buildConfigField("String", "FIREBASE_APPLICATION_ID", quotedBuildValue(
+                "HUMHUM_FIREBASE_APPLICATION_ID"))
+        buildConfigField("String", "FIREBASE_API_KEY", quotedBuildValue(
+                "HUMHUM_FIREBASE_API_KEY"))
+        buildConfigField("String", "FIREBASE_PROJECT_ID", quotedBuildValue(
+                "HUMHUM_FIREBASE_PROJECT_ID"))
+        buildConfigField("String", "FIREBASE_SENDER_ID", quotedBuildValue(
+                "HUMHUM_FIREBASE_SENDER_ID"))
     }
 
     signingConfigs {
@@ -73,6 +85,10 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    buildFeatures {
+        buildConfig = true
+    }
+
     testOptions {
         unitTests.isReturnDefaultValues = true
     }
@@ -92,6 +108,7 @@ if (!releaseSigningConfigured) {
 }
 
 dependencies {
+    implementation("com.google.firebase:firebase-messaging:25.1.0")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20250517")
 }

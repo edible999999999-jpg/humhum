@@ -73,12 +73,12 @@
 - `PushConfig.fromBuildValues(applicationId, apiKey, projectId, senderId) -> PushConfig?`
 - `PushWakePolicy.evaluate(data, priority, expectedChannel, monitorEnabled) -> START_MONITOR | IGNORE`
 
-- [ ] **Step 1: Write failing JVM tests** for all-or-none Firebase values, bounded identifier formats, exact three-field data map, channel match, positive sequence, high-priority constant and monitor-enabled gate.
-- [ ] **Step 2: Run** `./android/gradlew -p android :app:testDebugUnitTest --tests '*Push*'`; require compilation failures for missing classes.
-- [ ] **Step 3: Implement the two dependency-free policy classes** so security decisions can be exhaustively tested without Android or Firebase runtime mocks.
-- [ ] **Step 4: Add Firebase Messaging `25.1.0` and four escaped BuildConfig fields** sourced from `HUMHUM_FIREBASE_APPLICATION_ID`, `HUMHUM_FIREBASE_API_KEY`, `HUMHUM_FIREBASE_PROJECT_ID`, and `HUMHUM_FIREBASE_SENDER_ID`; default each to empty and keep analytics disabled.
-- [ ] **Step 5: Update the manifest contract test** to enumerate the actual merged FCM permissions and reject analytics, exported messaging service, notification payload defaults and broad package visibility.
-- [ ] **Step 6: Run focused JVM tests and release manifest processing**, then commit `feat(android): define strict FCM wake policy`.
+- [x] **Step 1: Write failing JVM tests** for all-or-none Firebase values, bounded identifier formats, exact three-field data map, channel match, positive sequence, high-priority constant and monitor-enabled gate.
+- [x] **Step 2: Run** `./android/gradlew -p android :app:testDebugUnitTest --tests '*Push*'`; require compilation failures for missing classes.
+- [x] **Step 3: Implement the two dependency-free policy classes** so security decisions can be exhaustively tested without Android or Firebase runtime mocks.
+- [x] **Step 4: Add Firebase Messaging `25.1.0` and four escaped BuildConfig fields** sourced from `HUMHUM_FIREBASE_APPLICATION_ID`, `HUMHUM_FIREBASE_API_KEY`, `HUMHUM_FIREBASE_PROJECT_ID`, and `HUMHUM_FIREBASE_SENDER_ID`; default each to empty and keep analytics disabled.
+- [x] **Step 5: Update the manifest contract test** to enumerate the actual merged FCM permissions and reject analytics, exported messaging service, notification payload defaults and broad package visibility.
+- [x] **Step 6: Run focused JVM tests and release manifest processing**, then commit `feat(android): define strict FCM wake policy`.
 
 ### Task 4: Token Registration And Firebase Messaging Service
 

@@ -71,6 +71,31 @@ public class ManifestContractTest {
         assertEquals(Set.of("localhost", "127.0.0.1", "[::1]"), values);
     }
 
+    @Test
+    public void mergedFirebasePermissionsAreExplicitAndBounded() throws Exception {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        factory.setNamespaceAware(true);
+        Document document = factory.newDocumentBuilder().parse(Path.of(
+                "build/intermediates/merged_manifest/debug/processDebugMainManifest/AndroidManifest.xml")
+                .toFile());
+        Set<String> permissions = new HashSet<>();
+        NodeList permissionNodes = document.getElementsByTagName("uses-permission");
+        for (int index = 0; index < permissionNodes.getLength(); index++) {
+            permissions.add(((Element) permissionNodes.item(index)).getAttributeNS(ANDROID, "name"));
+        }
+        assertEquals(Set.of(
+                "android.permission.INTERNET",
+                "android.permission.ACCESS_NETWORK_STATE",
+                "android.permission.FOREGROUND_SERVICE",
+                "android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING",
+                "android.permission.POST_NOTIFICATIONS",
+                "android.permission.RECEIVE_BOOT_COMPLETED",
+                "android.permission.WAKE_LOCK",
+                "com.google.android.c2dm.permission.RECEIVE",
+                "com.humhum.mobile.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"), permissions);
+        assertFalse(document.getDocumentElement().getTextContent().contains("firebase.analytics"));
+    }
+
     private static Element component(Document document, String tag, String name) {
         NodeList nodes = document.getElementsByTagName(tag);
         for (int index = 0; index < nodes.getLength(); index++) {
