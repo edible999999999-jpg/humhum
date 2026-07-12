@@ -26,6 +26,7 @@ mod remote_bridge;
 mod session_store;
 mod sound_pack;
 mod stats_store;
+mod tailnet;
 mod wake_guard;
 mod window_focus;
 mod wukong_watcher;
