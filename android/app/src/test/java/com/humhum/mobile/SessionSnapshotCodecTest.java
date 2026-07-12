@@ -79,6 +79,27 @@ public class SessionSnapshotCodecTest {
     }
 
     @Test
+    public void rejectsNonCanonicalJsonFormsAndTrailingPayloadBytes() throws Exception {
+        byte[] payload = SessionSnapshotCodec.encode(
+                new SessionSnapshot(SAVED_AT_MILLIS, List.of(session())));
+        String json = new String(payload, StandardCharsets.UTF_8);
+
+        assertInvalid((json + "x").getBytes(StandardCharsets.UTF_8));
+        assertInvalid(json.replace("\"version\"", "version").getBytes(StandardCharsets.UTF_8));
+        assertInvalid((json.substring(0, json.length() - 1) + ",}")
+                .getBytes(StandardCharsets.UTF_8));
+    }
+
+    @Test
+    public void rejectsMalformedUtf8Payloads() {
+        byte[] payload = SessionSnapshotCodec.encode(
+                new SessionSnapshot(SAVED_AT_MILLIS, List.of(new Models.Session(
+                        "id", "agent", "@", "idle", "", false, false, List.of()))));
+
+        assertInvalid(replaceFirst(payload, (byte) '@', (byte) 0x80));
+    }
+
+    @Test
     public void rejectsOversizedLiveSnapshotsInsteadOfTruncatingThem() {
         assertThrows(IllegalArgumentException.class,
                 () -> SessionSnapshotCodec.encode(new SessionSnapshot(SAVED_AT_MILLIS, sessions(31))));
@@ -101,8 +122,11 @@ public class SessionSnapshotCodecTest {
     }
 
     private static void assertInvalid(JSONObject payload) {
-        assertThrows(IllegalArgumentException.class,
-                () -> SessionSnapshotCodec.decode(payload.toString().getBytes(StandardCharsets.UTF_8)));
+        assertInvalid(payload.toString().getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static void assertInvalid(byte[] payload) {
+        assertThrows(IllegalArgumentException.class, () -> SessionSnapshotCodec.decode(payload));
     }
 
     private static JSONObject validPayload() throws Exception {
@@ -141,5 +165,16 @@ public class SessionSnapshotCodecTest {
 
     private static Models.Session session() {
         return new Models.Session("id", "agent", "project", "idle", "", false, false, List.of());
+    }
+
+    private static byte[] replaceFirst(byte[] source, byte expected, byte replacement) {
+        byte[] copy = source.clone();
+        for (int index = 0; index < copy.length; index++) {
+            if (copy[index] == expected) {
+                copy[index] = replacement;
+                return copy;
+            }
+        }
+        throw new AssertionError("Test payload did not contain expected byte");
     }
 }

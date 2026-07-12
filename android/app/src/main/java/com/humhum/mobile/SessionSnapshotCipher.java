@@ -1,7 +1,11 @@
 package com.humhum.mobile;
 
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
 import java.security.GeneralSecurityException;
+import java.util.Arrays;
 import java.util.Base64;
 import javax.crypto.Cipher;
 import javax.crypto.SecretKey;
@@ -30,23 +34,16 @@ public final class SessionSnapshotCipher {
         }
         Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
         cipher.init(Cipher.ENCRYPT_MODE, key, new GCMParameterSpec(128, nonce));
-        cipher.updateAAD(binding.getBytes(StandardCharsets.UTF_8));
+        cipher.updateAAD(aad(binding, savedAtMillis));
         byte[] ciphertext = cipher.doFinal(payload);
-        try {
-            byte[] envelope = new JSONObject()
-                    .put("version", VERSION)
-                    .put("saved_at_ms", savedAtMillis)
-                    .put("nonce", Base64.getUrlEncoder().withoutPadding().encodeToString(nonce))
-                    .put("ciphertext", Base64.getUrlEncoder().withoutPadding().encodeToString(ciphertext))
-                    .toString()
-                    .getBytes(StandardCharsets.UTF_8);
-            if (envelope.length > MAX_ENVELOPE_BYTES) {
-                throw new GeneralSecurityException("Snapshot envelope is too large");
-            }
-            return envelope;
-        } catch (JSONException error) {
-            throw new GeneralSecurityException("Snapshot envelope is invalid", error);
+        byte[] envelope = canonicalEnvelope(
+                savedAtMillis,
+                Base64.getUrlEncoder().withoutPadding().encodeToString(nonce),
+                Base64.getUrlEncoder().withoutPadding().encodeToString(ciphertext));
+        if (envelope.length > MAX_ENVELOPE_BYTES) {
+            throw new GeneralSecurityException("Snapshot envelope is too large");
         }
+        return envelope;
     }
 
     public static Decrypted decrypt(byte[] envelope, String binding, SecretKey key, long nowMillis)
@@ -56,7 +53,7 @@ public final class SessionSnapshotCipher {
         }
         requireBindingAndKey(binding, key);
         try {
-            JSONObject value = new JSONObject(new String(envelope, StandardCharsets.UTF_8));
+            JSONObject value = new JSONObject(strictUtf8(envelope));
             if (value.length() != 4
                     || !value.has("version")
                     || !value.has("saved_at_ms")
@@ -67,14 +64,19 @@ public final class SessionSnapshotCipher {
             }
             long savedAtMillis = strictLong(value, "saved_at_ms");
             validateAge(savedAtMillis, nowMillis);
-            byte[] nonce = decodeBase64Url(strictString(value, "nonce"), NONCE_BYTES);
-            byte[] ciphertext = decodeBase64Url(strictString(value, "ciphertext"), -1);
+            String nonceText = strictString(value, "nonce");
+            String ciphertextText = strictString(value, "ciphertext");
+            byte[] nonce = decodeBase64Url(nonceText, NONCE_BYTES);
+            byte[] ciphertext = decodeBase64Url(ciphertextText, -1);
             if (ciphertext.length < GCM_TAG_BYTES) {
                 throw new IllegalArgumentException("Snapshot ciphertext is invalid");
             }
+            if (!Arrays.equals(envelope, canonicalEnvelope(savedAtMillis, nonceText, ciphertextText))) {
+                throw new IllegalArgumentException("Snapshot envelope is not canonical");
+            }
             Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
             cipher.init(Cipher.DECRYPT_MODE, key, new GCMParameterSpec(128, nonce));
-            cipher.updateAAD(binding.getBytes(StandardCharsets.UTF_8));
+            cipher.updateAAD(aad(binding, savedAtMillis));
             return new Decrypted(cipher.doFinal(ciphertext), savedAtMillis);
         } catch (JSONException | IllegalArgumentException error) {
             throw new GeneralSecurityException("Snapshot envelope is invalid", error);
@@ -118,6 +120,38 @@ public final class SessionSnapshotCipher {
             return decoded;
         } catch (IllegalArgumentException error) {
             throw new IllegalArgumentException("Snapshot envelope encoding is invalid", error);
+        }
+    }
+
+    private static byte[] canonicalEnvelope(long savedAtMillis, String nonce, String ciphertext)
+            throws GeneralSecurityException {
+        try {
+            return new JSONObject()
+                    .put("version", VERSION)
+                    .put("saved_at_ms", savedAtMillis)
+                    .put("nonce", nonce)
+                    .put("ciphertext", ciphertext)
+                    .toString()
+                    .getBytes(StandardCharsets.UTF_8);
+        } catch (JSONException error) {
+            throw new GeneralSecurityException("Snapshot envelope is invalid", error);
+        }
+    }
+
+    private static byte[] aad(String binding, long savedAtMillis) {
+        return ("humhum-session-snapshot-v1:" + binding + ":" + savedAtMillis)
+                .getBytes(StandardCharsets.UTF_8);
+    }
+
+    private static String strictUtf8(byte[] value) throws GeneralSecurityException {
+        try {
+            return StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .decode(ByteBuffer.wrap(value))
+                    .toString();
+        } catch (CharacterCodingException error) {
+            throw new GeneralSecurityException("Snapshot envelope is not UTF-8", error);
         }
     }
 

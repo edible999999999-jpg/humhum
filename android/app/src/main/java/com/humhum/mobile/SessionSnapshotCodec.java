@@ -1,7 +1,11 @@
 package com.humhum.mobile;
 
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -55,7 +59,7 @@ public final class SessionSnapshotCodec {
             throw new IllegalArgumentException("Snapshot payload is invalid");
         }
         try {
-            JSONObject root = new JSONObject(new String(payload, StandardCharsets.UTF_8));
+            JSONObject root = new JSONObject(strictUtf8(payload));
             if (root.length() != 3
                     || !root.has("version")
                     || !root.has("saved_at_ms")
@@ -99,7 +103,11 @@ public final class SessionSnapshotCodec {
                         false,
                         List.of()));
             }
-            return new SessionSnapshot(savedAtMillis, sessions);
+            SessionSnapshot snapshot = new SessionSnapshot(savedAtMillis, sessions);
+            if (!Arrays.equals(payload, encode(snapshot))) {
+                throw new IllegalArgumentException("Snapshot payload is not canonical");
+            }
+            return snapshot;
         } catch (JSONException error) {
             throw new IllegalArgumentException("Snapshot payload is invalid", error);
         }
@@ -148,6 +156,18 @@ public final class SessionSnapshotCodec {
         }
         if (nowMillis - savedAtMillis > MAX_AGE_MILLIS) {
             throw new IllegalArgumentException("Snapshot has expired");
+        }
+    }
+
+    private static String strictUtf8(byte[] value) {
+        try {
+            return StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .decode(ByteBuffer.wrap(value))
+                    .toString();
+        } catch (CharacterCodingException error) {
+            throw new IllegalArgumentException("Snapshot payload is not UTF-8", error);
         }
     }
 }
