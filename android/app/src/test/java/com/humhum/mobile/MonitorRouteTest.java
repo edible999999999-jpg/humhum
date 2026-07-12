@@ -36,4 +36,12 @@ public class MonitorRouteTest {
         assertEquals(MonitorRoute.Next.RELAY, MonitorRoute.afterPrivateFailure(true));
         assertEquals(MonitorRoute.Next.POLL, MonitorRoute.afterPrivateFailure(false));
     }
+
+    @Test
+    public void stoppedOrRepairedServiceCannotCommitAnOldRelayResponse() {
+        assertEquals(true, MonitorRoute.canCommitRelayResult(false, true, true));
+        assertEquals(false, MonitorRoute.canCommitRelayResult(true, true, true));
+        assertEquals(false, MonitorRoute.canCommitRelayResult(false, false, true));
+        assertEquals(false, MonitorRoute.canCommitRelayResult(false, true, false));
+    }
 }

@@ -20,6 +20,8 @@ public class WakeRelayClientTest {
                 "https://relay.example.com"));
         assertEquals("http://127.0.0.1:3005", WakeRelayClient.validateBaseUrl(
                 "http://127.0.0.1:3005"));
+        assertEquals("http://[::1]:3005", WakeRelayClient.validateBaseUrl(
+                "http://[::1]:3005"));
         assertThrows(IllegalArgumentException.class,
                 () -> WakeRelayClient.validateBaseUrl("http://relay.example.com"));
         assertThrows(IllegalArgumentException.class,
@@ -134,6 +136,26 @@ public class WakeRelayClientTest {
                 new WakeRelayClient.TransportResponse(200, new byte[1_048_577]));
         assertThrows(IOException.class,
                 () -> oversized.poll(vectorRelay, 6, 1_783_836_001));
+    }
+
+    @Test
+    public void cancelIsForwardedToTheActiveTransport() {
+        final boolean[] cancelled = {false};
+        WakeRelayClient.Transport transport = new WakeRelayClient.Transport() {
+            @Override public WakeRelayClient.TransportResponse execute(
+                    WakeRelayClient.RequestSpec request) throws IOException {
+                return new WakeRelayClient.TransportResponse(500, new byte[0]);
+            }
+
+            @Override public void cancel() {
+                cancelled[0] = true;
+            }
+        };
+        WakeRelayClient client = new WakeRelayClient(transport);
+
+        client.cancel();
+
+        assertTrue(cancelled[0]);
     }
 
     private static Models.WakeRelayConfig relay() {

@@ -29,4 +29,11 @@ final class MonitorRoute {
     static Next afterPrivateFailure(boolean relayAvailable) {
         return relayAvailable ? Next.RELAY : Next.POLL;
     }
+
+    static boolean canCommitRelayResult(
+            boolean destroyed,
+            boolean monitorEnabled,
+            boolean sameChannel) {
+        return !destroyed && monitorEnabled && sameChannel;
+    }
 }

@@ -12,6 +12,7 @@ import java.security.GeneralSecurityException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.atomic.AtomicReference;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -53,7 +54,8 @@ public final class WakeRelayClient {
             }
             boolean loopback = "localhost".equalsIgnoreCase(host)
                     || "127.0.0.1".equals(host)
-                    || "::1".equals(host);
+                    || "::1".equals(host)
+                    || "[::1]".equals(host);
             if (!("https".equals(scheme) || ("http".equals(scheme) && loopback))) {
                 throw new IllegalArgumentException("Relay URL must use HTTPS");
             }
@@ -173,8 +175,14 @@ public final class WakeRelayClient {
         return authenticate(config, expectedAfter, messages, nowSeconds);
     }
 
+    public void cancel() {
+        transport.cancel();
+    }
+
     interface Transport {
         TransportResponse execute(RequestSpec request) throws IOException;
+
+        default void cancel() {}
     }
 
     static final class TransportResponse {
@@ -202,9 +210,12 @@ public final class WakeRelayClient {
     }
 
     private static final class UrlConnectionTransport implements Transport {
+        private final AtomicReference<HttpURLConnection> active = new AtomicReference<>();
+
         @Override
         public TransportResponse execute(RequestSpec request) throws IOException {
             HttpURLConnection connection = (HttpURLConnection) new URL(request.url()).openConnection();
+            active.set(connection);
             connection.setInstanceFollowRedirects(false);
             connection.setRequestMethod(request.method());
             connection.setConnectTimeout(8_000);
@@ -219,8 +230,15 @@ public final class WakeRelayClient {
                         : connection.getErrorStream();
                 return new TransportResponse(status, readBounded(input));
             } finally {
+                active.compareAndSet(connection, null);
                 connection.disconnect();
             }
+        }
+
+        @Override
+        public void cancel() {
+            HttpURLConnection connection = active.getAndSet(null);
+            if (connection != null) connection.disconnect();
         }
 
         private static byte[] readBounded(InputStream input) throws IOException {

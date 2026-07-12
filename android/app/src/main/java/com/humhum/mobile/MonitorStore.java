@@ -11,7 +11,7 @@ import org.json.JSONException;
 public final class MonitorStore {
     private static final String ENABLED = "enabled";
     private static final String KNOWN_DIGESTS = "known_digests";
-    private static final String RELAY_SEQUENCE = "relay_sequence";
+    private static final String RELAY_CURSOR = "relay_cursor";
 
     interface KeyValueStore {
         String get(String key);
@@ -59,20 +59,26 @@ public final class MonitorStore {
         storage.put(KNOWN_DIGESTS, payload.toString());
     }
 
-    public long relaySequence() {
-        String value = storage.get(RELAY_SEQUENCE);
-        if (value == null || !value.matches("[0-9]{1,19}")) return 0;
+    public long relaySequence(String channelId) {
+        if (channelId == null || !channelId.matches("[a-f0-9]{64}")) return 0;
+        String value = storage.get(RELAY_CURSOR);
+        if (value == null) return 0;
+        int separator = value.indexOf(':');
+        if (separator != 64 || !channelId.equals(value.substring(0, separator))) return 0;
+        String sequenceText = value.substring(separator + 1);
+        if (!sequenceText.matches("[0-9]{1,19}")) return 0;
         try {
-            long sequence = Long.parseLong(value);
+            long sequence = Long.parseLong(sequenceText);
             return Math.max(0, sequence);
         } catch (NumberFormatException error) {
             return 0;
         }
     }
 
-    public void saveRelaySequence(long sequence) {
-        if (sequence > relaySequence()) {
-            storage.put(RELAY_SEQUENCE, Long.toString(sequence));
+    public void saveRelaySequence(String channelId, long sequence) {
+        if (channelId == null || !channelId.matches("[a-f0-9]{64}") || sequence <= 0) return;
+        if (sequence > relaySequence(channelId)) {
+            storage.put(RELAY_CURSOR, channelId + ":" + sequence);
         }
     }
 

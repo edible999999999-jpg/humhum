@@ -57,14 +57,20 @@ public class MonitorStoreTest {
     public void relaySequenceSurvivesRestartAndNeverMovesBackward() {
         MemoryStore memory = new MemoryStore();
         MonitorStore store = new MonitorStore(memory);
+        String firstChannel = "11".repeat(32);
+        String replacementChannel = "22".repeat(32);
 
-        assertEquals(0, store.relaySequence());
-        store.saveRelaySequence(7);
-        store.saveRelaySequence(3);
+        assertEquals(0, store.relaySequence(firstChannel));
+        store.saveRelaySequence(firstChannel, 7);
+        store.saveRelaySequence(firstChannel, 3);
 
-        assertEquals(7, new MonitorStore(memory).relaySequence());
-        memory.put("relay_sequence", "invalid");
-        assertEquals(0, store.relaySequence());
+        assertEquals(7, new MonitorStore(memory).relaySequence(firstChannel));
+        assertEquals(0, store.relaySequence(replacementChannel));
+        store.saveRelaySequence(replacementChannel, 1);
+        assertEquals(1, store.relaySequence(replacementChannel));
+        assertEquals(0, store.relaySequence(firstChannel));
+        memory.put("relay_cursor", "invalid");
+        assertEquals(0, store.relaySequence(replacementChannel));
     }
 
     private static final class MemoryStore implements MonitorStore.KeyValueStore {

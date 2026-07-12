@@ -27,6 +27,7 @@ public final class AgentMonitorService extends Service {
 
     private final ScheduledExecutorService network = Executors.newSingleThreadScheduledExecutor();
     private final NetworkRecoveryGate recoveryGate = new NetworkRecoveryGate();
+    private final WakeRelayClient relayClient = new WakeRelayClient();
     private ScheduledFuture<?> nextPoll;
     private MonitorStore monitorStore;
     private AttentionTracker tracker;
@@ -81,6 +82,7 @@ public final class AgentMonitorService extends Service {
 
     @Override public void onDestroy() {
         destroyed = true;
+        relayClient.cancel();
         unregisterNetworkRecovery();
         if (nextPoll != null) nextPoll.cancel(true);
         network.shutdownNow();
@@ -128,7 +130,8 @@ public final class AgentMonitorService extends Service {
                     realtimeSupported,
                     monitorStore.isEnabled(),
                     lastCursor)) {
-                case RELAY -> scheduleRelay(monitorStore.relaySequence());
+                case RELAY -> scheduleRelay(monitorStore.relaySequence(
+                        connection.wakeRelay().channelId()));
                 case DIRECT_WATCH -> scheduleWatch(lastCursor);
                 default -> schedulePoll(RETRY_SECONDS[0]);
             }
@@ -157,15 +160,23 @@ public final class AgentMonitorService extends Service {
             return;
         }
         try {
-            long accepted = new WakeRelayClient().poll(
+            long accepted = relayClient.poll(
                     relay,
                     previousSequence,
                     System.currentTimeMillis() / 1_000L);
+            ConnectionStore.Connection current = connectionStore(this).load();
+            boolean sameChannel = current != null
+                    && current.wakeRelay() != null
+                    && relay.channelId().equals(current.wakeRelay().channelId());
+            if (!MonitorRoute.canCommitRelayResult(
+                    destroyed, monitorStore.isEnabled(), sameChannel)) {
+                return;
+            }
             failures = 0;
             updateOngoing(getString(R.string.monitor_notification_text));
             if (MonitorRoute.afterRelay(accepted, previousSequence)
                     == MonitorRoute.Next.PRIVATE_REFRESH) {
-                monitorStore.saveRelaySequence(accepted);
+                monitorStore.saveRelaySequence(relay.channelId(), accepted);
                 schedulePoll(0);
             } else {
                 scheduleRelay(accepted);
@@ -249,7 +260,8 @@ public final class AgentMonitorService extends Service {
         long delay = nextRetryDelay();
         if (MonitorRoute.afterPrivateFailure(
                 relaySupported && connection.wakeRelay() != null) == MonitorRoute.Next.RELAY) {
-            schedule(() -> relayOnce(monitorStore.relaySequence()), delay);
+            Models.WakeRelayConfig relay = connection.wakeRelay();
+            schedule(() -> relayOnce(monitorStore.relaySequence(relay.channelId())), delay);
         } else {
             schedulePoll(delay);
         }
