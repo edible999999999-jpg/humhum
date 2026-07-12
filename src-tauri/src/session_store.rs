@@ -238,6 +238,14 @@ impl SessionStore {
         self.sessions.get(session_id)
     }
 
+    pub fn get_session_with_history(&self, session_id: &str) -> Option<&Session> {
+        self.sessions.get(session_id).or_else(|| {
+            self.completed_sessions
+                .iter()
+                .find(|session| session.session_id == session_id)
+        })
+    }
+
     pub fn get_all_sessions_with_history(&self) -> Vec<&Session> {
         let mut all: Vec<&Session> = self
             .sessions
@@ -368,5 +376,37 @@ mod tests {
         assert_eq!(route.term_program.as_deref(), Some("Ghostty"));
         assert_eq!(route.tty.as_deref(), Some("ttys004"));
         assert_eq!(route.tmux_pane.as_deref(), Some("%3"));
+    }
+
+    #[test]
+    fn history_lookup_finds_completed_sessions_without_changing_active_lookup() {
+        let mut store = SessionStore::new();
+
+        let mut completed = event(json!({}));
+        completed.session_id = "completed-1".into();
+        store.update_from_event(&completed);
+        completed.hook_event_name = "SessionEnd".into();
+        store.update_from_event(&completed);
+
+        let mut active = event(json!({}));
+        active.session_id = "active-1".into();
+        store.update_from_event(&active);
+
+        assert_eq!(
+            store
+                .get_session_with_history("completed-1")
+                .unwrap()
+                .status,
+            SessionStatus::Completed
+        );
+        assert_eq!(
+            store.get_session_with_history("active-1").unwrap().status,
+            SessionStatus::Active
+        );
+        assert!(store.get_session("completed-1").is_none());
+        assert_eq!(
+            store.get_session("active-1").unwrap().status,
+            SessionStatus::Active
+        );
     }
 }

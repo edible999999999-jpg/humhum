@@ -4,10 +4,12 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
-use serde::{Deserialize, Serialize};
+use serde::de::{self, MapAccess, Visitor};
+use serde::{Deserialize, Deserializer, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::convert::Infallible;
+use std::fmt;
 use std::io::BufReader;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
@@ -23,6 +25,10 @@ const MAX_PAIRING_ATTEMPTS: u8 = 5;
 const MAX_EVENT_WAITERS: usize = 16;
 const EVENT_WAIT_SECONDS: usize = 20;
 pub const DEFAULT_MOBILE_PORT: u16 = 31_276;
+const MAX_CONVERSATION_REQUEST_BYTES: usize = 4 * 1024;
+const MAX_CONVERSATION_ID_CHARS: usize = 256;
+const MAX_CONVERSATION_TEXT_CHARS: usize = 500;
+const MAX_CONVERSATION_RESPONSE_BYTES: usize = 64 * 1024;
 
 type HttpBody = Full<Bytes>;
 
@@ -879,6 +885,9 @@ async fn handle_mobile_request(
                 json_error(StatusCode::UNAUTHORIZED, "Pair this device first")
             }
         }
+        (&Method::POST, "/api/session/conversation") => {
+            read_mobile_session_conversation(request, &app, &bridge).await
+        }
         (&Method::POST, "/api/codex/approval") => {
             if !request_scope(&request, &bridge).is_some_and(MobileDeviceScope::allows_control) {
                 json_error(StatusCode::FORBIDDEN, "This device is paired read-only")
@@ -938,10 +947,22 @@ async fn mobile_session_page(
     }
     let store = app.state::<Arc<Mutex<crate::session_store::SessionStore>>>();
     let codex = app.state::<Arc<crate::codex_bridge::CodexBridgeState>>();
+    let home_dir = dirs::home_dir();
+    let store = store.lock().unwrap_or_else(|error| error.into_inner());
     let mut sessions = codex
         .sessions()
         .iter()
-        .map(|session| MobileSessionSummary::from_codex(session, scope.allows_control()))
+        .map(|session| {
+            let can_read_conversation = home_dir
+                .as_deref()
+                .and_then(|home| {
+                    store
+                        .get_session_with_history(&session.session_id)
+                        .map(|stored| (home, stored))
+                })
+                .is_some_and(|(home, stored)| session_supports_mobile_conversation(stored, home));
+            MobileSessionSummary::from_codex(session, scope.allows_control(), can_read_conversation)
+        })
         .collect::<Vec<_>>();
     let known_ids = sessions
         .iter()
@@ -949,13 +970,18 @@ async fn mobile_session_page(
         .collect::<std::collections::HashSet<_>>();
     sessions.extend(
         store
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
             .get_all_sessions_with_history()
             .into_iter()
             .filter(|session| !known_ids.contains(&session.session_id))
             .map(|session| {
-                let mut summary = MobileSessionSummary::from_hook(&session, scope.allows_control());
+                let can_read_conversation = home_dir
+                    .as_deref()
+                    .is_some_and(|home| session_supports_mobile_conversation(session, home));
+                let mut summary = MobileSessionSummary::from_hook(
+                    &session,
+                    scope.allows_control(),
+                    can_read_conversation,
+                );
                 summary.pending_actions =
                     hook_actions.remove(&session.session_id).unwrap_or_default();
                 summary.needs_attention |= !summary.pending_actions.is_empty();
@@ -1284,6 +1310,274 @@ fn request_token(request: &Request<hyper::body::Incoming>) -> Option<&str> {
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.strip_prefix("Bearer "))
         .filter(|token| !token.is_empty())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum MobileConversationError {
+    Unauthorized,
+    BadRequest,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct MobileConversationMessage {
+    role: crate::transcript_reader::TranscriptRole,
+    text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct MobileConversationResponse {
+    session_id: String,
+    messages: Vec<MobileConversationMessage>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MobileConversationRequest {
+    session_id: String,
+}
+
+impl<'de> Deserialize<'de> for MobileConversationRequest {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct RequestVisitor;
+
+        impl<'de> Visitor<'de> for RequestVisitor {
+            type Value = MobileConversationRequest;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str(r#"{"session_id":"..."}"#)
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut session_id = None;
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "session_id" => {
+                            if session_id.is_some() {
+                                return Err(de::Error::duplicate_field("session_id"));
+                            }
+                            session_id = Some(map.next_value::<String>()?);
+                        }
+                        _ => return Err(de::Error::unknown_field(&key, &["session_id"])),
+                    }
+                }
+                Ok(MobileConversationRequest {
+                    session_id: session_id.ok_or_else(|| de::Error::missing_field("session_id"))?,
+                })
+            }
+        }
+
+        deserializer.deserialize_map(RequestVisitor)
+    }
+}
+
+async fn read_mobile_session_conversation(
+    request: Request<hyper::body::Incoming>,
+    app: &tauri::AppHandle,
+    bridge: &Arc<MobileBridgeState>,
+) -> Response<HttpBody> {
+    let Some(scope) = request_scope(&request, bridge) else {
+        return json_error(StatusCode::UNAUTHORIZED, "Pair this device first");
+    };
+    let body = match request.into_body().collect().await {
+        Ok(body) => body.to_bytes(),
+        Err(_) => return json_error(StatusCode::BAD_REQUEST, "Invalid conversation request"),
+    };
+    let Some(home_dir) = dirs::home_dir() else {
+        return json_error(StatusCode::NOT_FOUND, "Conversation unavailable");
+    };
+    let store = app.state::<Arc<std::sync::Mutex<crate::session_store::SessionStore>>>();
+    let store = store.lock().unwrap_or_else(|error| error.into_inner());
+    match mobile_conversation_from_request(Some(scope), &body, &store, &home_dir) {
+        Ok(response) => json_response(
+            StatusCode::OK,
+            &serde_json::to_value(response).unwrap_or_default(),
+        ),
+        Err(MobileConversationError::Unauthorized) => {
+            json_error(StatusCode::UNAUTHORIZED, "Pair this device first")
+        }
+        Err(MobileConversationError::BadRequest) => {
+            json_error(StatusCode::BAD_REQUEST, "Invalid conversation request")
+        }
+        Err(MobileConversationError::Unavailable) => {
+            json_error(StatusCode::NOT_FOUND, "Conversation unavailable")
+        }
+    }
+}
+
+fn mobile_conversation_from_request(
+    scope: Option<MobileDeviceScope>,
+    body: &[u8],
+    store: &crate::session_store::SessionStore,
+    home_dir: &Path,
+) -> Result<MobileConversationResponse, MobileConversationError> {
+    if scope.is_none() {
+        return Err(MobileConversationError::Unauthorized);
+    }
+    let request = parse_mobile_conversation_request(body)?;
+    let session = store
+        .get_session_with_history(&request.session_id)
+        .ok_or(MobileConversationError::Unavailable)?;
+    let transcript_path = canonical_transcript_for_session(session, home_dir)
+        .ok_or(MobileConversationError::Unavailable)?;
+    let signals = crate::transcript_reader::parse_transcript_signals(&transcript_path)
+        .map_err(|_| MobileConversationError::Unavailable)?;
+    Ok(bound_mobile_conversation_response(
+        MobileConversationResponse {
+            session_id: request.session_id,
+            messages: signals
+                .messages
+                .iter()
+                .filter_map(project_mobile_conversation_message)
+                .collect(),
+        },
+    ))
+}
+
+fn parse_mobile_conversation_request(
+    body: &[u8],
+) -> Result<MobileConversationRequest, MobileConversationError> {
+    if body.len() > MAX_CONVERSATION_REQUEST_BYTES {
+        return Err(MobileConversationError::BadRequest);
+    }
+    let request: MobileConversationRequest =
+        serde_json::from_slice(body).map_err(|_| MobileConversationError::BadRequest)?;
+    let session_id_len = request.session_id.chars().count();
+    if request.session_id.trim().is_empty() || session_id_len > MAX_CONVERSATION_ID_CHARS {
+        return Err(MobileConversationError::BadRequest);
+    }
+    Ok(request)
+}
+
+fn session_supports_mobile_conversation(
+    session: &crate::session_store::Session,
+    home_dir: &Path,
+) -> bool {
+    canonical_transcript_for_session(session, home_dir).is_some()
+}
+
+fn canonical_transcript_for_session(
+    session: &crate::session_store::Session,
+    home_dir: &Path,
+) -> Option<PathBuf> {
+    let transcript_path = Path::new(session.transcript_path.as_deref()?);
+    if !transcript_path.is_absolute() {
+        return None;
+    }
+    let canonical_root = std::fs::canonicalize(provider_transcript_root(
+        session.client_type.as_str(),
+        home_dir,
+    )?)
+    .ok()?;
+    let canonical_path = std::fs::canonicalize(transcript_path).ok()?;
+    if !canonical_path.starts_with(&canonical_root) {
+        return None;
+    }
+    std::fs::metadata(&canonical_path)
+        .ok()
+        .filter(|metadata| metadata.is_file())?;
+    Some(canonical_path)
+}
+
+fn provider_transcript_root(provider: &str, home_dir: &Path) -> Option<PathBuf> {
+    match provider {
+        "codex" => Some(home_dir.join(".codex/sessions")),
+        "claude" | "claude-code" => Some(home_dir.join(".claude/projects")),
+        "openclaw" => Some(home_dir.join(".openclaw/agents")),
+        _ => None,
+    }
+}
+
+fn project_mobile_conversation_message(
+    message: &crate::transcript_reader::TranscriptMessage,
+) -> Option<MobileConversationMessage> {
+    let redacted = redact_local_path_text(&message.text);
+    let compacted = compact_whitespace(&redacted);
+    if compacted.is_empty() || compacted == "[本机路径]" {
+        return None;
+    }
+    Some(MobileConversationMessage {
+        role: message.role,
+        text: truncate_scalar_value(&compacted, MAX_CONVERSATION_TEXT_CHARS),
+    })
+}
+
+fn bound_mobile_conversation_response(
+    mut response: MobileConversationResponse,
+) -> MobileConversationResponse {
+    while serde_json::to_vec(&response)
+        .map(|bytes| bytes.len() > MAX_CONVERSATION_RESPONSE_BYTES)
+        .unwrap_or(false)
+        && !response.messages.is_empty()
+    {
+        response.messages.remove(0);
+    }
+    response
+}
+
+fn compact_whitespace(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn truncate_scalar_value(text: &str, max_chars: usize) -> String {
+    text.chars().take(max_chars).collect()
+}
+
+fn redact_local_path_text(text: &str) -> String {
+    let mut redacted = String::with_capacity(text.len());
+    let mut index = 0;
+    let mut previous = None;
+    while index < text.len() {
+        let remaining = &text[index..];
+        let at_boundary = previous.is_none_or(is_path_boundary_char);
+        if let Some(len) = local_path_match_len(remaining, at_boundary) {
+            redacted.push_str("[本机路径]");
+            index += len;
+            continue;
+        }
+        let ch = remaining.chars().next().unwrap();
+        redacted.push(ch);
+        index += ch.len_utf8();
+        previous = Some(ch);
+    }
+    redacted
+}
+
+fn local_path_match_len(candidate: &str, at_boundary: bool) -> Option<usize> {
+    if !at_boundary {
+        return None;
+    }
+    let prefixes = ["file://", "/Users/", "/home/", "~/"];
+    if prefixes.iter().any(|prefix| candidate.starts_with(prefix)) {
+        return Some(path_token_len(candidate));
+    }
+    let bytes = candidate.as_bytes();
+    if bytes.len() >= 10
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'\\' | b'/')
+        && candidate[3..].starts_with("Users")
+        && matches!(bytes.get(8).copied(), Some(b'\\' | b'/'))
+    {
+        return Some(path_token_len(candidate));
+    }
+    None
+}
+
+fn path_token_len(candidate: &str) -> usize {
+    candidate
+        .char_indices()
+        .find_map(|(index, ch)| (index > 0 && is_path_boundary_char(ch)).then_some(index))
+        .unwrap_or(candidate.len())
+}
+
+fn is_path_boundary_char(ch: char) -> bool {
+    ch.is_whitespace() || matches!(ch, '"' | '\'' | ')' | ']' | '}' | '<' | '>' | ',' | ';')
 }
 
 #[derive(Deserialize)]
@@ -1717,6 +2011,7 @@ struct MobileSessionSummary {
     needs_attention: bool,
     pending_actions: Vec<MobileApprovalSummary>,
     can_message: bool,
+    can_read_conversation: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1728,7 +2023,11 @@ struct MobileApprovalSummary {
 }
 
 impl MobileSessionSummary {
-    fn from_hook(session: &crate::session_store::Session, include_actions: bool) -> Self {
+    fn from_hook(
+        session: &crate::session_store::Session,
+        include_actions: bool,
+        can_read_conversation: bool,
+    ) -> Self {
         Self {
             id: session.session_id.clone(),
             agent: session.client_type.clone(),
@@ -1743,12 +2042,14 @@ impl MobileSessionSummary {
             can_message: include_actions
                 && matches!(session.client_type.as_str(), "claude-code" | "opencode")
                 && session.status != crate::session_store::SessionStatus::Completed,
+            can_read_conversation,
         }
     }
 
     fn from_codex(
         session: &crate::hexa_protocol::HexaSessionProjection,
         include_actions: bool,
+        can_read_conversation: bool,
     ) -> Self {
         Self {
             id: session.session_id.clone(),
@@ -1775,6 +2076,7 @@ impl MobileSessionSummary {
                 Vec::new()
             },
             can_message: include_actions,
+            can_read_conversation,
         }
     }
 }
@@ -1856,6 +2158,55 @@ fn set_owner_only(path: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::event_bus::HookEvent;
+    use serde_json::json;
+
+    fn hook_session(
+        session_id: &str,
+        client_type: &str,
+        transcript_path: Option<&Path>,
+    ) -> crate::session_store::Session {
+        crate::session_store::Session {
+            session_id: session_id.into(),
+            client_type: client_type.into(),
+            transcript_path: transcript_path.map(|path| path.to_string_lossy().into_owned()),
+            cwd: Some("/tmp/humhum".into()),
+            project_name: Some("humhum".into()),
+            started_at: "2026-07-12T00:00:00Z".into(),
+            last_event_at: "2026-07-12T00:01:00Z".into(),
+            event_count: 2,
+            status: crate::session_store::SessionStatus::Active,
+            last_hook_message: None,
+            last_tool_name: None,
+            recent_tools: Vec::new(),
+            event_names: vec!["Notification".into()],
+            has_pending_permission: false,
+            route: None,
+        }
+    }
+
+    fn insert_hook_session(
+        store: &mut crate::session_store::SessionStore,
+        session_id: &str,
+        client_type: &str,
+        transcript_path: Option<&Path>,
+    ) {
+        store.update_from_event(&HookEvent {
+            id: format!("event-{session_id}"),
+            hook_event_name: "Notification".into(),
+            session_id: session_id.into(),
+            transcript_path: transcript_path.map(|path| path.to_string_lossy().into_owned()),
+            cwd: Some("/tmp/humhum".into()),
+            client_type: client_type.into(),
+            payload: json!({}),
+            timestamp: "2026-07-12T00:00:00Z".into(),
+        });
+    }
+
+    fn write_lines(path: &Path, lines: &[String]) {
+        let body = lines.join("\n");
+        std::fs::write(path, format!("{body}\n")).unwrap();
+    }
 
     #[test]
     fn scoped_mobile_cursor_is_stable_and_changes_with_visible_state() {
@@ -2587,17 +2938,18 @@ mod tests {
             route: None,
         };
 
-        let json =
-            serde_json::to_string(&MobileSessionSummary::from_hook(&session, false)).unwrap();
+        let json = serde_json::to_string(&MobileSessionSummary::from_hook(&session, false, false))
+            .unwrap();
         assert!(json.contains("project"));
         assert!(!json.contains("/Users"));
         assert!(!json.contains("private transcript text"));
-        assert!(!MobileSessionSummary::from_hook(&session, false).can_message);
+        assert!(!MobileSessionSummary::from_hook(&session, false, false).can_read_conversation);
+        assert!(!MobileSessionSummary::from_hook(&session, false, false).can_message);
 
         let mut opencode = session.clone();
         opencode.client_type = "opencode".into();
-        assert!(!MobileSessionSummary::from_hook(&opencode, false).can_message);
-        assert!(MobileSessionSummary::from_hook(&opencode, true).can_message);
+        assert!(!MobileSessionSummary::from_hook(&opencode, false, false).can_message);
+        assert!(MobileSessionSummary::from_hook(&opencode, true, false).can_message);
     }
 
     #[test]
@@ -2622,13 +2974,276 @@ mod tests {
             last_activity_at: "2026-07-12T00:01:00Z".into(),
         };
 
-        let read = MobileSessionSummary::from_codex(&session, false);
-        let control = MobileSessionSummary::from_codex(&session, true);
+        let read = MobileSessionSummary::from_codex(&session, false, false);
+        let control = MobileSessionSummary::from_codex(&session, true, false);
 
+        assert!(!read.can_read_conversation);
         assert!(!read.can_message);
         assert!(read.pending_actions.is_empty());
+        assert!(!control.can_read_conversation);
         assert!(control.can_message);
         assert_eq!(control.pending_actions.len(), 1);
+    }
+
+    #[test]
+    fn mobile_conversation_request_requires_exact_json_and_allows_read_or_control_scope() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path();
+        let transcript = home.join(".claude/projects/demo/transcript.jsonl");
+        std::fs::create_dir_all(transcript.parent().unwrap()).unwrap();
+        write_lines(
+            &transcript,
+            &[
+                r#"{"role":"user","content":"hello"}"#.into(),
+                r#"{"role":"assistant","content":"world"}"#.into(),
+            ],
+        );
+        let mut store = crate::session_store::SessionStore::new();
+        insert_hook_session(&mut store, "session-1", "claude-code", Some(&transcript));
+
+        assert_eq!(
+            mobile_conversation_from_request(None, br#"{"session_id":"session-1"}"#, &store, home),
+            Err(MobileConversationError::Unauthorized)
+        );
+
+        let read = mobile_conversation_from_request(
+            Some(MobileDeviceScope::Read),
+            br#"{"session_id":"session-1"}"#,
+            &store,
+            home,
+        )
+        .unwrap();
+        let control = mobile_conversation_from_request(
+            Some(MobileDeviceScope::Control),
+            br#"{"session_id":"session-1"}"#,
+            &store,
+            home,
+        )
+        .unwrap();
+
+        assert_eq!(
+            serde_json::to_value(&read).unwrap(),
+            serde_json::to_value(&control).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(&read).unwrap(),
+            json!({
+                "session_id": "session-1",
+                "messages": [
+                    { "role": "user", "text": "hello" },
+                    { "role": "assistant", "text": "world" }
+                ]
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(&read)
+                .unwrap()
+                .as_object()
+                .unwrap()
+                .len(),
+            2
+        );
+        for message in serde_json::to_value(&read).unwrap()["messages"]
+            .as_array()
+            .unwrap()
+        {
+            assert_eq!(message.as_object().unwrap().len(), 2);
+        }
+
+        let duplicate = br#"{"session_id":"session-1","session_id":"session-2"}"#;
+        let too_long = format!(r#"{{"session_id":"{}"}}"#, "s".repeat(257));
+        for body in [
+            br#"{"session_id":"session-1","path":"/tmp/nope"}"#.as_slice(),
+            br#"{"session_id":""}"#.as_slice(),
+            duplicate,
+            too_long.as_bytes(),
+            &[b'x'; 4097],
+        ] {
+            assert_eq!(
+                mobile_conversation_from_request(Some(MobileDeviceScope::Read), body, &store, home),
+                Err(MobileConversationError::BadRequest)
+            );
+        }
+    }
+
+    #[test]
+    fn mobile_conversation_requires_supported_provider_roots_and_blocks_escape_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path();
+
+        let codex_transcript = home.join(".codex/sessions/project/transcript.jsonl");
+        std::fs::create_dir_all(codex_transcript.parent().unwrap()).unwrap();
+        write_lines(
+            &codex_transcript,
+            &[r#"{"role":"user","content":"codex"}"#.into()],
+        );
+        assert!(session_supports_mobile_conversation(
+            &hook_session("codex-1", "codex", Some(&codex_transcript)),
+            home
+        ));
+
+        let openclaw_transcript = home.join(".openclaw/agents/demo/transcript.jsonl");
+        std::fs::create_dir_all(openclaw_transcript.parent().unwrap()).unwrap();
+        write_lines(
+            &openclaw_transcript,
+            &[r#"{"role":"assistant","content":"openclaw"}"#.into()],
+        );
+        assert!(session_supports_mobile_conversation(
+            &hook_session("openclaw-1", "openclaw", Some(&openclaw_transcript)),
+            home
+        ));
+
+        let wrong_root = home.join(".claude/projects/demo/transcript.jsonl");
+        std::fs::create_dir_all(wrong_root.parent().unwrap()).unwrap();
+        write_lines(
+            &wrong_root,
+            &[r#"{"role":"assistant","content":"wrong"}"#.into()],
+        );
+        assert!(!session_supports_mobile_conversation(
+            &hook_session("codex-2", "codex", Some(&wrong_root)),
+            home
+        ));
+        assert!(!session_supports_mobile_conversation(
+            &hook_session("other-1", "qoderwork", Some(&codex_transcript)),
+            home
+        ));
+
+        let directory_path = home.join(".claude/projects/directory-only");
+        std::fs::create_dir_all(&directory_path).unwrap();
+        assert!(!session_supports_mobile_conversation(
+            &hook_session("claude-1", "claude-code", Some(&directory_path)),
+            home
+        ));
+
+        #[cfg(unix)]
+        {
+            let outside = home.join("outside.jsonl");
+            write_lines(
+                &outside,
+                &[r#"{"role":"assistant","content":"outside"}"#.into()],
+            );
+            let escaped = home.join(".claude/projects/demo/escape.jsonl");
+            std::os::unix::fs::symlink(&outside, &escaped).unwrap();
+            assert!(!session_supports_mobile_conversation(
+                &hook_session("claude-2", "claude-code", Some(&escaped)),
+                home
+            ));
+        }
+    }
+
+    #[test]
+    fn mobile_conversation_collapses_unknown_and_unreadable_sessions_to_unavailable() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path();
+        let mut store = crate::session_store::SessionStore::new();
+
+        assert_eq!(
+            mobile_conversation_from_request(
+                Some(MobileDeviceScope::Read),
+                br#"{"session_id":"missing"}"#,
+                &store,
+                home,
+            ),
+            Err(MobileConversationError::Unavailable)
+        );
+
+        let missing_file = home.join(".claude/projects/demo/missing.jsonl");
+        insert_hook_session(
+            &mut store,
+            "missing-file",
+            "claude-code",
+            Some(&missing_file),
+        );
+        assert_eq!(
+            mobile_conversation_from_request(
+                Some(MobileDeviceScope::Read),
+                br#"{"session_id":"missing-file"}"#,
+                &store,
+                home,
+            ),
+            Err(MobileConversationError::Unavailable)
+        );
+
+        let unsupported = home.join(".qoder/sessions/demo.jsonl");
+        std::fs::create_dir_all(unsupported.parent().unwrap()).unwrap();
+        write_lines(
+            &unsupported,
+            &[r#"{"role":"assistant","content":"unsupported"}"#.into()],
+        );
+        insert_hook_session(&mut store, "unsupported", "qoderwork", Some(&unsupported));
+        assert_eq!(
+            mobile_conversation_from_request(
+                Some(MobileDeviceScope::Read),
+                br#"{"session_id":"unsupported"}"#,
+                &store,
+                home,
+            ),
+            Err(MobileConversationError::Unavailable)
+        );
+    }
+
+    #[test]
+    fn mobile_conversation_projects_redacted_recent_messages_from_reader_tail() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path();
+        let transcript = home.join(".codex/sessions/project/transcript.jsonl");
+        std::fs::create_dir_all(transcript.parent().unwrap()).unwrap();
+
+        let mut lines = vec![r#"{"role":"user","content":"outside-window"}"#.to_string()];
+        let filler = format!(
+            r#"{{"role":"assistant","content":[{{"type":"thinking","text":"{}"}}]}}"#,
+            "a".repeat(58_500)
+        );
+        for _ in 0..18 {
+            lines.push(filler.clone());
+        }
+        lines.push(
+            r#"{"message":{"role":"assistant","content":[{"type":"tool_use","name":"Read"}]}}"#
+                .into(),
+        );
+        for idx in 0..16 {
+            let role = if idx % 2 == 0 { "user" } else { "assistant" };
+            let text = match idx {
+                5 => "open /Users/me/private/project/src/main.rs".to_string(),
+                6 => "check ~/todo.md and file:///Users/me/private/project/readme.md".to_string(),
+                7 => r#"done at C:\\Users\\me\\Desktop\\notes.txt"#.to_string(),
+                _ => format!("turn-{idx}"),
+            };
+            lines.push(format!(r#"{{"role":"{role}","content":"{text}"}}"#));
+        }
+        write_lines(&transcript, &lines);
+
+        let mut store = crate::session_store::SessionStore::new();
+        insert_hook_session(&mut store, "session-2", "codex", Some(&transcript));
+
+        let response = mobile_conversation_from_request(
+            Some(MobileDeviceScope::Read),
+            br#"{"session_id":"session-2"}"#,
+            &store,
+            home,
+        )
+        .unwrap();
+        let value = serde_json::to_value(&response).unwrap();
+        let messages = value["messages"].as_array().unwrap();
+
+        assert_eq!(messages.len(), 12);
+        assert_eq!(messages.first().unwrap()["role"], "user");
+        assert_eq!(messages.first().unwrap()["text"], "turn-4");
+        assert_eq!(messages.last().unwrap()["role"], "assistant");
+        assert_eq!(messages.last().unwrap()["text"], "turn-15");
+
+        let serialized = serde_json::to_vec(&response).unwrap();
+        assert!(serialized.len() <= 64 * 1024);
+        let joined = String::from_utf8(serialized).unwrap();
+        assert!(!joined.contains("outside-window"));
+        assert!(!joined.contains("/Users/me"));
+        assert!(!joined.contains("file:///Users"));
+        assert!(!joined.contains(r#"C:\Users\me"#));
+        assert!(!joined.contains("Read"));
+        assert!(joined.contains("[本机路径]"));
+        for message in &response.messages {
+            assert!(message.text.chars().count() <= 500);
+        }
     }
 
     #[test]
