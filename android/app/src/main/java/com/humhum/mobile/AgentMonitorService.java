@@ -8,9 +8,12 @@ import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
+import android.net.ConnectivityManager;
+import android.net.Network;
 import android.os.Build;
 import android.os.IBinder;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
@@ -23,11 +26,15 @@ public final class AgentMonitorService extends Service {
     private static final long[] RETRY_SECONDS = {15, 30, 60};
 
     private final ScheduledExecutorService network = Executors.newSingleThreadScheduledExecutor();
+    private final NetworkRecoveryGate recoveryGate = new NetworkRecoveryGate();
     private ScheduledFuture<?> nextPoll;
     private MonitorStore monitorStore;
     private AttentionTracker tracker;
     private int failures;
-    private boolean destroyed;
+    private volatile boolean destroyed;
+    private ConnectivityManager connectivityManager;
+    private ConnectivityManager.NetworkCallback networkCallback;
+    private boolean networkCallbackRegistered;
 
     public static void start(Context context) {
         Intent intent = new Intent(context, AgentMonitorService.class);
@@ -56,6 +63,7 @@ public final class AgentMonitorService extends Service {
         tracker = new AttentionTracker(monitorStore.knownDigests());
         createChannels();
         promote(notification(getString(R.string.monitor_notification_text)));
+        registerNetworkRecovery();
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
@@ -69,6 +77,7 @@ public final class AgentMonitorService extends Service {
 
     @Override public void onDestroy() {
         destroyed = true;
+        unregisterNetworkRecovery();
         if (nextPoll != null) nextPoll.cancel(true);
         network.shutdownNow();
         super.onDestroy();
@@ -113,6 +122,44 @@ public final class AgentMonitorService extends Service {
         long delay = RETRY_SECONDS[Math.min(failures, RETRY_SECONDS.length - 1)];
         failures++;
         schedule(delay);
+    }
+
+    private void registerNetworkRecovery() {
+        connectivityManager = getSystemService(ConnectivityManager.class);
+        if (connectivityManager == null) return;
+        networkCallback = new ConnectivityManager.NetworkCallback() {
+            @Override public void onAvailable(Network availableNetwork) {
+                if (destroyed || !recoveryGate.onNetworkAvailable()) return;
+                try {
+                    network.execute(() -> {
+                        failures = 0;
+                        schedule(0);
+                    });
+                } catch (RejectedExecutionException ignored) {
+                    // Service shutdown won the race with this connectivity callback.
+                }
+            }
+
+            @Override public void onLost(Network lostNetwork) {
+                recoveryGate.onNetworkLost();
+            }
+        };
+        try {
+            connectivityManager.registerDefaultNetworkCallback(networkCallback);
+            networkCallbackRegistered = true;
+        } catch (RuntimeException ignored) {
+            networkCallback = null;
+        }
+    }
+
+    private void unregisterNetworkRecovery() {
+        if (!networkCallbackRegistered || connectivityManager == null || networkCallback == null) return;
+        networkCallbackRegistered = false;
+        try {
+            connectivityManager.unregisterNetworkCallback(networkCallback);
+        } catch (RuntimeException ignored) {
+            // The bounded poll retry remains active until service shutdown completes.
+        }
     }
 
     private void promote(Notification notification) {
