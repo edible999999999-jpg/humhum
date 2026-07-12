@@ -33,6 +33,7 @@ public final class AgentMonitorService extends Service {
     private int failures;
     private volatile boolean destroyed;
     private boolean realtimeSupported = true;
+    private boolean presenceSupported = true;
     private ConnectivityManager connectivityManager;
     private ConnectivityManager.NetworkCallback networkCallback;
     private boolean networkCallbackRegistered;
@@ -106,13 +107,15 @@ public final class AgentMonitorService extends Service {
             return;
         }
         try {
-            Models.SessionPage page = new MobileProtocol(
-                    connection.config(), connection.token(), connection.scope()).sessions();
+            MobileProtocol protocol = new MobileProtocol(
+                    connection.config(), connection.token(), connection.scope());
+            Models.SessionPage page = protocol.sessions();
             AttentionTracker.Result result = tracker.evaluate(page);
             monitorStore.saveKnownDigests(result.knownDigests());
             failures = 0;
             updateOngoing(getString(R.string.monitor_notification_text));
             if (result.newCount() > 0) notifyAttention(result.newCount());
+            reportMonitoringPresence(protocol);
             if (realtimeSupported && !page.cursor().isEmpty()) {
                 scheduleWatch(page.cursor());
             } else {
@@ -138,10 +141,11 @@ public final class AgentMonitorService extends Service {
             return;
         }
         try {
-            Models.EventSignal signal = new MobileProtocol(
-                    connection.config(), connection.token(), connection.scope())
-                    .waitForChange(cursor);
+            MobileProtocol protocol = new MobileProtocol(
+                    connection.config(), connection.token(), connection.scope());
+            Models.EventSignal signal = protocol.waitForChange(cursor);
             failures = 0;
+            reportMonitoringPresence(protocol);
             if (signal.changed() || !cursor.equals(signal.cursor())) {
                 schedulePoll(0);
             } else {
@@ -161,6 +165,13 @@ public final class AgentMonitorService extends Service {
             }
         } catch (Exception error) {
             retryAfterFailure();
+        }
+    }
+
+    private void reportMonitoringPresence(MobileProtocol protocol) throws Exception {
+        if (presenceSupported
+                && !protocol.reportPresence(MobileProtocol.PresenceMode.MONITORING)) {
+            presenceSupported = false;
         }
     }
 

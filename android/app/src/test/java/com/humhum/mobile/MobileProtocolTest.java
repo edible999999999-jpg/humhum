@@ -71,6 +71,30 @@ public class MobileProtocolTest {
     }
 
     @Test
+    public void presenceUsesExactAuthenticatedModesAndRoute() throws Exception {
+        MobileProtocol.RequestSpec foreground = MobileProtocol.presenceRequest(
+                MobileProtocol.PresenceMode.FOREGROUND);
+        MobileProtocol.RequestSpec monitoring = MobileProtocol.presenceRequest(
+                MobileProtocol.PresenceMode.MONITORING);
+
+        assertEquals("POST", foreground.method());
+        assertEquals("/api/presence", foreground.path());
+        assertTrue(foreground.requiresToken());
+        assertEquals("foreground", new JSONObject(foreground.body()).getString("mode"));
+        assertEquals("monitoring", new JSONObject(monitoring.body()).getString("mode"));
+        assertEquals(1, new JSONObject(foreground.body()).length());
+        assertThrows(IllegalArgumentException.class, () -> MobileProtocol.presenceRequest(null));
+    }
+
+    @Test
+    public void onlyLegacyNotFoundDisablesPresenceReporting() {
+        assertTrue(MobileProtocol.isPresenceUnsupported(404));
+        assertFalse(MobileProtocol.isPresenceUnsupported(400));
+        assertFalse(MobileProtocol.isPresenceUnsupported(401));
+        assertFalse(MobileProtocol.isPresenceUnsupported(500));
+    }
+
+    @Test
     public void parsingIsBoundedAndReadScopeRemovesControls() throws Exception {
         JSONArray sessions = new JSONArray();
         for (int index = 0; index < 35; index++) {

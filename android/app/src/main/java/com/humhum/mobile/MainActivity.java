@@ -90,7 +90,10 @@ public final class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
-        if (connection != null) syncMonitorState();
+        if (connection != null) {
+            syncMonitorState();
+            reportForegroundPresence();
+        }
         updateDeviceCareStatus();
         main.removeCallbacks(poll);
         main.post(poll);
@@ -217,7 +220,20 @@ public final class MainActivity extends Activity {
                 : "已安全连接 · " + route + "只读");
         statusText.setText("正在同步");
         syncMonitorState();
+        reportForegroundPresence();
         refreshSessions(true);
+    }
+
+    private void reportForegroundPresence() {
+        MobileProtocol active = protocol;
+        if (active == null) return;
+        network.execute(() -> {
+            try {
+                active.reportPresence(MobileProtocol.PresenceMode.FOREGROUND);
+            } catch (Exception ignored) {
+                // Session refresh owns visible connection errors and authentication handling.
+            }
+        });
     }
 
     private void showConnect() {

@@ -23,6 +23,17 @@ public final class MobileProtocol {
     private final String token;
     private final Models.Scope scope;
 
+    public enum PresenceMode {
+        FOREGROUND("foreground"),
+        MONITORING("monitoring");
+
+        private final String wireValue;
+
+        PresenceMode(String wireValue) {
+            this.wireValue = wireValue;
+        }
+    }
+
     public MobileProtocol(BridgeConfig config, String token, Models.Scope scope) {
         this.config = config;
         this.token = token == null ? "" : token.trim();
@@ -59,6 +70,16 @@ public final class MobileProtocol {
         execute(disconnectRequest());
     }
 
+    public boolean reportPresence(PresenceMode mode) throws IOException, JSONException {
+        try {
+            execute(presenceRequest(mode));
+            return true;
+        } catch (HttpStatusException error) {
+            if (isPresenceUnsupported(error.status())) return false;
+            throw error;
+        }
+    }
+
     static RequestSpec pairRequest(BridgeConfig config) throws JSONException {
         JSONObject body = new JSONObject()
                 .put("code", config.pairingCode())
@@ -68,6 +89,19 @@ public final class MobileProtocol {
 
     static RequestSpec disconnectRequest() {
         return new RequestSpec("DELETE", "/api/device", "", true);
+    }
+
+    static RequestSpec presenceRequest(PresenceMode mode) throws JSONException {
+        if (mode == null) throw new IllegalArgumentException("Presence mode is missing");
+        return new RequestSpec(
+                "POST",
+                "/api/presence",
+                new JSONObject().put("mode", mode.wireValue).toString(),
+                true);
+    }
+
+    static boolean isPresenceUnsupported(int status) {
+        return status == 404;
     }
 
     static RequestSpec eventRequest(String cursor) {
