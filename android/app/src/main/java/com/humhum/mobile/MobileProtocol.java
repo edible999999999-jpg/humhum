@@ -41,12 +41,48 @@ public final class MobileProtocol {
     }
 
     public Models.PairResult pair() throws IOException, JSONException {
-        JSONObject response = new JSONObject(execute(pairRequest(config)));
+        return parsePairResult(execute(pairRequest(config)));
+    }
+
+    static Models.PairResult parsePairResult(String payload) throws IOException, JSONException {
+        JSONObject response = new JSONObject(payload);
         String pairedToken = response.optString("token", "");
         if (!pairedToken.matches("[a-fA-F0-9]{64}")) {
             throw new IOException("HUMHUM returned an invalid device token");
         }
-        return new Models.PairResult(pairedToken, Models.Scope.fromWire(response.optString("scope")));
+        Models.WakeRelayConfig wakeRelay = null;
+        if (response.has("wake_relay")) {
+            JSONObject relay = response.getJSONObject("wake_relay");
+            if (relay.length() != 5
+                    || strictInteger(relay, "version") != 1
+                    || !relay.has("base_url")
+                    || !relay.has("channel_id")
+                    || !relay.has("subscriber_token")
+                    || !relay.has("wake_key")) {
+                throw new JSONException("Wake relay pairing data is invalid");
+            }
+            try {
+                wakeRelay = new Models.WakeRelayConfig(
+                        relay.getString("base_url"),
+                        relay.getString("channel_id"),
+                        relay.getString("subscriber_token"),
+                        relay.getString("wake_key"));
+            } catch (IllegalArgumentException error) {
+                throw new JSONException("Wake relay pairing data is invalid", error);
+            }
+        }
+        return new Models.PairResult(
+                pairedToken,
+                Models.Scope.fromWire(response.optString("scope")),
+                wakeRelay);
+    }
+
+    private static int strictInteger(JSONObject object, String key) throws JSONException {
+        Object value = object.get(key);
+        if (!(value instanceof Integer)) {
+            throw new JSONException("Numeric field is invalid");
+        }
+        return (Integer) value;
     }
 
     public Models.SessionPage sessions() throws IOException, JSONException {

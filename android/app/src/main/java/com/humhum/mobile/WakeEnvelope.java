@@ -11,8 +11,31 @@ import org.json.JSONObject;
 
 public final class WakeEnvelope {
     private static final long MAX_CLOCK_SKEW_SECONDS = 600;
+    private final int version;
+    private final long sequence;
+    private final String nonce;
+    private final String ciphertext;
 
-    private WakeEnvelope() {}
+    WakeEnvelope(int version, long sequence, String nonce, String ciphertext) {
+        this.version = version;
+        this.sequence = sequence;
+        this.nonce = nonce;
+        this.ciphertext = ciphertext;
+    }
+
+    public int version() { return version; }
+    public long sequence() { return sequence; }
+    public String nonce() { return nonce; }
+    public String ciphertext() { return ciphertext; }
+
+    public String toJson() throws JSONException {
+        return new JSONObject()
+                .put("version", version)
+                .put("sequence", sequence)
+                .put("nonce", nonce)
+                .put("ciphertext", ciphertext)
+                .toString();
+    }
 
     public static WakeSignal decrypt(
             String keyHex,

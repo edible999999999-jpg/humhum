@@ -34,6 +34,8 @@ public final class AgentMonitorService extends Service {
     private volatile boolean destroyed;
     private boolean realtimeSupported = true;
     private boolean presenceSupported = true;
+    private boolean relaySupported = true;
+    private String lastCursor = "";
     private ConnectivityManager connectivityManager;
     private ConnectivityManager.NetworkCallback networkCallback;
     private boolean networkCallbackRegistered;
@@ -93,6 +95,10 @@ public final class AgentMonitorService extends Service {
         schedule(() -> watchOnce(cursor), 0);
     }
 
+    private void scheduleRelay(long sequence) {
+        schedule(() -> relayOnce(sequence), 0);
+    }
+
     private void schedule(Runnable task, long delaySeconds) {
         if (destroyed) return;
         if (nextPoll != null) nextPoll.cancel(false);
@@ -116,20 +122,77 @@ public final class AgentMonitorService extends Service {
             updateOngoing(getString(R.string.monitor_notification_text));
             if (result.newCount() > 0) notifyAttention(result.newCount());
             reportMonitoringPresence(protocol);
-            if (realtimeSupported && !page.cursor().isEmpty()) {
-                scheduleWatch(page.cursor());
-            } else {
-                schedulePoll(RETRY_SECONDS[0]);
+            lastCursor = page.cursor();
+            switch (MonitorRoute.afterSessions(
+                    relaySupported && connection.wakeRelay() != null,
+                    realtimeSupported,
+                    monitorStore.isEnabled(),
+                    lastCursor)) {
+                case RELAY -> scheduleRelay(monitorStore.relaySequence());
+                case DIRECT_WATCH -> scheduleWatch(lastCursor);
+                default -> schedulePoll(RETRY_SECONDS[0]);
             }
         } catch (MobileProtocol.HttpStatusException error) {
             if (error.status() == 401 || error.status() == 403) {
                 monitorStore.clear();
                 stopSelf();
             } else {
-                retryAfterFailure();
+                retryAfterPrivateFailure(connection);
             }
         } catch (Exception error) {
-            retryAfterFailure();
+            retryAfterPrivateFailure(connection);
+        }
+    }
+
+    private void relayOnce(long previousSequence) {
+        ConnectionStore.Connection connection = connectionStore(this).load();
+        if (!monitorStore.isEnabled() || connection == null) {
+            monitorStore.clear();
+            stopSelf();
+            return;
+        }
+        Models.WakeRelayConfig relay = connection.wakeRelay();
+        if (!relaySupported || relay == null) {
+            scheduleDirectFallback();
+            return;
+        }
+        try {
+            long accepted = new WakeRelayClient().poll(
+                    relay,
+                    previousSequence,
+                    System.currentTimeMillis() / 1_000L);
+            failures = 0;
+            updateOngoing(getString(R.string.monitor_notification_text));
+            if (MonitorRoute.afterRelay(accepted, previousSequence)
+                    == MonitorRoute.Next.PRIVATE_REFRESH) {
+                monitorStore.saveRelaySequence(accepted);
+                schedulePoll(0);
+            } else {
+                scheduleRelay(accepted);
+            }
+        } catch (WakeRelayClient.RelayStatusException error) {
+            if (WakeRelayClient.isPermanentlyUnavailable(error.status())) {
+                relaySupported = false;
+                failures = 0;
+                updateOngoing(getString(R.string.monitor_notification_text));
+                scheduleDirectFallback();
+            } else {
+                retryAfterRelayFailure();
+            }
+        } catch (java.security.GeneralSecurityException | org.json.JSONException error) {
+            relaySupported = false;
+            failures = 0;
+            scheduleDirectFallback();
+        } catch (Exception error) {
+            retryAfterRelayFailure();
+        }
+    }
+
+    private void scheduleDirectFallback() {
+        if (realtimeSupported && lastCursor.matches("[a-f0-9]{64}")) {
+            scheduleWatch(lastCursor);
+        } else {
+            schedulePoll(RETRY_SECONDS[0]);
         }
     }
 
@@ -161,10 +224,10 @@ public final class AgentMonitorService extends Service {
                 updateOngoing(getString(R.string.monitor_notification_text));
                 schedulePoll(RETRY_SECONDS[0]);
             } else {
-                retryAfterFailure();
+                retryAfterPrivateFailure(connection);
             }
         } catch (Exception error) {
-            retryAfterFailure();
+            retryAfterPrivateFailure(connection);
         }
     }
 
@@ -175,11 +238,25 @@ public final class AgentMonitorService extends Service {
         }
     }
 
-    private void retryAfterFailure() {
+    private long nextRetryDelay() {
         updateOngoing(getString(R.string.monitor_notification_unreachable));
         long delay = RETRY_SECONDS[Math.min(failures, RETRY_SECONDS.length - 1)];
         failures++;
-        schedulePoll(delay);
+        return delay;
+    }
+
+    private void retryAfterPrivateFailure(ConnectionStore.Connection connection) {
+        long delay = nextRetryDelay();
+        if (MonitorRoute.afterPrivateFailure(
+                relaySupported && connection.wakeRelay() != null) == MonitorRoute.Next.RELAY) {
+            schedule(() -> relayOnce(monitorStore.relaySequence()), delay);
+        } else {
+            schedulePoll(delay);
+        }
+    }
+
+    private void retryAfterRelayFailure() {
+        schedulePoll(nextRetryDelay());
     }
 
     private void registerNetworkRecovery() {

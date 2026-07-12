@@ -25,6 +25,46 @@ public class MobileProtocolTest {
     }
 
     @Test
+    public void pairingParsesOptionalSubscriberOnlyWakeRelay() throws Exception {
+        JSONObject relay = new JSONObject()
+                .put("version", 1)
+                .put("base_url", "https://relay.example.com")
+                .put("channel_id", "11".repeat(32))
+                .put("subscriber_token", "22".repeat(32))
+                .put("wake_key", "33".repeat(32));
+        JSONObject payload = new JSONObject()
+                .put("token", "ab".repeat(32))
+                .put("scope", "control")
+                .put("wake_relay", relay);
+
+        Models.PairResult result = MobileProtocol.parsePairResult(payload.toString());
+
+        assertEquals(Models.Scope.CONTROL, result.scope());
+        assertEquals("https://relay.example.com", result.wakeRelay().baseUrl());
+        assertEquals("22".repeat(32), result.wakeRelay().subscriberToken());
+        assertThrows(org.json.JSONException.class, () -> MobileProtocol.parsePairResult(
+                new JSONObject(payload.toString())
+                        .put("wake_relay", new JSONObject(relay.toString())
+                                .put("publisher_token", "44".repeat(32)))
+                        .toString()));
+        assertThrows(org.json.JSONException.class, () -> MobileProtocol.parsePairResult(
+                new JSONObject(payload.toString())
+                        .put("wake_relay", new JSONObject(relay.toString()).put("version", "1"))
+                        .toString()));
+    }
+
+    @Test
+    public void legacyPairResponseHasNoWakeRelay() throws Exception {
+        Models.PairResult result = MobileProtocol.parsePairResult(new JSONObject()
+                .put("token", "ab".repeat(32))
+                .put("scope", "read")
+                .toString());
+
+        assertEquals(Models.Scope.READ, result.scope());
+        assertEquals(null, result.wakeRelay());
+    }
+
+    @Test
     public void approvalsSelectCodexOrHookEndpoints() throws Exception {
         Models.Action codex = new Models.Action("approval-1", "codex", "command", "Run tests");
         Models.Action claude = new Models.Action("event-1", "claude", "Bash", "Build app");

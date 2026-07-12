@@ -1,6 +1,6 @@
 import { useEffect, useReducer, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Copy, Crosshair, FileDiff, Flame, Link, Power, RefreshCw, RotateCcw, Send, ShieldCheck, Smartphone, Square, Trash2 } from "lucide-react";
+import { Copy, Crosshair, FileDiff, Flame, Link, Power, RefreshCw, RotateCcw, Save, Send, ShieldCheck, Smartphone, Square, Trash2 } from "lucide-react";
 import {
   useHexaData,
   type CodexRemoteControlState,
@@ -10,6 +10,7 @@ import {
   type HexaSupervisorSession,
   type MobileBridgeStatus,
   type MobilePairingInfo,
+  type MobileRelayConfig,
   type QueuedIntervention,
 } from "../../hooks/useHexaData";
 import { initialInterventionState, interventionReducer } from "../../hooks/interventionState";
@@ -748,27 +749,37 @@ function RemoteAccessPanel({
 function HumHumMobilePanel({
   state,
   pairing,
+  relayConfig,
   onEnable,
   onDisable,
   onPair,
   onRevoke,
   onRevokeDevice,
+  onConfigureRelay,
 }: {
   state: MobileBridgeStatus;
   pairing: MobilePairingInfo | null;
+  relayConfig: MobileRelayConfig;
   onEnable: () => Promise<MobileBridgeStatus>;
   onDisable: () => Promise<MobileBridgeStatus>;
   onPair: (scope?: "read" | "control", network?: "lan" | "tailnet") => Promise<MobilePairingInfo>;
   onRevoke: () => Promise<MobileBridgeStatus>;
   onRevokeDevice: (deviceId: string) => Promise<MobileBridgeStatus>;
+  onConfigureRelay: (enabled: boolean, baseUrl: string) => Promise<MobileRelayConfig>;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [network, setNetwork] = useState<"lan" | "tailnet">("lan");
+  const [relayEnabled, setRelayEnabled] = useState(relayConfig.enabled);
+  const [relayUrl, setRelayUrl] = useState(relayConfig.base_url ?? "");
   useEffect(() => {
     if (!state.tailnet_url) setNetwork("lan");
   }, [state.tailnet_url]);
+  useEffect(() => {
+    setRelayEnabled(relayConfig.enabled);
+    setRelayUrl(relayConfig.base_url ?? "");
+  }, [relayConfig]);
   const run = async (action: () => Promise<unknown>) => {
     setBusy(true);
     setError(null);
@@ -808,6 +819,41 @@ function HumHumMobilePanel({
                 {option === "lan" ? "同网 LAN" : "外出 Tailnet"}
               </button>
             ))}
+          </div>
+        )}
+        {!state.enabled && (
+          <div style={{ display: "grid", gridTemplateColumns: "auto minmax(120px, 1fr) auto", alignItems: "center", gap: 6, marginTop: 7 }}>
+            <label title="让手机跨网络收到加密的变化提醒" style={{ display: "inline-flex", alignItems: "center", gap: 5, color: "rgba(255,255,255,0.45)", fontSize: 9, whiteSpace: "nowrap" }}>
+              <input
+                type="checkbox"
+                checked={relayEnabled}
+                onChange={(event) => setRelayEnabled(event.target.checked)}
+              />
+              加密唤醒
+            </label>
+            <input
+              aria-label="加密唤醒中继 URL"
+              type="url"
+              value={relayUrl}
+              disabled={!relayEnabled || busy}
+              placeholder="https://relay.example.com"
+              onChange={(event) => setRelayUrl(event.target.value)}
+              style={{ minWidth: 0, height: 28, borderRadius: 6, border: "1px solid rgba(255,255,255,0.1)", background: "rgba(0,0,0,0.16)", color: "rgba(255,255,255,0.72)", padding: "0 8px", fontSize: 9 }}
+            />
+            <button
+              type="button"
+              title="保存加密唤醒设置"
+              aria-label="保存加密唤醒设置"
+              disabled={busy}
+              onClick={() => run(() => onConfigureRelay(relayEnabled, relayUrl))}
+              className="kawaii-icon-btn"
+              style={{ width: 28, height: 28, minWidth: 28 }}
+            ><Save size={13} /></button>
+          </div>
+        )}
+        {state.enabled && (
+          <div style={{ color: state.relay_status === "errored" ? "#f87171" : "rgba(255,255,255,0.3)", fontSize: 9, marginTop: 4, overflowWrap: "anywhere" }}>
+            加密唤醒 · {state.relay_status === "disabled" ? "未启用" : state.relay_status === "connected" ? "已连接" : state.relay_status === "retrying" ? "正在重试" : "连接异常"}{state.relay_url ? ` · ${state.relay_url}` : ""}
           </div>
         )}
         {state.devices.map((device) => (
@@ -989,6 +1035,7 @@ export function HexaModule() {
     remotePairing,
     mobileBridge,
     mobilePairing,
+    mobileRelayConfig,
     queuedInterventions,
     sendCodexMessage,
     retryCodexMessage,
@@ -1010,6 +1057,7 @@ export function HexaModule() {
     startMobilePairing,
     revokeMobileDevices,
     revokeMobileDevice,
+    configureMobileRelay,
   } = useHexaData();
   const [openReviews, setOpenReviews] = useState<Set<string>>(new Set());
   const [autoConfirmSessions, setAutoConfirmSessions] = useState<Set<string>>(new Set());
@@ -1083,11 +1131,13 @@ export function HexaModule() {
       <HumHumMobilePanel
         state={mobileBridge}
         pairing={mobilePairing}
+        relayConfig={mobileRelayConfig}
         onEnable={enableMobileBridge}
         onDisable={disableMobileBridge}
         onPair={startMobilePairing}
         onRevoke={revokeMobileDevices}
         onRevokeDevice={revokeMobileDevice}
+        onConfigureRelay={configureMobileRelay}
       />
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10, marginBottom: 14 }}>

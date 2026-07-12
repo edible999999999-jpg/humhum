@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { AgentStats } from "@/types";
+import type { AgentStats, AppConfig } from "@/types";
 import type { GitChangeSummary } from "./sessionChangesState";
 import { sortHexaSessions } from "./hexaPriority";
+import { normalizeMobileRelayConfig, type MobileRelayConfigValue } from "./mobileRelayConfig";
 import {
   mergeHexaSessions,
   type HexaBridgeApproval,
@@ -50,7 +51,11 @@ export interface MobileBridgeStatus {
     presence_mode: "foreground" | "monitoring" | null;
     last_seen_at: string | null;
   }>;
+  relay_status: "disabled" | "connected" | "retrying" | "errored";
+  relay_url: string | null;
 }
+
+export type MobileRelayConfig = MobileRelayConfigValue;
 
 export interface MobilePairingInfo {
   code: string;
@@ -518,6 +523,12 @@ export function useHexaData() {
     certificate_fingerprint: null,
     paired_devices: 0,
     devices: [],
+    relay_status: "disabled",
+    relay_url: null,
+  });
+  const [mobileRelayConfig, setMobileRelayConfig] = useState<MobileRelayConfig>({
+    enabled: false,
+    base_url: null,
   });
   const [mobilePairing, setMobilePairing] = useState<MobilePairingInfo | null>(null);
   const [queuedInterventions, setQueuedInterventions] = useState<QueuedIntervention[]>([]);
@@ -535,6 +546,7 @@ export function useHexaData() {
       ]);
       const remoteData = await invoke<CodexRemoteControlState>("get_codex_remote_control").catch(() => null);
       const mobileData = await invoke<MobileBridgeStatus>("get_mobile_bridge_status").catch(() => null);
+      const configData = await invoke<AppConfig>("get_config").catch(() => null);
       const statsByClient = new Map(statsData.map((stat) => [stat.client_type, stat]));
       const readoutBySession = new Map(readoutData.map((readout) => [readout.session_id, readout]));
       const merged = mergeHexaSessions(sessionData, bridgeData);
@@ -554,6 +566,7 @@ export function useHexaData() {
       setQueuedInterventions(queueData);
       if (remoteData) setRemoteControl(remoteData);
       if (mobileData) setMobileBridge(mobileData);
+      if (configData) setMobileRelayConfig(configData.mobile_relay);
     } catch {
       // Hub may open before the backend is ready.
     }
@@ -726,6 +739,19 @@ export function useHexaData() {
     return state;
   }, []);
 
+  const configureMobileRelay = useCallback(async (enabled: boolean, rawBaseUrl: string) => {
+    if (mobileBridge.enabled) {
+      throw new Error("请先关闭 HUMHUM 移动访问，再修改加密唤醒中继");
+    }
+    const mobileRelay = normalizeMobileRelayConfig(enabled, rawBaseUrl);
+    const config = await invoke<AppConfig>("get_config");
+    await invoke("save_config", {
+      newConfig: { ...config, mobile_relay: mobileRelay },
+    });
+    setMobileRelayConfig(mobileRelay);
+    return mobileRelay;
+  }, [mobileBridge.enabled]);
+
   return {
     sessions,
     activeSessions,
@@ -742,6 +768,7 @@ export function useHexaData() {
     remotePairing,
     mobileBridge,
     mobilePairing,
+    mobileRelayConfig,
     queuedInterventions,
     sendCodexMessage,
     retryCodexMessage,
@@ -763,5 +790,6 @@ export function useHexaData() {
     startMobilePairing,
     revokeMobileDevices,
     revokeMobileDevice,
+    configureMobileRelay,
   };
 }

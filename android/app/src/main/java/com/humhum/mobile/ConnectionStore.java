@@ -8,6 +8,10 @@ public final class ConnectionStore {
     private static final String DEVICE_NAME = "device_name";
     private static final String TOKEN = "token";
     private static final String SCOPE = "scope";
+    private static final String RELAY_BASE_URL = "relay_base_url";
+    private static final String RELAY_CHANNEL_ID = "relay_channel_id";
+    private static final String RELAY_SUBSCRIBER_TOKEN = "relay_subscriber_token";
+    private static final String RELAY_WAKE_KEY = "relay_wake_key";
 
     interface KeyValueStore {
         String get(String key);
@@ -26,6 +30,13 @@ public final class ConnectionStore {
     }
 
     public void save(BridgeConfig config, String token, Models.Scope scope) {
+        save(config, new Models.PairResult(token, scope));
+    }
+
+    public void save(BridgeConfig config, Models.PairResult result) {
+        if (result == null) throw new IllegalArgumentException("Pair result is missing");
+        String token = result.token();
+        Models.Scope scope = result.scope();
         String safeToken = token == null ? "" : token.trim();
         if (!safeToken.matches("[a-fA-F0-9]{64}")) {
             throw new IllegalArgumentException("Device token is invalid");
@@ -38,6 +49,11 @@ public final class ConnectionStore {
         storage.put(DEVICE_NAME, config.deviceName());
         storage.put(TOKEN, safeToken);
         storage.put(SCOPE, scope.wireValue());
+        Models.WakeRelayConfig relay = result.wakeRelay();
+        storage.put(RELAY_BASE_URL, relay == null ? "" : relay.baseUrl());
+        storage.put(RELAY_CHANNEL_ID, relay == null ? "" : relay.channelId());
+        storage.put(RELAY_SUBSCRIBER_TOKEN, relay == null ? "" : relay.subscriberToken());
+        storage.put(RELAY_WAKE_KEY, relay == null ? "" : relay.wakeKey());
     }
 
     public Connection load() {
@@ -55,10 +71,12 @@ public final class ConnectionStore {
             return null;
         }
         try {
+            Models.WakeRelayConfig relay = loadWakeRelay();
             return new Connection(
                     BridgeConfig.restore(baseUrl, fingerprint, deviceName),
                     token,
-                    Models.Scope.fromWire(scope));
+                    Models.Scope.fromWire(scope),
+                    relay);
         } catch (IllegalArgumentException error) {
             return null;
         }
@@ -72,20 +90,45 @@ public final class ConnectionStore {
         return value == null || value.isBlank();
     }
 
+    private Models.WakeRelayConfig loadWakeRelay() {
+        String baseUrl = storage.get(RELAY_BASE_URL);
+        String channelId = storage.get(RELAY_CHANNEL_ID);
+        String subscriberToken = storage.get(RELAY_SUBSCRIBER_TOKEN);
+        String wakeKey = storage.get(RELAY_WAKE_KEY);
+        if (isMissing(baseUrl)
+                || isMissing(channelId)
+                || isMissing(subscriberToken)
+                || isMissing(wakeKey)) {
+            return null;
+        }
+        try {
+            return new Models.WakeRelayConfig(baseUrl, channelId, subscriberToken, wakeKey);
+        } catch (IllegalArgumentException error) {
+            return null;
+        }
+    }
+
     public static final class Connection {
         private final BridgeConfig config;
         private final String token;
         private final Models.Scope scope;
+        private final Models.WakeRelayConfig wakeRelay;
 
-        Connection(BridgeConfig config, String token, Models.Scope scope) {
+        Connection(
+                BridgeConfig config,
+                String token,
+                Models.Scope scope,
+                Models.WakeRelayConfig wakeRelay) {
             this.config = config;
             this.token = token;
             this.scope = scope;
+            this.wakeRelay = wakeRelay;
         }
 
         public BridgeConfig config() { return config; }
         public String token() { return token; }
         public Models.Scope scope() { return scope; }
+        public Models.WakeRelayConfig wakeRelay() { return wakeRelay; }
     }
 
     private static final class PreferencesStore implements KeyValueStore {

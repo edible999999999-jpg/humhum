@@ -11,6 +11,7 @@ import org.json.JSONException;
 public final class MonitorStore {
     private static final String ENABLED = "enabled";
     private static final String KNOWN_DIGESTS = "known_digests";
+    private static final String RELAY_SEQUENCE = "relay_sequence";
 
     interface KeyValueStore {
         String get(String key);
@@ -56,6 +57,23 @@ public final class MonitorStore {
         JSONArray payload = new JSONArray();
         for (String digest : keepNewest(digests)) payload.put(digest);
         storage.put(KNOWN_DIGESTS, payload.toString());
+    }
+
+    public long relaySequence() {
+        String value = storage.get(RELAY_SEQUENCE);
+        if (value == null || !value.matches("[0-9]{1,19}")) return 0;
+        try {
+            long sequence = Long.parseLong(value);
+            return Math.max(0, sequence);
+        } catch (NumberFormatException error) {
+            return 0;
+        }
+    }
+
+    public void saveRelaySequence(long sequence) {
+        if (sequence > relaySequence()) {
+            storage.put(RELAY_SEQUENCE, Long.toString(sequence));
+        }
     }
 
     public void clear() {

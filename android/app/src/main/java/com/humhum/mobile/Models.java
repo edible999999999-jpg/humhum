@@ -22,14 +22,51 @@ public final class Models {
     public static final class PairResult {
         private final String token;
         private final Scope scope;
+        private final WakeRelayConfig wakeRelay;
 
         public PairResult(String token, Scope scope) {
+            this(token, scope, null);
+        }
+
+        public PairResult(String token, Scope scope, WakeRelayConfig wakeRelay) {
             this.token = token;
             this.scope = scope;
+            this.wakeRelay = wakeRelay;
         }
 
         public String token() { return token; }
         public Scope scope() { return scope; }
+        public WakeRelayConfig wakeRelay() { return wakeRelay; }
+    }
+
+    public static final class WakeRelayConfig {
+        private final String baseUrl;
+        private final String channelId;
+        private final String subscriberToken;
+        private final String wakeKey;
+
+        public WakeRelayConfig(
+                String baseUrl,
+                String channelId,
+                String subscriberToken,
+                String wakeKey) {
+            this.baseUrl = WakeRelayClient.validateBaseUrl(baseUrl);
+            this.channelId = requireSecret(channelId, "Relay channel is invalid");
+            this.subscriberToken = requireSecret(
+                    subscriberToken, "Relay subscriber credential is invalid");
+            this.wakeKey = requireSecret(wakeKey, "Relay wake key is invalid");
+        }
+
+        public String baseUrl() { return baseUrl; }
+        public String channelId() { return channelId; }
+        public String subscriberToken() { return subscriberToken; }
+        public String wakeKey() { return wakeKey; }
+
+        private static String requireSecret(String value, String message) {
+            String safe = value == null ? "" : value.trim();
+            if (!safe.matches("[a-f0-9]{64}")) throw new IllegalArgumentException(message);
+            return safe;
+        }
     }
 
     public static final class Action {

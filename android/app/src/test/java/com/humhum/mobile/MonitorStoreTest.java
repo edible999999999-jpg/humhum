@@ -53,6 +53,20 @@ public class MonitorStoreTest {
         assertTrue(store.knownDigests().isEmpty());
     }
 
+    @Test
+    public void relaySequenceSurvivesRestartAndNeverMovesBackward() {
+        MemoryStore memory = new MemoryStore();
+        MonitorStore store = new MonitorStore(memory);
+
+        assertEquals(0, store.relaySequence());
+        store.saveRelaySequence(7);
+        store.saveRelaySequence(3);
+
+        assertEquals(7, new MonitorStore(memory).relaySequence());
+        memory.put("relay_sequence", "invalid");
+        assertEquals(0, store.relaySequence());
+    }
+
     private static final class MemoryStore implements MonitorStore.KeyValueStore {
         private final Map<String, String> values = new HashMap<>();
 

@@ -170,6 +170,10 @@ export interface AppConfig {
     token?: string;
     model_name: string;
   };
+  mobile_relay: {
+    enabled: boolean;
+    base_url: string | null;
+  };
   ui: {
     position: "bottom-right" | "bottom-left" | "top-right" | "top-left";
     language: "zh" | "en";

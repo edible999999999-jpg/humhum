@@ -168,7 +168,7 @@ public final class MainActivity extends Activity {
         network.execute(() -> {
             try {
                 Models.PairResult result = new MobileProtocol(config, "", Models.Scope.READ).pair();
-                connectionStore.save(config, result.token(), result.scope());
+                connectionStore.save(config, result);
                 ConnectionStore.Connection saved = connectionStore.load();
                 main.post(() -> {
                     setPairing(false);

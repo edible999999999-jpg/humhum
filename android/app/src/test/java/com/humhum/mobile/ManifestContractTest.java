@@ -54,6 +54,23 @@ public class ManifestContractTest {
         assertNotNull(receiver.getElementsByTagName("intent-filter").item(0));
     }
 
+    @Test
+    public void cleartextIsLimitedToExactLoopbackDevelopmentHosts() throws Exception {
+        Document document = DocumentBuilderFactory.newInstance().newDocumentBuilder()
+                .parse(Path.of("src/main/res/xml/network_security_config.xml").toFile());
+        Element base = (Element) document.getElementsByTagName("base-config").item(0);
+        assertEquals("false", base.getAttribute("cleartextTrafficPermitted"));
+
+        NodeList domains = document.getElementsByTagName("domain");
+        Set<String> values = new HashSet<>();
+        for (int index = 0; index < domains.getLength(); index++) {
+            Element domain = (Element) domains.item(index);
+            assertEquals("false", domain.getAttribute("includeSubdomains"));
+            values.add(domain.getTextContent().trim());
+        }
+        assertEquals(Set.of("localhost", "127.0.0.1", "::1"), values);
+    }
+
     private static Element component(Document document, String tag, String name) {
         NodeList nodes = document.getElementsByTagName(tag);
         for (int index = 0; index < nodes.getLength(); index++) {
