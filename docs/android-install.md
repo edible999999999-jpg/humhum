@@ -1,15 +1,15 @@
-# HUMHUM Android 0.3.1
+# HUMHUM Android 0.3.2
 
 HUMHUM Android is a native private-network client for the desktop Mobile Bridge. It supports Android 8.0 and newer, including current Xiaomi and Redmi phones. Pair on the same LAN by default, or use an optional Tailscale tailnet when the Mac and phone are on different networks.
 
 ## Installable APK
 
-- Release APK: `build/releases/HUMHUM-Android-0.3.1.apk`
-- Play-compatible bundle: `build/releases/HUMHUM-Android-0.3.1.aab`
+- Release APK: `build/releases/HUMHUM-Android-0.3.2.apk`
+- Play-compatible bundle: `build/releases/HUMHUM-Android-0.3.2.aab`
 - Package: `com.humhum.mobile`
-- Version: `0.3.1` (`versionCode 4`)
-- APK SHA-256: `040644720a72c43e6ef6244e6a52e55771e96b9f2026ef7cac93c1865530ba6a`
-- AAB SHA-256: `d0b32c33cbbb28194175ebd842f23b0fd3fe7550f2dbb5b13d60642ad366f346`
+- Version: `0.3.2` (`versionCode 5`)
+- APK SHA-256: `498d169c48bf0279f6d4c259ea898504da08055c08917284e75bc8ee13e0d361`
+- AAB SHA-256: `d8d56082c0e8b6d429c346b47f119c791010d43a8065257db5c64235e3717216`
 - Release certificate SHA-256: `C2:8C:FF:BE:03:98:B2:DB:58:DB:B7:14:DD:39:4F:06:36:CB:55:A6:90:EE:FE:6F:DA:20:2A:78:ED:4E:12:F8`
 
 The APK and AAB use HUMHUM's durable local release certificate. They are installable and update-compatible with later builds signed by the same key, but they have not been published to Xiaomi GetApps or Google Play.
@@ -30,7 +30,7 @@ Connect an authorized phone, then run:
 
 ```bash
 ~/Library/Android/sdk/platform-tools/adb install -r \
-  build/releases/HUMHUM-Android-0.3.1.apk
+  build/releases/HUMHUM-Android-0.3.2.apk
 ```
 
 ## Pair With The Mac
@@ -65,13 +65,15 @@ Background monitoring is visible and user-controlled. It uses Android's `remoteM
 
 For cross-network wakeups, Hexa can optionally connect each newly paired phone to a self-hosted encrypted wake relay. The relay receives only AES-256-GCM ciphertext, opaque channel IDs, sequence numbers and credential digests; it never receives session names, messages, approvals, device names or encryption keys. Public relay URLs must use HTTPS, while loopback HTTP is accepted only for local development. A wake tells Android to refresh through the existing certificate-pinned LAN or Tailnet Mobile Bridge, so session reading, approvals and follow-ups are never sent through the relay. If the relay is unavailable, the private-network event wait remains the fallback.
 
-Version 0.3.1 contains an optional FCM transport for system-reclaimed Android processes. The relay encrypts one opaque FCM token per channel at rest and sends an exact high-priority data payload containing only `kind`, opaque channel ID and sequence. Android accepts it only when the channel matches, the sequence is valid, FCM retained high priority and the user previously enabled monitoring. Normal-priority, malformed, wrong-channel and disabled-monitor messages cannot start the service. User-initiated **Force stop** remains an Android hard boundary until the app is opened again.
+Version 0.3.2 contains an optional FCM transport for system-reclaimed Android processes. The relay encrypts one opaque FCM token per channel at rest and sends an exact high-priority data payload containing only `kind`, opaque channel ID and sequence. Android accepts it only when the channel matches, the sequence is valid, FCM retained high priority and the user previously enabled monitoring. Normal-priority, malformed, wrong-channel and disabled-monitor messages cannot start the service. User-initiated **Force stop** remains an Android hard boundary until the app is opened again.
 
 FCM registration is generation- and relay-channel-bound. Transient network, `429`, and `5xx` failures retry after 15, 60, and then 300 seconds; `401`, `404`, and `410` stop and ask for a fresh pairing. Every retry rechecks the current pairing before request and before committing state, while disconnect invalidates queued and in-flight work. The paired screen shows only interpreted states such as **系统推送尚未配置**, **正在连接系统推送**, or **需要重新配对**; it never displays or persists the FCM token.
 
-The downloadable 0.3.1 artifacts were deliberately built with empty Firebase client identifiers because no production HUMHUM Firebase project is configured on this machine. They therefore use encrypted relay/private-network monitoring but do not request an FCM token or registration network call. A real Firebase project and matching release build are still required before claiming killed-process delivery.
+The downloadable 0.3.2 artifacts were deliberately built with empty Firebase client identifiers because no production HUMHUM Firebase project is configured on this machine. They therefore use encrypted relay/private-network monitoring but do not request an FCM token or registration network call. A real Firebase project and matching release build are still required before claiming killed-process delivery.
 
 Hexa now shows whether each paired phone is **正在使用**, **后台监控**, or **离线**. Android reports only one bounded mode through the authenticated pinned-HTTPS bridge; the Mac supplies the timestamp and keeps it in memory. If no report arrives for 90 seconds, both mode and last-seen time disappear and Hexa shows offline. This prevents a stopped Xiaomi process from looking healthy without collecting app activity, location, network names, or message content.
+
+Version 0.3.2 keeps one encrypted offline snapshot of at most 30 redacted sessions for at most seven days. It stores only project, Agent, status, last activity and attention state in `noBackupFilesDir`, encrypted by an Android Keystore AES-256-GCM key and authenticated against the current Mac URL, pinned certificate and pairing scope. If the Mac becomes unreachable, the header explicitly says **离线快照** and every stale card is read-only: session IDs, approvals, approval summaries, follow-up drafts, messages, tokens and credentials are never cached. Reconnecting replaces the snapshot with live state. Pairing changes, corruption, authentication failure, expiration and in-app disconnect delete both ciphertext and key.
 
 ## Runtime Validation
 
@@ -82,7 +84,7 @@ The release APK was installed through Android's real Package Manager on an ARM64
 - A disposable desktop permission request produced one high-importance private attention notification and one stored SHA-256 digest. Its notification update timestamp remained unchanged across later polls, proving deduplication at runtime.
 - Rebooting Android restored the explicitly enabled monitor, foreground type and ongoing notification after `BOOT_COMPLETED`.
 - Revoking the device token on the Mac made the next Android poll stop the service, remove the ongoing notification and clear monitor preferences. Both disposable devices were removed from the desktop store.
-- The reliability control opened Android 16's real Battery Optimization screen and returned to HUMHUM without requesting a new runtime permission. The 0.3.1 merged manifest contains the original six permissions plus Firebase's `WAKE_LOCK`, C2DM receive and one package-scoped AndroidX dynamic-receiver permission. It still contains no direct battery-exemption, location, storage or all-packages permission.
+- The reliability control opened Android 16's real Battery Optimization screen and returned to HUMHUM without requesting a new runtime permission. The 0.3.2 merged manifest contains the original six permissions plus Firebase's `WAKE_LOCK`, C2DM receive and one package-scoped AndroidX dynamic-receiver permission. It still contains no direct battery-exemption, location, storage or all-packages permission.
 - After Wi-Fi loss moved monitoring into its 60-second retry window, restoring Wi-Fi changed the foreground notification from unreachable to connected in 0 seconds through the registered default-network callback. A full reboot restored both the `0x200` service and callback; token revocation stopped the service, emitted Connectivity `RELEASE`, and left zero paired devices.
 - The realtime Mobile Bridge returned a scoped change signal in 1,051 ms when a redacted session changed. A real disposable Claude permission request updated Android's private attention notification in 1,349 ms and was then denied and removed. An unchanged wait returned `changed=false` after 21 seconds and immediately established the next wait.
 - The event endpoint revalidates the device token every second, permits 16 concurrent waits, returns `429` plus `Retry-After: 1` for the seventeenth, rejects missing credentials with `401`, rejects missing or malformed cursors with `400`, and lets read-only devices receive only the same three-field wake signal. Revocation during an open Android wait stopped the service and released its network callback in 898 ms.
@@ -90,7 +92,8 @@ The release APK was installed through Android's real Package Manager on an ARM64
 - The current release reported `foreground` after visible-form pairing and `monitoring` after the real `remoteMessaging` service entered its event wait. Android process `force-stop` sent no offline message; 91 seconds after the final report, desktop status retained the paired device but returned both presence fields as null. Relaunch restored live state, and in-app disconnect removed the device and presence, leaving zero paired devices.
 - A real local SQLite relay, release desktop and visible API 36 Android pairing produced one channel containing only 64-character credential digests and bounded ciphertext. A disposable desktop change published sequence 1 and Android authenticated and decrypted it. After stopping the relay, a second change remained pending locally; restarting the same database published and consumed sequence 2 without skipping or falsely advancing. Android disconnect then deleted the remote channel, desktop relay secret, paired device and local monitor state, leaving all four counts at zero.
 - A real HTTP/SQLite relay with an injected push provider accepted a disposable FCM token, stored only a 16-character nonce and encrypted ciphertext, and contained no raw token bytes. The first sequence-1 push failure returned `503`; retrying the exact stored envelope returned `201` and delivered the same generic three-field wake without allocating sequence 2.
-- The signed 0.3.1 APK upgraded the installed 0.3.0 release through Package Manager, preserved `firstInstallTime`, cold-launched the pairing Activity and produced no HUMHUM/Firebase exception with all four client identifiers empty. A visible-form control pairing then loaded 23 real redacted sessions and displayed **系统推送尚未配置** under **后台可靠性** without overlap. In-app disconnect revoked the disposable device; desktop device and relay-secret stores both returned to zero before Mobile Bridge was disabled.
+- The signed 0.3.2 APK upgraded an installed 0.3.1 release through Package Manager and preserved `firstInstallTime`. A visible-form control pairing loaded 23 real redacted sessions. Disabling both emulator Wi-Fi and mobile data changed the header to **离线快照 · 刚刚** in one second while retaining the project list with zero approval or follow-up controls. Restoring networking returned **刚刚同步** and live controls in one second. Rotating the Activity during disconnect still reached the pairing screen and removed the desktop device.
+- A real API 36 instrumentation test writes and decrypts the snapshot through Android Keystore, proves cached sessions lose IDs/actions/messaging capability, then verifies `clear()` removes both the no-backup file and Keystore alias. Its initial red run exposed Android Keystore's rejection of caller-provided IVs under randomized-encryption enforcement; 0.3.2 now lets the provider generate a fresh 12-byte GCM nonce and the device test passes.
 
 This proves Android platform lifecycle behavior, not Xiaomi-specific battery-manager behavior. A physical HyperOS/MIUI device is still required before claiming manufacturer-level sleep survival.
 
@@ -106,12 +109,13 @@ This proves Android platform lifecycle behavior, not Xiaomi-specific battery-man
 - Optional FCM registration and high-priority generic wake handling when both Android client and relay server configuration are supplied.
 - Immediate monitoring recovery when Android reports that the default network has returned.
 - Volatile per-device foreground/background presence with a 90-second fail-closed offline transition.
+- One connection-bound AES-256-GCM offline snapshot with read-only stale cards and disconnect/key destruction.
 - In-app battery-settings access and Xiaomi-family autostart-settings routing with safe standard fallbacks.
 - HTTPS only, certificate fingerprint pinning, and no backup of app credentials.
 
 The APK requests network state, internet, foreground remote messaging, notification and opt-in boot restoration permissions. Firebase Messaging adds bounded wake-lock and C2DM receive permissions plus one package-scoped AndroidX receiver permission. HUMHUM does not request direct battery exemption, all-package visibility, location, nearby-device, contacts, files, camera, microphone, overlay, or accessibility access.
 
-Not yet verified or shipped: production-configured FCM delivery, Xiaomi Push, physical HyperOS process-reclaim survival, a HUMHUM-hosted relay service, attachments, iOS packaging, store distribution, or automatic updates. Xiaomi Push additionally requires an approved Xiaomi developer account, a registered package with AppID/AppKey, server-side AppSecret, and the region-appropriate Xiaomi SDK; none of those credentials are present on this machine, so the release does not pretend to initialize that provider. See Xiaomi's official [enablement guide](https://dev.mi.com/xiaomihyperos/documentation/detail?pId=1691) and [Android AAR integration guide](https://dev.mi.com/xiaomihyperos/documentation/detail?pId=1544).
+Not yet verified or shipped: production-configured FCM delivery, Xiaomi Push, physical HyperOS process-reclaim survival, a HUMHUM-hosted relay service, full encrypted transcript history, attachments, iOS packaging, store distribution, or automatic updates. Xiaomi Push additionally requires an approved Xiaomi developer account, a registered package with AppID/AppKey, server-side AppSecret, and the region-appropriate Xiaomi SDK; none of those credentials are present on this machine, so the release does not pretend to initialize that provider. See Xiaomi's official [enablement guide](https://dev.mi.com/xiaomihyperos/documentation/detail?pId=1691) and [Android AAR integration guide](https://dev.mi.com/xiaomihyperos/documentation/detail?pId=1544).
 
 ## Build With FCM
 
