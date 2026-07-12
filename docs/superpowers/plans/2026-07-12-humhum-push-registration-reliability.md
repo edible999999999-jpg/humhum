@@ -37,11 +37,11 @@
 - Modify: `android/app/src/main/java/com/humhum/mobile/PushRegistration.java`
 - Modify: `android/app/src/test/java/com/humhum/mobile/PushRegistrationTest.java`
 
-- [ ] Write failing tests for generation/channel commit gates and retry decisions after success, transient and permanent outcomes.
-- [ ] Run focused tests and require missing policy APIs.
-- [ ] Refactor registration through an injectable scheduler/transport coordinator; production uses one static scheduler and `WakeRelayClient`.
-- [ ] Re-read connection before every attempt and commit, cancel on disconnect, reset attempt count on token rotation/success, and persist only state/channel.
-- [ ] Run focused and complete JVM tests, then commit `feat(android): retry push registration safely`.
+- [x] Write failing tests for generation/channel commit gates and retry decisions after success, transient and permanent outcomes.
+- [x] Run focused tests and require missing policy APIs.
+- [x] Refactor registration through an injectable scheduler/transport coordinator; production uses one static scheduler and `WakeRelayClient`.
+- [x] Re-read connection before every attempt and commit, cancel on disconnect, reset attempt count on token rotation/success, and persist only state/channel.
+- [x] Run focused and complete JVM tests, then commit `feat(android): retry push registration safely`.
 
 ### Task 3: Paired-Screen Status And Runtime Evidence
 
