@@ -1,10 +1,14 @@
 package com.humhum.mobile;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -33,6 +37,25 @@ public class EncryptedSessionSnapshotStoreContractTest {
         String clear = source.substring(source.indexOf("public void clear()"));
         assertTrue(clear.contains("snapshotFile.delete()"));
         assertTrue(clear.contains("keyStore.deleteEntry(SNAPSHOT_KEY_ALIAS)"));
+    }
+
+    @Test
+    public void readsThroughAtomicFileRecoveryInsteadOfTheBaseFile() throws Exception {
+        String source = new String(Files.readAllBytes(Path.of(SOURCE)), StandardCharsets.UTF_8);
+
+        assertTrue(source.contains("snapshotFile.openRead()"));
+        assertFalse(source.contains("snapshotFile.getBaseFile()"));
+        assertFalse(source.contains("new FileInputStream("));
+    }
+
+    @Test
+    public void boundedReaderAcceptsExactly256KiBAndRejectsMore() throws Exception {
+        byte[] maximum = new byte[256 * 1024];
+
+        assertArrayEquals(maximum, EncryptedSessionSnapshotStore.readBounded(
+                new ByteArrayInputStream(maximum)));
+        assertThrows(IOException.class, () -> EncryptedSessionSnapshotStore.readBounded(
+                new ByteArrayInputStream(new byte[maximum.length + 1])));
     }
 
     @Test

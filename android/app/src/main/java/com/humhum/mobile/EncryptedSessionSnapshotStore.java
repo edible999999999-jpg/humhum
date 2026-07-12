@@ -4,10 +4,12 @@ import android.content.Context;
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
 import android.util.AtomicFile;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
-import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.security.GeneralSecurityException;
 import java.security.Key;
 import java.security.KeyStore;
@@ -49,10 +51,8 @@ public final class EncryptedSessionSnapshotStore {
     }
 
     public SessionSnapshot read(ConnectionStore.Connection connection, long nowMillis) {
-        File file = snapshotFile.getBaseFile();
-        if (!file.isFile()) return null;
-        try {
-            byte[] envelope = readBounded(file);
+        try (InputStream input = snapshotFile.openRead()) {
+            byte[] envelope = readBounded(input);
             SessionSnapshotCipher.Decrypted decrypted = SessionSnapshotCipher.decrypt(
                     envelope, binding(connection), existingKey(), nowMillis);
             SessionSnapshot snapshot = SessionSnapshotCodec.decode(decrypted.payload());
@@ -60,6 +60,8 @@ public final class EncryptedSessionSnapshotStore {
                 throw new GeneralSecurityException("Snapshot timestamps do not match");
             }
             return snapshot;
+        } catch (FileNotFoundException error) {
+            return null;
         } catch (Exception error) {
             clear();
             return null;
@@ -146,21 +148,18 @@ public final class EncryptedSessionSnapshotStore {
         return keyStore;
     }
 
-    private static byte[] readBounded(File file) throws IOException {
-        long length = file.length();
-        if (length <= 0 || length > MAX_ENVELOPE_BYTES) {
-            throw new IOException("Snapshot envelope is invalid");
+    static byte[] readBounded(InputStream input) throws IOException {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        byte[] buffer = new byte[8 * 1024];
+        int size = 0;
+        while (true) {
+            int remaining = MAX_ENVELOPE_BYTES - size;
+            int count = input.read(buffer, 0, Math.min(buffer.length, remaining + 1));
+            if (count == -1) return output.toByteArray();
+            if (count == 0) continue;
+            if (count > remaining) throw new IOException("Snapshot envelope is too large");
+            output.write(buffer, 0, count);
+            size += count;
         }
-        byte[] envelope = new byte[(int) length];
-        try (FileInputStream input = new FileInputStream(file)) {
-            int offset = 0;
-            while (offset < envelope.length) {
-                int count = input.read(envelope, offset, envelope.length - offset);
-                if (count <= 0) throw new IOException("Snapshot envelope is incomplete");
-                offset += count;
-            }
-            if (input.read() != -1) throw new IOException("Snapshot envelope is too large");
-        }
-        return envelope;
     }
 }
