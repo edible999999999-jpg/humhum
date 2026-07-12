@@ -354,30 +354,35 @@ public final class MobileProtocol {
                 request.method(),
                 request.requiresToken() ? token : null,
                 request.readTimeoutMillis());
-        if (!request.body().isEmpty()) {
-            byte[] bytes = request.body().getBytes(StandardCharsets.UTF_8);
-            connection.setDoOutput(true);
-            connection.setFixedLengthStreamingMode(bytes.length);
-            connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
-            try (OutputStream output = connection.getOutputStream()) {
-                output.write(bytes);
+        try {
+            if (!request.body().isEmpty()) {
+                byte[] bytes = request.body().getBytes(StandardCharsets.UTF_8);
+                connection.setDoOutput(true);
+                connection.setFixedLengthStreamingMode(bytes.length);
+                connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+                try (OutputStream output = connection.getOutputStream()) {
+                    output.write(bytes);
+                }
             }
-        }
-        int status = connection.getResponseCode();
-        String response = readBounded(
-                status >= 200 && status < 300 ? connection.getInputStream() : connection.getErrorStream(),
-                request.maxResponseBytes());
-        connection.disconnect();
-        if (status < 200 || status >= 300) {
-            String message;
-            try {
-                message = new JSONObject(response).optString("error", "Request failed");
-            } catch (JSONException ignored) {
-                message = "Request failed";
+            int status = connection.getResponseCode();
+            String response = readBounded(
+                    status >= 200 && status < 300
+                            ? connection.getInputStream()
+                            : connection.getErrorStream(),
+                    request.maxResponseBytes());
+            if (status < 200 || status >= 300) {
+                String message;
+                try {
+                    message = new JSONObject(response).optString("error", "Request failed");
+                } catch (JSONException ignored) {
+                    message = "Request failed";
+                }
+                throw new HttpStatusException(status, bounded(message, 240));
             }
-            throw new HttpStatusException(status, bounded(message, 240));
+            return response;
+        } finally {
+            connection.disconnect();
         }
-        return response;
     }
 
     static String readBounded(InputStream input, int maxBytes) throws IOException {

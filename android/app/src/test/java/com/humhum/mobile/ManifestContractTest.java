@@ -73,6 +73,20 @@ public class ManifestContractTest {
     }
 
     @Test
+    public void rotationKeepsTheActivityOwnedDraftAndSendStateAlive() throws Exception {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        factory.setNamespaceAware(true);
+        Document document = factory.newDocumentBuilder()
+                .parse(Path.of("src/main/AndroidManifest.xml").toFile());
+        Element activity = component(document, "activity", ".MainActivity");
+        Set<String> handledChanges = Set.of(
+                activity.getAttributeNS(ANDROID, "configChanges").split("\\|"));
+
+        assertTrue(handledChanges.contains("orientation"));
+        assertTrue(handledChanges.contains("screenSize"));
+    }
+
+    @Test
     public void cleartextIsLimitedToExactLoopbackDevelopmentHosts() throws Exception {
         Document document = DocumentBuilderFactory.newInstance().newDocumentBuilder()
                 .parse(Path.of("src/main/res/xml/network_security_config.xml").toFile());
@@ -167,6 +181,26 @@ public class ManifestContractTest {
         assertTrue(button.contains("setMinHeight(dp(48))"));
         String weighted = methodSource(source, "private LinearLayout.LayoutParams weightedButton()", "private LinearLayout.LayoutParams matchWidthWrap()");
         assertTrue(weighted.contains("LinearLayout.LayoutParams.WRAP_CONTENT"));
+    }
+
+    @Test
+    public void rootScrollViewKeepsContentOutsideSideAndBottomSystemBars() throws Exception {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        factory.setNamespaceAware(true);
+        Document document = factory.newDocumentBuilder()
+                .parse(Path.of("src/main/res/layout/activity_main.xml").toFile());
+        assertEquals("@+id/rootScroll", document.getDocumentElement()
+                .getAttributeNS(ANDROID, "id"));
+
+        String source = new String(Files.readAllBytes(
+                Path.of("src/main/java/com/humhum/mobile/MainActivity.java")),
+                StandardCharsets.UTF_8);
+        String insets = methodSource(
+                source, "private void applySystemBarInsets(", "private void updateDeviceCareStatus(");
+        assertTrue(insets.contains("getSystemWindowInsetRight()"));
+        assertTrue(insets.contains("baseTop"));
+        assertTrue(insets.contains("baseRight + rightInset"));
+        assertTrue(insets.contains("baseBottom + bottomInset"));
     }
 
     @Test
@@ -290,6 +324,61 @@ public class ManifestContractTest {
         assertTrue(posting.contains("snapshotGenerationGate.isCurrent(generation)"));
         assertTrue(posting.contains("isCurrentConnection(expectedProtocol, expectedConnection)"));
         assertTrue(posting.contains("expectedSessionId.equals(expandedConversationSessionId)"));
+    }
+
+    @Test
+    public void conversationRerendersPreserveUnsavedFollowUpDraftsInActivityMemory()
+            throws Exception {
+        String source = new String(Files.readAllBytes(
+                Path.of("src/main/java/com/humhum/mobile/MainActivity.java")),
+                StandardCharsets.UTF_8);
+        assertTrue(source.contains("Map<String, String> messageDraftBySessionId"));
+        assertTrue(source.contains("Set<String> sendingSessionIds"));
+
+        String panel = methodSource(
+                source, "private View messagePanel(", "private void loadConversation(");
+        assertOrdered(
+                panel,
+                "messageDraftBySessionId.getOrDefault(session.id(), \"\")",
+                "draft.addTextChangedListener(",
+                "messageDraftBySessionId.put(session.id(), value.toString())",
+                "boolean sending = sendingSessionIds.contains(session.id());",
+                "draft.setEnabled(!sending)",
+                "send.setEnabled(!sending)");
+
+        String send = methodSource(source, "private void send(", "private void setPairing(");
+        assertOrdered(
+                send,
+                "sendingSessionIds.add(session.id());",
+                "draft.setEnabled(false);",
+                "current.sendMessage(session, message)",
+                "sendingSessionIds.remove(session.id());",
+                "messageDraftBySessionId.remove(session.id());",
+                "renderSessions(renderedSessions)");
+    }
+
+    @Test
+    public void expandedConversationIsExcludedFromAndroidTaskSnapshots() throws Exception {
+        String source = new String(Files.readAllBytes(
+                Path.of("src/main/java/com/humhum/mobile/MainActivity.java")),
+                StandardCharsets.UTF_8);
+        assertTrue(source.contains("WindowManager.LayoutParams.FLAG_SECURE"));
+
+        String privacy = methodSource(
+                source, "private void syncConversationPrivacy()", "private void syncConversationDisclosureWithSessions(");
+        assertTrue(privacy.contains("expandedConversationSessionId == null"));
+        assertTrue(privacy.contains("getWindow().clearFlags"));
+        assertTrue(privacy.contains("getWindow().addFlags"));
+    }
+
+    @Test
+    public void protocolAlwaysDisconnectsHttpsConnectionsAfterReadFailures() throws Exception {
+        String source = new String(Files.readAllBytes(
+                Path.of("src/main/java/com/humhum/mobile/MobileProtocol.java")),
+                StandardCharsets.UTF_8);
+        String execute = methodSource(
+                source, "private String execute(", "static String readBounded(");
+        assertOrdered(execute, "try {", "} finally {", "connection.disconnect();");
     }
 
     @Test

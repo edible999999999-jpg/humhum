@@ -15,7 +15,10 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.PowerManager;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.view.View;
+import android.view.WindowManager;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.Button;
 import android.widget.EditText;
@@ -23,9 +26,11 @@ import android.widget.LinearLayout;
 import android.widget.Switch;
 import android.widget.TextView;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -39,6 +44,8 @@ public final class MainActivity extends Activity {
     private final ExecutorService network = Executors.newSingleThreadExecutor();
     private final Map<String, List<Models.ConversationMessage>> recentConversationBySessionId =
             new HashMap<>();
+    private final Map<String, String> messageDraftBySessionId = new HashMap<>();
+    private final Set<String> sendingSessionIds = new HashSet<>();
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Runnable poll = new Runnable() {
         @Override public void run() {
@@ -88,6 +95,7 @@ public final class MainActivity extends Activity {
     protected void onCreate(Bundle state) {
         super.onCreate(state);
         setContentView(R.layout.activity_main);
+        applySystemBarInsets(findViewById(R.id.rootScroll));
         bindViews();
         connectionStore = new ConnectionStore(getSharedPreferences("humhum_connection", MODE_PRIVATE));
         snapshotStore = new EncryptedSessionSnapshotStore(this);
@@ -159,6 +167,8 @@ public final class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         recentConversationBySessionId.clear();
+        messageDraftBySessionId.clear();
+        sendingSessionIds.clear();
         collapseConversationDisclosure();
         renderedSessions = List.of();
         snapshotGenerationGate.close();
@@ -186,6 +196,26 @@ public final class MainActivity extends Activity {
         pushStatusText = findViewById(R.id.pushStatusText);
         batterySettingsButton = findViewById(R.id.batterySettingsButton);
         autostartSettingsButton = findViewById(R.id.autostartSettingsButton);
+    }
+
+    @SuppressWarnings("deprecation")
+    private void applySystemBarInsets(View root) {
+        int baseLeft = root.getPaddingLeft();
+        int baseTop = root.getPaddingTop();
+        int baseRight = root.getPaddingRight();
+        int baseBottom = root.getPaddingBottom();
+        root.setOnApplyWindowInsetsListener((view, insets) -> {
+            int leftInset = insets.getSystemWindowInsetLeft();
+            int rightInset = insets.getSystemWindowInsetRight();
+            int bottomInset = insets.getSystemWindowInsetBottom();
+            view.setPadding(
+                    baseLeft + leftInset,
+                    baseTop,
+                    baseRight + rightInset,
+                    baseBottom + bottomInset);
+            return insets;
+        });
+        root.requestApplyInsets();
     }
 
     private void updateDeviceCareStatus() {
@@ -267,6 +297,8 @@ public final class MainActivity extends Activity {
             return;
         }
         recentConversationBySessionId.clear();
+        messageDraftBySessionId.clear();
+        sendingSessionIds.clear();
         collapseConversationDisclosure();
         renderedSessions = List.of();
         connection = saved;
@@ -299,6 +331,8 @@ public final class MainActivity extends Activity {
 
     private void showConnect() {
         recentConversationBySessionId.clear();
+        messageDraftBySessionId.clear();
+        sendingSessionIds.clear();
         collapseConversationDisclosure();
         renderedSessions = List.of();
         protocol = null;
@@ -314,6 +348,8 @@ public final class MainActivity extends Activity {
         MobileProtocol current = protocol;
         if (current == null || connection == null) return;
         List<Models.Session> sessions = renderedSessions;
+        messageDraftBySessionId.clear();
+        sendingSessionIds.clear();
         clearConversationState();
         renderSessions(sessions);
         boolean started = TRANSITIONS.begin(
@@ -750,6 +786,15 @@ public final class MainActivity extends Activity {
         loadingConversationSessionId = null;
         conversationErrorSessionId = null;
         conversationErrorText = "";
+        syncConversationPrivacy();
+    }
+
+    private void syncConversationPrivacy() {
+        if (expandedConversationSessionId == null) {
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SECURE);
+        } else {
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
+        }
     }
 
     private void syncConversationDisclosureWithSessions(List<Models.Session> sessions) {
@@ -882,6 +927,7 @@ public final class MainActivity extends Activity {
             return;
         }
         expandedConversationSessionId = sessionId;
+        syncConversationPrivacy();
         conversationErrorSessionId = null;
         conversationErrorText = "";
         if (recentConversationBySessionId.containsKey(sessionId)) {
@@ -961,8 +1007,23 @@ public final class MainActivity extends Activity {
         draft.setBackgroundResource(R.drawable.input_background);
         draft.setTextColor(color(R.color.ink));
         draft.setHintTextColor(Color.rgb(147, 164, 184));
+        draft.setText(messageDraftBySessionId.getOrDefault(session.id(), ""));
+        draft.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence value, int start, int count, int after) {}
+            @Override public void onTextChanged(CharSequence value, int start, int before, int count) {
+                if (value.length() == 0) {
+                    messageDraftBySessionId.remove(session.id());
+                } else {
+                    messageDraftBySessionId.put(session.id(), value.toString());
+                }
+            }
+            @Override public void afterTextChanged(Editable value) {}
+        });
         panel.addView(draft, matchWidthWrap());
         Button send = button("发送跟进", true);
+        boolean sending = sendingSessionIds.contains(session.id());
+        draft.setEnabled(!sending);
+        send.setEnabled(!sending);
         LinearLayout.LayoutParams sendParams = matchWidthWrap();
         sendParams.topMargin = dp(8);
         panel.addView(send, sendParams);
@@ -1053,7 +1114,9 @@ public final class MainActivity extends Activity {
 
     private void send(Models.Session session, EditText draft, Button send) {
         String message = draft.getText().toString().trim();
-        if (message.isEmpty()) return;
+        if (message.isEmpty() || sendingSessionIds.contains(session.id())) return;
+        sendingSessionIds.add(session.id());
+        draft.setEnabled(false);
         send.setEnabled(false);
         MobileProtocol current = protocol;
         ConnectionStore.Connection currentConnection = connection;
@@ -1062,9 +1125,10 @@ public final class MainActivity extends Activity {
             try {
                 String state = current.sendMessage(session, message);
                 postIfCurrent(generation, current, currentConnection, () -> {
-                    draft.setText("");
-                    send.setEnabled(true);
+                    sendingSessionIds.remove(session.id());
+                    messageDraftBySessionId.remove(session.id());
                     statusText.setText("delivered".equals(state) ? "跟进已送达" : "跟进已进入队列");
+                    renderSessions(renderedSessions);
                     refreshSessions(false);
                 });
             } catch (Exception error) {
@@ -1073,8 +1137,9 @@ public final class MainActivity extends Activity {
                     return;
                 }
                 postIfCurrent(generation, current, currentConnection, () -> {
-                    send.setEnabled(true);
+                    sendingSessionIds.remove(session.id());
                     statusText.setText(safeError(error));
+                    renderSessions(renderedSessions);
                 });
             }
         });
