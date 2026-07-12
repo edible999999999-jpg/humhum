@@ -38,6 +38,8 @@ export interface CodexRemotePairing {
 export interface MobileBridgeStatus {
   enabled: boolean;
   url: string | null;
+  lan_url: string | null;
+  tailnet_url: string | null;
   certificate_fingerprint: string | null;
   paired_devices: number;
   devices: Array<{
@@ -54,6 +56,7 @@ export interface MobilePairingInfo {
   url: string;
   certificate_fingerprint: string;
   scope: "read" | "control";
+  network: "lan" | "tailnet";
   android_setup: string;
 }
 
@@ -508,6 +511,8 @@ export function useHexaData() {
   const [mobileBridge, setMobileBridge] = useState<MobileBridgeStatus>({
     enabled: false,
     url: null,
+    lan_url: null,
+    tailnet_url: null,
     certificate_fingerprint: null,
     paired_devices: 0,
     devices: [],
@@ -697,8 +702,11 @@ export function useHexaData() {
     return state;
   }, []);
 
-  const startMobilePairing = useCallback(async (scope: "read" | "control" = "read") => {
-    const pairing = await invoke<MobilePairingInfo>("start_mobile_pairing", { scope });
+  const startMobilePairing = useCallback(async (
+    scope: "read" | "control" = "read",
+    network: "lan" | "tailnet" = "lan",
+  ) => {
+    const pairing = await invoke<MobilePairingInfo>("start_mobile_pairing", { scope, network });
     setMobilePairing(pairing);
     return pairing;
   }, []);

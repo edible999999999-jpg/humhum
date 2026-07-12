@@ -757,22 +757,26 @@ function HumHumMobilePanel({
   pairing: MobilePairingInfo | null;
   onEnable: () => Promise<MobileBridgeStatus>;
   onDisable: () => Promise<MobileBridgeStatus>;
-  onPair: (scope?: "read" | "control") => Promise<MobilePairingInfo>;
+  onPair: (scope?: "read" | "control", network?: "lan" | "tailnet") => Promise<MobilePairingInfo>;
   onRevoke: () => Promise<MobileBridgeStatus>;
   onRevokeDevice: (deviceId: string) => Promise<MobileBridgeStatus>;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [network, setNetwork] = useState<"lan" | "tailnet">("lan");
+  useEffect(() => {
+    if (!state.tailnet_url) setNetwork("lan");
+  }, [state.tailnet_url]);
   const run = async (action: () => Promise<unknown>) => {
     setBusy(true);
     setError(null);
     try { await action(); } catch (cause) { setError(String(cause)); } finally { setBusy(false); }
   };
   const detail = pairing
-    ? `${copied ? "Android 配对资料已复制 · " : ""}配对码 ${pairing.code} · ${pairing.scope === "control" ? "可控制" : "只读"} · 5 分钟内有效`
+    ? `${copied ? "Android 配对资料已复制 · " : ""}配对码 ${pairing.code} · ${pairing.network === "tailnet" ? "Tailnet" : "同网 LAN"} · ${pairing.scope === "control" ? "可控制" : "只读"} · 5 分钟内有效`
     : state.enabled
-      ? `${state.url} · ${state.paired_devices} 台设备`
+      ? `${state.lan_url ?? state.url} · ${state.paired_devices} 台设备`
       : "默认关闭；开启后仅同一局域网可见";
 
   return (
@@ -786,6 +790,25 @@ function HumHumMobilePanel({
             TLS {state.certificate_fingerprint}
           </div>
         )}
+        {state.enabled && state.tailnet_url && (
+          <div
+            role="group"
+            aria-label="Android 配对网络"
+            style={{ display: "inline-flex", gap: 2, padding: 2, marginTop: 6, borderRadius: 7, background: "rgba(255,255,255,0.035)", border: "1px solid rgba(255,255,255,0.07)" }}
+          >
+            {(["lan", "tailnet"] as const).map((option) => (
+              <button
+                key={option}
+                type="button"
+                aria-pressed={network === option}
+                onClick={() => setNetwork(option)}
+                style={{ border: 0, borderRadius: 5, padding: "4px 8px", background: network === option ? "rgba(34,197,94,0.16)" : "transparent", color: network === option ? "#86efac" : "rgba(255,255,255,0.38)", fontSize: 9, fontWeight: 800, cursor: "pointer" }}
+              >
+                {option === "lan" ? "同网 LAN" : "外出 Tailnet"}
+              </button>
+            ))}
+          </div>
+        )}
         {state.devices.map((device) => (
           <div key={device.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 7, marginTop: 5, color: "rgba(255,255,255,0.42)", fontSize: 9 }}>
             <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -795,7 +818,7 @@ function HumHumMobilePanel({
           </div>
         ))}
       </div>
-      <div style={{ display: "flex", gap: 6 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "flex-end", gap: 6, maxWidth: 144 }}>
         {state.enabled ? (
           <>
             {pairing?.android_setup && (
@@ -812,8 +835,8 @@ function HumHumMobilePanel({
                 className="kawaii-toggle-btn"
               ><Copy size={15} /></button>
             )}
-            <button type="button" title="生成只读配对码" aria-label="生成只读配对码" disabled={busy} onClick={() => run(() => onPair("read"))} className="kawaii-toggle-btn connected"><Link size={15} /></button>
-            <button type="button" title="生成可控制配对码" aria-label="生成可控制配对码" disabled={busy} onClick={() => run(() => onPair("control"))} className="kawaii-toggle-btn"><ShieldCheck size={15} /></button>
+            <button type="button" title="生成只读配对码" aria-label="生成只读配对码" disabled={busy} onClick={() => run(() => onPair("read", network))} className="kawaii-toggle-btn connected"><Link size={15} /></button>
+            <button type="button" title="生成可控制配对码" aria-label="生成可控制配对码" disabled={busy} onClick={() => run(() => onPair("control", network))} className="kawaii-toggle-btn"><ShieldCheck size={15} /></button>
             {state.paired_devices > 0 && <button type="button" title="撤销全部移动设备" aria-label="撤销全部移动设备" disabled={busy} onClick={() => run(onRevoke)} className="kawaii-toggle-btn"><Trash2 size={15} /></button>}
             <button type="button" title="关闭 HUMHUM 移动访问" aria-label="关闭 HUMHUM 移动访问" disabled={busy} onClick={() => run(onDisable)} className="kawaii-toggle-btn"><Power size={15} /></button>
           </>
