@@ -280,9 +280,19 @@ public final class AgentMonitorService extends Service {
     }
 
     private void reportMonitoringPresence(MobileProtocol protocol) throws Exception {
-        if (presenceSupported
-                && !protocol.reportPresence(MobileProtocol.PresenceMode.MONITORING)) {
-            presenceSupported = false;
+        Exception[] failure = {null};
+        lifecycle.commit(() -> {
+            try {
+                if (presenceSupported
+                        && !protocol.reportPresence(MobileProtocol.PresenceMode.MONITORING)) {
+                    presenceSupported = false;
+                }
+            } catch (Exception error) {
+                failure[0] = error;
+            }
+        });
+        if (failure[0] != null) {
+            throw failure[0];
         }
     }
 
