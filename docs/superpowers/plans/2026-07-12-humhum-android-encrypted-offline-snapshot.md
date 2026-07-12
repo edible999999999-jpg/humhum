@@ -34,15 +34,15 @@
 - Produces: `SessionSnapshotCodec.encode(SessionSnapshot): byte[]`, `decode(byte[]): SessionSnapshot`, and `ageCopy(long savedAtMillis, long nowMillis): String`.
 - Produces: `SessionSnapshotCipher.encrypt(byte[] payload, String binding, SecretKey key, byte[] nonce, long savedAtMillis): byte[]` and `decrypt(byte[] envelope, String binding, SecretKey key, long nowMillis): Decrypted`.
 
-- [ ] Write codec tests that round-trip all five allowed fields and prove decoded sessions have empty ID, no actions, and no messaging capability.
-- [ ] Write rejection tests for unknown keys, more than 30 entries, strings over their protocol bounds, non-boolean attention, negative/future save times, and snapshots older than seven days.
-- [ ] Write copy tests for **离线快照 · 刚刚**, minute, hour, and day buckets without raw timestamps.
-- [ ] Run `./android/gradlew -p android :app:testDebugUnitTest --tests '*SessionSnapshot*'` and require missing-class compilation failure.
-- [ ] Implement exact JSON shapes: payload `{version,saved_at_ms,sessions}` and entries `{project,agent,status,last_activity_at,needs_attention}`; reject rather than truncate malformed stored input.
-- [ ] Write AES-GCM tests for round-trip, changed binding, changed nonce/ciphertext, unknown envelope keys/version, oversized envelope, and seven-day expiration.
-- [ ] Run the focused tests and require cipher failures before implementing `SessionSnapshotCipher`.
-- [ ] Implement a four-field envelope `{version,saved_at_ms,nonce,ciphertext}`, 12-byte nonce, binding as UTF-8 AAD, 256 KiB maximum input, and `Decrypted.payload()/savedAtMillis()`.
-- [ ] Run focused and complete Android JVM tests, then commit `feat(android): define encrypted snapshot format`.
+- [x] Write codec tests that round-trip all five allowed fields and prove decoded sessions have empty ID, no actions, and no messaging capability.
+- [x] Write rejection tests for unknown keys, more than 30 entries, strings over their protocol bounds, non-boolean attention, negative/future save times, and snapshots older than seven days.
+- [x] Write copy tests for **离线快照 · 刚刚**, minute, hour, and day buckets without raw timestamps.
+- [x] Run `./android/gradlew -p android :app:testDebugUnitTest --tests '*SessionSnapshot*'` and require missing-class compilation failure.
+- [x] Implement exact JSON shapes: payload `{version,saved_at_ms,sessions}` and entries `{project,agent,status,last_activity_at,needs_attention}`; reject rather than truncate malformed stored input.
+- [x] Write AES-GCM tests for round-trip, changed binding, changed nonce/ciphertext, unknown envelope keys/version, oversized envelope, and seven-day expiration.
+- [x] Run the focused tests and require cipher failures before implementing `SessionSnapshotCipher`.
+- [x] Implement a four-field envelope `{version,saved_at_ms,nonce,ciphertext}`, 12-byte nonce, binding as UTF-8 AAD, 256 KiB maximum input, and `Decrypted.payload()/savedAtMillis()`.
+- [x] Run focused and complete Android JVM tests, then commit `feat(android): define encrypted snapshot format`.
 
 ### Task 2: Android Keystore And Atomic No-Backup Store
 
@@ -81,4 +81,3 @@
 - [ ] Bump Android to `0.3.2` / `versionCode 5`, run all Android JVM tests, release lint, APK/AAB builds, signature, permission, and non-debuggable checks.
 - [ ] Install the signed APK over 0.3.1 on API 36. Pair through the visible form, load live sessions, disable emulator networking, refresh and verify **离线快照** appears with no approval/message controls; restore networking and verify **刚刚同步**; disconnect and verify the snapshot file and keystore alias are gone.
 - [ ] Copy final APK/AAB to `build/releases`, record SHA-256 values, update installation/parity docs and this checklist, commit `docs(android): verify encrypted offline snapshot`, rebuild/relaunch desktop, and leave the overall Xiaomi goal active.
-
