@@ -32,11 +32,11 @@
 - `store.pushSubscription(channelId) -> { provider, token } | null`
 - `PUT|DELETE /v1/channels/{channel}/push`
 
-- [ ] **Step 1: Write failing relay tests** proving subscriber-only registration, exact JSON, 4,096-byte bound, disabled `503`, encrypted-at-rest token absence, replacement, deletion and channel-delete cascade. Use a fixed 64-hex test key and assert the raw SQLite file does not contain the registration token.
-- [ ] **Step 2: Run** `node --test --test-name-pattern='push subscription' relay/test/relay.test.mjs`; require failures because the route and store methods are missing.
-- [ ] **Step 3: Implement the schema and AES-256-GCM token codec** with a `push_subscriptions(channel_id PRIMARY KEY, provider, nonce, ciphertext, updated_at)` table, subscriber authentication and transaction-safe upsert/delete.
-- [ ] **Step 4: Implement strict `PUT` and `DELETE` routing** with exact content type/object fields, generic authentication failures and `503` when the encryption key is absent.
-- [ ] **Step 5: Run** `node --test relay/test/*.test.mjs`; require all relay tests green, then commit `feat(relay): store encrypted push subscriptions`.
+- [x] **Step 1: Write failing relay tests** proving subscriber-only registration, exact JSON, 4,096-byte bound, disabled `503`, encrypted-at-rest token absence, replacement, deletion and channel-delete cascade. Use a fixed 64-hex test key and assert the raw SQLite file does not contain the registration token.
+- [x] **Step 2: Run** `node --test --test-name-pattern='push subscription' relay/test/relay.test.mjs`; require failures because the route and store methods are missing.
+- [x] **Step 3: Implement the schema and AES-256-GCM token codec** with a `push_subscriptions(channel_id PRIMARY KEY, provider, nonce, ciphertext, updated_at)` table, subscriber authentication and transaction-safe upsert/delete.
+- [x] **Step 4: Implement strict `PUT` and `DELETE` routing** with exact content type/object fields, generic authentication failures and `503` when the encryption key is absent.
+- [x] **Step 5: Run** `node --test relay/test/*.test.mjs`; require all relay tests green, then commit `feat(relay): store encrypted push subscriptions`.
 
 ### Task 2: Bounded FCM HTTP v1 Provider And Idempotent Delivery
 

@@ -1,4 +1,10 @@
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  randomBytes,
+  timingSafeEqual,
+} from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
 const RETENTION_MS = 24 * 60 * 60 * 1_000;
@@ -19,8 +25,12 @@ function sameDigest(left, right) {
 }
 
 export class RelayStore {
-  constructor(databasePath, clock = Date.now) {
+  constructor(databasePath, clock = Date.now, pushTokenKey = null) {
     this.clock = clock;
+    if (pushTokenKey !== null && !/^[a-f0-9]{64}$/.test(pushTokenKey)) {
+      throw new Error("pushTokenKey must encode exactly 32 bytes");
+    }
+    this.pushTokenKey = pushTokenKey === null ? null : Buffer.from(pushTokenKey, "hex");
     this.database = new DatabaseSync(databasePath);
     this.database.exec("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;");
     this.database.exec(`
@@ -42,6 +52,13 @@ export class RelayStore {
       ) STRICT;
       CREATE INDEX IF NOT EXISTS messages_expiry
         ON messages(channel_id, created_at);
+      CREATE TABLE IF NOT EXISTS push_subscriptions (
+        channel_id TEXT PRIMARY KEY REFERENCES channels(id) ON DELETE CASCADE,
+        provider TEXT NOT NULL,
+        nonce TEXT NOT NULL,
+        ciphertext TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      ) STRICT;
     `);
     this.insertChannel = this.database.prepare(`
       INSERT INTO channels
@@ -82,6 +99,23 @@ export class RelayStore {
       )
     `);
     this.deleteChannel = this.database.prepare("DELETE FROM channels WHERE id = ?");
+    this.upsertPush = this.database.prepare(`
+      INSERT INTO push_subscriptions
+        (channel_id, provider, nonce, ciphertext, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(channel_id) DO UPDATE SET
+        provider = excluded.provider,
+        nonce = excluded.nonce,
+        ciphertext = excluded.ciphertext,
+        updated_at = excluded.updated_at
+    `);
+    this.selectPush = this.database.prepare(`
+      SELECT provider, nonce, ciphertext
+      FROM push_subscriptions WHERE channel_id = ?
+    `);
+    this.deletePushStatement = this.database.prepare(
+      "DELETE FROM push_subscriptions WHERE channel_id = ?",
+    );
   }
 
   createChannel() {
@@ -147,6 +181,50 @@ export class RelayStore {
     if (!this.authorize(channelId, token, "subscriber")) return null;
     this.deleteExpired.run(channelId, this.clock() - RETENTION_MS);
     return this.selectMessages.all(channelId, after);
+  }
+
+  putPush(channelId, token, provider, registrationToken) {
+    if (!this.authorize(channelId, token, "subscriber")) return "unauthorized";
+    if (!this.pushTokenKey) return "disabled";
+    const nonce = randomBytes(12);
+    const cipher = createCipheriv("aes-256-gcm", this.pushTokenKey, nonce);
+    cipher.setAAD(Buffer.from(`humhum-push-v1:${channelId}:${provider}`, "utf8"));
+    const ciphertext = Buffer.concat([
+      cipher.update(registrationToken, "utf8"),
+      cipher.final(),
+      cipher.getAuthTag(),
+    ]).toString("base64url");
+    this.upsertPush.run(
+      channelId,
+      provider,
+      nonce.toString("base64url"),
+      ciphertext,
+      this.clock(),
+    );
+    return "stored";
+  }
+
+  deletePush(channelId, token) {
+    if (!this.authorize(channelId, token, "subscriber")) return false;
+    this.deletePushStatement.run(channelId);
+    return true;
+  }
+
+  pushSubscription(channelId) {
+    if (!this.pushTokenKey) return null;
+    const row = this.selectPush.get(channelId);
+    if (!row) return null;
+    const nonce = Buffer.from(row.nonce, "base64url");
+    const combined = Buffer.from(row.ciphertext, "base64url");
+    if (nonce.length !== 12 || combined.length <= 16) throw new Error("invalid push token");
+    const decipher = createDecipheriv("aes-256-gcm", this.pushTokenKey, nonce);
+    decipher.setAAD(Buffer.from(`humhum-push-v1:${channelId}:${row.provider}`, "utf8"));
+    decipher.setAuthTag(combined.subarray(combined.length - 16));
+    const token = Buffer.concat([
+      decipher.update(combined.subarray(0, combined.length - 16)),
+      decipher.final(),
+    ]).toString("utf8");
+    return { provider: row.provider, token };
   }
 
   delete(channelId, token) {

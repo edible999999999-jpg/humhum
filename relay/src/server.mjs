@@ -4,6 +4,7 @@ import { RelayStore } from "./store.mjs";
 
 const CHANNEL_PATH = /^\/v1\/channels\/([a-f0-9]{64})$/;
 const MESSAGES_PATH = /^\/v1\/channels\/([a-f0-9]{64})\/messages$/;
+const PUSH_PATH = /^\/v1\/channels\/([a-f0-9]{64})\/push$/;
 const TOKEN = /^[a-f0-9]{64}$/;
 const BASE64URL = /^[A-Za-z0-9_-]+$/;
 
@@ -96,9 +97,9 @@ function limiter(clock) {
   };
 }
 
-export function createRelayServer({ databasePath, clock = Date.now }) {
+export function createRelayServer({ databasePath, clock = Date.now, pushTokenKey = null }) {
   if (!databasePath) throw new Error("databasePath is required");
-  const store = new RelayStore(databasePath, clock);
+  const store = new RelayStore(databasePath, clock, pushTokenKey);
   const allow = limiter(clock);
   const server = createServer(async (request, response) => {
     try {
@@ -151,6 +152,39 @@ export function createRelayServer({ databasePath, clock = Date.now }) {
           }
           await new Promise((resolve) => setTimeout(resolve, 25));
         }
+      }
+
+      const pushMatch = PUSH_PATH.exec(url.pathname);
+      if (request.method === "PUT" && pushMatch && !url.search) {
+        const token = bearer(request);
+        if (!token) return unauthorized(response);
+        let body;
+        try {
+          body = await readJson(request, 4_224);
+        } catch (error) {
+          return send(response, error.tooLarge ? 413 : 400, { error: "Invalid push subscription" });
+        }
+        if (!exactObject(body, ["provider", "token"])
+            || body.provider !== "fcm"
+            || typeof body.token !== "string"
+            || body.token.length === 0
+            || body.token.length > 4_096
+            || !/^[\x21-\x7e]+$/.test(body.token)) {
+          return send(response, body?.token?.length > 4_096 ? 413 : 400, {
+            error: "Invalid push subscription",
+          });
+        }
+        const result = store.putPush(pushMatch[1], token, body.provider, body.token);
+        if (result === "unauthorized") return unauthorized(response);
+        if (result === "disabled") {
+          return send(response, 503, { error: "Push unavailable" });
+        }
+        return send(response, 204);
+      }
+      if (request.method === "DELETE" && pushMatch && !url.search) {
+        const token = bearer(request);
+        if (!token || !store.deletePush(pushMatch[1], token)) return unauthorized(response);
+        return send(response, 204);
       }
 
       const channelMatch = CHANNEL_PATH.exec(url.pathname);

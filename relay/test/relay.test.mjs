@@ -8,6 +8,7 @@ import { DatabaseSync } from "node:sqlite";
 import { createRelayServer } from "../src/server.mjs";
 
 const cleanups = [];
+const PUSH_TOKEN_KEY = "11".repeat(32);
 afterEach(async () => {
   while (cleanups.length) await cleanups.pop()();
 });
@@ -43,6 +44,17 @@ function envelope(sequence, ciphertext = "AQIDBA") {
 async function publish(baseUrl, channel, token, body) {
   return fetch(`${baseUrl}/v1/channels/${channel}/messages`, {
     method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+}
+
+async function putPush(baseUrl, channel, token, body) {
+  return fetch(`${baseUrl}/v1/channels/${channel}/push`, {
+    method: "PUT",
     headers: {
       authorization: `Bearer ${token}`,
       "content-type": "application/json",
@@ -192,6 +204,99 @@ test("identical publication retry is idempotent after the first response is lost
     channel.publisher_token,
     envelope(1, "DIFFERENT"),
   )).status, 409);
+});
+
+test("push subscription is subscriber-only and encrypted at rest", async () => {
+  const { baseUrl, databasePath } = await relay({ pushTokenKey: PUSH_TOKEN_KEY });
+  const channel = await createChannel(baseUrl);
+  const token = "fcm:opaque-registration-token-123";
+
+  assert.equal((await putPush(
+    baseUrl,
+    channel.channel_id,
+    channel.publisher_token,
+    { provider: "fcm", token },
+  )).status, 401);
+  assert.equal((await putPush(
+    baseUrl,
+    channel.channel_id,
+    channel.subscriber_token,
+    { provider: "fcm", token },
+  )).status, 204);
+
+  const database = new DatabaseSync(databasePath);
+  const stored = database.prepare(
+    "SELECT provider, nonce, ciphertext FROM push_subscriptions WHERE channel_id = ?",
+  ).get(channel.channel_id);
+  database.close();
+  assert.equal(stored.provider, "fcm");
+  assert.match(stored.nonce, /^[A-Za-z0-9_-]{16}$/);
+  assert.notEqual(stored.ciphertext, token);
+  const bytes = await readFile(databasePath);
+  assert.equal(bytes.includes(Buffer.from(token)), false);
+});
+
+test("push subscription replaces, deletes, and cascades with its channel", async () => {
+  const { baseUrl, databasePath } = await relay({ pushTokenKey: PUSH_TOKEN_KEY });
+  const first = await createChannel(baseUrl);
+  const second = await createChannel(baseUrl);
+
+  for (const token of ["fcm:first-token", "fcm:rotated-token"]) {
+    assert.equal((await putPush(
+      baseUrl,
+      first.channel_id,
+      first.subscriber_token,
+      { provider: "fcm", token },
+    )).status, 204);
+  }
+  assert.equal((await putPush(
+    baseUrl,
+    second.channel_id,
+    second.subscriber_token,
+    { provider: "fcm", token: "fcm:second-token" },
+  )).status, 204);
+
+  assert.equal((await fetch(`${baseUrl}/v1/channels/${first.channel_id}/push`, {
+    method: "DELETE",
+    headers: { authorization: `Bearer ${first.subscriber_token}` },
+  })).status, 204);
+  assert.equal((await fetch(`${baseUrl}/v1/channels/${second.channel_id}`, {
+    method: "DELETE",
+    headers: { authorization: `Bearer ${second.publisher_token}` },
+  })).status, 204);
+
+  const database = new DatabaseSync(databasePath);
+  assert.equal(database.prepare("SELECT count(*) AS count FROM push_subscriptions").get().count, 0);
+  database.close();
+});
+
+test("push subscription rejects disabled, malformed, and oversized requests", async () => {
+  const disabled = await relay();
+  const disabledChannel = await createChannel(disabled.baseUrl);
+  assert.equal((await putPush(
+    disabled.baseUrl,
+    disabledChannel.channel_id,
+    disabledChannel.subscriber_token,
+    { provider: "fcm", token: "fcm:token" },
+  )).status, 503);
+
+  const { baseUrl } = await relay({ pushTokenKey: PUSH_TOKEN_KEY });
+  const channel = await createChannel(baseUrl);
+  for (const body of [
+    { provider: "other", token: "fcm:token" },
+    { provider: "fcm", token: "" },
+    { provider: "fcm", token: "fcm:token", extra: true },
+  ]) {
+    assert.equal((await putPush(
+      baseUrl, channel.channel_id, channel.subscriber_token, body,
+    )).status, 400);
+  }
+  assert.equal((await putPush(
+    baseUrl,
+    channel.channel_id,
+    channel.subscriber_token,
+    { provider: "fcm", token: "A".repeat(4_097) },
+  )).status, 413);
 });
 
 test("mailboxes retain only 128 bounded envelopes", async () => {
