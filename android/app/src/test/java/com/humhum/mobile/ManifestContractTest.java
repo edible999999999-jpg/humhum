@@ -137,43 +137,65 @@ public class ManifestContractTest {
     }
 
     @Test
-    public void encryptedSnapshotLifecycleIsOrderedAroundLiveConnectionState() throws Exception {
+    public void encryptedSnapshotLifecycleUsesPolicyAndGenerationGuard() throws Exception {
         String source = new String(Files.readAllBytes(
                 Path.of("src/main/java/com/humhum/mobile/MainActivity.java")), StandardCharsets.UTF_8);
 
-        String creation = "snapshotStore = new EncryptedSessionSnapshotStore(this);";
-        assertTrue(source.contains(creation));
+        assertTrue(source.contains("snapshotStore = new EncryptedSessionSnapshotStore(this);"));
+        assertTrue(source.contains(
+                "snapshotGenerationGate = SessionSnapshotGenerationGate.open();"));
+
+        String destruction = methodSource(
+                source, "protected void onDestroy()", "private void bindViews()");
+        assertOrdered(destruction, "snapshotGenerationGate.close();", "network.shutdownNow();");
 
         String pairing = methodSource(source, "private void pair()", "private void pasteSetup()");
         assertOrdered(
                 pairing,
+                "long pairGeneration = snapshotGenerationGate.renew();",
+                "snapshotGenerationGate.callIfCurrent(pairGeneration",
+                "isCurrentConnection(null, null)",
                 "clearSnapshotSafely();",
                 "connectionStore.save(config, result);");
 
         String disconnect = methodSource(
                 source, "private void disconnect()", "private void onMonitorChanged(boolean checked)");
-        assertOrdered(disconnect, "clearSnapshotSafely();", "connectionStore.clear();");
+        assertOrdered(
+                disconnect,
+                "long disconnectGeneration = snapshotGenerationGate.renew();",
+                "snapshotGenerationGate.callIfCurrent(disconnectGeneration",
+                "isCurrentConnection(current, currentConnection)",
+                "clearSnapshotSafely();",
+                "connectionStore.clear();",
+                "refreshInFlight = false;",
+                "showConnect();");
 
         String refresh = methodSource(
                 source, "private void refreshSessions(boolean userInitiated)",
                 "private void renderSessions(List<Models.Session> sessions)");
         assertOrdered(
                 refresh,
+                "long refreshGeneration = snapshotGenerationGate.capture();",
                 "Models.SessionPage page = current.sessions();",
-                "writeSnapshotSafely(currentConnection, page.sessions(), savedAtMillis);",
-                "renderSessions(page.sessions());");
+                "snapshotGenerationGate.callIfCurrent(",
+                "isCurrentConnection(current, currentConnection)",
+                "writeSnapshotSafely(",
+                "postIfCurrent(refreshGeneration, current, currentConnection");
         assertOrdered(
                 refresh,
                 "} catch (Exception error) {",
-                "SessionSnapshot snapshot = readSnapshotSafely(currentConnection, nowMillis);",
-                "SessionSnapshotCodec.ageCopy(snapshot.savedAtMillis(), nowMillis)",
-                "renderSessions(snapshot.sessions());");
+                "OfflineFallbackPolicy.canUseSnapshot(error)",
+                "snapshotGenerationGate.callIfCurrent(",
+                "isCurrentConnection(current, currentConnection)",
+                "readSnapshotSafely(currentConnection, nowMillis)",
+                "postIfCurrent(refreshGeneration, current, currentConnection");
         assertTrue(refresh.contains("statusText.setText(safeError(error));"));
 
-        assertTrue(source.contains("private void writeSnapshotSafely("));
-        assertTrue(source.contains("private SessionSnapshot readSnapshotSafely("));
-        assertTrue(source.contains("private void clearSnapshotSafely()"));
-        assertTrue(source.contains("catch (RuntimeException ignored)"));
+        String callback = methodSource(
+                source, "private void postIfCurrent(", "private void writeSnapshotSafely(");
+        assertTrue(callback.contains("snapshotGenerationGate.runIfCurrent(generation"));
+        assertTrue(callback.contains(
+                "isCurrentConnection(expectedProtocol, expectedConnection)"));
     }
 
     private static Element component(Document document, String tag, String name) {

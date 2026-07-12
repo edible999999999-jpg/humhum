@@ -39,6 +39,7 @@ public final class MainActivity extends Activity {
 
     private ConnectionStore connectionStore;
     private EncryptedSessionSnapshotStore snapshotStore;
+    private SessionSnapshotGenerationGate snapshotGenerationGate;
     private MonitorStore monitorStore;
     private ConnectionStore.Connection connection;
     private MobileProtocol protocol;
@@ -75,6 +76,7 @@ public final class MainActivity extends Activity {
         bindViews();
         connectionStore = new ConnectionStore(getSharedPreferences("humhum_connection", MODE_PRIVATE));
         snapshotStore = new EncryptedSessionSnapshotStore(this);
+        snapshotGenerationGate = SessionSnapshotGenerationGate.open();
         monitorStore = AgentMonitorService.monitorStore(this);
         pushPreferences = getSharedPreferences("humhum_push", MODE_PRIVATE);
         connectButton.setOnClickListener(view -> pair());
@@ -123,6 +125,7 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        snapshotGenerationGate.close();
         network.shutdownNow();
         super.onDestroy();
     }
@@ -182,19 +185,28 @@ public final class MainActivity extends Activity {
             return;
         }
         setPairing(true);
+        long pairRequestGeneration = snapshotGenerationGate.capture();
         network.execute(() -> {
+            long callbackGeneration = pairRequestGeneration;
             try {
                 Models.PairResult result = new MobileProtocol(config, "", Models.Scope.READ).pair();
-                clearSnapshotSafely();
-                connectionStore.save(config, result);
-                ConnectionStore.Connection saved = connectionStore.load();
-                main.post(() -> {
+                long pairGeneration = snapshotGenerationGate.renew();
+                callbackGeneration = pairGeneration;
+                ConnectionStore.Connection saved = snapshotGenerationGate.callIfCurrent(pairGeneration, () -> {
+                    if (!isCurrentConnection(null, null)) return null;
+                    clearSnapshotSafely();
+                    connectionStore.save(config, result);
+                    return connectionStore.load();
+                }, null);
+                if (saved == null) return;
+                postIfCurrent(pairGeneration, null, null, () -> {
                     setPairing(false);
                     hideKeyboard();
                     activate(saved);
                 });
             } catch (Exception error) {
-                main.post(() -> {
+                long failureGeneration = callbackGeneration;
+                postIfCurrent(failureGeneration, null, null, () -> {
                     setPairing(false);
                     connectError.setText(safeError(error));
                 });
@@ -268,7 +280,9 @@ public final class MainActivity extends Activity {
 
     private void disconnect() {
         MobileProtocol current = protocol;
-        if (current == null) return;
+        ConnectionStore.Connection currentConnection = connection;
+        if (current == null || currentConnection == null) return;
+        long disconnectGeneration = snapshotGenerationGate.renew();
         disableMonitor();
         PushRegistration.cancel(this);
         disconnectButton.setEnabled(false);
@@ -281,11 +295,18 @@ public final class MainActivity extends Activity {
                 warning = "本机连接已清除；Mac 未确认撤销，请在 Hexa 中撤销旧设备。";
             }
             String finalWarning = warning;
-            clearSnapshotSafely();
-            connectionStore.clear();
-            main.post(() -> {
+            boolean cleared = snapshotGenerationGate.callIfCurrent(disconnectGeneration, () -> {
+                if (!isCurrentConnection(current, currentConnection)) return false;
+                clearSnapshotSafely();
+                connectionStore.clear();
+                return true;
+            }, false);
+            if (!cleared) return;
+            postIfCurrent(disconnectGeneration, current, currentConnection, () -> {
                 disconnectButton.setEnabled(true);
                 codeInput.setText("");
+                refreshInFlight = false;
+                refreshButton.setEnabled(true);
                 showConnect();
                 connectError.setText(finalWarning.isEmpty() ? "已安全断开并撤销此设备" : finalWarning);
             });
@@ -393,15 +414,18 @@ public final class MainActivity extends Activity {
         if (userInitiated) statusText.setText("正在刷新");
         MobileProtocol current = protocol;
         ConnectionStore.Connection currentConnection = connection;
+        long refreshGeneration = snapshotGenerationGate.capture();
         network.execute(() -> {
             try {
                 Models.SessionPage page = current.sessions();
                 long savedAtMillis = System.currentTimeMillis();
-                if (protocol == current && connection == currentConnection) {
+                boolean written = snapshotGenerationGate.callIfCurrent(refreshGeneration, () -> {
+                    if (!isCurrentConnection(current, currentConnection)) return false;
                     writeSnapshotSafely(currentConnection, page.sessions(), savedAtMillis);
-                }
-                main.post(() -> {
-                    if (protocol != current || connection != currentConnection) return;
+                    return true;
+                }, false);
+                if (!written) return;
+                postIfCurrent(refreshGeneration, current, currentConnection, () -> {
                     refreshInFlight = false;
                     refreshButton.setEnabled(true);
                     statusText.setText("刚刚同步");
@@ -409,9 +433,16 @@ public final class MainActivity extends Activity {
                 });
             } catch (Exception error) {
                 long nowMillis = System.currentTimeMillis();
-                SessionSnapshot snapshot = readSnapshotSafely(currentConnection, nowMillis);
-                main.post(() -> {
-                    if (protocol != current || connection != currentConnection) return;
+                SessionSnapshot snapshot = OfflineFallbackPolicy.canUseSnapshot(error)
+                        ? snapshotGenerationGate.callIfCurrent(
+                                refreshGeneration,
+                                () -> {
+                                    if (!isCurrentConnection(current, currentConnection)) return null;
+                                    return readSnapshotSafely(currentConnection, nowMillis);
+                                },
+                                null)
+                        : null;
+                postIfCurrent(refreshGeneration, current, currentConnection, () -> {
                     refreshInFlight = false;
                     refreshButton.setEnabled(true);
                     if (snapshot == null) {
@@ -424,6 +455,23 @@ public final class MainActivity extends Activity {
                 });
             }
         });
+    }
+
+    private boolean isCurrentConnection(
+            MobileProtocol expectedProtocol,
+            ConnectionStore.Connection expectedConnection) {
+        return protocol == expectedProtocol && connection == expectedConnection;
+    }
+
+    private void postIfCurrent(
+            long generation,
+            MobileProtocol expectedProtocol,
+            ConnectionStore.Connection expectedConnection,
+            Runnable action) {
+        main.post(() -> snapshotGenerationGate.runIfCurrent(generation, () -> {
+            if (!isCurrentConnection(expectedProtocol, expectedConnection)) return;
+            action.run();
+        }));
     }
 
     private void writeSnapshotSafely(
@@ -550,12 +598,14 @@ public final class MainActivity extends Activity {
         first.setEnabled(false);
         second.setEnabled(false);
         MobileProtocol current = protocol;
+        ConnectionStore.Connection currentConnection = connection;
+        long generation = snapshotGenerationGate.capture();
         network.execute(() -> {
             try {
                 current.resolveApproval(action, decision);
-                main.post(() -> refreshSessions(true));
+                postIfCurrent(generation, current, currentConnection, () -> refreshSessions(true));
             } catch (Exception error) {
-                main.post(() -> {
+                postIfCurrent(generation, current, currentConnection, () -> {
                     first.setEnabled(true);
                     second.setEnabled(true);
                     statusText.setText(safeError(error));
@@ -569,17 +619,19 @@ public final class MainActivity extends Activity {
         if (message.isEmpty()) return;
         send.setEnabled(false);
         MobileProtocol current = protocol;
+        ConnectionStore.Connection currentConnection = connection;
+        long generation = snapshotGenerationGate.capture();
         network.execute(() -> {
             try {
                 String state = current.sendMessage(session, message);
-                main.post(() -> {
+                postIfCurrent(generation, current, currentConnection, () -> {
                     draft.setText("");
                     send.setEnabled(true);
                     statusText.setText("delivered".equals(state) ? "跟进已送达" : "跟进已进入队列");
                     refreshSessions(false);
                 });
             } catch (Exception error) {
-                main.post(() -> {
+                postIfCurrent(generation, current, currentConnection, () -> {
                     send.setEnabled(true);
                     statusText.setText(safeError(error));
                 });
