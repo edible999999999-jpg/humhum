@@ -23,11 +23,15 @@ import android.widget.LinearLayout;
 import android.widget.Switch;
 import android.widget.TextView;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public final class MainActivity extends Activity {
     private static final int NOTIFICATION_PERMISSION_REQUEST = 4103;
+    private static final StartedOwnerRegistry<MainActivity> STARTED_ACTIVITIES =
+            new StartedOwnerRegistry<>();
+    private static final ExecutorService DURABLE_TRANSITIONS = Executors.newSingleThreadExecutor();
     private final ExecutorService network = Executors.newSingleThreadExecutor();
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Runnable poll = new Runnable() {
@@ -100,6 +104,8 @@ public final class MainActivity extends Activity {
     @Override
     protected void onStart() {
         super.onStart();
+        STARTED_ACTIVITIES.start(this);
+        reconcileDurableConnection(null);
         pushPreferences.registerOnSharedPreferenceChangeListener(pushStateListener);
         updatePushStatus();
     }
@@ -118,6 +124,7 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onStop() {
+        STARTED_ACTIVITIES.stop(this);
         pushPreferences.unregisterOnSharedPreferenceChangeListener(pushStateListener);
         main.removeCallbacks(poll);
         super.onStop();
@@ -186,27 +193,20 @@ public final class MainActivity extends Activity {
         }
         setPairing(true);
         long pairRequestGeneration = snapshotGenerationGate.capture();
-        network.execute(() -> {
-            long callbackGeneration = pairRequestGeneration;
+        DURABLE_TRANSITIONS.execute(() -> {
             try {
                 Models.PairResult result = new MobileProtocol(config, "", Models.Scope.READ).pair();
-                long pairGeneration = snapshotGenerationGate.renew();
-                callbackGeneration = pairGeneration;
-                ConnectionStore.Connection saved = snapshotGenerationGate.callIfCurrent(pairGeneration, () -> {
-                    if (!isCurrentConnection(null, null)) return null;
-                    clearSnapshotSafely();
-                    connectionStore.save(config, result);
-                    return connectionStore.load();
-                }, null);
-                if (saved == null) return;
-                postIfCurrent(pairGeneration, null, null, () -> {
-                    setPairing(false);
-                    hideKeyboard();
-                    activate(saved);
-                });
+                try {
+                    SessionSnapshotGenerationGate.callExclusiveTransition(() -> {
+                        clearSnapshotSafely();
+                        connectionStore.save(config, result);
+                        return null;
+                    });
+                } finally {
+                    notifyStartedActivityOfDurableChange("");
+                }
             } catch (Exception error) {
-                long failureGeneration = callbackGeneration;
-                postIfCurrent(failureGeneration, null, null, () -> {
+                postIfCurrent(pairRequestGeneration, null, null, () -> {
                     setPairing(false);
                     connectError.setText(safeError(error));
                 });
@@ -280,14 +280,12 @@ public final class MainActivity extends Activity {
 
     private void disconnect() {
         MobileProtocol current = protocol;
-        ConnectionStore.Connection currentConnection = connection;
-        if (current == null || currentConnection == null) return;
-        long disconnectGeneration = snapshotGenerationGate.renew();
+        if (current == null || connection == null) return;
         disableMonitor();
         PushRegistration.cancel(this);
         disconnectButton.setEnabled(false);
         statusText.setText("正在安全断开");
-        network.execute(() -> {
+        DURABLE_TRANSITIONS.execute(() -> {
             String warning = "";
             try {
                 current.disconnect();
@@ -295,21 +293,14 @@ public final class MainActivity extends Activity {
                 warning = "本机连接已清除；Mac 未确认撤销，请在 Hexa 中撤销旧设备。";
             }
             String finalWarning = warning;
-            boolean cleared = snapshotGenerationGate.callIfCurrent(disconnectGeneration, () -> {
-                if (!isCurrentConnection(current, currentConnection)) return false;
-                clearSnapshotSafely();
-                connectionStore.clear();
-                return true;
-            }, false);
-            if (!cleared) return;
-            postIfCurrent(disconnectGeneration, current, currentConnection, () -> {
-                disconnectButton.setEnabled(true);
-                codeInput.setText("");
-                refreshInFlight = false;
-                refreshButton.setEnabled(true);
-                showConnect();
-                connectError.setText(finalWarning.isEmpty() ? "已安全断开并撤销此设备" : finalWarning);
-            });
+            try {
+                SessionSnapshotGenerationGate.runExclusiveTransition(() -> {
+                    clearSnapshotSafely();
+                    connectionStore.clear();
+                });
+            } finally {
+                notifyStartedActivityOfDurableChange(finalWarning);
+            }
         });
     }
 
@@ -468,10 +459,81 @@ public final class MainActivity extends Activity {
             MobileProtocol expectedProtocol,
             ConnectionStore.Connection expectedConnection,
             Runnable action) {
-        main.post(() -> snapshotGenerationGate.runIfCurrent(generation, () -> {
+        main.post(() -> {
+            if (!snapshotGenerationGate.isLatestOwner()) return;
+            if (!snapshotGenerationGate.isCurrent(generation)) return;
             if (!isCurrentConnection(expectedProtocol, expectedConnection)) return;
             action.run();
+        });
+    }
+
+    private static void notifyStartedActivityOfDurableChange(String notice) {
+        STARTED_ACTIVITIES.dispatch(activity -> activity.main.post(() -> {
+            if (!STARTED_ACTIVITIES.isCurrent(activity)) return;
+            if (!activity.snapshotGenerationGate.isLatestOwner()) return;
+            activity.reconcileDurableConnection(notice);
         }));
+    }
+
+    private void reconcileDurableConnection(String notice) {
+        if (!STARTED_ACTIVITIES.isCurrent(this)) return;
+        if (!snapshotGenerationGate.isLatestOwner()) return;
+        ensureCurrentSnapshotGeneration();
+        ConnectionStore.Connection saved = connectionStore.load();
+        if (saved == null) {
+            if (connection == null && notice == null) return;
+            disconnectButton.setEnabled(true);
+            codeInput.setText("");
+            refreshInFlight = false;
+            refreshButton.setEnabled(true);
+            showConnect();
+            if (notice != null) {
+                connectError.setText(notice.isEmpty()
+                        ? "已安全断开并撤销此设备"
+                        : notice);
+            }
+            return;
+        }
+        setPairing(false);
+        hideKeyboard();
+        if (!sameConnection(connection, saved)) {
+            activate(saved);
+        } else if (notice != null) {
+            refreshInFlight = false;
+            refreshButton.setEnabled(true);
+            refreshSessions(true);
+        }
+    }
+
+    private void ensureCurrentSnapshotGeneration() {
+        long generation = snapshotGenerationGate.capture();
+        if (snapshotGenerationGate.isCurrent(generation)) return;
+        snapshotGenerationGate.close();
+        snapshotGenerationGate = SessionSnapshotGenerationGate.open();
+    }
+
+    private static boolean sameConnection(
+            ConnectionStore.Connection first, ConnectionStore.Connection second) {
+        if (first == second) return true;
+        if (first == null || second == null) return false;
+        BridgeConfig firstConfig = first.config();
+        BridgeConfig secondConfig = second.config();
+        return Objects.equals(firstConfig.baseUrl(), secondConfig.baseUrl())
+                && Objects.equals(firstConfig.fingerprint(), secondConfig.fingerprint())
+                && Objects.equals(firstConfig.deviceName(), secondConfig.deviceName())
+                && Objects.equals(first.token(), second.token())
+                && first.scope() == second.scope()
+                && sameWakeRelay(first.wakeRelay(), second.wakeRelay());
+    }
+
+    private static boolean sameWakeRelay(
+            Models.WakeRelayConfig first, Models.WakeRelayConfig second) {
+        if (first == second) return true;
+        if (first == null || second == null) return false;
+        return Objects.equals(first.baseUrl(), second.baseUrl())
+                && Objects.equals(first.channelId(), second.channelId())
+                && Objects.equals(first.subscriberToken(), second.subscriberToken())
+                && Objects.equals(first.wakeKey(), second.wakeKey());
     }
 
     private void writeSnapshotSafely(

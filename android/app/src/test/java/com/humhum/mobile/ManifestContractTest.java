@@ -144,6 +144,19 @@ public class ManifestContractTest {
         assertTrue(source.contains("snapshotStore = new EncryptedSessionSnapshotStore(this);"));
         assertTrue(source.contains(
                 "snapshotGenerationGate = SessionSnapshotGenerationGate.open();"));
+        assertTrue(source.contains(
+                "StartedOwnerRegistry<MainActivity> STARTED_ACTIVITIES"));
+        assertTrue(source.contains(
+                "ExecutorService DURABLE_TRANSITIONS = Executors.newSingleThreadExecutor()"));
+
+        String start = methodSource(source, "protected void onStart()", "protected void onResume()");
+        assertOrdered(
+                start,
+                "STARTED_ACTIVITIES.start(this);",
+                "reconcileDurableConnection(null);");
+
+        String stop = methodSource(source, "protected void onStop()", "protected void onDestroy()");
+        assertTrue(stop.contains("STARTED_ACTIVITIES.stop(this);"));
 
         String destruction = methodSource(
                 source, "protected void onDestroy()", "private void bindViews()");
@@ -152,23 +165,24 @@ public class ManifestContractTest {
         String pairing = methodSource(source, "private void pair()", "private void pasteSetup()");
         assertOrdered(
                 pairing,
-                "long pairGeneration = snapshotGenerationGate.renew();",
-                "snapshotGenerationGate.callIfCurrent(pairGeneration",
-                "isCurrentConnection(null, null)",
+                "DURABLE_TRANSITIONS.execute(",
+                "SessionSnapshotGenerationGate.callExclusiveTransition(",
                 "clearSnapshotSafely();",
-                "connectionStore.save(config, result);");
+                "connectionStore.save(config, result);",
+                "notifyStartedActivityOfDurableChange(\"\");");
+        assertFalse(pairing.contains("callIfCurrent"));
 
         String disconnect = methodSource(
                 source, "private void disconnect()", "private void onMonitorChanged(boolean checked)");
         assertOrdered(
                 disconnect,
-                "long disconnectGeneration = snapshotGenerationGate.renew();",
-                "snapshotGenerationGate.callIfCurrent(disconnectGeneration",
-                "isCurrentConnection(current, currentConnection)",
+                "DURABLE_TRANSITIONS.execute(",
+                "SessionSnapshotGenerationGate.runExclusiveTransition(",
                 "clearSnapshotSafely();",
                 "connectionStore.clear();",
-                "refreshInFlight = false;",
-                "showConnect();");
+                "notifyStartedActivityOfDurableChange(finalWarning);");
+        assertFalse(disconnect.contains("callIfCurrent"));
+        assertFalse(disconnect.contains("snapshotGenerationGate.renew"));
 
         String refresh = methodSource(
                 source, "private void refreshSessions(boolean userInitiated)",
@@ -193,9 +207,28 @@ public class ManifestContractTest {
 
         String callback = methodSource(
                 source, "private void postIfCurrent(", "private void writeSnapshotSafely(");
-        assertTrue(callback.contains("snapshotGenerationGate.runIfCurrent(generation"));
+        assertTrue(callback.contains("snapshotGenerationGate.isLatestOwner()"));
+        assertTrue(callback.contains("snapshotGenerationGate.isCurrent(generation)"));
         assertTrue(callback.contains(
                 "isCurrentConnection(expectedProtocol, expectedConnection)"));
+        assertFalse(callback.contains("runIfCurrent"));
+
+        String notification = methodSource(
+                source,
+                "private static void notifyStartedActivityOfDurableChange(",
+                "private void reconcileDurableConnection(");
+        assertTrue(notification.contains("STARTED_ACTIVITIES.dispatch("));
+        assertTrue(notification.contains("STARTED_ACTIVITIES.isCurrent(activity)"));
+
+        String reconciliation = methodSource(
+                source, "private void reconcileDurableConnection(",
+                "private void ensureCurrentSnapshotGeneration()");
+        assertOrdered(
+                reconciliation,
+                "ensureCurrentSnapshotGeneration();",
+                "connectionStore.load()",
+                "showConnect()");
+        assertTrue(reconciliation.contains("activate(saved)"));
     }
 
     private static Element component(Document document, String tag, String name) {

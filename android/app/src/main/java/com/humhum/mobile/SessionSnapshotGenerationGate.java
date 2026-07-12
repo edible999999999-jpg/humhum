@@ -7,18 +7,24 @@ final class SessionSnapshotGenerationGate implements AutoCloseable {
     private static final Object PROCESS_LOCK = new Object();
     private static long generationCounter;
     private static long activeGeneration;
+    private static long ownerCounter;
+    private static long latestOwnerId;
 
+    private final long ownerId;
     private long ownedGeneration;
 
-    private SessionSnapshotGenerationGate(long generation) {
+    private SessionSnapshotGenerationGate(long generation, long ownerId) {
         ownedGeneration = generation;
+        this.ownerId = ownerId;
     }
 
     static SessionSnapshotGenerationGate open() {
         synchronized (PROCESS_LOCK) {
             long generation = nextGeneration();
+            long ownerId = nextOwnerId();
             activeGeneration = generation;
-            return new SessionSnapshotGenerationGate(generation);
+            latestOwnerId = ownerId;
+            return new SessionSnapshotGenerationGate(generation, ownerId);
         }
     }
 
@@ -47,6 +53,12 @@ final class SessionSnapshotGenerationGate implements AutoCloseable {
         }
     }
 
+    boolean isLatestOwner() {
+        synchronized (PROCESS_LOCK) {
+            return ownedGeneration != 0L && ownerId == latestOwnerId;
+        }
+    }
+
     boolean runIfCurrent(long generation, Runnable operation) {
         Objects.requireNonNull(operation, "operation");
         synchronized (PROCESS_LOCK) {
@@ -61,6 +73,26 @@ final class SessionSnapshotGenerationGate implements AutoCloseable {
         synchronized (PROCESS_LOCK) {
             if (!isCurrentLocked(generation)) return staleValue;
             return operation.get();
+        }
+    }
+
+    static void runExclusiveTransition(Runnable operation) {
+        Objects.requireNonNull(operation, "operation");
+        callExclusiveTransition(() -> {
+            operation.run();
+            return null;
+        });
+    }
+
+    static <T> T callExclusiveTransition(Supplier<T> operation) {
+        Objects.requireNonNull(operation, "operation");
+        synchronized (PROCESS_LOCK) {
+            try {
+                // Keep this to snapshot/connection persistence; Keystore latency blocks the lock.
+                return operation.get();
+            } finally {
+                activeGeneration = nextGeneration();
+            }
         }
     }
 
@@ -89,5 +121,11 @@ final class SessionSnapshotGenerationGate implements AutoCloseable {
         generationCounter++;
         if (generationCounter == 0L) generationCounter++;
         return generationCounter;
+    }
+
+    private static long nextOwnerId() {
+        ownerCounter++;
+        if (ownerCounter == 0L) ownerCounter++;
+        return ownerCounter;
     }
 }

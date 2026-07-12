@@ -1,10 +1,13 @@
 package com.humhum.mobile;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -102,6 +105,88 @@ public class SessionSnapshotGenerationGateTest {
             releaseOperation.countDown();
             assertTrue(operation.get(1, TimeUnit.SECONDS));
             assertTrue(gate.isCurrent(renewal.get(1, TimeUnit.SECONDS)));
+        } finally {
+            releaseOperation.countDown();
+            executor.shutdownNow();
+            gate.close();
+        }
+    }
+
+    @Test
+    public void exclusiveTransitionRunsAfterInitiatingOwnerIsStaleAndClosed() {
+        SessionSnapshotGenerationGate oldOwner = SessionSnapshotGenerationGate.open();
+        SessionSnapshotGenerationGate replacement = SessionSnapshotGenerationGate.open();
+        long replacementGeneration = replacement.capture();
+        oldOwner.close();
+        AtomicBoolean committed = new AtomicBoolean();
+        try {
+            SessionSnapshotGenerationGate.runExclusiveTransition(() -> committed.set(true));
+            assertTrue(committed.get());
+            assertFalse(replacement.isCurrent(replacementGeneration));
+        } finally {
+            replacement.close();
+        }
+    }
+
+    @Test
+    public void exclusiveTransitionDoesNotChangeLatestActivityOwner() {
+        SessionSnapshotGenerationGate oldOwner = SessionSnapshotGenerationGate.open();
+        SessionSnapshotGenerationGate replacement = SessionSnapshotGenerationGate.open();
+        try {
+            assertFalse(oldOwner.isLatestOwner());
+            assertTrue(replacement.isLatestOwner());
+            SessionSnapshotGenerationGate.runExclusiveTransition(() -> {});
+            assertFalse(oldOwner.isLatestOwner());
+            assertTrue(replacement.isLatestOwner());
+        } finally {
+            oldOwner.close();
+            replacement.close();
+        }
+    }
+
+    @Test
+    public void exclusiveTransitionPreservesClearBeforeCommitOrdering() {
+        List<String> events = new ArrayList<>();
+        String result = SessionSnapshotGenerationGate.callExclusiveTransition(() -> {
+            events.add("clear snapshot");
+            events.add("commit connection");
+            return "saved";
+        });
+        assertEquals("saved", result);
+        assertEquals(List.of("clear snapshot", "commit connection"), events);
+    }
+
+    @Test
+    public void exclusiveTransitionWaitsForGuardedSnapshotOperation() throws Exception {
+        SessionSnapshotGenerationGate gate = SessionSnapshotGenerationGate.open();
+        long generation = gate.capture();
+        CountDownLatch operationStarted = new CountDownLatch(1);
+        CountDownLatch releaseOperation = new CountDownLatch(1);
+        CountDownLatch transitionStarted = new CountDownLatch(1);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<Boolean> operation = executor.submit(() -> gate.runIfCurrent(generation, () -> {
+                operationStarted.countDown();
+                await(releaseOperation);
+            }));
+            assertTrue(operationStarted.await(1, TimeUnit.SECONDS));
+
+            Future<?> transition = executor.submit(() -> {
+                transitionStarted.countDown();
+                SessionSnapshotGenerationGate.runExclusiveTransition(() -> {});
+            });
+            assertTrue(transitionStarted.await(1, TimeUnit.SECONDS));
+            try {
+                transition.get(100, TimeUnit.MILLISECONDS);
+                fail("Exclusive transition must wait for the guarded operation");
+            } catch (TimeoutException expected) {
+                // Expected while snapshot work owns the process lock.
+            }
+
+            releaseOperation.countDown();
+            assertTrue(operation.get(1, TimeUnit.SECONDS));
+            transition.get(1, TimeUnit.SECONDS);
+            assertFalse(gate.isCurrent(generation));
         } finally {
             releaseOperation.countDown();
             executor.shutdownNow();
