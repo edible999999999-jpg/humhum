@@ -1,7 +1,10 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::collections::HashSet;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 const COALESCE_MILLIS: u64 = 1_000;
@@ -48,6 +51,10 @@ pub(crate) struct PublisherState {
 
 impl PublisherState {
     pub(crate) fn observe(&mut self, device_id: &str, cursor: &str, now: u64) {
+        self.observe_after(device_id, cursor, now, COALESCE_MILLIS);
+    }
+
+    fn observe_after(&mut self, device_id: &str, cursor: &str, now: u64, coalesce: u64) {
         let state = self.devices.entry(device_id.to_string()).or_default();
         if state.published_cursor.is_none() {
             state.published_cursor = Some(cursor.to_string());
@@ -59,7 +66,7 @@ impl PublisherState {
             return;
         }
         if state.pending_cursor.is_none() {
-            state.due_at = now.saturating_add(COALESCE_MILLIS);
+            state.due_at = now.saturating_add(coalesce);
         }
         state.pending_cursor = Some(cursor.to_string());
     }
@@ -87,20 +94,28 @@ impl PublisherState {
     }
 
     pub(crate) fn failed(&mut self, device_id: &str, now: u64) {
+        self.failed_after(device_id, now, RETRY_MILLIS);
+    }
+
+    fn failed_after(&mut self, device_id: &str, now: u64, retries: [u64; 4]) {
         let Some(state) = self.devices.get_mut(device_id) else {
             return;
         };
-        let delay = RETRY_MILLIS[state.failures.min(RETRY_MILLIS.len() - 1)];
+        let delay = retries[state.failures.min(retries.len() - 1)];
         state.failures = state.failures.saturating_add(1);
         state.due_at = now.saturating_add(delay);
     }
 
-    pub(crate) fn remove(&mut self, device_id: &str) {
-        self.devices.remove(device_id);
+    fn next_due(&self) -> Option<u64> {
+        self.devices
+            .values()
+            .filter(|state| state.pending_cursor.is_some())
+            .map(|state| state.due_at)
+            .min()
     }
 
-    pub(crate) fn retain(&mut self, mut keep: impl FnMut(&str) -> bool) {
-        self.devices.retain(|device_id, _| keep(device_id));
+    pub(crate) fn remove(&mut self, device_id: &str) {
+        self.devices.remove(device_id);
     }
 
     pub(crate) fn clear(&mut self) {
@@ -125,6 +140,319 @@ impl PublisherState {
             RelayPublisherStatus::Connected
         }
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct PublisherTiming {
+    pub(crate) coalesce: Duration,
+    pub(crate) retries: [Duration; 4],
+}
+
+impl Default for PublisherTiming {
+    fn default() -> Self {
+        Self {
+            coalesce: Duration::from_secs(1),
+            retries: [
+                Duration::from_secs(5),
+                Duration::from_secs(15),
+                Duration::from_secs(30),
+                Duration::from_secs(60),
+            ],
+        }
+    }
+}
+
+enum PublisherCommand {
+    Observe {
+        device_id: String,
+        cursor: String,
+    },
+    Revoke {
+        device_id: String,
+        complete: std::sync::mpsc::SyncSender<()>,
+    },
+    Clear {
+        complete: std::sync::mpsc::SyncSender<()>,
+    },
+    Stop,
+}
+
+pub(crate) struct WakePublisher {
+    commands: tokio::sync::mpsc::UnboundedSender<PublisherCommand>,
+    status: Arc<Mutex<RelayPublisherStatus>>,
+    lifecycle: Arc<PublisherLifecycle>,
+    thread: Mutex<Option<std::thread::JoinHandle<()>>>,
+}
+
+#[derive(Default)]
+struct PublisherLifecycle {
+    stopping: AtomicBool,
+    clearing: AtomicBool,
+    revoked: Mutex<HashSet<String>>,
+}
+
+impl WakePublisher {
+    pub(crate) fn start(
+        secrets: Arc<Mutex<MobileRelaySecretStore>>,
+        timing: PublisherTiming,
+    ) -> Arc<Self> {
+        let (commands, receiver) = tokio::sync::mpsc::unbounded_channel();
+        let status = Arc::new(Mutex::new(RelayPublisherStatus::Connected));
+        let lifecycle = Arc::new(PublisherLifecycle::default());
+        let publisher_status = Arc::clone(&status);
+        let publisher_lifecycle = Arc::clone(&lifecycle);
+        let thread = std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build();
+            match runtime {
+                Ok(runtime) => runtime.block_on(run_publisher(
+                    secrets,
+                    receiver,
+                    publisher_status,
+                    publisher_lifecycle,
+                    timing,
+                )),
+                Err(_) => {
+                    *publisher_status
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner()) = RelayPublisherStatus::Errored;
+                }
+            }
+        });
+        Arc::new(Self {
+            commands,
+            status,
+            lifecycle,
+            thread: Mutex::new(Some(thread)),
+        })
+    }
+
+    pub(crate) fn observe(&self, device_id: &str, cursor: &str) {
+        if self.lifecycle.stopping.load(Ordering::Acquire)
+            || self.lifecycle.clearing.load(Ordering::Acquire)
+            || self
+                .lifecycle
+                .revoked
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .contains(device_id)
+        {
+            return;
+        }
+        let _ = self.commands.send(PublisherCommand::Observe {
+            device_id: device_id.to_string(),
+            cursor: cursor.to_string(),
+        });
+    }
+
+    pub(crate) fn revoke(&self, device_id: &str) -> Result<(), String> {
+        self.lifecycle
+            .revoked
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .insert(device_id.to_string());
+        let (complete, completed) = std::sync::mpsc::sync_channel(0);
+        self.commands
+            .send(PublisherCommand::Revoke {
+                device_id: device_id.to_string(),
+                complete,
+            })
+            .map_err(|_| "Wake publisher is unavailable".to_string())?;
+        completed
+            .recv()
+            .map_err(|_| "Wake publisher stopped during revocation".to_string())
+    }
+
+    pub(crate) fn clear(&self) -> Result<(), String> {
+        self.lifecycle.clearing.store(true, Ordering::Release);
+        let (complete, completed) = std::sync::mpsc::sync_channel(0);
+        self.commands
+            .send(PublisherCommand::Clear { complete })
+            .map_err(|_| "Wake publisher is unavailable".to_string())?;
+        completed
+            .recv()
+            .map_err(|_| "Wake publisher stopped during revocation".to_string())
+    }
+
+    pub(crate) fn stop(&self) {
+        let thread = self
+            .thread
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .take();
+        if let Some(thread) = thread {
+            self.lifecycle.stopping.store(true, Ordering::Release);
+            let _ = self.commands.send(PublisherCommand::Stop);
+            let _ = thread.join();
+        }
+    }
+
+    pub(crate) fn status(&self) -> RelayPublisherStatus {
+        *self
+            .status
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+    }
+}
+
+impl Drop for WakePublisher {
+    fn drop(&mut self) {
+        if let Ok(thread) = self.thread.get_mut() {
+            if let Some(thread) = thread.take() {
+                self.lifecycle.stopping.store(true, Ordering::Release);
+                let _ = self.commands.send(PublisherCommand::Stop);
+                let _ = thread.join();
+            }
+        }
+    }
+}
+
+async fn run_publisher(
+    secrets: Arc<Mutex<MobileRelaySecretStore>>,
+    mut commands: tokio::sync::mpsc::UnboundedReceiver<PublisherCommand>,
+    status: Arc<Mutex<RelayPublisherStatus>>,
+    lifecycle: Arc<PublisherLifecycle>,
+    timing: PublisherTiming,
+) {
+    let started = std::time::Instant::now();
+    let coalesce = duration_millis(timing.coalesce);
+    let retries = timing.retries.map(duration_millis);
+    let mut state = PublisherState::default();
+
+    loop {
+        let now = elapsed_millis(started);
+        let wait = state
+            .next_due()
+            .map(|due| Duration::from_millis(due.saturating_sub(now)))
+            .unwrap_or(Duration::from_secs(86_400));
+        tokio::select! {
+            command = commands.recv() => {
+                match command {
+                    Some(PublisherCommand::Observe { device_id, cursor }) => {
+                        let exists = secrets
+                            .lock()
+                            .unwrap_or_else(|error| error.into_inner())
+                            .get(&device_id)
+                            .is_some();
+                        if exists {
+                            state.observe_after(
+                                &device_id,
+                                &cursor,
+                                elapsed_millis(started),
+                                coalesce,
+                            );
+                        } else {
+                            state.remove(&device_id);
+                        }
+                    }
+                    Some(PublisherCommand::Revoke { device_id, complete }) => {
+                        state.remove(&device_id);
+                        let _ = complete.send(());
+                    }
+                    Some(PublisherCommand::Clear { complete }) => {
+                        state.clear();
+                        lifecycle.clearing.store(false, Ordering::Release);
+                        let _ = complete.send(());
+                    }
+                    Some(PublisherCommand::Stop) | None => {
+                        state.clear();
+                        set_publisher_status(&status, RelayPublisherStatus::Disabled);
+                        break;
+                    }
+                }
+                set_publisher_status(&status, state.status(true));
+            }
+            _ = tokio::time::sleep(wait) => {
+                let ready_at = elapsed_millis(started);
+                for pending in state.ready(ready_at) {
+                    if lifecycle.stopping.load(Ordering::Acquire) {
+                        break;
+                    }
+                    if lifecycle.clearing.load(Ordering::Acquire)
+                        || lifecycle
+                            .revoked
+                            .lock()
+                            .unwrap_or_else(|error| error.into_inner())
+                            .contains(&pending.device_id)
+                    {
+                        state.remove(&pending.device_id);
+                        continue;
+                    }
+                    let secret = secrets
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner())
+                        .get(&pending.device_id)
+                        .cloned();
+                    let Some(secret) = secret else {
+                        state.remove(&pending.device_id);
+                        continue;
+                    };
+                    let result = create_wake_envelope(&secret).and_then(|envelope| {
+                        RelayBaseUrl::parse(&secret.base_url)
+                            .and_then(RelayClient::new)
+                            .map(|client| (client, envelope))
+                    });
+                    let result = match result {
+                        Ok((client, envelope)) => client.publish(&secret, &envelope).await,
+                        Err(error) => Err(error),
+                    };
+                    if result.is_ok()
+                        && secrets
+                            .lock()
+                            .unwrap_or_else(|error| error.into_inner())
+                            .advance_sequence(&pending.device_id, secret.next_sequence)
+                            .is_ok()
+                    {
+                        state.succeeded(&pending.device_id, &pending.cursor);
+                    } else {
+                        state.failed_after(
+                            &pending.device_id,
+                            elapsed_millis(started),
+                            retries,
+                        );
+                    }
+                    set_publisher_status(&status, state.status(true));
+                }
+                if lifecycle.stopping.load(Ordering::Acquire) {
+                    state.clear();
+                    set_publisher_status(&status, RelayPublisherStatus::Disabled);
+                    break;
+                }
+                if lifecycle.clearing.load(Ordering::Acquire) {
+                    state.clear();
+                    set_publisher_status(&status, RelayPublisherStatus::Connected);
+                }
+            }
+        }
+    }
+}
+
+fn create_wake_envelope(
+    secret: &RelayDeviceSecret,
+) -> Result<crate::wake_crypto::WakeEnvelope, String> {
+    let mut nonce = [0_u8; 12];
+    getrandom::fill(&mut nonce).map_err(|_| "Could not create wake nonce".to_string())?;
+    crate::wake_crypto::encrypt_wake(
+        &secret.wake_key,
+        &secret.channel_id,
+        secret.next_sequence,
+        chrono::Utc::now().timestamp(),
+        &hex::encode(nonce),
+    )
+    .map_err(|_| "Could not encrypt wake signal".to_string())
+}
+
+fn set_publisher_status(status: &Mutex<RelayPublisherStatus>, value: RelayPublisherStatus) {
+    *status.lock().unwrap_or_else(|error| error.into_inner()) = value;
+}
+
+fn elapsed_millis(started: std::time::Instant) -> u64 {
+    started.elapsed().as_millis().min(u64::MAX as u128) as u64
+}
+
+fn duration_millis(duration: Duration) -> u64 {
+    duration.as_millis().min(u64::MAX as u128) as u64
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -245,7 +573,7 @@ impl RelayClient {
         secret.validate()?;
         if secret.base_url != self.base_url.as_str()
             || envelope.sequence != secret.next_sequence
-            || envelope.sequence >= MAX_RELAY_SEQUENCE
+            || envelope.sequence > MAX_RELAY_SEQUENCE
         {
             return Err("Relay publication is invalid".into());
         }
@@ -581,6 +909,103 @@ fn set_owner_only(path: &Path) -> Result<(), String> {
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+    use std::sync::{Arc, Mutex};
+
+    struct SlowRelayRequest {
+        envelope: crate::wake_crypto::WakeEnvelope,
+        respond: tokio::sync::oneshot::Sender<(u16, String)>,
+    }
+
+    async fn slow_relay() -> (
+        String,
+        tokio::sync::mpsc::UnboundedReceiver<SlowRelayRequest>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (requests_tx, requests_rx) = tokio::sync::mpsc::unbounded_channel();
+        let server = tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+            loop {
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    break;
+                };
+                let requests_tx = requests_tx.clone();
+                tokio::spawn(async move {
+                    let mut request = Vec::new();
+                    let mut buffer = [0_u8; 4096];
+                    let body_start = loop {
+                        let read = stream.read(&mut buffer).await.unwrap();
+                        if read == 0 {
+                            return;
+                        }
+                        request.extend_from_slice(&buffer[..read]);
+                        if let Some(position) =
+                            request.windows(4).position(|part| part == b"\r\n\r\n")
+                        {
+                            break position + 4;
+                        }
+                    };
+                    let headers = String::from_utf8_lossy(&request[..body_start]);
+                    let content_length = headers
+                        .lines()
+                        .find_map(|line| {
+                            line.to_ascii_lowercase()
+                                .strip_prefix("content-length: ")
+                                .and_then(|value| value.parse::<usize>().ok())
+                        })
+                        .unwrap();
+                    while request.len() < body_start + content_length {
+                        let read = stream.read(&mut buffer).await.unwrap();
+                        request.extend_from_slice(&buffer[..read]);
+                    }
+                    let envelope =
+                        serde_json::from_slice(&request[body_start..body_start + content_length])
+                            .unwrap();
+                    let (respond, response) = tokio::sync::oneshot::channel();
+                    requests_tx
+                        .send(SlowRelayRequest { envelope, respond })
+                        .unwrap();
+                    let Ok((status, body)) = response.await else {
+                        return;
+                    };
+                    let reason = if status == 201 { "Created" } else { "Error" };
+                    let response = format!(
+                        "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    stream.write_all(response.as_bytes()).await.unwrap();
+                });
+            }
+        });
+        (format!("http://{address}"), requests_rx, server)
+    }
+
+    fn publisher_store(base_url: &str) -> (tempfile::TempDir, Arc<Mutex<MobileRelaySecretStore>>) {
+        let temp = tempfile::tempdir().unwrap();
+        let mut store = MobileRelaySecretStore::load_or_create(temp.path()).unwrap();
+        store.put(relay_secret(base_url)).unwrap();
+        (temp, Arc::new(Mutex::new(store)))
+    }
+
+    fn fast_timing() -> PublisherTiming {
+        PublisherTiming {
+            coalesce: Duration::from_millis(30),
+            retries: [
+                Duration::from_millis(50),
+                Duration::from_millis(150),
+                Duration::from_millis(300),
+                Duration::from_millis(600),
+            ],
+        }
+    }
+
+    async fn stop_publisher(publisher: Arc<WakePublisher>) {
+        tokio::task::spawn_blocking(move || publisher.stop())
+            .await
+            .unwrap();
+    }
 
     fn relay_secret(base_url: &str) -> RelayDeviceSecret {
         RelayDeviceSecret {
@@ -889,6 +1314,7 @@ mod tests {
         publisher.observe("device-phone", "cursor-d", 11_000);
         publisher.observe("device-phone", "cursor-c", 11_500);
         assert!(publisher.ready(20_000).is_empty());
+        assert_eq!(publisher.status(true), RelayPublisherStatus::Connected);
     }
 
     #[test]
@@ -923,6 +1349,10 @@ mod tests {
         }
         publisher.remove("device-phone");
         assert_eq!(publisher.ready(2_000)[0].device_id, "device-tablet");
+        publisher.failed("device-tablet", 2_000);
+        assert_eq!(publisher.status(true), RelayPublisherStatus::Retrying);
+        publisher.remove("device-tablet");
+        assert_eq!(publisher.status(true), RelayPublisherStatus::Connected);
         publisher.clear();
         assert!(publisher.ready(2_000).is_empty());
         assert_eq!(publisher.status(false), RelayPublisherStatus::Disabled);
@@ -957,5 +1387,209 @@ mod tests {
         assert!(secret.validate().is_ok());
         secret.next_sequence += 1;
         assert!(secret.validate().is_err());
+    }
+
+    #[tokio::test]
+    async fn live_publisher_finishes_inflight_before_processing_newest_change() {
+        let (base_url, mut requests, server) = slow_relay().await;
+        let (_temp, store) = publisher_store(&base_url);
+        let publisher = WakePublisher::start(Arc::clone(&store), fast_timing());
+        publisher.observe("device-phone", "cursor-a");
+        publisher.observe("device-phone", "cursor-b");
+
+        let first = tokio::time::timeout(Duration::from_secs(1), requests.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(first.envelope.sequence, 7);
+        publisher.observe("device-phone", "cursor-c");
+        first
+            .respond
+            .send((201, r#"{"sequence":7}"#.into()))
+            .unwrap();
+
+        let second = tokio::time::timeout(Duration::from_secs(1), requests.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(second.envelope.sequence, 8);
+        second
+            .respond
+            .send((201, r#"{"sequence":8}"#.into()))
+            .unwrap();
+        stop_publisher(publisher).await;
+        assert_eq!(
+            store
+                .lock()
+                .unwrap()
+                .get("device-phone")
+                .unwrap()
+                .next_sequence,
+            9
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn live_publisher_backoff_starts_when_slow_failure_finishes() {
+        let (base_url, mut requests, server) = slow_relay().await;
+        let (_temp, store) = publisher_store(&base_url);
+        let publisher = WakePublisher::start(store, fast_timing());
+        publisher.observe("device-phone", "cursor-a");
+        publisher.observe("device-phone", "cursor-b");
+
+        let first = tokio::time::timeout(Duration::from_secs(1), requests.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let failed_at = std::time::Instant::now();
+        first.respond.send((500, "{}".into())).unwrap();
+        let second = tokio::time::timeout(Duration::from_secs(1), requests.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(failed_at.elapsed() >= Duration::from_millis(50));
+        second
+            .respond
+            .send((201, r#"{"sequence":7}"#.into()))
+            .unwrap();
+        stop_publisher(publisher).await;
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn live_publisher_stop_waits_for_inflight_and_reenable_has_one_owner() {
+        let (base_url, mut requests, server) = slow_relay().await;
+        let (_temp, store) = publisher_store(&base_url);
+        let publisher = WakePublisher::start(Arc::clone(&store), fast_timing());
+        publisher.observe("device-phone", "cursor-a");
+        publisher.observe("device-phone", "cursor-b");
+        let first = tokio::time::timeout(Duration::from_secs(1), requests.recv())
+            .await
+            .unwrap()
+            .unwrap();
+
+        let stopping = Arc::clone(&publisher);
+        let stopped = tokio::task::spawn_blocking(move || stopping.stop());
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        assert!(!stopped.is_finished());
+        first
+            .respond
+            .send((201, r#"{"sequence":7}"#.into()))
+            .unwrap();
+        stopped.await.unwrap();
+
+        let replacement = WakePublisher::start(Arc::clone(&store), fast_timing());
+        replacement.observe("device-phone", "cursor-c");
+        replacement.observe("device-phone", "cursor-d");
+        let second = tokio::time::timeout(Duration::from_secs(1), requests.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(second.envelope.sequence, 8);
+        second
+            .respond
+            .send((201, r#"{"sequence":8}"#.into()))
+            .unwrap();
+        stop_publisher(replacement).await;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), requests.recv())
+                .await
+                .is_err()
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn live_publisher_revoke_barrier_waits_for_inflight_then_cancels_device() {
+        let (base_url, mut requests, server) = slow_relay().await;
+        let (_temp, store) = publisher_store(&base_url);
+        let publisher = WakePublisher::start(Arc::clone(&store), fast_timing());
+        publisher.observe("device-phone", "cursor-a");
+        publisher.observe("device-phone", "cursor-b");
+        let first = tokio::time::timeout(Duration::from_secs(1), requests.recv())
+            .await
+            .unwrap()
+            .unwrap();
+
+        let revoking = Arc::clone(&publisher);
+        let revoked = tokio::task::spawn_blocking(move || revoking.revoke("device-phone"));
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        assert!(!revoked.is_finished());
+        first
+            .respond
+            .send((201, r#"{"sequence":7}"#.into()))
+            .unwrap();
+        revoked.await.unwrap().unwrap();
+        store.lock().unwrap().remove("device-phone").unwrap();
+        publisher.observe("device-phone", "cursor-c");
+        assert_eq!(publisher.status(), RelayPublisherStatus::Connected);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), requests.recv())
+                .await
+                .is_err()
+        );
+        stop_publisher(publisher).await;
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn live_publisher_stop_never_starts_another_device_after_inflight() {
+        let (base_url, mut requests, server) = slow_relay().await;
+        let (_temp, store) = publisher_store(&base_url);
+        let mut tablet = relay_secret(&base_url);
+        tablet.device_id = "device-tablet".into();
+        tablet.channel_id = "44".repeat(32);
+        store.lock().unwrap().put(tablet).unwrap();
+        let publisher = WakePublisher::start(store, fast_timing());
+        for device in ["device-phone", "device-tablet"] {
+            publisher.observe(device, "cursor-a");
+            publisher.observe(device, "cursor-b");
+        }
+        let first = tokio::time::timeout(Duration::from_secs(1), requests.recv())
+            .await
+            .unwrap()
+            .unwrap();
+
+        let stopping = Arc::clone(&publisher);
+        let stopped = tokio::task::spawn_blocking(move || stopping.stop());
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        first
+            .respond
+            .send((201, r#"{"sequence":7}"#.into()))
+            .unwrap();
+        stopped.await.unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), requests.recv())
+                .await
+                .is_err()
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn live_publisher_clear_barrier_allows_future_pairings() {
+        let (base_url, mut requests, server) = slow_relay().await;
+        let (_temp, store) = publisher_store(&base_url);
+        let publisher = WakePublisher::start(store, fast_timing());
+        let clearing = Arc::clone(&publisher);
+        tokio::task::spawn_blocking(move || clearing.clear())
+            .await
+            .unwrap()
+            .unwrap();
+
+        publisher.observe("device-phone", "cursor-a");
+        publisher.observe("device-phone", "cursor-b");
+        let request = tokio::time::timeout(Duration::from_secs(1), requests.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        request
+            .respond
+            .send((201, r#"{"sequence":7}"#.into()))
+            .unwrap();
+        stop_publisher(publisher).await;
+        server.abort();
     }
 }

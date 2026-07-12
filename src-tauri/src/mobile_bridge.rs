@@ -11,7 +11,7 @@ use std::convert::Infallible;
 use std::io::BufReader;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use tauri::{Listener, Manager};
 use tokio::net::TcpListener;
 use tokio::sync::{oneshot, Notify, Semaphore};
@@ -140,22 +140,27 @@ fn default_mobile_scope() -> MobileDeviceScope {
 
 struct MobileRuntime {
     enabled: bool,
+    enabling: bool,
+    generation: u64,
     url: Option<String>,
     tailnet_url: Option<String>,
     certificate_fingerprint: Option<String>,
     pairing: Option<PairingChallenge>,
     shutdown: Option<oneshot::Sender<()>>,
-    relay_shutdown: Option<oneshot::Sender<()>>,
+    observer_shutdown: Option<oneshot::Sender<()>>,
     relay_base_url: Option<crate::mobile_relay::RelayBaseUrl>,
     relay_status: crate::mobile_relay::RelayPublisherStatus,
+    publisher: Option<Arc<crate::mobile_relay::WakePublisher>>,
 }
 
 pub struct MobileBridgeState {
     humhum_dir: PathBuf,
     devices: Arc<Mutex<MobileDeviceStore>>,
     presence: Mutex<MobilePresenceStore>,
-    relay_secrets: Mutex<crate::mobile_relay::MobileRelaySecretStore>,
+    relay_secrets: Arc<Mutex<crate::mobile_relay::MobileRelaySecretStore>>,
     relay_changes: Arc<Notify>,
+    publisher_stopping: Mutex<bool>,
+    publisher_stopped: Condvar,
     event_waiters: Arc<Semaphore>,
     runtime: Mutex<MobileRuntime>,
 }
@@ -166,21 +171,26 @@ impl MobileBridgeState {
             humhum_dir: humhum_dir.to_path_buf(),
             devices: Arc::new(Mutex::new(MobileDeviceStore::load_or_create(humhum_dir)?)),
             presence: Mutex::new(MobilePresenceStore::default()),
-            relay_secrets: Mutex::new(crate::mobile_relay::MobileRelaySecretStore::load_or_create(
-                humhum_dir,
-            )?),
+            relay_secrets: Arc::new(Mutex::new(
+                crate::mobile_relay::MobileRelaySecretStore::load_or_create(humhum_dir)?,
+            )),
             relay_changes: Arc::new(Notify::new()),
+            publisher_stopping: Mutex::new(false),
+            publisher_stopped: Condvar::new(),
             event_waiters: Arc::new(Semaphore::new(MAX_EVENT_WAITERS)),
             runtime: Mutex::new(MobileRuntime {
                 enabled: false,
+                enabling: false,
+                generation: 0,
                 url: None,
                 tailnet_url: None,
                 certificate_fingerprint: None,
                 pairing: None,
                 shutdown: None,
-                relay_shutdown: None,
+                observer_shutdown: None,
                 relay_base_url: None,
                 relay_status: crate::mobile_relay::RelayPublisherStatus::Connected,
+                publisher: None,
             }),
         })
     }
@@ -210,7 +220,13 @@ impl MobileBridgeState {
             paired_devices: devices.len(),
             devices,
             relay_status: if runtime.relay_base_url.is_some() {
-                runtime.relay_status.as_str().into()
+                runtime
+                    .publisher
+                    .as_ref()
+                    .map(|publisher| publisher.status())
+                    .unwrap_or(runtime.relay_status)
+                    .as_str()
+                    .into()
             } else {
                 "disabled".into()
             },
@@ -221,6 +237,52 @@ impl MobileBridgeState {
         }
     }
 
+    fn begin_enable(&self) -> Result<u64, String> {
+        if *self
+            .publisher_stopping
+            .lock()
+            .map_err(|error| error.to_string())?
+        {
+            return Err("Mobile access is still disabling".into());
+        }
+        let mut runtime = self.runtime.lock().map_err(|error| error.to_string())?;
+        if runtime.enabled {
+            return Err("Mobile access is already enabled".into());
+        }
+        if runtime.enabling {
+            return Err("Mobile access is already enabling".into());
+        }
+        runtime.generation = runtime.generation.wrapping_add(1);
+        runtime.enabling = true;
+        Ok(runtime.generation)
+    }
+
+    fn enable_generation_is_current(&self, generation: u64) -> bool {
+        let runtime = self
+            .runtime
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        runtime.enabling && runtime.generation == generation
+    }
+
+    fn abandon_enable(&self, generation: u64) {
+        let mut runtime = self
+            .runtime
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if runtime.generation == generation {
+            runtime.enabling = false;
+        }
+    }
+
+    fn generation_is_enabled(&self, generation: u64) -> bool {
+        let runtime = self
+            .runtime
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        runtime.enabled && runtime.generation == generation
+    }
+
     pub async fn enable(
         self: &Arc<Self>,
         app: tauri::AppHandle,
@@ -228,49 +290,91 @@ impl MobileBridgeState {
         if self.status().enabled {
             return Ok(self.status());
         }
+        let generation = self.begin_enable()?;
+        let setup = async {
+            let relay_config = app
+                .state::<Arc<std::sync::Mutex<crate::config::AppConfig>>>()
+                .lock()
+                .map_err(|error| error.to_string())?
+                .mobile_relay
+                .clone();
+            let relay_base_url = relay_base_from_config(&relay_config)?;
+            if let Some(base_url) = relay_base_url.clone() {
+                crate::mobile_relay::RelayClient::new(base_url)?
+                    .health()
+                    .await?;
+            }
+            if !self.enable_generation_is_current(generation) {
+                return Err("Mobile enable was cancelled".to_string());
+            }
 
-        let relay_config = app
-            .state::<Arc<std::sync::Mutex<crate::config::AppConfig>>>()
-            .lock()
-            .map_err(|error| error.to_string())?
-            .mobile_relay
-            .clone();
-        let relay_base_url = relay_base_from_config(&relay_config)?;
-        if let Some(base_url) = relay_base_url.clone() {
-            crate::mobile_relay::RelayClient::new(base_url)?
-                .health()
-                .await?;
+            let local_ip = local_lan_ip()?;
+            let tailnet_ip = crate::tailnet::discover_tailnet_ipv4().await;
+            if !self.enable_generation_is_current(generation) {
+                return Err("Mobile enable was cancelled".to_string());
+            }
+            let cert = ensure_certificate(&self.humhum_dir)?;
+            let tls_config = load_tls_config(&cert.cert_path, &cert.key_path)?;
+            let listener = TcpListener::bind(SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                DEFAULT_MOBILE_PORT,
+            ))
+            .await
+            .map_err(|error| format!("Could not open mobile HTTPS port: {error}"))?;
+            if !self.enable_generation_is_current(generation) {
+                return Err("Mobile enable was cancelled".to_string());
+            }
+            Ok((
+                relay_base_url,
+                local_ip,
+                tailnet_ip,
+                cert,
+                tls_config,
+                listener,
+            ))
         }
-
-        let local_ip = local_lan_ip()?;
-        let tailnet_ip = crate::tailnet::discover_tailnet_ipv4().await;
-        let cert = ensure_certificate(&self.humhum_dir)?;
-        let tls_config = load_tls_config(&cert.cert_path, &cert.key_path)?;
-        let listener = TcpListener::bind(SocketAddr::new(
-            IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-            DEFAULT_MOBILE_PORT,
-        ))
-        .await
-        .map_err(|error| format!("Could not open mobile HTTPS port: {error}"))?;
+        .await;
+        let (relay_base_url, local_ip, tailnet_ip, cert, tls_config, listener) = match setup {
+            Ok(setup) => setup,
+            Err(error) => {
+                self.abandon_enable(generation);
+                return Err(error);
+            }
+        };
         let url = format!("https://{local_ip}:{DEFAULT_MOBILE_PORT}");
         let tailnet_url = tailnet_ip.map(|ip| format!("https://{ip}:{DEFAULT_MOBILE_PORT}"));
         let relay_enabled = relay_base_url.is_some();
         let (shutdown_tx, mut shutdown_rx) = oneshot::channel();
-        let (relay_shutdown_tx, relay_shutdown_rx) = oneshot::channel();
+        let (observer_shutdown_tx, observer_shutdown_rx) = oneshot::channel();
+        let publisher = relay_enabled.then(|| {
+            crate::mobile_relay::WakePublisher::start(
+                Arc::clone(&self.relay_secrets),
+                crate::mobile_relay::PublisherTiming::default(),
+            )
+        });
         {
             let mut runtime = self.runtime.lock().map_err(|error| error.to_string())?;
+            if !runtime.enabling || runtime.generation != generation {
+                drop(runtime);
+                if let Some(publisher) = publisher {
+                    publisher.stop();
+                }
+                return Err("Mobile enable was cancelled".into());
+            }
             runtime.enabled = true;
+            runtime.enabling = false;
             runtime.url = Some(url);
             runtime.tailnet_url = tailnet_url;
             runtime.certificate_fingerprint = Some(cert.fingerprint);
             runtime.shutdown = Some(shutdown_tx);
-            runtime.relay_shutdown = Some(relay_shutdown_tx);
+            runtime.observer_shutdown = Some(observer_shutdown_tx);
             runtime.relay_base_url = relay_base_url;
             runtime.relay_status = if relay_enabled {
                 crate::mobile_relay::RelayPublisherStatus::Connected
             } else {
                 crate::mobile_relay::RelayPublisherStatus::Disabled
             };
+            runtime.publisher = publisher.clone();
         }
 
         let bridge = Arc::clone(self);
@@ -298,29 +402,69 @@ impl MobileBridgeState {
                 }
             }
         });
-        if relay_enabled {
-            spawn_wake_publisher(Arc::clone(self), publisher_app, relay_shutdown_rx);
+        if let Some(publisher) = publisher {
+            spawn_wake_observer(
+                Arc::clone(self),
+                publisher_app,
+                publisher,
+                generation,
+                observer_shutdown_rx,
+            );
+        }
+        if !self.generation_is_enabled(generation) {
+            return Err("Mobile enable was cancelled".into());
         }
         Ok(self.status())
     }
 
     pub fn disable(&self) -> Result<MobileBridgeStatus, String> {
-        let mut runtime = self.runtime.lock().map_err(|error| error.to_string())?;
-        if let Some(shutdown) = runtime.shutdown.take() {
+        let mut stopping = self
+            .publisher_stopping
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        while *stopping {
+            stopping = self
+                .publisher_stopped
+                .wait(stopping)
+                .unwrap_or_else(|error| error.into_inner());
+        }
+        *stopping = true;
+        drop(stopping);
+        let (shutdown, observer_shutdown, publisher) = {
+            let mut runtime = self
+                .runtime
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            runtime.generation = runtime.generation.wrapping_add(1);
+            runtime.enabled = false;
+            runtime.enabling = false;
+            runtime.pairing = None;
+            runtime.url = None;
+            runtime.tailnet_url = None;
+            runtime.certificate_fingerprint = None;
+            runtime.relay_base_url = None;
+            runtime.relay_status = crate::mobile_relay::RelayPublisherStatus::Disabled;
+            (
+                runtime.shutdown.take(),
+                runtime.observer_shutdown.take(),
+                runtime.publisher.take(),
+            )
+        };
+        if let Some(shutdown) = observer_shutdown {
             let _ = shutdown.send(());
         }
-        if let Some(shutdown) = runtime.relay_shutdown.take() {
+        if let Some(shutdown) = shutdown {
             let _ = shutdown.send(());
         }
-        runtime.enabled = false;
-        runtime.pairing = None;
-        runtime.url = None;
-        runtime.tailnet_url = None;
-        runtime.certificate_fingerprint = None;
-        runtime.relay_base_url = None;
-        runtime.relay_status = crate::mobile_relay::RelayPublisherStatus::Disabled;
-        drop(runtime);
         self.relay_changes.notify_one();
+        if let Some(publisher) = publisher {
+            publisher.stop();
+        }
+        *self
+            .publisher_stopping
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = false;
+        self.publisher_stopped.notify_all();
         self.presence
             .lock()
             .map_err(|error| error.to_string())?
@@ -365,6 +509,15 @@ impl MobileBridgeState {
     }
 
     pub fn revoke_devices(&self) -> Result<MobileBridgeStatus, String> {
+        let publisher = self
+            .runtime
+            .lock()
+            .map_err(|error| error.to_string())?
+            .publisher
+            .clone();
+        if let Some(publisher) = publisher {
+            let _ = publisher.clear();
+        }
         self.devices
             .lock()
             .map_err(|error| error.to_string())?
@@ -384,6 +537,15 @@ impl MobileBridgeState {
     }
 
     pub fn revoke_device(&self, device_id: &str) -> Result<MobileBridgeStatus, String> {
+        let publisher = self
+            .runtime
+            .lock()
+            .map_err(|error| error.to_string())?
+            .publisher
+            .clone();
+        if let Some(publisher) = publisher {
+            let _ = publisher.revoke(device_id);
+        }
         self.devices
             .lock()
             .map_err(|error| error.to_string())?
@@ -418,40 +580,47 @@ fn wake_envelope_for_secret(
     .map_err(|_| "Could not encrypt wake signal".to_string())
 }
 
-fn spawn_wake_publisher(
+fn spawn_wake_observer(
     bridge: Arc<MobileBridgeState>,
     app: tauri::AppHandle,
+    publisher: Arc<crate::mobile_relay::WakePublisher>,
+    generation: u64,
     shutdown: oneshot::Receiver<()>,
 ) {
-    tokio::spawn(run_wake_publisher(bridge, app, shutdown));
+    tokio::spawn(run_wake_observer(
+        bridge, app, publisher, generation, shutdown,
+    ));
 }
 
-async fn run_wake_publisher(
+async fn run_wake_observer(
     bridge: Arc<MobileBridgeState>,
     app: tauri::AppHandle,
+    publisher: Arc<crate::mobile_relay::WakePublisher>,
+    generation: u64,
     mut shutdown: oneshot::Receiver<()>,
 ) {
     let changes = Arc::clone(&bridge.relay_changes);
     let event_changes = Arc::clone(&changes);
     let listener = app.listen("humhum://hook-event", move |_| event_changes.notify_one());
-    let started = std::time::Instant::now();
-    let mut publisher = crate::mobile_relay::PublisherState::default();
     let mut poll = tokio::time::interval(std::time::Duration::from_secs(1));
     poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
-    'publisher: loop {
+    loop {
         tokio::select! {
             _ = &mut shutdown => break,
             _ = changes.notified() => {},
             _ = poll.tick() => {},
         }
-
-        let active_base_url = bridge
-            .runtime
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .relay_base_url
-            .clone();
+        let active_base_url = {
+            let runtime = bridge
+                .runtime
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            if !runtime.enabled || runtime.generation != generation {
+                break;
+            }
+            runtime.relay_base_url.clone()
+        };
         let Some(active_base_url) = active_base_url else {
             break;
         };
@@ -471,83 +640,16 @@ async fn run_wake_publisher(
             .iter()
             .map(|device| (device.id.clone(), device.scope))
             .collect::<HashMap<_, _>>();
-        publisher.retain(|device_id| {
-            scopes.contains_key(device_id)
-                && secrets.iter().any(|secret| secret.device_id == device_id)
-        });
-
-        let now = started.elapsed().as_millis().min(u64::MAX as u128) as u64;
         for secret in &secrets {
             let Some(scope) = scopes.get(&secret.device_id).copied() else {
                 continue;
             };
             let page = with_mobile_cursor(mobile_session_page(&app, scope).await);
             if let Some(cursor) = page["cursor"].as_str() {
-                publisher.observe(&secret.device_id, cursor, now);
-            }
-        }
-
-        for pending in publisher.ready(now) {
-            let secret = bridge
-                .relay_secrets
-                .lock()
-                .unwrap_or_else(|error| error.into_inner())
-                .get(&pending.device_id)
-                .cloned();
-            let Some(secret) = secret.filter(|secret| secret.base_url == active_base_url.as_str())
-            else {
-                publisher.remove(&pending.device_id);
-                continue;
-            };
-            let mut nonce = [0_u8; 12];
-            let result = getrandom::fill(&mut nonce)
-                .map_err(|_| "Could not create wake nonce".to_string())
-                .and_then(|()| {
-                    wake_envelope_for_secret(
-                        &secret,
-                        chrono::Utc::now().timestamp(),
-                        &hex::encode(nonce),
-                    )
-                });
-            let result = match result {
-                Ok(envelope) => {
-                    let client = crate::mobile_relay::RelayClient::new(active_base_url.clone());
-                    match client {
-                        Ok(client) => tokio::select! {
-                            _ = &mut shutdown => break 'publisher,
-                            _ = changes.notified() => continue 'publisher,
-                            result = client.publish(&secret, &envelope) => result,
-                        },
-                        Err(error) => Err(error),
-                    }
-                }
-                Err(error) => Err(error),
-            };
-
-            if result.is_ok()
-                && bridge
-                    .relay_secrets
-                    .lock()
-                    .unwrap_or_else(|error| error.into_inner())
-                    .advance_sequence(&pending.device_id, secret.next_sequence)
-                    .is_ok()
-            {
-                publisher.succeeded(&pending.device_id, &pending.cursor);
-            } else {
-                publisher.failed(&pending.device_id, now);
-            }
-            let status = publisher.status(true);
-            let mut runtime = bridge
-                .runtime
-                .lock()
-                .unwrap_or_else(|error| error.into_inner());
-            if runtime.enabled && runtime.relay_base_url.is_some() {
-                runtime.relay_status = status;
+                publisher.observe(&secret.device_id, cursor);
             }
         }
     }
-
-    publisher.clear();
     app.unlisten(listener);
 }
 
@@ -957,6 +1059,17 @@ fn revoke_mobile_device(
         .unwrap_or_else(|error| error.into_inner())
         .authorize_device(token)
         .map(|device| device.id);
+    if let Some(device_id) = device_id.as_deref() {
+        let publisher = bridge
+            .runtime
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .publisher
+            .clone();
+        if let Some(publisher) = publisher {
+            let _ = publisher.revoke(device_id);
+        }
+    }
     match bridge
         .devices
         .lock()
@@ -2072,6 +2185,38 @@ mod tests {
             assert!(!serialized.contains("wake_key"));
             runtime = bridge.runtime.lock().unwrap();
         }
+    }
+
+    #[test]
+    fn disable_invalidates_an_enable_generation_before_health_can_finish() {
+        let temp = tempfile::tempdir().unwrap();
+        let bridge = MobileBridgeState::load_or_create(temp.path()).unwrap();
+        let generation = bridge.begin_enable().unwrap();
+        assert!(bridge.enable_generation_is_current(generation));
+        assert!(bridge.begin_enable().is_err());
+
+        bridge.disable().unwrap();
+
+        assert!(!bridge.enable_generation_is_current(generation));
+        assert!(!bridge.runtime.lock().unwrap().enabling);
+        assert!(bridge.begin_enable().is_ok());
+    }
+
+    #[test]
+    fn concurrent_disable_and_reenable_wait_for_the_stop_barrier() {
+        let temp = tempfile::tempdir().unwrap();
+        let bridge = Arc::new(MobileBridgeState::load_or_create(temp.path()).unwrap());
+        *bridge.publisher_stopping.lock().unwrap() = true;
+        assert!(bridge.begin_enable().is_err());
+
+        let disabling = Arc::clone(&bridge);
+        let disabled = std::thread::spawn(move || disabling.disable());
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        assert!(!disabled.is_finished());
+
+        *bridge.publisher_stopping.lock().unwrap() = false;
+        bridge.publisher_stopped.notify_all();
+        disabled.join().unwrap().unwrap();
     }
 
     #[test]
