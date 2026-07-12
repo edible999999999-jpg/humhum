@@ -4,10 +4,10 @@ HUMHUM Android is a native LAN client for the desktop Mobile Bridge. It supports
 
 ## Installable APK
 
-- Local artifact: `dist/android/HUMHUM-Android-0.1.0-debug.apk`
+- Local artifact: `build/releases/HUMHUM-Android-0.1.0-debug.apk`
 - Package: `com.humhum.mobile`
 - Version: `0.1.0` (`versionCode 1`)
-- SHA-256: `d8f99d6ed184c3846932e67cef03d52b930f36965635633c34c99050caa1dfac`
+- SHA-256: `f1da4af4ec1749496f54b32c5d286f8d76f9afd2f7188730a904e90e0fe2639a`
 
 This is a developer build signed with the Android debug certificate. It is installable, but it is not a Xiaomi Store or Google Play release.
 
@@ -25,7 +25,7 @@ Connect an authorized phone, then run:
 
 ```bash
 ~/Library/Android/sdk/platform-tools/adb install -r \
-  dist/android/HUMHUM-Android-0.1.0-debug.apk
+  build/releases/HUMHUM-Android-0.1.0-debug.apk
 ```
 
 ## Pair With The Mac
@@ -38,16 +38,27 @@ Connect an authorized phone, then run:
 
 After pairing, the app stores its token in app-private storage and verifies the exact TLS certificate fingerprint on every connection. Pressing **Disconnect** revokes that device on the Mac before clearing the local credential. If the Mac is unreachable, the app clears the phone and asks the user to revoke the stale device from Hexa.
 
+## Background Monitoring On Xiaomi
+
+Turn on **后台监控** from the paired session screen. Android 13 and newer asks for notification permission at that moment. HUMHUM then shows a persistent notification while it watches the paired Mac over trusted Wi-Fi and sends a generic notification when a new Agent approval appears.
+
+For stronger survival on HyperOS or MIUI, open HUMHUM's system App info and enable **Autostart**, then set Battery saver to **No restrictions**. Menu names vary by Xiaomi system version. The service can restore after reboot only when the user previously enabled background monitoring, notification permission remains granted, and a valid pairing still exists.
+
+Background monitoring is visible and user-controlled. It uses Android's `remoteMessaging` foreground-service type, polls every 15 seconds, and backs off to at most 60 seconds while Wi-Fi is unavailable. It does not hold a wake lock, request location, or bypass Android/Xiaomi power controls. Xiaomi may still stop it under aggressive battery policy; physical-device behavior has not yet been verified on this Mac.
+
 ## Current Scope
 
 - Native session list, redacted to project, agent, status, recency, attention state, and bounded approval summaries.
 - Read-only and control pairing scopes.
 - Allow-once/deny for supported Agent approvals.
 - Text follow-ups for known Codex, Claude Code, and OpenCode sessions.
-- Foreground polling every 10 seconds; polling stops when the Activity leaves the foreground.
+- Foreground session refresh every 10 seconds.
+- Optional background monitoring with a persistent notification, 15-second polling, bounded retry, approval deduplication, and opt-in reboot restoration.
 - HTTPS only, certificate fingerprint pinning, and no backup of app credentials.
 
-Not yet included: FCM push, Xiaomi background/autostart integration, an internet relay, attachments, iOS packaging, release-key signing, store distribution, or automatic updates.
+The APK requests only network state, internet, foreground remote messaging, notification, and opt-in boot restoration permissions. It does not request wake lock, location, nearby-device, contacts, files, camera, microphone, overlay, or accessibility access.
+
+Not yet included: FCM server push, guaranteed Xiaomi process survival, an internet relay, attachments, iOS packaging, release-key signing, store distribution, or automatic updates.
 
 ## Build Locally
 

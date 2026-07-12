@@ -1,12 +1,15 @@
 package com.humhum.mobile;
 
+import android.Manifest;
 import android.app.Activity;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
+import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -15,12 +18,14 @@ import android.view.inputmethod.InputMethodManager;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.Switch;
 import android.widget.TextView;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public final class MainActivity extends Activity {
+    private static final int NOTIFICATION_PERMISSION_REQUEST = 4103;
     private final ExecutorService network = Executors.newSingleThreadExecutor();
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Runnable poll = new Runnable() {
@@ -31,6 +36,7 @@ public final class MainActivity extends Activity {
     };
 
     private ConnectionStore connectionStore;
+    private MonitorStore monitorStore;
     private ConnectionStore.Connection connection;
     private MobileProtocol protocol;
     private boolean refreshInFlight;
@@ -47,6 +53,10 @@ public final class MainActivity extends Activity {
     private Button connectButton;
     private Button refreshButton;
     private Button disconnectButton;
+    private Switch monitorSwitch;
+    private TextView monitorStatusText;
+    private boolean updatingMonitorSwitch;
+    private boolean pendingMonitorEnable;
 
     @Override
     protected void onCreate(Bundle state) {
@@ -54,10 +64,12 @@ public final class MainActivity extends Activity {
         setContentView(R.layout.activity_main);
         bindViews();
         connectionStore = new ConnectionStore(getSharedPreferences("humhum_connection", MODE_PRIVATE));
+        monitorStore = AgentMonitorService.monitorStore(this);
         connectButton.setOnClickListener(view -> pair());
         findViewById(R.id.pasteSetupButton).setOnClickListener(view -> pasteSetup());
         refreshButton.setOnClickListener(view -> refreshSessions(true));
         disconnectButton.setOnClickListener(view -> disconnect());
+        monitorSwitch.setOnCheckedChangeListener((button, checked) -> onMonitorChanged(checked));
 
         connection = connectionStore.load();
         if (connection == null) {
@@ -70,6 +82,7 @@ public final class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        if (connection != null) syncMonitorState();
         main.removeCallbacks(poll);
         main.post(poll);
     }
@@ -100,6 +113,8 @@ public final class MainActivity extends Activity {
         connectButton = findViewById(R.id.connectButton);
         refreshButton = findViewById(R.id.refreshButton);
         disconnectButton = findViewById(R.id.disconnectButton);
+        monitorSwitch = findViewById(R.id.monitorSwitch);
+        monitorStatusText = findViewById(R.id.monitorStatusText);
     }
 
     private void pair() {
@@ -167,6 +182,7 @@ public final class MainActivity extends Activity {
         sessionPanel.setVisibility(View.VISIBLE);
         scopeText.setText(saved.scope() == Models.Scope.CONTROL ? "已安全连接 · 可控制" : "已安全连接 · 只读");
         statusText.setText("正在同步");
+        syncMonitorState();
         refreshSessions(true);
     }
 
@@ -177,11 +193,13 @@ public final class MainActivity extends Activity {
         sessionPanel.setVisibility(View.GONE);
         statusText.setText("等待连接");
         sessionsContainer.removeAllViews();
+        if (monitorStore != null && monitorStore.isEnabled()) disableMonitor();
     }
 
     private void disconnect() {
         MobileProtocol current = protocol;
         if (current == null) return;
+        disableMonitor();
         disconnectButton.setEnabled(false);
         statusText.setText("正在安全断开");
         network.execute(() -> {
@@ -200,6 +218,88 @@ public final class MainActivity extends Activity {
                 connectError.setText(finalWarning.isEmpty() ? "已安全断开并撤销此设备" : finalWarning);
             });
         });
+    }
+
+    private void onMonitorChanged(boolean checked) {
+        if (updatingMonitorSwitch) return;
+        if (!checked) {
+            disableMonitor();
+            return;
+        }
+        boolean granted = hasNotificationPermission();
+        if (MonitorPermissionPolicy.needsRequest(Build.VERSION.SDK_INT, granted)) {
+            pendingMonitorEnable = true;
+            setMonitorSwitch(false);
+            monitorStatusText.setText("需要通知权限");
+            requestPermissions(
+                    new String[] {Manifest.permission.POST_NOTIFICATIONS},
+                    NOTIFICATION_PERMISSION_REQUEST);
+            return;
+        }
+        enableMonitor();
+    }
+
+    private void syncMonitorState() {
+        if (!monitorStore.isEnabled()) {
+            setMonitorSwitch(false);
+            monitorStatusText.setText("已关闭");
+            return;
+        }
+        if (!MonitorPermissionPolicy.canStart(Build.VERSION.SDK_INT, hasNotificationPermission())) {
+            disableMonitor();
+            monitorStatusText.setText("需要通知权限");
+            return;
+        }
+        setMonitorSwitch(true);
+        monitorStatusText.setText("正在监控这台 Mac");
+        AgentMonitorService.start(this);
+    }
+
+    private void enableMonitor() {
+        try {
+            monitorStore.setEnabled(true);
+            AgentMonitorService.start(this);
+            setMonitorSwitch(true);
+            monitorStatusText.setText("正在监控这台 Mac");
+        } catch (RuntimeException error) {
+            monitorStore.clear();
+            setMonitorSwitch(false);
+            monitorStatusText.setText("无法启动后台监控");
+        }
+    }
+
+    private void disableMonitor() {
+        pendingMonitorEnable = false;
+        AgentMonitorService.stop(this);
+        monitorStore.clear();
+        setMonitorSwitch(false);
+        if (monitorStatusText != null) monitorStatusText.setText("已关闭");
+    }
+
+    private void setMonitorSwitch(boolean checked) {
+        if (monitorSwitch == null) return;
+        updatingMonitorSwitch = true;
+        monitorSwitch.setChecked(checked);
+        updatingMonitorSwitch = false;
+    }
+
+    private boolean hasNotificationPermission() {
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
+                || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                        == PackageManager.PERMISSION_GRANTED;
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grants) {
+        super.onRequestPermissionsResult(requestCode, permissions, grants);
+        if (requestCode != NOTIFICATION_PERMISSION_REQUEST || !pendingMonitorEnable) return;
+        pendingMonitorEnable = false;
+        if (grants.length > 0 && grants[0] == PackageManager.PERMISSION_GRANTED) {
+            enableMonitor();
+        } else {
+            setMonitorSwitch(false);
+            monitorStatusText.setText("需要通知权限");
+        }
     }
 
     private void refreshSessions(boolean userInitiated) {

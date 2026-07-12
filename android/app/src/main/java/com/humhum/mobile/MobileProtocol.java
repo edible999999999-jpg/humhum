@@ -180,7 +180,7 @@ public final class MobileProtocol {
             } catch (JSONException ignored) {
                 message = "Request failed";
             }
-            throw new IOException(bounded(message, 240));
+            throw new HttpStatusException(status, bounded(message, 240));
         }
         return response;
     }
@@ -230,5 +230,16 @@ public final class MobileProtocol {
         String path() { return path; }
         String body() { return body; }
         boolean requiresToken() { return requiresToken; }
+    }
+
+    public static final class HttpStatusException extends IOException {
+        private final int status;
+
+        HttpStatusException(int status, String message) {
+            super(message);
+            this.status = status;
+        }
+
+        public int status() { return status; }
     }
 }

@@ -1,0 +1,56 @@
+package com.humhum.mobile;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
+
+import java.nio.file.Path;
+import java.util.HashSet;
+import java.util.Set;
+import javax.xml.parsers.DocumentBuilderFactory;
+import org.junit.Test;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.NodeList;
+
+public class ManifestContractTest {
+    private static final String ANDROID = "http://schemas.android.com/apk/res/android";
+
+    @Test
+    public void backgroundMonitorPermissionsAndComponentsAreScoped() throws Exception {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        factory.setNamespaceAware(true);
+        Document document = factory.newDocumentBuilder()
+                .parse(Path.of("src/main/AndroidManifest.xml").toFile());
+
+        Set<String> permissions = new HashSet<>();
+        NodeList permissionNodes = document.getElementsByTagName("uses-permission");
+        for (int index = 0; index < permissionNodes.getLength(); index++) {
+            permissions.add(((Element) permissionNodes.item(index)).getAttributeNS(ANDROID, "name"));
+        }
+        assertEquals(Set.of(
+                "android.permission.INTERNET",
+                "android.permission.ACCESS_NETWORK_STATE",
+                "android.permission.FOREGROUND_SERVICE",
+                "android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING",
+                "android.permission.POST_NOTIFICATIONS",
+                "android.permission.RECEIVE_BOOT_COMPLETED"), permissions);
+
+        Element service = component(document, "service", ".AgentMonitorService");
+        assertEquals("false", service.getAttributeNS(ANDROID, "exported"));
+        assertEquals("remoteMessaging", service.getAttributeNS(ANDROID, "foregroundServiceType"));
+
+        Element receiver = component(document, "receiver", ".MonitorBootReceiver");
+        assertEquals("false", receiver.getAttributeNS(ANDROID, "exported"));
+        assertNotNull(receiver.getElementsByTagName("intent-filter").item(0));
+    }
+
+    private static Element component(Document document, String tag, String name) {
+        NodeList nodes = document.getElementsByTagName(tag);
+        for (int index = 0; index < nodes.getLength(); index++) {
+            Element element = (Element) nodes.item(index);
+            if (name.equals(element.getAttributeNS(ANDROID, "name"))) return element;
+        }
+        throw new AssertionError(tag + " not found: " + name);
+    }
+}

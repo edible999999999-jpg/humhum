@@ -189,6 +189,46 @@
             </LinearLayout>
 
             <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="56dp"
+                android:layout_marginTop="10dp"
+                android:background="@drawable/panel_background"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingLeft="12dp"
+                android:paddingRight="8dp">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="后台监控"
+                        android:textColor="@color/ink"
+                        android:textSize="14sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/monitorStatusText"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="已关闭"
+                        android:textColor="@color/muted"
+                        android:textSize="11sp" />
+                </LinearLayout>
+
+                <Switch
+                    android:id="@+id/monitorSwitch"
+                    android:layout_width="wrap_content"
+                    android:layout_height="48dp"
+                    android:contentDescription="后台监控" />
+            </LinearLayout>
+
+            <LinearLayout
                 android:id="@+id/sessionsContainer"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
