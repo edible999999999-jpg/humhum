@@ -50,6 +50,66 @@ pub struct RelayDeviceSecret {
     pub next_sequence: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct WakeRelayBundle {
+    pub version: u8,
+    pub base_url: String,
+    pub channel_id: String,
+    pub subscriber_token: String,
+    pub wake_key: String,
+}
+
+struct RelayProvision {
+    desktop: RelayDeviceSecret,
+    android: WakeRelayBundle,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RelayRegistrationResponse {
+    channel_id: String,
+    publisher_token: String,
+    subscriber_token: String,
+}
+
+fn split_registration(
+    device_id: &str,
+    base_url: &RelayBaseUrl,
+    response: &[u8],
+    wake_key: &str,
+) -> Result<RelayProvision, String> {
+    if response.len() > 1024 || !is_secret(wake_key) {
+        return Err("Relay registration is invalid".into());
+    }
+    let registration: RelayRegistrationResponse = serde_json::from_slice(response)
+        .map_err(|_| "Relay registration is invalid".to_string())?;
+    if !is_secret(&registration.channel_id)
+        || !is_secret(&registration.publisher_token)
+        || !is_secret(&registration.subscriber_token)
+        || registration.publisher_token == registration.subscriber_token
+    {
+        return Err("Relay registration is invalid".into());
+    }
+    let desktop = RelayDeviceSecret {
+        device_id: device_id.to_string(),
+        base_url: base_url.as_str().to_string(),
+        channel_id: registration.channel_id.clone(),
+        wake_key: wake_key.to_string(),
+        publisher_token: registration.publisher_token,
+        next_sequence: 1,
+    };
+    desktop.validate()?;
+    let android = WakeRelayBundle {
+        version: 1,
+        base_url: base_url.as_str().to_string(),
+        channel_id: registration.channel_id,
+        subscriber_token: registration.subscriber_token,
+        wake_key: wake_key.to_string(),
+    };
+    Ok(RelayProvision { desktop, android })
+}
+
 impl RelayDeviceSecret {
     fn validate(&self) -> Result<(), String> {
         RelayBaseUrl::parse(&self.base_url)?;
@@ -240,5 +300,62 @@ mod tests {
             .unwrap()
             .get("device-tablet")
             .is_none());
+    }
+
+    #[test]
+    fn relay_registration_splits_publisher_and_subscriber_material() {
+        let base = RelayBaseUrl::parse("https://relay.example.com").unwrap();
+        let response = serde_json::json!({
+            "channel_id": "11".repeat(32),
+            "publisher_token": "22".repeat(32),
+            "subscriber_token": "33".repeat(32),
+        });
+
+        let provision = split_registration(
+            "device-phone",
+            &base,
+            &serde_json::to_vec(&response).unwrap(),
+            &"44".repeat(32),
+        )
+        .unwrap();
+
+        assert_eq!(provision.desktop.publisher_token, "22".repeat(32));
+        assert_eq!(provision.desktop.wake_key, "44".repeat(32));
+        assert_eq!(provision.android.subscriber_token, "33".repeat(32));
+        assert_eq!(provision.android.wake_key, "44".repeat(32));
+        let desktop_json = serde_json::to_string(&provision.desktop).unwrap();
+        let android_json = serde_json::to_string(&provision.android).unwrap();
+        assert!(!desktop_json.contains(&"33".repeat(32)));
+        assert!(!android_json.contains(&"22".repeat(32)));
+    }
+
+    #[test]
+    fn relay_registration_rejects_unknown_fields_and_malformed_secrets() {
+        let base = RelayBaseUrl::parse("https://relay.example.com").unwrap();
+        let valid = serde_json::json!({
+            "channel_id": "11".repeat(32),
+            "publisher_token": "22".repeat(32),
+            "subscriber_token": "33".repeat(32),
+        });
+        assert!(split_registration(
+            "device-phone",
+            &base,
+            &serde_json::to_vec(&valid).unwrap(),
+            "short",
+        )
+        .is_err());
+        assert!(split_registration(
+            "device-phone",
+            &base,
+            &serde_json::to_vec(&serde_json::json!({
+                "channel_id": "11".repeat(32),
+                "publisher_token": "22".repeat(32),
+                "subscriber_token": "33".repeat(32),
+                "plaintext": "not allowed",
+            }))
+            .unwrap(),
+            &"44".repeat(32),
+        )
+        .is_err());
     }
 }
