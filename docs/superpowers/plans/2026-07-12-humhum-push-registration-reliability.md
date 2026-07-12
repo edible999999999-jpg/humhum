@@ -53,8 +53,8 @@
 - Modify: `docs/competitive-parity-2026-07-12.md`
 - Modify: this plan.
 
-- [ ] Add one stable push-status TextView under **后台可靠性**, bind only interpreted state copy and register/unregister the preference listener with Activity lifecycle.
-- [ ] Ensure disconnect cancels registration and clears push state before clearing connection state.
-- [ ] Run an injected fail-then-success coordinator test and a no-Firebase API 36 release cold launch; verify no registration network request and visible disabled copy.
-- [ ] Run all frontend, relay, Rust and Android tests plus release lint/build/signature/permission checks.
-- [ ] Update docs with verified retry/status evidence and the real Xiaomi account/AppID/AppKey/AppSecret blocker, commit `docs(push): verify registration recovery`, rebuild/relaunch desktop and keep the overall goal active.
+- [x] Add one stable push-status TextView under **后台可靠性**, bind only interpreted state copy and register/unregister the preference listener with Activity lifecycle.
+- [x] Ensure disconnect cancels registration and clears push state before clearing connection state.
+- [x] Run an injected fail-then-success coordinator test and a no-Firebase API 36 release cold launch; verify no registration network request and visible disabled copy.
+- [x] Run all frontend, relay, Rust and Android tests plus release lint/build/signature/permission checks.
+- [x] Update docs with verified retry/status evidence and the real Xiaomi account/AppID/AppKey/AppSecret blocker, commit `docs(push): verify registration recovery`, rebuild/relaunch desktop and keep the overall goal active.
