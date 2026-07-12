@@ -107,6 +107,55 @@ public class MobileProtocolTest {
         assertFalse(read.sessions().get(0).canMessage());
     }
 
+    @Test
+    public void sessionCursorAcceptsOnlyLowercaseSha256() throws Exception {
+        String cursor = "ab".repeat(32);
+        JSONObject payload = new JSONObject()
+                .put("scope", "read")
+                .put("sessions", new JSONArray())
+                .put("cursor", cursor);
+
+        assertEquals(cursor, MobileProtocol.parseSessions(payload.toString()).cursor());
+        assertEquals("", MobileProtocol.parseSessions(
+                new JSONObject(payload.toString()).put("cursor", "ABC").toString()).cursor());
+    }
+
+    @Test
+    public void eventWaitUsesExactAuthenticatedRouteAndLongReadTimeout() {
+        String cursor = "cd".repeat(32);
+
+        MobileProtocol.RequestSpec request = MobileProtocol.eventRequest(cursor);
+
+        assertEquals("GET", request.method());
+        assertEquals("/api/events?cursor=" + cursor, request.path());
+        assertTrue(request.requiresToken());
+        assertEquals(25_000, request.readTimeoutMillis());
+        assertThrows(IllegalArgumentException.class, () -> MobileProtocol.eventRequest("bad"));
+        assertThrows(IllegalArgumentException.class,
+                () -> MobileProtocol.eventRequest(cursor.toUpperCase()));
+    }
+
+    @Test
+    public void eventSignalParserAcceptsOnlyMinimalBoundedMetadata() throws Exception {
+        String cursor = "ef".repeat(32);
+        String payload = new JSONObject()
+                .put("cursor", cursor)
+                .put("changed", true)
+                .put("retry_after_ms", 0)
+                .toString();
+
+        Models.EventSignal signal = MobileProtocol.parseEventSignal(payload);
+
+        assertEquals(cursor, signal.cursor());
+        assertTrue(signal.changed());
+        assertThrows(org.json.JSONException.class, () -> MobileProtocol.parseEventSignal(
+                new JSONObject(payload).put("session", "private").toString()));
+        assertThrows(org.json.JSONException.class, () -> MobileProtocol.parseEventSignal(
+                new JSONObject(payload).put("cursor", "bad").toString()));
+        assertThrows(org.json.JSONException.class, () -> MobileProtocol.parseEventSignal(
+                new JSONObject(payload).put("changed", "true").toString()));
+    }
+
     private static BridgeConfig config() {
         return BridgeConfig.parse(
                 "https://192.168.1.20:31276",

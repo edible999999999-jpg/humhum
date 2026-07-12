@@ -42,6 +42,10 @@ public final class MobileProtocol {
         return parseSessions(execute(new RequestSpec("GET", "/api/sessions", "", true)));
     }
 
+    public Models.EventSignal waitForChange(String cursor) throws IOException, JSONException {
+        return parseEventSignal(execute(eventRequest(cursor)));
+    }
+
     public void resolveApproval(Models.Action action, String decision) throws IOException, JSONException {
         execute(approvalRequest(action, decision, scope));
     }
@@ -64,6 +68,11 @@ public final class MobileProtocol {
 
     static RequestSpec disconnectRequest() {
         return new RequestSpec("DELETE", "/api/device", "", true);
+    }
+
+    static RequestSpec eventRequest(String cursor) {
+        if (!isCursor(cursor)) throw new IllegalArgumentException("Event cursor is invalid");
+        return new RequestSpec("GET", "/api/events?cursor=" + cursor, "", true, 25_000);
     }
 
     static RequestSpec approvalRequest(Models.Action action, String decision, Models.Scope scope)
@@ -109,10 +118,12 @@ public final class MobileProtocol {
     static Models.SessionPage parseSessions(String payload) throws JSONException {
         JSONObject root = new JSONObject(payload);
         Models.Scope scope = Models.Scope.fromWire(root.optString("scope"));
+        String cursor = root.optString("cursor", "");
+        if (!isCursor(cursor)) cursor = "";
         JSONArray source = root.optJSONArray("sessions");
         List<Models.Session> sessions = new ArrayList<>();
         if (source == null) {
-            return new Models.SessionPage(scope, sessions);
+            return new Models.SessionPage(scope, sessions, cursor);
         }
         for (int index = 0; index < Math.min(source.length(), MAX_SESSIONS); index++) {
             JSONObject item = source.optJSONObject(index);
@@ -133,7 +144,26 @@ public final class MobileProtocol {
                     scope == Models.Scope.CONTROL && item.optBoolean("can_message", false),
                     actions));
         }
-        return new Models.SessionPage(scope, sessions);
+        return new Models.SessionPage(scope, sessions, cursor);
+    }
+
+    static Models.EventSignal parseEventSignal(String payload) throws JSONException {
+        JSONObject root = new JSONObject(payload);
+        if (root.length() != 3
+                || !root.has("cursor")
+                || !root.has("changed")
+                || !root.has("retry_after_ms")) {
+            throw new JSONException("Event signal shape is invalid");
+        }
+        String cursor = root.getString("cursor");
+        if (!isCursor(cursor) || !(root.get("changed") instanceof Boolean)) {
+            throw new JSONException("Event signal value is invalid");
+        }
+        int retryAfter = root.getInt("retry_after_ms");
+        if (retryAfter < 0 || retryAfter > 60_000) {
+            throw new JSONException("Event retry is invalid");
+        }
+        return new Models.EventSignal(cursor, root.getBoolean("changed"));
     }
 
     private static List<Models.Action> parseActions(JSONArray source) {
@@ -159,7 +189,11 @@ public final class MobileProtocol {
             throw new IllegalStateException("Pair this device first");
         }
         HttpsURLConnection connection = PinnedTlsClient.open(
-                config, request.path(), request.method(), request.requiresToken() ? token : null);
+                config,
+                request.path(),
+                request.method(),
+                request.requiresToken() ? token : null,
+                request.readTimeoutMillis());
         if (!request.body().isEmpty()) {
             byte[] bytes = request.body().getBytes(StandardCharsets.UTF_8);
             connection.setDoOutput(true);
@@ -213,23 +247,39 @@ public final class MobileProtocol {
         return safe.length() <= max ? safe : safe.substring(0, max);
     }
 
+    private static boolean isCursor(String cursor) {
+        return cursor != null && cursor.matches("[a-f0-9]{64}");
+    }
+
     static final class RequestSpec {
         private final String method;
         private final String path;
         private final String body;
         private final boolean requiresToken;
+        private final int readTimeoutMillis;
 
         RequestSpec(String method, String path, String body, boolean requiresToken) {
+            this(method, path, body, requiresToken, 8_000);
+        }
+
+        RequestSpec(
+                String method,
+                String path,
+                String body,
+                boolean requiresToken,
+                int readTimeoutMillis) {
             this.method = method;
             this.path = path;
             this.body = body;
             this.requiresToken = requiresToken;
+            this.readTimeoutMillis = readTimeoutMillis;
         }
 
         String method() { return method; }
         String path() { return path; }
         String body() { return body; }
         boolean requiresToken() { return requiresToken; }
+        int readTimeoutMillis() { return readTimeoutMillis; }
     }
 
     public static final class HttpStatusException extends IOException {

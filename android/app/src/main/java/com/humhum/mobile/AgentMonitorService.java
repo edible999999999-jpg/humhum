@@ -32,6 +32,7 @@ public final class AgentMonitorService extends Service {
     private AttentionTracker tracker;
     private int failures;
     private volatile boolean destroyed;
+    private boolean realtimeSupported = true;
     private ConnectivityManager connectivityManager;
     private ConnectivityManager.NetworkCallback networkCallback;
     private boolean networkCallbackRegistered;
@@ -67,7 +68,7 @@ public final class AgentMonitorService extends Service {
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
-        schedule(0);
+        schedulePoll(0);
         return START_STICKY;
     }
 
@@ -83,10 +84,18 @@ public final class AgentMonitorService extends Service {
         super.onDestroy();
     }
 
-    private void schedule(long delaySeconds) {
+    private void schedulePoll(long delaySeconds) {
+        schedule(this::pollOnce, delaySeconds);
+    }
+
+    private void scheduleWatch(String cursor) {
+        schedule(() -> watchOnce(cursor), 0);
+    }
+
+    private void schedule(Runnable task, long delaySeconds) {
         if (destroyed) return;
         if (nextPoll != null) nextPoll.cancel(false);
-        nextPoll = network.schedule(this::pollOnce, delaySeconds, TimeUnit.SECONDS);
+        nextPoll = network.schedule(task, delaySeconds, TimeUnit.SECONDS);
     }
 
     private void pollOnce() {
@@ -104,7 +113,11 @@ public final class AgentMonitorService extends Service {
             failures = 0;
             updateOngoing(getString(R.string.monitor_notification_text));
             if (result.newCount() > 0) notifyAttention(result.newCount());
-            schedule(RETRY_SECONDS[0]);
+            if (realtimeSupported && !page.cursor().isEmpty()) {
+                scheduleWatch(page.cursor());
+            } else {
+                schedulePoll(RETRY_SECONDS[0]);
+            }
         } catch (MobileProtocol.HttpStatusException error) {
             if (error.status() == 401 || error.status() == 403) {
                 monitorStore.clear();
@@ -117,11 +130,45 @@ public final class AgentMonitorService extends Service {
         }
     }
 
+    private void watchOnce(String cursor) {
+        ConnectionStore.Connection connection = connectionStore(this).load();
+        if (!monitorStore.isEnabled() || connection == null) {
+            monitorStore.clear();
+            stopSelf();
+            return;
+        }
+        try {
+            Models.EventSignal signal = new MobileProtocol(
+                    connection.config(), connection.token(), connection.scope())
+                    .waitForChange(cursor);
+            failures = 0;
+            if (signal.changed() || !cursor.equals(signal.cursor())) {
+                schedulePoll(0);
+            } else {
+                scheduleWatch(signal.cursor());
+            }
+        } catch (MobileProtocol.HttpStatusException error) {
+            if (error.status() == 401 || error.status() == 403) {
+                monitorStore.clear();
+                stopSelf();
+            } else if (error.status() == 404) {
+                realtimeSupported = false;
+                failures = 0;
+                updateOngoing(getString(R.string.monitor_notification_text));
+                schedulePoll(RETRY_SECONDS[0]);
+            } else {
+                retryAfterFailure();
+            }
+        } catch (Exception error) {
+            retryAfterFailure();
+        }
+    }
+
     private void retryAfterFailure() {
         updateOngoing(getString(R.string.monitor_notification_unreachable));
         long delay = RETRY_SECONDS[Math.min(failures, RETRY_SECONDS.length - 1)];
         failures++;
-        schedule(delay);
+        schedulePoll(delay);
     }
 
     private void registerNetworkRecovery() {
@@ -132,8 +179,8 @@ public final class AgentMonitorService extends Service {
                 if (destroyed || !recoveryGate.onNetworkAvailable()) return;
                 try {
                     network.execute(() -> {
-                        failures = 0;
-                        schedule(0);
+                    failures = 0;
+                    schedulePoll(0);
                     });
                 } catch (RejectedExecutionException ignored) {
                     // Service shutdown won the race with this connectivity callback.

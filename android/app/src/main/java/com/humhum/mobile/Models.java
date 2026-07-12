@@ -93,13 +93,33 @@ public final class Models {
     public static final class SessionPage {
         private final Scope scope;
         private final List<Session> sessions;
+        private final String cursor;
 
         public SessionPage(Scope scope, List<Session> sessions) {
+            this(scope, sessions, "");
+        }
+
+        public SessionPage(Scope scope, List<Session> sessions, String cursor) {
             this.scope = scope;
             this.sessions = List.copyOf(sessions);
+            this.cursor = cursor == null ? "" : cursor;
         }
 
         public Scope scope() { return scope; }
         public List<Session> sessions() { return sessions; }
+        public String cursor() { return cursor; }
+    }
+
+    public static final class EventSignal {
+        private final String cursor;
+        private final boolean changed;
+
+        public EventSignal(String cursor, boolean changed) {
+            this.cursor = cursor;
+            this.changed = changed;
+        }
+
+        public String cursor() { return cursor; }
+        public boolean changed() { return changed; }
     }
 }

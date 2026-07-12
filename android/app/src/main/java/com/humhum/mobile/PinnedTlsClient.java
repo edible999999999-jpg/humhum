@@ -66,8 +66,20 @@ public final class PinnedTlsClient {
 
     public static HttpsURLConnection open(
             BridgeConfig config, String path, String method, String bearerToken) throws IOException {
+        return open(config, path, method, bearerToken, TIMEOUT_MILLIS);
+    }
+
+    public static HttpsURLConnection open(
+            BridgeConfig config,
+            String path,
+            String method,
+            String bearerToken,
+            int readTimeoutMillis) throws IOException {
         if (path == null || !path.startsWith("/") || path.startsWith("//")) {
             throw new IllegalArgumentException("API path must be absolute within the bridge");
+        }
+        if (readTimeoutMillis < 1_000 || readTimeoutMillis > 30_000) {
+            throw new IllegalArgumentException("Read timeout is outside the safe range");
         }
         try {
             SSLContext context = SSLContext.getInstance("TLS");
@@ -77,7 +89,7 @@ public final class PinnedTlsClient {
             connection.setSSLSocketFactory(context.getSocketFactory());
             connection.setRequestMethod(method);
             connection.setConnectTimeout(TIMEOUT_MILLIS);
-            connection.setReadTimeout(TIMEOUT_MILLIS);
+            connection.setReadTimeout(readTimeoutMillis);
             connection.setUseCaches(false);
             connection.setRequestProperty("Accept", "application/json");
             if (bearerToken != null && !bearerToken.isBlank()) {
