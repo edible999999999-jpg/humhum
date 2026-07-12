@@ -26,10 +26,10 @@
 - Create: `android/app/src/test/java/com/humhum/mobile/PushRetryPolicyTest.java`
 - Create: `android/app/src/test/java/com/humhum/mobile/PushStateStoreTest.java`
 
-- [ ] Write failing tests for 15/60/300 capped delays, transient/permanent statuses, channel-bound states, corrupt-value fallback, clear behavior and user-facing copy.
-- [ ] Run focused tests and require missing-class compilation failures.
-- [ ] Implement the dependency-free policy and testable key/value store adapter without token fields.
-- [ ] Run focused and complete JVM tests, then commit `feat(android): model push registration reliability`.
+- [x] Write failing tests for 15/60/300 capped delays, transient/permanent statuses, channel-bound states, corrupt-value fallback, clear behavior and user-facing copy.
+- [x] Run focused tests and require missing-class compilation failures.
+- [x] Implement the dependency-free policy and testable key/value store adapter without token fields.
+- [x] Run focused and complete JVM tests, then commit `feat(android): model push registration reliability`.
 
 ### Task 2: Generation-Bound Registration Scheduler
 
