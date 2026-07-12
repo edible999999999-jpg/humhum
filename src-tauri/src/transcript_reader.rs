@@ -604,37 +604,22 @@ mod tests {
     fn only_considers_last_five_hundred_records() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("records.jsonl");
-        let mut lines = Vec::new();
-        for idx in 0..520 {
-            lines.push(format!(
-                r#"{{"role":"user","content":"user-{idx}","tool_name":"tool-{idx}"}}"#
-            ));
-        }
+        let mut lines = vec![json_line("user", "outside-window")];
+        lines.extend((1..20).map(|idx| format!(r#"{{"sequence":{idx}}}"#)));
+        lines.extend((20..519).map(|idx| format!(r#"{{"sequence":{idx}}}"#)));
+        lines.push(json_line("user", "recent"));
         write_lines(&path, &lines);
 
         let signals = parse(&path);
 
+        assert_eq!(signals.user_messages, vec!["recent".to_string()]);
+        assert_eq!(signals.tool_names, Vec::<String>::new());
         assert_eq!(
-            signals.user_messages,
-            (510..520)
-                .map(|idx| format!("user-{idx}"))
-                .collect::<Vec<_>>()
-        );
-        assert_eq!(
-            signals.tool_names,
-            (508..520)
-                .map(|idx| format!("tool-{idx}"))
-                .collect::<Vec<_>>()
-        );
-        assert_eq!(
-            signals
-                .messages
-                .iter()
-                .map(|message| message.text.clone())
-                .collect::<Vec<_>>(),
-            (508..520)
-                .map(|idx| format!("user-{idx}"))
-                .collect::<Vec<_>>()
+            signals.messages,
+            vec![TranscriptMessage {
+                role: TranscriptRole::User,
+                text: "recent".to_string(),
+            }]
         );
     }
 
