@@ -4,6 +4,129 @@ use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+const COALESCE_MILLIS: u64 = 1_000;
+const RETRY_MILLIS: [u64; 4] = [5_000, 15_000, 30_000, 60_000];
+const MAX_RELAY_SEQUENCE: u64 = 9_007_199_254_740_991;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RelayPublisherStatus {
+    Disabled,
+    Connected,
+    Retrying,
+    Errored,
+}
+
+impl RelayPublisherStatus {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Disabled => "disabled",
+            Self::Connected => "connected",
+            Self::Retrying => "retrying",
+            Self::Errored => "errored",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PendingWake {
+    pub(crate) device_id: String,
+    pub(crate) cursor: String,
+}
+
+#[derive(Default)]
+struct DevicePublisherState {
+    published_cursor: Option<String>,
+    pending_cursor: Option<String>,
+    due_at: u64,
+    failures: usize,
+}
+
+#[derive(Default)]
+pub(crate) struct PublisherState {
+    devices: BTreeMap<String, DevicePublisherState>,
+}
+
+impl PublisherState {
+    pub(crate) fn observe(&mut self, device_id: &str, cursor: &str, now: u64) {
+        let state = self.devices.entry(device_id.to_string()).or_default();
+        if state.published_cursor.is_none() {
+            state.published_cursor = Some(cursor.to_string());
+            return;
+        }
+        if state.published_cursor.as_deref() == Some(cursor) {
+            state.pending_cursor = None;
+            state.failures = 0;
+            return;
+        }
+        if state.pending_cursor.is_none() {
+            state.due_at = now.saturating_add(COALESCE_MILLIS);
+        }
+        state.pending_cursor = Some(cursor.to_string());
+    }
+
+    pub(crate) fn ready(&self, now: u64) -> Vec<PendingWake> {
+        self.devices
+            .iter()
+            .filter_map(|(device_id, state)| {
+                (state.pending_cursor.is_some() && now >= state.due_at).then(|| PendingWake {
+                    device_id: device_id.clone(),
+                    cursor: state.pending_cursor.clone().unwrap_or_default(),
+                })
+            })
+            .collect()
+    }
+
+    pub(crate) fn succeeded(&mut self, device_id: &str, cursor: &str) {
+        let Some(state) = self.devices.get_mut(device_id) else {
+            return;
+        };
+        if state.pending_cursor.as_deref() == Some(cursor) {
+            state.published_cursor = state.pending_cursor.take();
+            state.failures = 0;
+        }
+    }
+
+    pub(crate) fn failed(&mut self, device_id: &str, now: u64) {
+        let Some(state) = self.devices.get_mut(device_id) else {
+            return;
+        };
+        let delay = RETRY_MILLIS[state.failures.min(RETRY_MILLIS.len() - 1)];
+        state.failures = state.failures.saturating_add(1);
+        state.due_at = now.saturating_add(delay);
+    }
+
+    pub(crate) fn remove(&mut self, device_id: &str) {
+        self.devices.remove(device_id);
+    }
+
+    pub(crate) fn retain(&mut self, mut keep: impl FnMut(&str) -> bool) {
+        self.devices.retain(|device_id, _| keep(device_id));
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.devices.clear();
+    }
+
+    pub(crate) fn status(&self, enabled: bool) -> RelayPublisherStatus {
+        if !enabled {
+            return RelayPublisherStatus::Disabled;
+        }
+        let failures = self
+            .devices
+            .values()
+            .map(|state| state.failures)
+            .max()
+            .unwrap_or(0);
+        if failures >= RETRY_MILLIS.len() {
+            RelayPublisherStatus::Errored
+        } else if failures > 0 {
+            RelayPublisherStatus::Retrying
+        } else {
+            RelayPublisherStatus::Connected
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RelayBaseUrl(String);
 
@@ -114,6 +237,30 @@ impl RelayClient {
             .map_err(|_| "Could not build relay deletion".into())
     }
 
+    fn publication_request(
+        &self,
+        secret: &RelayDeviceSecret,
+        envelope: &crate::wake_crypto::WakeEnvelope,
+    ) -> Result<reqwest::Request, String> {
+        secret.validate()?;
+        if secret.base_url != self.base_url.as_str()
+            || envelope.sequence != secret.next_sequence
+            || envelope.sequence >= MAX_RELAY_SEQUENCE
+        {
+            return Err("Relay publication is invalid".into());
+        }
+        self.client
+            .post(self.endpoint(&format!("/v1/channels/{}/messages", secret.channel_id))?)
+            .header(
+                reqwest::header::AUTHORIZATION,
+                format!("Bearer {}", secret.publisher_token),
+            )
+            .header(reqwest::header::ACCEPT, "application/json")
+            .json(envelope)
+            .build()
+            .map_err(|_| "Could not build relay publication".into())
+    }
+
     pub async fn health(&self) -> Result<(), String> {
         let response = self
             .client
@@ -167,23 +314,57 @@ impl RelayClient {
         }
         Ok(())
     }
+
+    pub async fn publish(
+        &self,
+        secret: &RelayDeviceSecret,
+        envelope: &crate::wake_crypto::WakeEnvelope,
+    ) -> Result<(), String> {
+        let response = self
+            .client
+            .execute(self.publication_request(secret, envelope)?)
+            .await
+            .map_err(|_| "Could not publish wake signal".to_string())?;
+        if response.status() != reqwest::StatusCode::CREATED {
+            return Err("Wake relay rejected publication".into());
+        }
+        let bytes = bounded_response(response, 128).await?;
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct PublicationResponse {
+            sequence: u64,
+        }
+        let result: PublicationResponse = serde_json::from_slice(&bytes)
+            .map_err(|_| "Wake relay returned invalid publication data".to_string())?;
+        if result.sequence != envelope.sequence {
+            return Err("Wake relay returned invalid publication data".into());
+        }
+        Ok(())
+    }
 }
 
-async fn bounded_response(response: reqwest::Response, limit: usize) -> Result<Vec<u8>, String> {
+async fn bounded_response(
+    mut response: reqwest::Response,
+    limit: usize,
+) -> Result<Vec<u8>, String> {
     if response
         .content_length()
         .is_some_and(|length| length > limit as u64)
     {
         return Err("Wake relay response is too large".into());
     }
-    let bytes = response
-        .bytes()
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
         .await
-        .map_err(|_| "Could not read wake relay response".to_string())?;
-    if bytes.len() > limit {
-        return Err("Wake relay response is too large".into());
+        .map_err(|_| "Could not read wake relay response".to_string())?
+    {
+        if chunk.len() > limit.saturating_sub(bytes.len()) {
+            return Err("Wake relay response is too large".into());
+        }
+        bytes.extend_from_slice(&chunk);
     }
-    Ok(bytes.to_vec())
+    Ok(bytes)
 }
 
 #[derive(Deserialize)]
@@ -244,6 +425,7 @@ impl RelayDeviceSecret {
             || !is_secret(&self.wake_key)
             || !is_secret(&self.publisher_token)
             || self.next_sequence == 0
+            || self.next_sequence > MAX_RELAY_SEQUENCE
         {
             return Err("Relay device secret is invalid".into());
         }
@@ -302,6 +484,38 @@ impl MobileRelaySecretStore {
         secret.validate()?;
         self.devices.insert(secret.device_id.clone(), secret);
         self.persist()
+    }
+
+    pub(crate) fn all(&self) -> Vec<RelayDeviceSecret> {
+        self.devices.values().cloned().collect()
+    }
+
+    pub(crate) fn advance_sequence(
+        &mut self,
+        device_id: &str,
+        published_sequence: u64,
+    ) -> Result<(), String> {
+        let previous = self
+            .devices
+            .get(device_id)
+            .cloned()
+            .ok_or_else(|| "Relay device secret is unavailable".to_string())?;
+        if previous.next_sequence != published_sequence {
+            return Err("Relay sequence changed during publication".into());
+        }
+        let next_sequence = published_sequence
+            .checked_add(1)
+            .filter(|sequence| *sequence <= MAX_RELAY_SEQUENCE)
+            .ok_or_else(|| "Relay sequence is exhausted".to_string())?;
+        self.devices
+            .get_mut(device_id)
+            .expect("relay secret checked above")
+            .next_sequence = next_sequence;
+        if let Err(error) = self.persist() {
+            self.devices.insert(device_id.to_string(), previous);
+            return Err(error);
+        }
+        Ok(())
     }
 
     pub fn remove(&mut self, device_id: &str) -> Result<(), String> {
@@ -367,6 +581,28 @@ fn set_owner_only(path: &Path) -> Result<(), String> {
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+
+    fn relay_secret(base_url: &str) -> RelayDeviceSecret {
+        RelayDeviceSecret {
+            device_id: "device-phone".into(),
+            base_url: base_url.into(),
+            channel_id: "11".repeat(32),
+            wake_key: "22".repeat(32),
+            publisher_token: "33".repeat(32),
+            next_sequence: 7,
+        }
+    }
+
+    fn wake_envelope(sequence: u64) -> crate::wake_crypto::WakeEnvelope {
+        crate::wake_crypto::encrypt_wake(
+            &"22".repeat(32),
+            &"11".repeat(32),
+            sequence,
+            1_783_836_000,
+            "000102030405060708090a0b",
+        )
+        .unwrap()
+    }
 
     #[test]
     fn relay_base_url_requires_https_except_exact_loopback() {
@@ -539,5 +775,187 @@ mod tests {
             deletion.headers()[reqwest::header::AUTHORIZATION],
             format!("Bearer {}", secret.publisher_token)
         );
+    }
+
+    #[tokio::test]
+    async fn relay_client_posts_only_the_encrypted_envelope_with_publisher_auth() {
+        let body = r#"{"sequence":7}"#;
+        let response = format!(
+            "HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 4096];
+            loop {
+                let read = stream.read(&mut buffer).await.unwrap();
+                request.extend_from_slice(&buffer[..read]);
+                if request.ends_with(b"}") {
+                    break;
+                }
+            }
+            stream.write_all(response.as_bytes()).await.unwrap();
+            String::from_utf8(request).unwrap()
+        });
+        let base_url = format!("http://{address}");
+        let secret = relay_secret(&base_url);
+        let envelope = wake_envelope(7);
+
+        RelayClient::new(RelayBaseUrl::parse(&base_url).unwrap())
+            .unwrap()
+            .publish(&secret, &envelope)
+            .await
+            .unwrap();
+
+        let request = server.await.unwrap();
+        assert!(request.starts_with(&format!(
+            "POST /v1/channels/{}/messages HTTP/1.1\r\n",
+            secret.channel_id
+        )));
+        assert!(request
+            .to_ascii_lowercase()
+            .contains(&format!("authorization: bearer {}", secret.publisher_token)));
+        let published: serde_json::Value =
+            serde_json::from_str(request.split("\r\n\r\n").nth(1).unwrap()).unwrap();
+        assert_eq!(published.as_object().unwrap().len(), 4);
+        assert_eq!(published["version"], 1);
+        assert_eq!(published["sequence"], 7);
+        for forbidden in [
+            "session", "project", "scope", "device", "approval", "message",
+        ] {
+            assert!(!published.to_string().contains(forbidden));
+        }
+    }
+
+    #[tokio::test]
+    async fn relay_client_rejects_redirect_errors_mismatch_and_unbounded_responses() {
+        let cases = [
+            "HTTP/1.1 302 Found\r\nLocation: /elsewhere\r\nContent-Length: 0\r\n\r\n".to_string(),
+            "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n".to_string(),
+            "HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nContent-Length: 14\r\n\r\n{\"sequence\":8}".to_string(),
+            "HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nContent-Length: 27\r\n\r\n{\"sequence\":7,\"extra\":true}".to_string(),
+            format!(
+                "HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nContent-Length: 600\r\n\r\n{}",
+                "x".repeat(600)
+            ),
+        ];
+
+        for response in cases {
+            let response: &'static str = Box::leak(response.into_boxed_str());
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            tokio::spawn(async move {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut buffer = [0_u8; 4096];
+                let _ = stream.read(&mut buffer).await.unwrap();
+                stream.write_all(response.as_bytes()).await.unwrap();
+            });
+            let base_url = format!("http://{address}");
+            let secret = relay_secret(&base_url);
+            let result = RelayClient::new(RelayBaseUrl::parse(&base_url).unwrap())
+                .unwrap()
+                .publish(&secret, &wake_envelope(7))
+                .await;
+            assert!(result.is_err());
+        }
+    }
+
+    #[test]
+    fn publisher_baselines_then_coalesces_only_changed_cursors_for_one_second() {
+        let mut publisher = PublisherState::default();
+        publisher.observe("device-phone", "cursor-a", 0);
+        assert!(publisher.ready(10_000).is_empty());
+
+        publisher.observe("device-phone", "cursor-b", 10);
+        publisher.observe("device-phone", "cursor-c", 500);
+        assert!(publisher.ready(1_009).is_empty());
+        assert_eq!(
+            publisher.ready(1_010),
+            vec![PendingWake {
+                device_id: "device-phone".into(),
+                cursor: "cursor-c".into(),
+            }]
+        );
+
+        publisher.succeeded("device-phone", "cursor-c");
+        publisher.observe("device-phone", "cursor-c", 5_000);
+        assert!(publisher.ready(10_000).is_empty());
+
+        publisher.observe("device-phone", "cursor-d", 11_000);
+        publisher.observe("device-phone", "cursor-c", 11_500);
+        assert!(publisher.ready(20_000).is_empty());
+    }
+
+    #[test]
+    fn publisher_retries_at_bounded_delays_and_keeps_only_newest_wake() {
+        let mut publisher = PublisherState::default();
+        publisher.observe("device-phone", "cursor-a", 0);
+        publisher.observe("device-phone", "cursor-b", 1);
+        assert_eq!(publisher.ready(1_001)[0].cursor, "cursor-b");
+
+        let mut now = 1_001;
+        for delay in [5_000, 15_000, 30_000, 60_000, 60_000] {
+            publisher.failed("device-phone", now);
+            publisher.observe("device-phone", &format!("cursor-{now}"), now + 1);
+            assert!(publisher.ready(now + delay - 1).is_empty());
+            assert_eq!(
+                publisher.ready(now + delay)[0].cursor,
+                format!("cursor-{now}")
+            );
+            now += delay;
+        }
+        assert_eq!(publisher.status(true), RelayPublisherStatus::Errored);
+        publisher.succeeded("device-phone", &format!("cursor-{}", now - 60_000));
+        assert_eq!(publisher.status(true), RelayPublisherStatus::Connected);
+    }
+
+    #[test]
+    fn publisher_cancels_revoked_devices_and_shutdown() {
+        let mut publisher = PublisherState::default();
+        for device in ["device-phone", "device-tablet"] {
+            publisher.observe(device, "cursor-a", 0);
+            publisher.observe(device, "cursor-b", 1);
+        }
+        publisher.remove("device-phone");
+        assert_eq!(publisher.ready(2_000)[0].device_id, "device-tablet");
+        publisher.clear();
+        assert!(publisher.ready(2_000).is_empty());
+        assert_eq!(publisher.status(false), RelayPublisherStatus::Disabled);
+    }
+
+    #[test]
+    fn successful_sequence_advance_is_atomic_and_checked() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut store = MobileRelaySecretStore::load_or_create(temp.path()).unwrap();
+        store
+            .put(relay_secret("https://relay.example.com"))
+            .unwrap();
+
+        assert!(store.advance_sequence("device-phone", 6).is_err());
+        assert_eq!(store.get("device-phone").unwrap().next_sequence, 7);
+        store.advance_sequence("device-phone", 7).unwrap();
+        assert_eq!(store.get("device-phone").unwrap().next_sequence, 8);
+        assert_eq!(
+            MobileRelaySecretStore::load_or_create(temp.path())
+                .unwrap()
+                .get("device-phone")
+                .unwrap()
+                .next_sequence,
+            8
+        );
+    }
+
+    #[test]
+    fn relay_sequences_are_bounded_to_json_safe_integers() {
+        let mut secret = relay_secret("https://relay.example.com");
+        secret.next_sequence = 9_007_199_254_740_991;
+        assert!(secret.validate().is_ok());
+        secret.next_sequence += 1;
+        assert!(secret.validate().is_err());
     }
 }

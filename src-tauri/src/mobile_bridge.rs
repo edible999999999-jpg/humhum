@@ -12,9 +12,9 @@ use std::io::BufReader;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use tauri::Manager;
+use tauri::{Listener, Manager};
 use tokio::net::TcpListener;
-use tokio::sync::{oneshot, Semaphore};
+use tokio::sync::{oneshot, Notify, Semaphore};
 use tokio_rustls::rustls;
 use tokio_rustls::TlsAcceptor;
 
@@ -145,7 +145,9 @@ struct MobileRuntime {
     certificate_fingerprint: Option<String>,
     pairing: Option<PairingChallenge>,
     shutdown: Option<oneshot::Sender<()>>,
+    relay_shutdown: Option<oneshot::Sender<()>>,
     relay_base_url: Option<crate::mobile_relay::RelayBaseUrl>,
+    relay_status: crate::mobile_relay::RelayPublisherStatus,
 }
 
 pub struct MobileBridgeState {
@@ -153,6 +155,7 @@ pub struct MobileBridgeState {
     devices: Arc<Mutex<MobileDeviceStore>>,
     presence: Mutex<MobilePresenceStore>,
     relay_secrets: Mutex<crate::mobile_relay::MobileRelaySecretStore>,
+    relay_changes: Arc<Notify>,
     event_waiters: Arc<Semaphore>,
     runtime: Mutex<MobileRuntime>,
 }
@@ -166,6 +169,7 @@ impl MobileBridgeState {
             relay_secrets: Mutex::new(crate::mobile_relay::MobileRelaySecretStore::load_or_create(
                 humhum_dir,
             )?),
+            relay_changes: Arc::new(Notify::new()),
             event_waiters: Arc::new(Semaphore::new(MAX_EVENT_WAITERS)),
             runtime: Mutex::new(MobileRuntime {
                 enabled: false,
@@ -174,7 +178,9 @@ impl MobileBridgeState {
                 certificate_fingerprint: None,
                 pairing: None,
                 shutdown: None,
+                relay_shutdown: None,
                 relay_base_url: None,
+                relay_status: crate::mobile_relay::RelayPublisherStatus::Connected,
             }),
         })
     }
@@ -204,7 +210,7 @@ impl MobileBridgeState {
             paired_devices: devices.len(),
             devices,
             relay_status: if runtime.relay_base_url.is_some() {
-                "connected".into()
+                runtime.relay_status.as_str().into()
             } else {
                 "disabled".into()
             },
@@ -248,7 +254,9 @@ impl MobileBridgeState {
         .map_err(|error| format!("Could not open mobile HTTPS port: {error}"))?;
         let url = format!("https://{local_ip}:{DEFAULT_MOBILE_PORT}");
         let tailnet_url = tailnet_ip.map(|ip| format!("https://{ip}:{DEFAULT_MOBILE_PORT}"));
+        let relay_enabled = relay_base_url.is_some();
         let (shutdown_tx, mut shutdown_rx) = oneshot::channel();
+        let (relay_shutdown_tx, relay_shutdown_rx) = oneshot::channel();
         {
             let mut runtime = self.runtime.lock().map_err(|error| error.to_string())?;
             runtime.enabled = true;
@@ -256,10 +264,17 @@ impl MobileBridgeState {
             runtime.tailnet_url = tailnet_url;
             runtime.certificate_fingerprint = Some(cert.fingerprint);
             runtime.shutdown = Some(shutdown_tx);
+            runtime.relay_shutdown = Some(relay_shutdown_tx);
             runtime.relay_base_url = relay_base_url;
+            runtime.relay_status = if relay_enabled {
+                crate::mobile_relay::RelayPublisherStatus::Connected
+            } else {
+                crate::mobile_relay::RelayPublisherStatus::Disabled
+            };
         }
 
         let bridge = Arc::clone(self);
+        let publisher_app = app.clone();
         let acceptor = TlsAcceptor::from(Arc::new(tls_config));
         tokio::spawn(async move {
             loop {
@@ -283,6 +298,9 @@ impl MobileBridgeState {
                 }
             }
         });
+        if relay_enabled {
+            spawn_wake_publisher(Arc::clone(self), publisher_app, relay_shutdown_rx);
+        }
         Ok(self.status())
     }
 
@@ -291,13 +309,18 @@ impl MobileBridgeState {
         if let Some(shutdown) = runtime.shutdown.take() {
             let _ = shutdown.send(());
         }
+        if let Some(shutdown) = runtime.relay_shutdown.take() {
+            let _ = shutdown.send(());
+        }
         runtime.enabled = false;
         runtime.pairing = None;
         runtime.url = None;
         runtime.tailnet_url = None;
         runtime.certificate_fingerprint = None;
         runtime.relay_base_url = None;
+        runtime.relay_status = crate::mobile_relay::RelayPublisherStatus::Disabled;
         drop(runtime);
+        self.relay_changes.notify_one();
         self.presence
             .lock()
             .map_err(|error| error.to_string())?
@@ -351,6 +374,7 @@ impl MobileBridgeState {
             .lock()
             .map_err(|error| error.to_string())?
             .take_all()?;
+        self.relay_changes.notify_one();
         schedule_relay_deletions(relay_secrets);
         self.presence
             .lock()
@@ -369,6 +393,7 @@ impl MobileBridgeState {
             .lock()
             .map_err(|error| error.to_string())?
             .take(device_id)?;
+        self.relay_changes.notify_one();
         schedule_relay_deletions(relay_secret.into_iter().collect());
         self.presence
             .lock()
@@ -376,6 +401,154 @@ impl MobileBridgeState {
             .remove(device_id);
         Ok(self.status())
     }
+}
+
+fn wake_envelope_for_secret(
+    secret: &crate::mobile_relay::RelayDeviceSecret,
+    issued_at: i64,
+    nonce_hex: &str,
+) -> Result<crate::wake_crypto::WakeEnvelope, String> {
+    crate::wake_crypto::encrypt_wake(
+        &secret.wake_key,
+        &secret.channel_id,
+        secret.next_sequence,
+        issued_at,
+        nonce_hex,
+    )
+    .map_err(|_| "Could not encrypt wake signal".to_string())
+}
+
+fn spawn_wake_publisher(
+    bridge: Arc<MobileBridgeState>,
+    app: tauri::AppHandle,
+    shutdown: oneshot::Receiver<()>,
+) {
+    tokio::spawn(run_wake_publisher(bridge, app, shutdown));
+}
+
+async fn run_wake_publisher(
+    bridge: Arc<MobileBridgeState>,
+    app: tauri::AppHandle,
+    mut shutdown: oneshot::Receiver<()>,
+) {
+    let changes = Arc::clone(&bridge.relay_changes);
+    let event_changes = Arc::clone(&changes);
+    let listener = app.listen("humhum://hook-event", move |_| event_changes.notify_one());
+    let started = std::time::Instant::now();
+    let mut publisher = crate::mobile_relay::PublisherState::default();
+    let mut poll = tokio::time::interval(std::time::Duration::from_secs(1));
+    poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+    'publisher: loop {
+        tokio::select! {
+            _ = &mut shutdown => break,
+            _ = changes.notified() => {},
+            _ = poll.tick() => {},
+        }
+
+        let active_base_url = bridge
+            .runtime
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .relay_base_url
+            .clone();
+        let Some(active_base_url) = active_base_url else {
+            break;
+        };
+        let secrets = bridge
+            .relay_secrets
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .all()
+            .into_iter()
+            .filter(|secret| secret.base_url == active_base_url.as_str())
+            .collect::<Vec<_>>();
+        let scopes = bridge
+            .devices
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .devices
+            .iter()
+            .map(|device| (device.id.clone(), device.scope))
+            .collect::<HashMap<_, _>>();
+        publisher.retain(|device_id| {
+            scopes.contains_key(device_id)
+                && secrets.iter().any(|secret| secret.device_id == device_id)
+        });
+
+        let now = started.elapsed().as_millis().min(u64::MAX as u128) as u64;
+        for secret in &secrets {
+            let Some(scope) = scopes.get(&secret.device_id).copied() else {
+                continue;
+            };
+            let page = with_mobile_cursor(mobile_session_page(&app, scope).await);
+            if let Some(cursor) = page["cursor"].as_str() {
+                publisher.observe(&secret.device_id, cursor, now);
+            }
+        }
+
+        for pending in publisher.ready(now) {
+            let secret = bridge
+                .relay_secrets
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .get(&pending.device_id)
+                .cloned();
+            let Some(secret) = secret.filter(|secret| secret.base_url == active_base_url.as_str())
+            else {
+                publisher.remove(&pending.device_id);
+                continue;
+            };
+            let mut nonce = [0_u8; 12];
+            let result = getrandom::fill(&mut nonce)
+                .map_err(|_| "Could not create wake nonce".to_string())
+                .and_then(|()| {
+                    wake_envelope_for_secret(
+                        &secret,
+                        chrono::Utc::now().timestamp(),
+                        &hex::encode(nonce),
+                    )
+                });
+            let result = match result {
+                Ok(envelope) => {
+                    let client = crate::mobile_relay::RelayClient::new(active_base_url.clone());
+                    match client {
+                        Ok(client) => tokio::select! {
+                            _ = &mut shutdown => break 'publisher,
+                            _ = changes.notified() => continue 'publisher,
+                            result = client.publish(&secret, &envelope) => result,
+                        },
+                        Err(error) => Err(error),
+                    }
+                }
+                Err(error) => Err(error),
+            };
+
+            if result.is_ok()
+                && bridge
+                    .relay_secrets
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .advance_sequence(&pending.device_id, secret.next_sequence)
+                    .is_ok()
+            {
+                publisher.succeeded(&pending.device_id, &pending.cursor);
+            } else {
+                publisher.failed(&pending.device_id, now);
+            }
+            let status = publisher.status(true);
+            let mut runtime = bridge
+                .runtime
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            if runtime.enabled && runtime.relay_base_url.is_some() {
+                runtime.relay_status = status;
+            }
+        }
+    }
+
+    publisher.clear();
+    app.unlisten(listener);
 }
 
 fn select_mobile_url<'a>(
@@ -433,6 +606,7 @@ fn rollback_paired_device(bridge: &MobileBridgeState, device_id: &str) {
         .lock()
         .unwrap_or_else(|error| error.into_inner())
         .remove(device_id);
+    bridge.relay_changes.notify_one();
 }
 
 fn schedule_relay_deletions(secrets: Vec<crate::mobile_relay::RelayDeviceSecret>) {
@@ -798,6 +972,7 @@ fn revoke_mobile_device(
                     .take(&device_id)
                     .ok()
                     .flatten();
+                bridge.relay_changes.notify_one();
                 schedule_relay_deletions(relay_secret.into_iter().collect());
                 bridge
                     .presence
@@ -963,6 +1138,7 @@ async fn pair_device(
                 "Wake relay pairing failed",
             );
         }
+        bridge.relay_changes.notify_one();
         Some(provision.android)
     } else {
         None
@@ -1869,6 +2045,70 @@ mod tests {
         assert!(!status.contains("publisher_token"));
         assert!(!status.contains("subscriber_token"));
         assert!(!status.contains("wake_key"));
+    }
+
+    #[test]
+    fn relay_status_reports_retrying_and_errored_without_credentials() {
+        let temp = tempfile::tempdir().unwrap();
+        let bridge = MobileBridgeState::load_or_create(temp.path()).unwrap();
+        let mut runtime = bridge.runtime.lock().unwrap();
+        runtime.relay_base_url =
+            Some(crate::mobile_relay::RelayBaseUrl::parse("https://relay.example.com").unwrap());
+        for (state, expected) in [
+            (
+                crate::mobile_relay::RelayPublisherStatus::Retrying,
+                "retrying",
+            ),
+            (
+                crate::mobile_relay::RelayPublisherStatus::Errored,
+                "errored",
+            ),
+        ] {
+            runtime.relay_status = state;
+            drop(runtime);
+            let serialized = serde_json::to_string(&bridge.status()).unwrap();
+            assert!(serialized.contains(&format!(r#""relay_status":"{expected}""#)));
+            assert!(!serialized.contains("publisher_token"));
+            assert!(!serialized.contains("wake_key"));
+            runtime = bridge.runtime.lock().unwrap();
+        }
+    }
+
+    #[test]
+    fn desktop_wake_envelope_encrypts_only_minimal_wake_signal() {
+        let secret = crate::mobile_relay::RelayDeviceSecret {
+            device_id: "private-device-name".into(),
+            base_url: "https://relay.example.com".into(),
+            channel_id: "11".repeat(32),
+            wake_key: "22".repeat(32),
+            publisher_token: "33".repeat(32),
+            next_sequence: 7,
+        };
+        let envelope =
+            wake_envelope_for_secret(&secret, 1_783_836_000, "000102030405060708090a0b").unwrap();
+        let signal = crate::wake_crypto::decrypt_wake(
+            &secret.wake_key,
+            &secret.channel_id,
+            &envelope,
+            1_783_836_001,
+            0,
+        )
+        .unwrap();
+
+        let plaintext = serde_json::to_value(&signal).unwrap();
+        assert_eq!(
+            plaintext,
+            serde_json::json!({
+                "kind": "wake",
+                "issued_at": 1_783_836_000,
+            })
+        );
+        let serialized = serde_json::to_string(&envelope).unwrap();
+        for forbidden in [
+            "session", "project", "scope", "device", "approval", "message",
+        ] {
+            assert!(!serialized.contains(forbidden));
+        }
     }
 
     #[test]
