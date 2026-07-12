@@ -8,8 +8,8 @@ HUMHUM Android is a native LAN client for the desktop Mobile Bridge. It supports
 - Play-compatible bundle: `build/releases/HUMHUM-Android-0.1.0.aab`
 - Package: `com.humhum.mobile`
 - Version: `0.1.0` (`versionCode 1`)
-- APK SHA-256: `7999dc1f7e99ade5511d065af29c3be8e6fded7b7e986af207b3e9ccf02c4157`
-- AAB SHA-256: `0ef7c380ed9c628e6eeaa0004958437b50723448147d00671328617f6cad0a61`
+- APK SHA-256: `65500cc86cca6cd0751c4c307ce4077e545b32963baa34d5b7131962d2c35c0b`
+- AAB SHA-256: `41b1d0d171d31bb6aaa2e65c1dc8d0fd09f788b77a08f52860bf86dc9ed8f584`
 - Release certificate SHA-256: `C2:8C:FF:BE:03:98:B2:DB:58:DB:B7:14:DD:39:4F:06:36:CB:55:A6:90:EE:FE:6F:DA:20:2A:78:ED:4E:12:F8`
 
 The APK and AAB use HUMHUM's durable local release certificate. They are installable and update-compatible with later builds signed by the same key, but they have not been published to Xiaomi GetApps or Google Play.
@@ -51,7 +51,7 @@ For stronger survival on HyperOS or MIUI, open HUMHUM's system App info and enab
 
 The paired screen now includes **后台可靠性** controls. **电池设置** opens Android's standard battery-optimization list and reports only the exemption state Android actually exposes. Xiaomi, Redmi, Poco and BlackShark builds also show **自启动设置**; HUMHUM tries a small allow-list of resolvable MIUI/HyperOS Security Center activities and falls back to this app's standard system details page. HUMHUM cannot read Xiaomi's private autostart switch, so it never claims that switch is enabled.
 
-Background monitoring is visible and user-controlled. It uses Android's `remoteMessaging` foreground-service type, polls every 15 seconds, and backs off to at most 60 seconds while Wi-Fi is unavailable. It does not hold a wake lock, request location, or bypass Android/Xiaomi power controls. Xiaomi may still stop it under aggressive battery policy; physical-device behavior has not yet been verified on this Mac.
+Background monitoring is visible and user-controlled. It uses Android's `remoteMessaging` foreground-service type and, with the current desktop, holds an authenticated 20-second HTTPS event wait protected by the same pinned certificate. A scope-specific SHA-256 cursor wakes a full redacted refresh when visible state changes; the wake response contains only cursor, change flag and retry metadata. Older desktops automatically use 15-second polling, and network failures back off to at most 60 seconds. It does not hold a wake lock, request location, or bypass Android/Xiaomi power controls. Xiaomi may still stop it under aggressive battery policy; physical-device behavior has not yet been verified on this Mac.
 
 ## Runtime Validation
 
@@ -64,6 +64,9 @@ The release APK was installed through Android's real Package Manager on an ARM64
 - Revoking the device token on the Mac made the next Android poll stop the service, remove the ongoing notification and clear monitor preferences. Both disposable devices were removed from the desktop store.
 - The reliability control opened Android 16's real Battery Optimization screen and returned to HUMHUM without requesting a new runtime permission. The release manifest still contains exactly the original six permissions and no direct battery-exemption or all-packages permission.
 - After Wi-Fi loss moved monitoring into its 60-second retry window, restoring Wi-Fi changed the foreground notification from unreachable to connected in 0 seconds through the registered default-network callback. A full reboot restored both the `0x200` service and callback; token revocation stopped the service, emitted Connectivity `RELEASE`, and left zero paired devices.
+- The realtime Mobile Bridge returned a scoped change signal in 1,051 ms when a redacted session changed. A real disposable Claude permission request updated Android's private attention notification in 1,349 ms and was then denied and removed. An unchanged wait returned `changed=false` after 21 seconds and immediately established the next wait.
+- The event endpoint revalidates the device token every second, permits 16 concurrent waits, returns `429` plus `Retry-After: 1` for the seventeenth, rejects missing credentials with `401`, rejects missing or malformed cursors with `400`, and lets read-only devices receive only the same three-field wake signal. Revocation during an open Android wait stopped the service and released its network callback in 898 ms.
+- With both emulator Wi-Fi and mobile data disabled, the monitor reported unreachable after 9 seconds; restoring a network returned it to connected in 1 second. Full Android reboot restored realtime monitoring from `BOOT_COMPLETED`.
 
 This proves Android platform lifecycle behavior, not Xiaomi-specific battery-manager behavior. A physical HyperOS/MIUI device is still required before claiming manufacturer-level sleep survival.
 
@@ -74,7 +77,7 @@ This proves Android platform lifecycle behavior, not Xiaomi-specific battery-man
 - Allow-once/deny for supported Agent approvals.
 - Text follow-ups for known Codex, Claude Code, and OpenCode sessions.
 - Foreground session refresh every 10 seconds.
-- Optional background monitoring with a persistent notification, 15-second polling, bounded retry, approval deduplication, and opt-in reboot restoration.
+- Optional background monitoring with a persistent notification, authenticated realtime LAN wake, legacy 15-second polling fallback, bounded retry, approval deduplication, and opt-in reboot restoration.
 - Immediate monitoring recovery when Android reports that the default network has returned.
 - In-app battery-settings access and Xiaomi-family autostart-settings routing with safe standard fallbacks.
 - HTTPS only, certificate fingerprint pinning, and no backup of app credentials.
