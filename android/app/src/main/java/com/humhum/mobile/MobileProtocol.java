@@ -68,7 +68,9 @@ public final class MobileProtocol {
                         relay.getString("subscriber_token"),
                         relay.getString("wake_key"));
             } catch (IllegalArgumentException error) {
-                throw new JSONException("Wake relay pairing data is invalid", error);
+                JSONException invalid = new JSONException("Wake relay pairing data is invalid");
+                invalid.initCause(error);
+                throw invalid;
             }
         }
         return new Models.PairResult(
