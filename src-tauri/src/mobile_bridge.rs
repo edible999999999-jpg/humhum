@@ -13,12 +13,14 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tauri::Manager;
 use tokio::net::TcpListener;
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, Semaphore};
 use tokio_rustls::rustls;
 use tokio_rustls::TlsAcceptor;
 
 const PAIRING_TTL_SECONDS: i64 = 300;
 const MAX_PAIRING_ATTEMPTS: u8 = 5;
+const MAX_EVENT_WAITERS: usize = 16;
+const EVENT_WAIT_SECONDS: usize = 20;
 pub const DEFAULT_MOBILE_PORT: u16 = 31_276;
 
 type HttpBody = Full<Bytes>;
@@ -78,6 +80,7 @@ struct MobileRuntime {
 pub struct MobileBridgeState {
     humhum_dir: PathBuf,
     devices: Arc<Mutex<MobileDeviceStore>>,
+    event_waiters: Arc<Semaphore>,
     runtime: Mutex<MobileRuntime>,
 }
 
@@ -86,6 +89,7 @@ impl MobileBridgeState {
         Ok(Self {
             humhum_dir: humhum_dir.to_path_buf(),
             devices: Arc::new(Mutex::new(MobileDeviceStore::load_or_create(humhum_dir)?)),
+            event_waiters: Arc::new(Semaphore::new(MAX_EVENT_WAITERS)),
             runtime: Mutex::new(MobileRuntime {
                 enabled: false,
                 url: None,
@@ -369,6 +373,7 @@ async fn handle_mobile_request(
         (&Method::GET, "/") => html_response(MOBILE_HTML),
         (&Method::POST, "/api/pair") => pair_device(request, &bridge).await,
         (&Method::DELETE, "/api/device") => revoke_mobile_device(&request, &bridge),
+        (&Method::GET, "/api/events") => wait_for_mobile_event(&request, &app, &bridge).await,
         (&Method::GET, "/api/sessions") => {
             if let Some(scope) = request_scope(&request, &bridge) {
                 json_response(
@@ -481,6 +486,71 @@ fn with_mobile_cursor(mut page: serde_json::Value) -> serde_json::Value {
     page
 }
 
+async fn wait_for_mobile_event(
+    request: &Request<hyper::body::Incoming>,
+    app: &tauri::AppHandle,
+    bridge: &Arc<MobileBridgeState>,
+) -> Response<HttpBody> {
+    let Some(token) = request_token(request).map(str::to_owned) else {
+        return json_error(StatusCode::UNAUTHORIZED, "Pair this device first");
+    };
+    let Some(scope) = token_scope(&token, bridge) else {
+        return json_error(StatusCode::UNAUTHORIZED, "Pair this device first");
+    };
+    let Some(expected_cursor) = event_cursor(request.uri().query()).map(str::to_owned) else {
+        return json_error(StatusCode::BAD_REQUEST, "Event cursor is invalid");
+    };
+    let Ok(_permit) = Arc::clone(&bridge.event_waiters).try_acquire_owned() else {
+        let mut response = json_error(StatusCode::TOO_MANY_REQUESTS, "Too many event waits");
+        response
+            .headers_mut()
+            .insert(hyper::header::RETRY_AFTER, "1".parse().unwrap());
+        return response;
+    };
+
+    for second in 0..=EVENT_WAIT_SECONDS {
+        if token_scope(&token, bridge).is_none() {
+            return json_error(StatusCode::UNAUTHORIZED, "Pair this device first");
+        }
+        let page = with_mobile_cursor(mobile_session_page(app, scope).await);
+        let current_cursor = page["cursor"].as_str().unwrap_or_default();
+        if current_cursor != expected_cursor {
+            return json_response(StatusCode::OK, &event_signal(current_cursor, true));
+        }
+        if second == EVENT_WAIT_SECONDS {
+            return json_response(StatusCode::OK, &event_signal(current_cursor, false));
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+    unreachable!()
+}
+
+fn event_cursor(query: Option<&str>) -> Option<&str> {
+    let mut cursors = query
+        .unwrap_or_default()
+        .split('&')
+        .filter_map(|pair| pair.split_once('='))
+        .filter_map(|(key, value)| (key == "cursor").then_some(value));
+    let cursor = cursors.next()?;
+    if cursors.next().is_some()
+        || cursor.len() != 64
+        || !cursor
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        return None;
+    }
+    Some(cursor)
+}
+
+fn event_signal(cursor: &str, changed: bool) -> serde_json::Value {
+    serde_json::json!({
+        "cursor": cursor,
+        "changed": changed,
+        "retry_after_ms": 0
+    })
+}
+
 fn revoke_mobile_device(
     request: &Request<hyper::body::Incoming>,
     bridge: &MobileBridgeState,
@@ -569,13 +639,15 @@ fn request_scope(
     request: &Request<hyper::body::Incoming>,
     bridge: &MobileBridgeState,
 ) -> Option<MobileDeviceScope> {
-    request_token(request).and_then(|token| {
-        bridge
-            .devices
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .authorize(token)
-    })
+    request_token(request).and_then(|token| token_scope(token, bridge))
+}
+
+fn token_scope(token: &str, bridge: &MobileBridgeState) -> Option<MobileDeviceScope> {
+    bridge
+        .devices
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .authorize(token)
 }
 
 fn request_token(request: &Request<hyper::body::Incoming>) -> Option<&str> {
@@ -1177,6 +1249,56 @@ mod tests {
         assert!(!serialized.contains("transcript_path"));
         assert!(!serialized.contains("private-message-sentinel"));
         assert_eq!(page["cursor"].as_str().unwrap().len(), 64);
+    }
+
+    #[test]
+    fn event_cursor_accepts_only_exact_lowercase_sha256_query_values() {
+        let cursor = "ab".repeat(32);
+        let query = format!("cursor={cursor}");
+
+        assert_eq!(event_cursor(Some(&query)), Some(cursor.as_str()));
+        assert_eq!(
+            event_cursor(Some(&format!("mode=wait&{query}"))),
+            Some(cursor.as_str())
+        );
+        assert_eq!(event_cursor(None), None);
+        assert_eq!(event_cursor(Some("")), None);
+        assert_eq!(event_cursor(Some("cursor=abc")), None);
+        assert_eq!(
+            event_cursor(Some(&format!("cursor={}", cursor.to_uppercase()))),
+            None
+        );
+        assert_eq!(
+            event_cursor(Some(&format!("cursor={cursor}&cursor={cursor}"))),
+            None
+        );
+    }
+
+    #[test]
+    fn event_signal_contains_only_wake_metadata() {
+        let cursor = "cd".repeat(32);
+        let signal = event_signal(&cursor, true);
+        let object = signal.as_object().unwrap();
+
+        assert_eq!(object.len(), 3);
+        assert_eq!(signal["cursor"], cursor);
+        assert_eq!(signal["changed"], true);
+        assert_eq!(signal["retry_after_ms"], 0);
+        assert!(!signal.to_string().contains("session"));
+        assert!(!signal.to_string().contains("message"));
+    }
+
+    #[tokio::test]
+    async fn event_waiter_limit_is_exactly_sixteen() {
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(MAX_EVENT_WAITERS));
+        let mut permits = Vec::new();
+        for _ in 0..MAX_EVENT_WAITERS {
+            permits.push(Arc::clone(&semaphore).try_acquire_owned().unwrap());
+        }
+
+        assert!(Arc::clone(&semaphore).try_acquire_owned().is_err());
+        drop(permits.pop());
+        assert!(Arc::clone(&semaphore).try_acquire_owned().is_ok());
     }
 
     #[test]
