@@ -8,8 +8,8 @@ HUMHUM Android is a native private-network client for the desktop Mobile Bridge.
 - Play-compatible bundle: `build/releases/HUMHUM-Android-0.1.0.aab`
 - Package: `com.humhum.mobile`
 - Version: `0.1.0` (`versionCode 1`)
-- APK SHA-256: `f9136b29b446991d4dbac3e397c6fb1a28ed68d3bf7fd319466ef517b6cc60da`
-- AAB SHA-256: `2e29ab9e8b90aa909b76513f1ccd084b9a281c8a4c7782d45b73fa38e3a602d7`
+- APK SHA-256: `4b04a06f1f6ac9d789468fc264a5d2f4388a48e37a1a35a194b68d7e5b5be135`
+- AAB SHA-256: `8c94f4f69d25676e64658afff5e19b6c3c9684d652b0a55a313c71e7060ba61f`
 - Release certificate SHA-256: `C2:8C:FF:BE:03:98:B2:DB:58:DB:B7:14:DD:39:4F:06:36:CB:55:A6:90:EE:FE:6F:DA:20:2A:78:ED:4E:12:F8`
 
 The APK and AAB use HUMHUM's durable local release certificate. They are installable and update-compatible with later builds signed by the same key, but they have not been published to Xiaomi GetApps or Google Play.
@@ -63,6 +63,8 @@ The paired screen now includes **后台可靠性** controls. **电池设置** op
 
 Background monitoring is visible and user-controlled. It uses Android's `remoteMessaging` foreground-service type and, with the current desktop, holds an authenticated 20-second HTTPS event wait protected by the same pinned certificate. A scope-specific SHA-256 cursor wakes a full redacted refresh when visible state changes; the wake response contains only cursor, change flag and retry metadata. Older desktops automatically use 15-second polling, and network failures back off to at most 60 seconds. It does not hold a wake lock, request location, or bypass Android/Xiaomi power controls. Xiaomi may still stop it under aggressive battery policy; physical-device behavior has not yet been verified on this Mac.
 
+Hexa now shows whether each paired phone is **正在使用**, **后台监控**, or **离线**. Android reports only one bounded mode through the authenticated pinned-HTTPS bridge; the Mac supplies the timestamp and keeps it in memory. If no report arrives for 90 seconds, both mode and last-seen time disappear and Hexa shows offline. This prevents a force-stopped Xiaomi process from looking healthy and provides routing state for future FCM or encrypted-relay delivery without collecting app activity, location, network names, or message content.
+
 ## Runtime Validation
 
 The release APK was installed through Android's real Package Manager on an ARM64 Android 16/API 36 emulator and cold-launched successfully. Reinstalling it with `adb install -r` preserved `firstInstallTime` while changing `lastUpdateTime`; trying to install the debug APK over it failed with Android's expected `INSTALL_FAILED_UPDATE_INCOMPATIBLE`. Earlier paired-flow validation used the visible connect form rather than injecting app preferences:
@@ -77,6 +79,7 @@ The release APK was installed through Android's real Package Manager on an ARM64
 - The realtime Mobile Bridge returned a scoped change signal in 1,051 ms when a redacted session changed. A real disposable Claude permission request updated Android's private attention notification in 1,349 ms and was then denied and removed. An unchanged wait returned `changed=false` after 21 seconds and immediately established the next wait.
 - The event endpoint revalidates the device token every second, permits 16 concurrent waits, returns `429` plus `Retry-After: 1` for the seventeenth, rejects missing credentials with `401`, rejects missing or malformed cursors with `400`, and lets read-only devices receive only the same three-field wake signal. Revocation during an open Android wait stopped the service and released its network callback in 898 ms.
 - With both emulator Wi-Fi and mobile data disabled, the monitor reported unreachable after 9 seconds; restoring a network returned it to connected in 1 second. Full Android reboot restored realtime monitoring from `BOOT_COMPLETED`.
+- The current release reported `foreground` after visible-form pairing and `monitoring` after the real `remoteMessaging` service entered its event wait. Android process `force-stop` sent no offline message; 91 seconds after the final report, desktop status retained the paired device but returned both presence fields as null. Relaunch restored live state, and in-app disconnect removed the device and presence, leaving zero paired devices.
 
 This proves Android platform lifecycle behavior, not Xiaomi-specific battery-manager behavior. A physical HyperOS/MIUI device is still required before claiming manufacturer-level sleep survival.
 
@@ -89,6 +92,7 @@ This proves Android platform lifecycle behavior, not Xiaomi-specific battery-man
 - Foreground session refresh every 10 seconds.
 - Optional background monitoring with a persistent notification, authenticated realtime private-network wake, legacy 15-second polling fallback, bounded retry, approval deduplication, and opt-in reboot restoration.
 - Immediate monitoring recovery when Android reports that the default network has returned.
+- Volatile per-device foreground/background presence with a 90-second fail-closed offline transition.
 - In-app battery-settings access and Xiaomi-family autostart-settings routing with safe standard fallbacks.
 - HTTPS only, certificate fingerprint pinning, and no backup of app credentials.
 
