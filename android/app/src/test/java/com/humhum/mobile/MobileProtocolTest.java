@@ -5,6 +5,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
+import java.util.List;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.junit.Test;
@@ -101,6 +102,44 @@ public class MobileProtocolTest {
     }
 
     @Test
+    public void recentConversationUsesExactAuthenticatedSessionOnlyRequest() throws Exception {
+        Models.Session session = MobileProtocol.parseSessions(new JSONObject()
+                .put("scope", "read")
+                .put("sessions", new JSONArray().put(new JSONObject()
+                        .put("id", "session-1")
+                        .put("agent", "codex")
+                        .put("project", "humhum")
+                        .put("status", "active")
+                        .put("last_activity_at", "2026-07-12T00:00:00Z")
+                        .put("needs_attention", false)
+                        .put("can_message", false)
+                        .put("can_read_conversation", true)))
+                .toString())
+                .sessions()
+                .get(0);
+
+        MobileProtocol.RequestSpec request = MobileProtocol.conversationRequest(session);
+
+        assertTrue(session.canReadConversation());
+        assertEquals("POST", request.method());
+        assertEquals("/api/session/conversation", request.path());
+        assertTrue(request.requiresToken());
+        JSONObject body = new JSONObject(request.body());
+        assertEquals(1, body.length());
+        assertEquals("session-1", body.getString("session_id"));
+        assertThrows(IllegalArgumentException.class, () -> MobileProtocol.conversationRequest(
+                new Models.Session(
+                        "session-2",
+                        "codex",
+                        "humhum",
+                        "active",
+                        "2026-07-12T00:00:00Z",
+                        false,
+                        false,
+                        java.util.List.of())));
+    }
+
+    @Test
     public void disconnectRevokesTheCurrentPairedDevice() {
         MobileProtocol.RequestSpec request = MobileProtocol.disconnectRequest();
 
@@ -154,6 +193,7 @@ public class MobileProtocolTest {
                     .put("last_activity_at", "2026-07-12T00:00:00Z")
                     .put("needs_attention", true)
                     .put("can_message", true)
+                    .put("can_read_conversation", true)
                     .put("pending_actions", actions));
         }
         String payload = new JSONObject().put("scope", "control").put("sessions", sessions).toString();
@@ -163,12 +203,14 @@ public class MobileProtocolTest {
         assertEquals(30, control.sessions().size());
         assertEquals(20, control.sessions().get(0).actions().size());
         assertTrue(control.sessions().get(0).canMessage());
+        assertTrue(control.sessions().get(0).canReadConversation());
 
         String readPayload = new JSONObject(payload).put("scope", "read").toString();
         Models.SessionPage read = MobileProtocol.parseSessions(readPayload);
         assertEquals(Models.Scope.READ, read.scope());
         assertTrue(read.sessions().get(0).actions().isEmpty());
         assertFalse(read.sessions().get(0).canMessage());
+        assertTrue(read.sessions().get(0).canReadConversation());
     }
 
     @Test
@@ -218,6 +260,67 @@ public class MobileProtocolTest {
                 new JSONObject(payload).put("cursor", "bad").toString()));
         assertThrows(org.json.JSONException.class, () -> MobileProtocol.parseEventSignal(
                 new JSONObject(payload).put("changed", "true").toString()));
+    }
+
+    @Test
+    public void recentConversationParserAcceptsOnlyExactBoundedTranscriptPayload() throws Exception {
+        JSONArray messages = new JSONArray();
+        for (int index = 0; index < 12; index++) {
+            messages.put(new JSONObject()
+                    .put("role", index % 2 == 0 ? "user" : "assistant")
+                    .put("text", index == 11 ? "x".repeat(500) : "message " + index));
+        }
+        String payload = new JSONObject()
+                .put("session_id", "session-1")
+                .put("messages", messages)
+                .toString();
+
+        List<Models.ConversationMessage> conversation = MobileProtocol.parseConversation(
+                payload, "session-1");
+
+        assertEquals(12, conversation.size());
+        assertEquals(Models.ConversationRole.USER, conversation.get(0).role());
+        assertEquals("message 0", conversation.get(0).text());
+        assertEquals(Models.ConversationRole.ASSISTANT, conversation.get(1).role());
+        assertEquals("x".repeat(500), conversation.get(11).text());
+
+        assertThrows(org.json.JSONException.class, () -> MobileProtocol.parseConversation(
+                new JSONObject(payload).put("trace", "private").toString(),
+                "session-1"));
+        assertThrows(org.json.JSONException.class, () -> MobileProtocol.parseConversation(
+                new JSONObject(payload)
+                        .put("session_id", "session-2")
+                        .toString(),
+                "session-1"));
+        assertThrows(org.json.JSONException.class, () -> MobileProtocol.parseConversation(
+                new JSONObject(payload)
+                        .put("messages", new JSONArray(messages.toString()).put(new JSONObject()
+                                .put("role", "user")
+                                .put("text", "overflow")))
+                        .toString(),
+                "session-1"));
+        assertThrows(org.json.JSONException.class, () -> MobileProtocol.parseConversation(
+                new JSONObject(payload)
+                        .put("messages", new JSONArray().put(new JSONObject()
+                                .put("role", "system")
+                                .put("text", "bad role")))
+                        .toString(),
+                "session-1"));
+        assertThrows(org.json.JSONException.class, () -> MobileProtocol.parseConversation(
+                new JSONObject(payload)
+                        .put("messages", new JSONArray().put(new JSONObject()
+                                .put("role", "user")
+                                .put("text", "x".repeat(501))))
+                        .toString(),
+                "session-1"));
+        assertThrows(org.json.JSONException.class, () -> MobileProtocol.parseConversation(
+                new JSONObject(payload)
+                        .put("messages", new JSONArray().put(new JSONObject()
+                                .put("role", "user")
+                                .put("text", "ok")
+                                .put("path", "/Users/yxguo/private")))
+                        .toString(),
+                "session-1"));
     }
 
     private static BridgeConfig config() {

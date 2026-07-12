@@ -88,6 +88,35 @@ public final class Models {
         public String summary() { return summary; }
     }
 
+    public enum ConversationRole {
+        USER,
+        ASSISTANT;
+
+        public static ConversationRole fromWire(String value) {
+            if ("user".equals(value)) return USER;
+            if ("assistant".equals(value)) return ASSISTANT;
+            throw new IllegalArgumentException("Conversation role is invalid");
+        }
+
+        public String wireValue() {
+            return name().toLowerCase(Locale.ROOT);
+        }
+    }
+
+    public static final class ConversationMessage {
+        private final ConversationRole role;
+        private final String text;
+
+        public ConversationMessage(ConversationRole role, String text) {
+            if (role == null) throw new IllegalArgumentException("Conversation role is missing");
+            this.role = role;
+            this.text = text == null ? "" : text;
+        }
+
+        public ConversationRole role() { return role; }
+        public String text() { return text; }
+    }
+
     public static final class Session {
         private final String id;
         private final String agent;
@@ -96,6 +125,7 @@ public final class Models {
         private final String lastActivityAt;
         private final boolean needsAttention;
         private final boolean canMessage;
+        private final boolean canReadConversation;
         private final List<Action> actions;
 
         public Session(
@@ -107,6 +137,28 @@ public final class Models {
                 boolean needsAttention,
                 boolean canMessage,
                 List<Action> actions) {
+            this(
+                    id,
+                    agent,
+                    project,
+                    status,
+                    lastActivityAt,
+                    needsAttention,
+                    canMessage,
+                    false,
+                    actions);
+        }
+
+        public Session(
+                String id,
+                String agent,
+                String project,
+                String status,
+                String lastActivityAt,
+                boolean needsAttention,
+                boolean canMessage,
+                boolean canReadConversation,
+                List<Action> actions) {
             this.id = id;
             this.agent = agent;
             this.project = project;
@@ -114,6 +166,7 @@ public final class Models {
             this.lastActivityAt = lastActivityAt;
             this.needsAttention = needsAttention;
             this.canMessage = canMessage;
+            this.canReadConversation = canReadConversation;
             this.actions = List.copyOf(actions);
         }
 
@@ -124,6 +177,7 @@ public final class Models {
         public String lastActivityAt() { return lastActivityAt; }
         public boolean needsAttention() { return needsAttention; }
         public boolean canMessage() { return canMessage; }
+        public boolean canReadConversation() { return canReadConversation; }
         public List<Action> actions() { return actions; }
     }
 

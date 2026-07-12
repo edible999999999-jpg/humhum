@@ -225,6 +225,84 @@ public class ManifestContractTest {
     }
 
     @Test
+    public void recentConversationDisclosureStaysActivityOnlyAndScopedToEligibleLiveCards()
+            throws Exception {
+        String source = new String(Files.readAllBytes(
+                Path.of("src/main/java/com/humhum/mobile/MainActivity.java")),
+                StandardCharsets.UTF_8);
+        assertTrue(source.contains("Map<String, List<Models.ConversationMessage>>"));
+
+        String activation = methodSource(
+                source, "private void activate(", "private void reportForegroundPresence()");
+        assertTrue(activation.contains("recentConversationBySessionId.clear();"));
+
+        String connect = methodSource(source, "private void showConnect()", "private void disconnect()");
+        assertTrue(connect.contains("recentConversationBySessionId.clear();"));
+
+        String destroy = methodSource(source, "protected void onDestroy()", "private void bindViews()");
+        assertOrdered(
+                destroy,
+                "recentConversationBySessionId.clear();",
+                "snapshotGenerationGate.close();",
+                "network.shutdownNow();");
+
+        String card = methodSource(source, "private View sessionCard(Models.Session session)", "private View actionPanel(");
+        assertTrue(card.contains("session.canReadConversation()"));
+        assertTrue(card.contains("查看最近对话"));
+        assertTrue(card.contains("收起最近对话"));
+    }
+
+    @Test
+    public void recentConversationLateResponsesRequireGenerationProtocolConnectionAndSessionChecks()
+            throws Exception {
+        String source = new String(Files.readAllBytes(
+                Path.of("src/main/java/com/humhum/mobile/MainActivity.java")),
+                StandardCharsets.UTF_8);
+
+        String loading = methodSource(
+                source, "private void loadConversation(", "private void resolve(");
+        assertOrdered(
+                loading,
+                "long generation = snapshotGenerationGate.capture();",
+                "network.execute(() -> {",
+                "current.conversation(session)",
+                "postConversationIfCurrent(");
+
+        String posting = methodSource(
+                source, "private void postConversationIfCurrent(", "private void resolve(");
+        assertTrue(posting.contains("snapshotGenerationGate.isLatestOwner()"));
+        assertTrue(posting.contains("snapshotGenerationGate.isCurrent(generation)"));
+        assertTrue(posting.contains("isCurrentConnection(expectedProtocol, expectedConnection)"));
+        assertTrue(posting.contains("expectedSessionId.equals(expandedConversationSessionId)"));
+    }
+
+    @Test
+    public void recentConversationTextIsAbsentFromSnapshotsPushAndNotificationSources()
+            throws Exception {
+        String snapshotCodec = new String(Files.readAllBytes(
+                Path.of("src/main/java/com/humhum/mobile/SessionSnapshotCodec.java")),
+                StandardCharsets.UTF_8);
+        String snapshotStore = new String(Files.readAllBytes(
+                Path.of("src/main/java/com/humhum/mobile/EncryptedSessionSnapshotStore.java")),
+                StandardCharsets.UTF_8);
+        String pushService = new String(Files.readAllBytes(
+                Path.of("src/main/java/com/humhum/mobile/HumHumMessagingService.java")),
+                StandardCharsets.UTF_8);
+        String wakeEnvelope = new String(Files.readAllBytes(
+                Path.of("src/main/java/com/humhum/mobile/WakeEnvelope.java")),
+                StandardCharsets.UTF_8);
+
+        assertFalse(snapshotCodec.contains("ConversationMessage"));
+        assertFalse(snapshotCodec.contains("can_read_conversation"));
+        assertFalse(snapshotStore.contains("ConversationMessage"));
+        assertFalse(snapshotStore.contains("can_read_conversation"));
+        assertFalse(pushService.contains("ConversationMessage"));
+        assertFalse(pushService.contains("/api/session/conversation"));
+        assertFalse(wakeEnvelope.contains("ConversationMessage"));
+        assertFalse(wakeEnvelope.contains("conversation"));
+    }
+
+    @Test
     public void fallbackActivityClaimsPendingTransitionCompletion() throws Exception {
         String source = new String(Files.readAllBytes(
                 Path.of("src/main/java/com/humhum/mobile/MainActivity.java")),

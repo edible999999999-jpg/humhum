@@ -101,6 +101,7 @@ public final class SessionSnapshotCodec {
                         bounded(entry, "last_activity_at", MAX_LAST_ACTIVITY_LENGTH),
                         (Boolean) attention,
                         false,
+                        false,
                         List.of()));
             }
             SessionSnapshot snapshot = new SessionSnapshot(savedAtMillis, sessions);

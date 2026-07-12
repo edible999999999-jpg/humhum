@@ -17,6 +17,8 @@ public final class MobileProtocol {
     private static final int MAX_RESPONSE_BYTES = 1_048_576;
     private static final int MAX_SESSIONS = 30;
     private static final int MAX_ACTIONS = 20;
+    private static final int MAX_CONVERSATION_MESSAGES = 12;
+    private static final int MAX_CONVERSATION_TEXT_SCALARS = 500;
     private static final Set<String> MESSAGE_PROVIDERS = Set.of("codex", "claude", "claude-code", "opencode");
 
     private final BridgeConfig config;
@@ -87,6 +89,14 @@ public final class MobileProtocol {
         return (Integer) value;
     }
 
+    private static String strictString(JSONObject object, String key) throws JSONException {
+        Object value = object.get(key);
+        if (!(value instanceof String)) {
+            throw new JSONException("String field is invalid");
+        }
+        return (String) value;
+    }
+
     public Models.SessionPage sessions() throws IOException, JSONException {
         return parseSessions(execute(new RequestSpec("GET", "/api/sessions", "", true)));
     }
@@ -102,6 +112,11 @@ public final class MobileProtocol {
     public String sendMessage(Models.Session session, String message) throws IOException, JSONException {
         JSONObject response = new JSONObject(execute(messageRequest(session, message, scope)));
         return bounded(response.optString("status", "queued"), 32);
+    }
+
+    public List<Models.ConversationMessage> conversation(Models.Session session)
+            throws IOException, JSONException {
+        return parseConversation(execute(conversationRequest(session)), session.id());
     }
 
     public void disconnect() throws IOException, JSONException {
@@ -187,6 +202,17 @@ public final class MobileProtocol {
         return new RequestSpec("POST", "/api/session/message", body.toString(), true);
     }
 
+    static RequestSpec conversationRequest(Models.Session session) throws JSONException {
+        if (session == null || session.id().isBlank() || !session.canReadConversation()) {
+            throw new IllegalArgumentException("Recent conversation is unavailable");
+        }
+        return new RequestSpec(
+                "POST",
+                "/api/session/conversation",
+                new JSONObject().put("session_id", session.id()).toString(),
+                true);
+    }
+
     static Models.SessionPage parseSessions(String payload) throws JSONException {
         JSONObject root = new JSONObject(payload);
         Models.Scope scope = Models.Scope.fromWire(root.optString("scope"));
@@ -214,9 +240,59 @@ public final class MobileProtocol {
                     bounded(item.optString("last_activity_at"), 64),
                     item.optBoolean("needs_attention", false),
                     scope == Models.Scope.CONTROL && item.optBoolean("can_message", false),
+                    item.optBoolean("can_read_conversation", false),
                     actions));
         }
         return new Models.SessionPage(scope, sessions, cursor);
+    }
+
+    static List<Models.ConversationMessage> parseConversation(
+            String payload, String expectedSessionId) throws JSONException {
+        if (expectedSessionId == null || expectedSessionId.isBlank()) {
+            throw new IllegalArgumentException("Session is invalid");
+        }
+        JSONObject root = new JSONObject(payload);
+        if (root.length() != 2 || !root.has("session_id") || !root.has("messages")) {
+            throw new JSONException("Conversation shape is invalid");
+        }
+        String sessionId = strictString(root, "session_id");
+        if (!expectedSessionId.equals(sessionId)) {
+            throw new JSONException("Conversation session is invalid");
+        }
+        Object messagesValue = root.get("messages");
+        if (!(messagesValue instanceof JSONArray)) {
+            throw new JSONException("Conversation messages are invalid");
+        }
+        JSONArray source = (JSONArray) messagesValue;
+        if (source.length() > MAX_CONVERSATION_MESSAGES) {
+            throw new JSONException("Conversation messages are invalid");
+        }
+        List<Models.ConversationMessage> messages = new ArrayList<>();
+        for (int index = 0; index < source.length(); index++) {
+            Object value = source.get(index);
+            if (!(value instanceof JSONObject)) {
+                throw new JSONException("Conversation message is invalid");
+            }
+            JSONObject item = (JSONObject) value;
+            if (item.length() != 2 || !item.has("role") || !item.has("text")) {
+                throw new JSONException("Conversation message is invalid");
+            }
+            String role = strictString(item, "role");
+            String text = strictString(item, "text");
+            if (text.isBlank() || text.codePointCount(0, text.length()) > MAX_CONVERSATION_TEXT_SCALARS) {
+                throw new JSONException("Conversation text is invalid");
+            }
+            try {
+                messages.add(new Models.ConversationMessage(
+                        Models.ConversationRole.fromWire(role),
+                        text));
+            } catch (IllegalArgumentException error) {
+                JSONException invalid = new JSONException("Conversation role is invalid");
+                invalid.initCause(error);
+                throw invalid;
+            }
+        }
+        return messages;
     }
 
     static Models.EventSignal parseEventSignal(String payload) throws JSONException {

@@ -22,7 +22,9 @@ import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.Switch;
 import android.widget.TextView;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -35,6 +37,8 @@ public final class MainActivity extends Activity {
             new DurableConnectionTransitionCoordinator(
                     MainActivity::notifyStartedActivityOfTransitionCompletion);
     private final ExecutorService network = Executors.newSingleThreadExecutor();
+    private final Map<String, List<Models.ConversationMessage>> recentConversationBySessionId =
+            new HashMap<>();
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Runnable poll = new Runnable() {
         @Override public void run() {
@@ -71,6 +75,11 @@ public final class MainActivity extends Activity {
     private Button autostartSettingsButton;
     private boolean updatingMonitorSwitch;
     private boolean pendingMonitorEnable;
+    private List<Models.Session> renderedSessions = List.of();
+    private String expandedConversationSessionId;
+    private String loadingConversationSessionId;
+    private String conversationErrorSessionId;
+    private String conversationErrorText = "";
     private SharedPreferences pushPreferences;
     private final SharedPreferences.OnSharedPreferenceChangeListener pushStateListener =
             (preferences, key) -> main.post(this::updatePushStatus);
@@ -149,6 +158,9 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        recentConversationBySessionId.clear();
+        collapseConversationDisclosure();
+        renderedSessions = List.of();
         snapshotGenerationGate.close();
         network.shutdownNow();
         super.onDestroy();
@@ -197,6 +209,7 @@ public final class MainActivity extends Activity {
 
     private void pair() {
         connectError.setText("");
+        clearConversationState();
         final BridgeConfig config;
         try {
             config = BridgeConfig.parse(
@@ -253,6 +266,9 @@ public final class MainActivity extends Activity {
             showConnect();
             return;
         }
+        recentConversationBySessionId.clear();
+        collapseConversationDisclosure();
+        renderedSessions = List.of();
         connection = saved;
         protocol = new MobileProtocol(saved.config(), saved.token(), saved.scope());
         connectPanel.setVisibility(View.GONE);
@@ -282,6 +298,9 @@ public final class MainActivity extends Activity {
     }
 
     private void showConnect() {
+        recentConversationBySessionId.clear();
+        collapseConversationDisclosure();
+        renderedSessions = List.of();
         protocol = null;
         connection = null;
         connectPanel.setVisibility(View.VISIBLE);
@@ -294,6 +313,7 @@ public final class MainActivity extends Activity {
     private void disconnect() {
         MobileProtocol current = protocol;
         if (current == null || connection == null) return;
+        clearConversationState();
         boolean started = TRANSITIONS.begin(
                 DurableConnectionTransitionCoordinator.State.DISCONNECTING,
                 () -> {
@@ -717,7 +737,32 @@ public final class MainActivity extends Activity {
         }
     }
 
+    private void clearConversationState() {
+        recentConversationBySessionId.clear();
+        collapseConversationDisclosure();
+        renderedSessions = List.of();
+    }
+
+    private void collapseConversationDisclosure() {
+        expandedConversationSessionId = null;
+        loadingConversationSessionId = null;
+        conversationErrorSessionId = null;
+        conversationErrorText = "";
+    }
+
+    private void syncConversationDisclosureWithSessions(List<Models.Session> sessions) {
+        renderedSessions = List.copyOf(sessions);
+        if (expandedConversationSessionId == null) return;
+        for (Models.Session session : renderedSessions) {
+            if (session.canReadConversation() && expandedConversationSessionId.equals(session.id())) {
+                return;
+            }
+        }
+        collapseConversationDisclosure();
+    }
+
     private void renderSessions(List<Models.Session> sessions) {
+        syncConversationDisclosureWithSessions(sessions);
         sessionsContainer.removeAllViews();
         if (sessions.isEmpty()) {
             TextView empty = text("最近没有 Agent 会话", 14, color(R.color.muted));
@@ -732,6 +777,8 @@ public final class MainActivity extends Activity {
     }
 
     private void renderUnavailableSessions() {
+        renderedSessions = List.of();
+        collapseConversationDisclosure();
         sessionsContainer.removeAllViews();
         TextView unavailable = text("无法确认当前会话状态，请恢复连接后重试", 14, color(R.color.muted));
         unavailable.setGravity(android.view.Gravity.CENTER);
@@ -769,10 +816,114 @@ public final class MainActivity extends Activity {
         for (Models.Action action : session.actions()) {
             card.addView(actionPanel(action));
         }
+        if (session.canReadConversation()) {
+            card.addView(conversationPanel(session));
+        }
         if (session.canMessage()) {
             card.addView(messagePanel(session));
         }
         return card;
+    }
+
+    private View conversationPanel(Models.Session session) {
+        LinearLayout panel = vertical();
+        panel.setPadding(0, dp(12), 0, 0);
+
+        boolean expanded = session.id().equals(expandedConversationSessionId);
+        Button toggle = button(expanded ? "收起最近对话" : "查看最近对话", false);
+        panel.addView(toggle, matchWidthWrap());
+        toggle.setOnClickListener(view -> toggleConversation(session));
+        if (!expanded) return panel;
+
+        if (session.id().equals(loadingConversationSessionId)) {
+            TextView loading = text("正在读取最近对话", 12, color(R.color.muted));
+            loading.setPadding(0, dp(8), 0, 0);
+            panel.addView(loading);
+            return panel;
+        }
+
+        if (session.id().equals(conversationErrorSessionId)) {
+            TextView error = text(conversationErrorText, 12, color(R.color.attention));
+            error.setPadding(0, dp(8), 0, 0);
+            panel.addView(error);
+            Button retry = button("重试", false);
+            LinearLayout.LayoutParams retryParams = matchWidthWrap();
+            retryParams.topMargin = dp(8);
+            retry.setOnClickListener(view -> retryConversation(session));
+            panel.addView(retry, retryParams);
+            return panel;
+        }
+
+        List<Models.ConversationMessage> messages = recentConversationBySessionId.get(session.id());
+        if (messages == null || messages.isEmpty()) {
+            TextView unavailable = text("最近对话暂时不可用", 12, color(R.color.muted));
+            unavailable.setPadding(0, dp(8), 0, 0);
+            panel.addView(unavailable);
+            return panel;
+        }
+
+        LinearLayout transcript = vertical();
+        transcript.setPadding(0, dp(8), 0, 0);
+        for (Models.ConversationMessage message : messages) {
+            transcript.addView(conversationRow(message));
+        }
+        panel.addView(transcript);
+        return panel;
+    }
+
+    private void toggleConversation(Models.Session session) {
+        if (session == null || !session.canReadConversation()) return;
+        String sessionId = session.id();
+        if (sessionId.equals(expandedConversationSessionId)) {
+            collapseConversationDisclosure();
+            renderSessions(renderedSessions);
+            return;
+        }
+        expandedConversationSessionId = sessionId;
+        conversationErrorSessionId = null;
+        conversationErrorText = "";
+        if (recentConversationBySessionId.containsKey(sessionId)) {
+            loadingConversationSessionId = null;
+            renderSessions(renderedSessions);
+            return;
+        }
+        loadingConversationSessionId = sessionId;
+        renderSessions(renderedSessions);
+        loadConversation(session);
+    }
+
+    private void retryConversation(Models.Session session) {
+        if (session == null || !session.id().equals(expandedConversationSessionId)) return;
+        loadingConversationSessionId = session.id();
+        conversationErrorSessionId = null;
+        conversationErrorText = "";
+        renderSessions(renderedSessions);
+        loadConversation(session);
+    }
+
+    private View conversationRow(Models.ConversationMessage message) {
+        LinearLayout row = vertical();
+        LinearLayout.LayoutParams params = matchWidthWrap();
+        params.topMargin = dp(8);
+        row.setLayoutParams(params);
+        row.setPadding(dp(10), dp(10), dp(10), dp(10));
+        row.setMinimumHeight(dp(44));
+
+        GradientDrawable background = new GradientDrawable();
+        background.setCornerRadius(dp(8));
+        boolean user = message.role() == Models.ConversationRole.USER;
+        background.setColor(color(user ? R.color.primary_soft : R.color.surface));
+        background.setStroke(dp(1), color(user ? R.color.primary : R.color.line));
+        row.setBackground(background);
+
+        TextView role = text(user ? "你" : "Agent", 11, color(user ? R.color.primary : R.color.muted));
+        role.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        row.addView(role);
+
+        TextView body = text(message.text(), 13, color(R.color.ink));
+        body.setPadding(0, dp(4), 0, 0);
+        row.addView(body);
+        return row;
     }
 
     private View actionPanel(Models.Action action) {
@@ -815,6 +966,63 @@ public final class MainActivity extends Activity {
         panel.addView(send, sendParams);
         send.setOnClickListener(view -> send(session, draft, send));
         return panel;
+    }
+
+    private void loadConversation(Models.Session session) {
+        MobileProtocol current = protocol;
+        ConnectionStore.Connection currentConnection = connection;
+        if (current == null || currentConnection == null) return;
+        String sessionId = session.id();
+        long generation = snapshotGenerationGate.capture();
+        network.execute(() -> {
+            try {
+                List<Models.ConversationMessage> messages = current.conversation(session);
+                postConversationIfCurrent(
+                        generation,
+                        current,
+                        currentConnection,
+                        sessionId,
+                        () -> {
+                            recentConversationBySessionId.put(sessionId, List.copyOf(messages));
+                            loadingConversationSessionId = null;
+                            conversationErrorSessionId = null;
+                            conversationErrorText = "";
+                            renderSessions(renderedSessions);
+                        });
+            } catch (Exception error) {
+                if (OfflineFallbackPolicy.isAuthorizationRevoked(error)) {
+                    clearRevokedConnection(generation, current, currentConnection);
+                    return;
+                }
+                postConversationIfCurrent(
+                        generation,
+                        current,
+                        currentConnection,
+                        sessionId,
+                        () -> {
+                            loadingConversationSessionId = null;
+                            conversationErrorSessionId = sessionId;
+                            conversationErrorText = safeError(error);
+                            renderSessions(renderedSessions);
+                        });
+            }
+        });
+    }
+
+    private void postConversationIfCurrent(
+            long generation,
+            MobileProtocol expectedProtocol,
+            ConnectionStore.Connection expectedConnection,
+            String expectedSessionId,
+            Runnable action) {
+        main.post(() -> {
+            if (!snapshotGenerationGate.isLatestOwner()) return;
+            if (!snapshotGenerationGate.isCurrent(generation)) return;
+            if (TRANSITIONS.state() != DurableConnectionTransitionCoordinator.State.IDLE) return;
+            if (!isCurrentConnection(expectedProtocol, expectedConnection)) return;
+            if (!expectedSessionId.equals(expandedConversationSessionId)) return;
+            action.run();
+        });
     }
 
     private void resolve(Models.Action action, String decision, Button first, Button second) {

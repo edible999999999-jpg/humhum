@@ -20,7 +20,7 @@ public class SessionSnapshotCodecTest {
     public void roundTripsOnlyTheFiveAllowedSessionFields() throws Exception {
         Models.Session source = new Models.Session(
                 "session-private", "codex", "HUMHUM", "waiting",
-                "2026-07-12T00:00:00Z", true, true,
+                "2026-07-12T00:00:00Z", true, true, true,
                 List.of(new Models.Action("approval-private", "codex", "command", "Run tests")));
 
         byte[] encoded = SessionSnapshotCodec.encode(
@@ -47,6 +47,7 @@ public class SessionSnapshotCodecTest {
         assertTrue(session.needsAttention());
         assertEquals("", session.id());
         assertFalse(session.canMessage());
+        assertFalse(session.canReadConversation());
         assertTrue(session.actions().isEmpty());
     }
 
@@ -66,6 +67,9 @@ public class SessionSnapshotCodecTest {
         assertInvalid(new JSONObject(payload.toString()).put("private", "leak"));
         assertInvalid(new JSONObject(payload.toString())
                 .put("sessions", new JSONArray().put(new JSONObject(entry.toString()).put("private", "leak"))));
+        assertInvalid(new JSONObject(payload.toString())
+                .put("sessions", new JSONArray().put(new JSONObject(entry.toString())
+                        .put("can_read_conversation", true))));
         assertInvalid(new JSONObject(payload.toString()).put("sessions", entries(31)));
         assertInvalid(new JSONObject(payload.toString()).put("saved_at_ms", -1));
         assertInvalid(new JSONObject(payload.toString()).put("saved_at_ms", NOW_MILLIS + 60_000L));
