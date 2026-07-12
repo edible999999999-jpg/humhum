@@ -13,6 +13,7 @@ import {
   type QueuedIntervention,
 } from "../../hooks/useHexaData";
 import { initialInterventionState, interventionReducer } from "../../hooks/interventionState";
+import { mobilePresenceLabel } from "../../hooks/mobilePresence";
 import {
   interventionMatches,
   interventionProviderForClient,
@@ -811,8 +812,8 @@ function HumHumMobilePanel({
         )}
         {state.devices.map((device) => (
           <div key={device.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 7, marginTop: 5, color: "rgba(255,255,255,0.42)", fontSize: 9 }}>
-            <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {device.name} · {device.scope === "control" ? "可控制" : "只读"}
+            <span title={device.last_seen_at ?? "尚未收到在线状态"} style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {device.name} · {device.scope === "control" ? "可控制" : "只读"} · {mobilePresenceLabel(device.presence_mode)}
             </span>
             <button type="button" title={`撤销 ${device.name}`} aria-label={`撤销 ${device.name}`} disabled={busy} onClick={() => run(() => onRevokeDevice(device.id))} className="kawaii-icon-btn" style={{ width: 24, height: 24, minWidth: 24 }}><Trash2 size={12} /></button>
           </div>

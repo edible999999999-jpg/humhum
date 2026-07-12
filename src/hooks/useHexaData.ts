@@ -47,6 +47,8 @@ export interface MobileBridgeStatus {
     name: string;
     paired_at: string;
     scope: "read" | "control";
+    presence_mode: "foreground" | "monitoring" | null;
+    last_seen_at: string | null;
   }>;
 }
 
