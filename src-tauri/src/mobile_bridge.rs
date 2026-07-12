@@ -6,6 +6,7 @@ use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::io::BufReader;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -68,6 +69,61 @@ pub struct MobileDeviceSummary {
     pub name: String,
     pub paired_at: String,
     pub scope: MobileDeviceScope,
+    pub presence_mode: Option<MobilePresenceMode>,
+    pub last_seen_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MobilePresenceMode {
+    Foreground,
+    Monitoring,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MobileDeviceAuth {
+    id: String,
+    scope: MobileDeviceScope,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct MobilePresence {
+    mode: MobilePresenceMode,
+    recorded_at: i64,
+}
+
+#[derive(Default)]
+struct MobilePresenceStore {
+    entries: HashMap<String, MobilePresence>,
+}
+
+impl MobilePresenceStore {
+    const FRESH_SECONDS: i64 = 90;
+
+    fn report(&mut self, device_id: &str, mode: MobilePresenceMode, now: i64) {
+        self.entries.insert(
+            device_id.to_string(),
+            MobilePresence {
+                mode,
+                recorded_at: now,
+            },
+        );
+    }
+
+    fn fresh(&self, device_id: &str, now: i64) -> Option<MobilePresence> {
+        self.entries.get(device_id).copied().filter(|presence| {
+            now >= presence.recorded_at
+                && now.saturating_sub(presence.recorded_at) <= Self::FRESH_SECONDS
+        })
+    }
+
+    fn remove(&mut self, device_id: &str) {
+        self.entries.remove(device_id);
+    }
+
+    fn clear(&mut self) {
+        self.entries.clear();
+    }
 }
 
 impl MobileDeviceScope {
@@ -92,6 +148,7 @@ struct MobileRuntime {
 pub struct MobileBridgeState {
     humhum_dir: PathBuf,
     devices: Arc<Mutex<MobileDeviceStore>>,
+    presence: Mutex<MobilePresenceStore>,
     event_waiters: Arc<Semaphore>,
     runtime: Mutex<MobileRuntime>,
 }
@@ -101,6 +158,7 @@ impl MobileBridgeState {
         Ok(Self {
             humhum_dir: humhum_dir.to_path_buf(),
             devices: Arc::new(Mutex::new(MobileDeviceStore::load_or_create(humhum_dir)?)),
+            presence: Mutex::new(MobilePresenceStore::default()),
             event_waiters: Arc::new(Semaphore::new(MAX_EVENT_WAITERS)),
             runtime: Mutex::new(MobileRuntime {
                 enabled: false,
@@ -122,7 +180,13 @@ impl MobileBridgeState {
             .devices
             .lock()
             .unwrap_or_else(|error| error.into_inner())
-            .summaries();
+            .summaries_with_presence(
+                &self
+                    .presence
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner()),
+                chrono::Utc::now().timestamp(),
+            );
         MobileBridgeStatus {
             enabled: runtime.enabled,
             url: runtime.url.clone(),
@@ -202,6 +266,10 @@ impl MobileBridgeState {
         runtime.tailnet_url = None;
         runtime.certificate_fingerprint = None;
         drop(runtime);
+        self.presence
+            .lock()
+            .map_err(|error| error.to_string())?
+            .clear();
         Ok(self.status())
     }
 
@@ -246,6 +314,10 @@ impl MobileBridgeState {
             .lock()
             .map_err(|error| error.to_string())?
             .revoke_all()?;
+        self.presence
+            .lock()
+            .map_err(|error| error.to_string())?
+            .clear();
         Ok(self.status())
     }
 
@@ -254,6 +326,10 @@ impl MobileBridgeState {
             .lock()
             .map_err(|error| error.to_string())?
             .revoke_device(device_id)?;
+        self.presence
+            .lock()
+            .map_err(|error| error.to_string())?
+            .remove(device_id);
         Ok(self.status())
     }
 }
@@ -1024,11 +1100,18 @@ impl MobileDeviceStore {
     }
 
     fn authorize(&self, raw_token: &str) -> Option<MobileDeviceScope> {
+        self.authorize_device(raw_token).map(|device| device.scope)
+    }
+
+    fn authorize_device(&self, raw_token: &str) -> Option<MobileDeviceAuth> {
         let candidate = digest_token(raw_token);
         self.devices
             .iter()
             .find(|device| constant_time_eq(device.token_digest.as_bytes(), candidate.as_bytes()))
-            .map(|device| device.scope)
+            .map(|device| MobileDeviceAuth {
+                id: device.id.clone(),
+                scope: device.scope,
+            })
     }
 
     fn summaries(&self) -> Vec<MobileDeviceSummary> {
@@ -1039,6 +1122,32 @@ impl MobileDeviceStore {
                 name: device.name.clone(),
                 paired_at: device.paired_at.clone(),
                 scope: device.scope,
+                presence_mode: None,
+                last_seen_at: None,
+            })
+            .collect()
+    }
+
+    fn summaries_with_presence(
+        &self,
+        presence: &MobilePresenceStore,
+        now: i64,
+    ) -> Vec<MobileDeviceSummary> {
+        self.devices
+            .iter()
+            .map(|device| {
+                let fresh = presence.fresh(&device.id, now);
+                MobileDeviceSummary {
+                    id: device.id.clone(),
+                    name: device.name.clone(),
+                    paired_at: device.paired_at.clone(),
+                    scope: device.scope,
+                    presence_mode: fresh.map(|value| value.mode),
+                    last_seen_at: fresh.and_then(|value| {
+                        chrono::DateTime::from_timestamp(value.recorded_at, 0)
+                            .map(|timestamp| timestamp.to_rfc3339())
+                    }),
+                }
             })
             .collect()
     }
@@ -1403,6 +1512,62 @@ mod tests {
         assert!(!content.contains(raw_token));
         assert_eq!(store.authorize(raw_token), Some(MobileDeviceScope::Read));
         assert_eq!(store.authorize("wrong-token"), None);
+    }
+
+    #[test]
+    fn mobile_presence_authorizes_to_an_opaque_device_identity() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut store = MobileDeviceStore::load_or_create(temp.path()).unwrap();
+        let paired = store
+            .add_device("Xiaomi 14", "phone-token", MobileDeviceScope::Control)
+            .unwrap();
+
+        let authorized = store.authorize_device("phone-token").unwrap();
+
+        assert_eq!(authorized.id, paired.id);
+        assert_eq!(authorized.scope, MobileDeviceScope::Control);
+        assert!(store.authorize_device("wrong-token").is_none());
+    }
+
+    #[test]
+    fn mobile_presence_is_fresh_through_ninety_seconds_then_expires() {
+        let mut presence = MobilePresenceStore::default();
+        presence.report("device-1", MobilePresenceMode::Monitoring, 1_000);
+
+        assert_eq!(
+            presence.fresh("device-1", 1_090).unwrap().mode,
+            MobilePresenceMode::Monitoring
+        );
+        assert!(presence.fresh("device-1", 1_091).is_none());
+        assert!(presence.fresh("unknown", 1_000).is_none());
+    }
+
+    #[test]
+    fn mobile_presence_summaries_hide_stale_timestamps_and_cleanup_on_revoke() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut devices = MobileDeviceStore::load_or_create(temp.path()).unwrap();
+        let device = devices
+            .add_device("Xiaomi 14", "phone-token", MobileDeviceScope::Read)
+            .unwrap();
+        let mut presence = MobilePresenceStore::default();
+        presence.report(&device.id, MobilePresenceMode::Foreground, 1_000);
+
+        let fresh = devices.summaries_with_presence(&presence, 1_090);
+        assert_eq!(fresh[0].presence_mode, Some(MobilePresenceMode::Foreground));
+        assert_eq!(
+            fresh[0].last_seen_at.as_deref(),
+            Some("1970-01-01T00:16:40+00:00")
+        );
+
+        let stale = devices.summaries_with_presence(&presence, 1_091);
+        assert_eq!(stale[0].presence_mode, None);
+        assert_eq!(stale[0].last_seen_at, None);
+
+        presence.remove(&device.id);
+        assert!(presence.fresh(&device.id, 1_000).is_none());
+        presence.report(&device.id, MobilePresenceMode::Monitoring, 1_000);
+        presence.clear();
+        assert!(presence.fresh(&device.id, 1_000).is_none());
     }
 
     #[test]
