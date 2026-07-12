@@ -99,7 +99,7 @@
 - `PushRegistration.plan(configured, paired, relayConfigured, token) -> REGISTER | SKIP`
 - `HumHumMessagingService` delegates all start decisions to `PushWakePolicy`.
 
-- [x] **Step 1: Write failing tests** for strict registration URL/body/auth, no registration before pairing or without complete Firebase configuration, token rotation replacement, timeout/cancellation and no persisted FCM token.
+- [x] **Step 1: Write failing tests** for strict registration URL/body/auth, no registration before pairing or without complete Firebase configuration, token rotation replacement, timeout/cancellation and no token copied into HUMHUM connection preferences.
 - [x] **Step 2: Run focused JVM tests** and require missing registration APIs.
 - [x] **Step 3: Implement `PushRegistration` and `WakeRelayClient.putPushToken`** using platform TLS, subscriber bearer auth, bounded body/status handling and no redirects.
 - [x] **Step 4: Implement `HumHumApplication`** to initialize Firebase only for complete public client configuration, disable automatic analytics/data collection and request/register a token after pairing or process start.
@@ -119,8 +119,8 @@
 - Disabled-config release remains installable and uses relay/private wake fallback.
 - Injected local provider proves registration encryption and idempotent retry without production Firebase credentials.
 
-- [ ] **Step 1: Run a local relay with fixed test push key and injected provider**, register a disposable token, inspect SQLite for ciphertext/no plaintext, publish sequence 1, fail once, retry the exact envelope and prove one accepted generic payload.
-- [ ] **Step 2: Build and install the release APK with Firebase client config absent**, cold-launch API 36, verify no crash/token registration and confirm existing pairing UI remains usable.
-- [ ] **Step 3: Run complete relay, Rust, frontend and Android suites**, plus release lint, APK/AAB builds, merged-permission inspection, signature verification and SHA-256 generation.
-- [ ] **Step 4: If production Firebase credentials and a Xiaomi phone are unavailable, explicitly retain physical killed-process delivery as unverified**; do not simulate or relabel force-stop evidence.
-- [ ] **Step 5: Update installation and parity documentation**, check every plan item, commit `docs(push): verify optional FCM wake`, rebuild/relaunch the desktop app and leave the goal active for Xiaomi Push/physical-device/store work.
+- [x] **Step 1: Run a local relay with fixed test push key and injected provider**, register a disposable token, inspect SQLite for ciphertext/no plaintext, publish sequence 1, fail once, retry the exact envelope and prove one accepted generic payload.
+- [x] **Step 2: Build and install the release APK with Firebase client config absent**, cold-launch API 36, verify no crash/token registration and confirm existing pairing UI remains usable.
+- [x] **Step 3: Run complete relay, Rust, frontend and Android suites**, plus release lint, APK/AAB builds, merged-permission inspection, signature verification and SHA-256 generation.
+- [x] **Step 4: If production Firebase credentials and a Xiaomi phone are unavailable, explicitly retain physical killed-process delivery as unverified**; do not simulate or relabel force-stop evidence.
+- [x] **Step 5: Update installation and parity documentation**, check every plan item, commit `docs(push): verify optional FCM wake`, rebuild/relaunch the desktop app and leave the goal active for Xiaomi Push/physical-device/store work.
