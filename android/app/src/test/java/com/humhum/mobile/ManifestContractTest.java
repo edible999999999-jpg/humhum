@@ -1,6 +1,7 @@
 package com.humhum.mobile;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
@@ -35,6 +36,14 @@ public class ManifestContractTest {
                 "android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING",
                 "android.permission.POST_NOTIFICATIONS",
                 "android.permission.RECEIVE_BOOT_COMPLETED"), permissions);
+        assertFalse(permissions.contains("android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"));
+        assertFalse(permissions.contains("android.permission.QUERY_ALL_PACKAGES"));
+
+        NodeList visiblePackages = document.getElementsByTagName("package");
+        assertEquals(1, visiblePackages.getLength());
+        assertEquals(
+                "com.miui.securitycenter",
+                ((Element) visiblePackages.item(0)).getAttributeNS(ANDROID, "name"));
 
         Element service = component(document, "service", ".AgentMonitorService");
         assertEquals("false", service.getAttributeNS(ANDROID, "exported"));
