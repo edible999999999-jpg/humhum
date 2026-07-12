@@ -313,7 +313,9 @@ public final class MainActivity extends Activity {
     private void disconnect() {
         MobileProtocol current = protocol;
         if (current == null || connection == null) return;
+        List<Models.Session> sessions = renderedSessions;
         clearConversationState();
+        renderSessions(sessions);
         boolean started = TRANSITIONS.begin(
                 DurableConnectionTransitionCoordinator.State.DISCONNECTING,
                 () -> {

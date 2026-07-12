@@ -253,6 +253,22 @@ public class ManifestContractTest {
     }
 
     @Test
+    public void disconnectRerendersConversationDisclosureBeforeAsyncRevocationFinishes()
+            throws Exception {
+        String source = new String(Files.readAllBytes(
+                Path.of("src/main/java/com/humhum/mobile/MainActivity.java")),
+                StandardCharsets.UTF_8);
+        String disconnect = methodSource(
+                source, "private void disconnect()", "private void onMonitorChanged(boolean checked)");
+        assertOrdered(
+                disconnect,
+                "List<Models.Session> sessions = renderedSessions;",
+                "clearConversationState();",
+                "renderSessions(sessions);",
+                "TRANSITIONS.begin(");
+    }
+
+    @Test
     public void recentConversationLateResponsesRequireGenerationProtocolConnectionAndSessionChecks()
             throws Exception {
         String source = new String(Files.readAllBytes(
@@ -383,6 +399,9 @@ public class ManifestContractTest {
                 source, "private void disconnect()", "private void onMonitorChanged(boolean checked)");
         assertOrdered(
                 disconnect,
+                "List<Models.Session> sessions = renderedSessions;",
+                "clearConversationState();",
+                "renderSessions(sessions);",
                 "TRANSITIONS.begin(",
                 "DurableConnectionTransitionCoordinator.State.DISCONNECTING",
                 "SessionSnapshotGenerationGate.runExclusiveTransition(",

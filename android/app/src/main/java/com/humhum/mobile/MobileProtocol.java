@@ -15,6 +15,7 @@ import org.json.JSONObject;
 
 public final class MobileProtocol {
     private static final int MAX_RESPONSE_BYTES = 1_048_576;
+    private static final int MAX_CONVERSATION_RESPONSE_BYTES = 65_536;
     private static final int MAX_SESSIONS = 30;
     private static final int MAX_ACTIONS = 20;
     private static final int MAX_CONVERSATION_MESSAGES = 12;
@@ -210,7 +211,9 @@ public final class MobileProtocol {
                 "POST",
                 "/api/session/conversation",
                 new JSONObject().put("session_id", session.id()).toString(),
-                true);
+                true,
+                8_000,
+                MAX_CONVERSATION_RESPONSE_BYTES);
     }
 
     static Models.SessionPage parseSessions(String payload) throws JSONException {
@@ -238,9 +241,9 @@ public final class MobileProtocol {
                     bounded(item.optString("project", "未命名项目"), 160),
                     bounded(item.optString("status", "idle"), 32),
                     bounded(item.optString("last_activity_at"), 64),
-                    item.optBoolean("needs_attention", false),
-                    scope == Models.Scope.CONTROL && item.optBoolean("can_message", false),
-                    item.optBoolean("can_read_conversation", false),
+                    strictBoolean(item, "needs_attention"),
+                    scope == Models.Scope.CONTROL && strictBoolean(item, "can_message"),
+                    strictBoolean(item, "can_read_conversation"),
                     actions));
         }
         return new Models.SessionPage(scope, sessions, cursor);
@@ -250,6 +253,10 @@ public final class MobileProtocol {
             String payload, String expectedSessionId) throws JSONException {
         if (expectedSessionId == null || expectedSessionId.isBlank()) {
             throw new IllegalArgumentException("Session is invalid");
+        }
+        if (payload == null
+                || payload.getBytes(StandardCharsets.UTF_8).length > MAX_CONVERSATION_RESPONSE_BYTES) {
+            throw new JSONException("Conversation response is too large");
         }
         JSONObject root = new JSONObject(payload);
         if (root.length() != 2 || !root.has("session_id") || !root.has("messages")) {
@@ -332,6 +339,11 @@ public final class MobileProtocol {
         return actions;
     }
 
+    private static boolean strictBoolean(JSONObject object, String key) {
+        Object value = object.opt(key);
+        return value instanceof Boolean && (Boolean) value;
+    }
+
     private String execute(RequestSpec request) throws IOException, JSONException {
         if (request.requiresToken() && token.isEmpty()) {
             throw new IllegalStateException("Pair this device first");
@@ -353,7 +365,8 @@ public final class MobileProtocol {
         }
         int status = connection.getResponseCode();
         String response = readBounded(
-                status >= 200 && status < 300 ? connection.getInputStream() : connection.getErrorStream());
+                status >= 200 && status < 300 ? connection.getInputStream() : connection.getErrorStream(),
+                request.maxResponseBytes());
         connection.disconnect();
         if (status < 200 || status >= 300) {
             String message;
@@ -367,15 +380,18 @@ public final class MobileProtocol {
         return response;
     }
 
-    private static String readBounded(InputStream input) throws IOException {
+    static String readBounded(InputStream input, int maxBytes) throws IOException {
         if (input == null) return "";
+        if (maxBytes < 1 || maxBytes > MAX_RESPONSE_BYTES) {
+            throw new IllegalArgumentException("Response limit is invalid");
+        }
         try (InputStream stream = input; ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             byte[] buffer = new byte[8192];
             int total = 0;
             int count;
             while ((count = stream.read(buffer)) != -1) {
                 total += count;
-                if (total > MAX_RESPONSE_BYTES) {
+                if (total > maxBytes) {
                     throw new IOException("HUMHUM response is too large");
                 }
                 output.write(buffer, 0, count);
@@ -405,9 +421,10 @@ public final class MobileProtocol {
         private final String body;
         private final boolean requiresToken;
         private final int readTimeoutMillis;
+        private final int maxResponseBytes;
 
         RequestSpec(String method, String path, String body, boolean requiresToken) {
-            this(method, path, body, requiresToken, 8_000);
+            this(method, path, body, requiresToken, 8_000, MAX_RESPONSE_BYTES);
         }
 
         RequestSpec(
@@ -416,11 +433,22 @@ public final class MobileProtocol {
                 String body,
                 boolean requiresToken,
                 int readTimeoutMillis) {
+            this(method, path, body, requiresToken, readTimeoutMillis, MAX_RESPONSE_BYTES);
+        }
+
+        RequestSpec(
+                String method,
+                String path,
+                String body,
+                boolean requiresToken,
+                int readTimeoutMillis,
+                int maxResponseBytes) {
             this.method = method;
             this.path = path;
             this.body = body;
             this.requiresToken = requiresToken;
             this.readTimeoutMillis = readTimeoutMillis;
+            this.maxResponseBytes = maxResponseBytes;
         }
 
         String method() { return method; }
@@ -428,6 +456,7 @@ public final class MobileProtocol {
         String body() { return body; }
         boolean requiresToken() { return requiresToken; }
         int readTimeoutMillis() { return readTimeoutMillis; }
+        int maxResponseBytes() { return maxResponseBytes; }
     }
 
     public static final class HttpStatusException extends IOException {

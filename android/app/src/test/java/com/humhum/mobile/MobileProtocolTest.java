@@ -5,6 +5,9 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -124,6 +127,7 @@ public class MobileProtocolTest {
         assertEquals("POST", request.method());
         assertEquals("/api/session/conversation", request.path());
         assertTrue(request.requiresToken());
+        assertEquals(65_536, request.maxResponseBytes());
         JSONObject body = new JSONObject(request.body());
         assertEquals(1, body.length());
         assertEquals("session-1", body.getString("session_id"));
@@ -137,6 +141,15 @@ public class MobileProtocolTest {
                         false,
                         false,
                         java.util.List.of())));
+    }
+
+    @Test
+    public void boundedReaderRejectsConversationResponseAboveRawByteLimit() {
+        byte[] paddedPayload = (" ".repeat(65_536) + "{}")
+                .getBytes(StandardCharsets.UTF_8);
+
+        assertThrows(IOException.class, () -> MobileProtocol.readBounded(
+                new ByteArrayInputStream(paddedPayload), 65_536));
     }
 
     @Test
@@ -211,6 +224,16 @@ public class MobileProtocolTest {
         assertTrue(read.sessions().get(0).actions().isEmpty());
         assertFalse(read.sessions().get(0).canMessage());
         assertTrue(read.sessions().get(0).canReadConversation());
+
+        String stringBooleanPayload = new JSONObject()
+                .put("scope", "read")
+                .put("sessions", new JSONArray().put(new JSONObject()
+                        .put("id", "session-string-boolean")
+                        .put("agent", "codex")
+                        .put("can_read_conversation", "true")))
+                .toString();
+        assertFalse(MobileProtocol.parseSessions(stringBooleanPayload)
+                .sessions().get(0).canReadConversation());
     }
 
     @Test
@@ -321,6 +344,24 @@ public class MobileProtocolTest {
                                 .put("path", "/Users/yxguo/private")))
                         .toString(),
                 "session-1"));
+    }
+
+    @Test
+    public void recentConversationParserRejectsRawPayloadsOver64KiBBeforeParsing() throws Exception {
+        String basePayload = new JSONObject()
+                .put("session_id", "session-1")
+                .put("messages", new JSONArray())
+                .toString();
+        int baseBytes = basePayload.getBytes(StandardCharsets.UTF_8).length;
+        String exactPayload = basePayload + " ".repeat(65_536 - baseBytes);
+        String oversizedPayload = exactPayload + " ";
+
+        assertEquals(65_536, exactPayload.getBytes(StandardCharsets.UTF_8).length);
+        assertEquals(65_537, oversizedPayload.getBytes(StandardCharsets.UTF_8).length);
+        assertEquals(List.of(), MobileProtocol.parseConversation(exactPayload, "session-1"));
+        assertThrows(
+                org.json.JSONException.class,
+                () -> MobileProtocol.parseConversation(oversizedPayload, "session-1"));
     }
 
     private static BridgeConfig config() {
