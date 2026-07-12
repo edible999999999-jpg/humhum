@@ -172,3 +172,26 @@ test("expired ciphertext disappears and either credential can delete the channel
   );
   assert.equal(gone.status, 401);
 });
+
+test("strict query, JSON shape, and rate bounds fail closed", async () => {
+  const { baseUrl } = await relay();
+  const channel = await createChannel(baseUrl);
+  const invalidQuery = await fetch(
+    `${baseUrl}/v1/channels/${channel.channel_id}/messages?after=0&wait=21`,
+    { headers: { authorization: `Bearer ${channel.subscriber_token}` } },
+  );
+  assert.equal(invalidQuery.status, 400);
+  const ambiguous = await publish(
+    baseUrl,
+    channel.channel_id,
+    channel.publisher_token,
+    { ...envelope(1), plaintext: "not allowed" },
+  );
+  assert.equal(ambiguous.status, 400);
+
+  let finalStatus = 0;
+  for (let request = 0; request < 301; request += 1) {
+    finalStatus = (await fetch(`${baseUrl}/health`)).status;
+  }
+  assert.equal(finalStatus, 429);
+});

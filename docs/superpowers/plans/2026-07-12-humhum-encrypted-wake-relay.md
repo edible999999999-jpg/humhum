@@ -34,11 +34,11 @@
 - `createRelayServer({databasePath, clock}) -> http.Server`.
 - HTTP endpoints and limits exactly match the design spec.
 
-- [ ] **Step 1: Write failing `node:test` cases** for health, channel creation, publisher/subscriber credential separation, generic `401`, monotonic sequences, 20-second bounded long poll, 4-KiB/128-message limits, 24-hour expiry, deletion and no CORS.
-- [ ] **Step 2: Run** `node --test relay/test/relay.test.mjs`; expect missing modules.
-- [ ] **Step 3: Implement a prepared-statement SQLite store** that hashes credentials before insert and provides atomic sequence allocation, bounded cleanup and channel deletion.
-- [ ] **Step 4: Implement strict HTTP parsing, body/time/rate bounds and graceful shutdown**, then prove the database contains ciphertext/digests but no issued raw token.
-- [ ] **Step 5: Add a non-root Node 22 Docker image and concise self-host guide**, rerun tests and commit `feat(relay): add opaque wake mailbox`.
+- [x] **Step 1: Write failing `node:test` cases** for health, channel creation, publisher/subscriber credential separation, generic `401`, monotonic sequences, 20-second bounded long poll, 4-KiB/128-message limits, 24-hour expiry, deletion and no CORS.
+- [x] **Step 2: Run** `node --test relay/test/relay.test.mjs`; expect missing modules.
+- [x] **Step 3: Implement a prepared-statement SQLite store** that hashes credentials before insert and provides atomic sequence allocation, bounded cleanup and channel deletion.
+- [x] **Step 4: Implement strict HTTP parsing, body/time/rate bounds and graceful shutdown**, then prove the database contains ciphertext/digests but no issued raw token.
+- [x] **Step 5: Add a non-root Node 22 Docker image and concise self-host guide**, rerun tests and commit `feat(relay): add opaque wake mailbox`.
 
 ### Task 2: Shared Wake Envelope Cryptography
 
@@ -54,10 +54,10 @@
 - Rust `decrypt_wake(...) -> WakeSignal` for vector verification.
 - Java `WakeEnvelope.decrypt(keyHex, channel, expectedAfter, json, now) -> WakeSignal`.
 
-- [ ] **Step 1: Add one fixed key/channel/sequence/nonce/issued-at vector in Rust and Java tests** plus wrong-key, changed-AAD, ciphertext-tamper, replay, unknown-field and stale-time rejection.
-- [ ] **Step 2: Run focused Rust and JVM tests**, requiring missing crypto APIs.
-- [ ] **Step 3: Implement strict base64url AES-256-GCM codecs** with exact JSON shapes and no secret-bearing debug output.
-- [ ] **Step 4: Require both languages to produce/consume the same fixed ciphertext**, run focused tests and commit `feat(mobile): add interoperable wake encryption`.
+- [x] **Step 1: Add one fixed key/channel/sequence/nonce/issued-at vector in Rust and Java tests** plus wrong-key, changed-AAD, ciphertext-tamper, replay, unknown-field and stale-time rejection.
+- [x] **Step 2: Run focused Rust and JVM tests**, requiring missing crypto APIs.
+- [x] **Step 3: Implement strict base64url AES-256-GCM codecs** with exact JSON shapes and no secret-bearing debug output.
+- [x] **Step 4: Require both languages to produce/consume the same fixed ciphertext**, run focused tests and commit `feat(mobile): add interoperable wake encryption`.
 
 ### Task 3: Relay Configuration And Per-Device Secrets
 
@@ -72,7 +72,7 @@
 - `MobileRelaySecretStore` persists channel, key and publisher credential by opaque device ID in `~/.humhum/mobile-relay-secrets.json` mode `0600`.
 - Pair response adds optional `wake_relay` bundle with subscriber-only material.
 
-- [ ] **Step 1: Write failing Rust tests** for URL policy, legacy config migration, secret-file permissions/isolation, no secret status serialization and pairing response separation.
+- [x] **Step 1: Write failing Rust tests** for URL policy, legacy config migration, secret-file permissions/isolation, no secret status serialization and pairing response separation.
 - [ ] **Step 2: Implement strict config/secret storage and channel registration**, failing relay-selected pairing closed while preserving ordinary pairing.
 - [ ] **Step 3: Implement one/all/self revoke remote deletion with local-first cleanup and bounded timeout**, run Rust tests and commit `feat(mobile): provision encrypted wake channels`.
 
