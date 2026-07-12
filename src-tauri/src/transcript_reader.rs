@@ -86,6 +86,15 @@ fn read_recent_lines(path: &Path) -> Result<Vec<String>, String> {
     let mut file = File::open(path).map_err(|error| error.to_string())?;
     let file_len = file.metadata().map_err(|error| error.to_string())?.len();
     let start = file_len.saturating_sub(MAX_TAIL_BYTES);
+    let mut skip_partial_first_record = false;
+    if start > 0 {
+        file.seek(SeekFrom::Start(start - 1))
+            .map_err(|error| error.to_string())?;
+        let mut previous = [0_u8; 1];
+        file.read_exact(&mut previous)
+            .map_err(|error| error.to_string())?;
+        skip_partial_first_record = previous[0] != b'\n';
+    }
     file.seek(SeekFrom::Start(start))
         .map_err(|error| error.to_string())?;
 
@@ -93,7 +102,7 @@ fn read_recent_lines(path: &Path) -> Result<Vec<String>, String> {
     file.read_to_end(&mut bytes)
         .map_err(|error| error.to_string())?;
 
-    let slice = if start > 0 {
+    let slice = if skip_partial_first_record {
         match bytes.iter().position(|byte| *byte == b'\n') {
             Some(index) => &bytes[index + 1..],
             None => &[][..],
@@ -275,12 +284,20 @@ fn truncate_text(text: &str, max_chars: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_transcript_signals, TranscriptMessage, TranscriptRole};
+    use super::{parse_transcript_signals, TranscriptMessage, TranscriptRole, MAX_TAIL_BYTES};
     use std::path::Path;
 
     fn write_lines(path: &Path, lines: &[String]) {
         let body = lines.join("\n");
         std::fs::write(path, format!("{body}\n")).unwrap();
+    }
+
+    fn write_content(path: &Path, content: &str) {
+        std::fs::write(path, content).unwrap();
+    }
+
+    fn json_line(role: &str, text: &str) -> String {
+        format!(r#"{{"role":"{role}","content":"{text}"}}"#)
     }
 
     fn parse(path: &Path) -> super::TranscriptSignals {
@@ -390,6 +407,99 @@ mod tests {
                 TranscriptMessage {
                     role: TranscriptRole::User,
                     text: "recent user".to_string(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn preserves_exact_boundary_record_when_tail_starts_on_a_record_edge() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("exact-boundary.jsonl");
+        let prefix = json_line("user", "older context");
+        let tail_overhead = json_line("assistant", "").len();
+        let tail_text_len = MAX_TAIL_BYTES as usize - tail_overhead;
+        let tail_text = format!(
+            "keep-boundary{}",
+            "x".repeat(tail_text_len - "keep-boundary".len())
+        );
+        let tail = json_line("assistant", &tail_text);
+        assert_eq!(tail.len(), MAX_TAIL_BYTES as usize);
+        write_content(&path, &format!("{prefix}\n{tail}"));
+
+        let signals = parse(&path);
+
+        assert_eq!(signals.assistant_messages.len(), 1);
+        assert!(signals.assistant_messages[0].starts_with("keep-boundary"));
+        assert_eq!(
+            signals.messages,
+            vec![TranscriptMessage {
+                role: TranscriptRole::Assistant,
+                text: signals.assistant_messages[0].clone(),
+            }]
+        );
+    }
+
+    #[test]
+    fn handles_crlf_line_endings() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("crlf.jsonl");
+        write_content(
+            &path,
+            concat!(
+                r#"{"role":"user","content":"hello"}"#,
+                "\r\n",
+                r#"{"message":{"role":"assistant","content":"world"}}"#,
+                "\r\n",
+            ),
+        );
+
+        let signals = parse(&path);
+
+        assert_eq!(signals.user_messages, vec!["hello".to_string()]);
+        assert_eq!(signals.assistant_messages, vec!["world".to_string()]);
+        assert_eq!(
+            signals.messages,
+            vec![
+                TranscriptMessage {
+                    role: TranscriptRole::User,
+                    text: "hello".to_string(),
+                },
+                TranscriptMessage {
+                    role: TranscriptRole::Assistant,
+                    text: "world".to_string(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn handles_final_record_without_trailing_newline() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("no-final-newline.jsonl");
+        write_content(
+            &path,
+            &format!(
+                "{}\n{}",
+                json_line("user", "alpha"),
+                json_line("assistant", "omega")
+            ),
+        );
+
+        let signals = parse(&path);
+
+        assert_eq!(signals.user_messages, vec!["alpha".to_string()]);
+        assert_eq!(signals.assistant_messages, vec!["omega".to_string()]);
+        assert_eq!(
+            signals.messages,
+            vec![
+                TranscriptMessage {
+                    role: TranscriptRole::User,
+                    text: "alpha".to_string(),
+                },
+                TranscriptMessage {
+                    role: TranscriptRole::Assistant,
+                    text: "omega".to_string(),
                 },
             ]
         );
