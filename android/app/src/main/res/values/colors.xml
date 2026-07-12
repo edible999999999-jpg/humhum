@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="canvas">#F6FAFF</color>
+    <color name="ink">#243247</color>
+    <color name="muted">#667A93</color>
+    <color name="line">#DCE7F2</color>
+    <color name="primary">#2563EB</color>
+    <color name="primary_soft">#EAF1FF</color>
+    <color name="attention">#E97843</color>
+    <color name="surface">#FFFFFF</color>
+</resources>

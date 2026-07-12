@@ -30,6 +30,26 @@ public final class BridgeConfig {
             throw new IllegalArgumentException("Pairing code must contain eight letters or digits");
         }
 
+        String fingerprint = normalizeFingerprint(rawFingerprint);
+        String deviceName = normalizeDeviceName(rawDeviceName);
+
+        return new BridgeConfig(
+                "https://" + uri.getHost().toLowerCase(Locale.ROOT) + ":" + BRIDGE_PORT,
+                code,
+                fingerprint,
+                deviceName);
+    }
+
+    public static BridgeConfig restore(String rawUrl, String rawFingerprint, String rawDeviceName) {
+        URI uri = parseUri(rawUrl);
+        return new BridgeConfig(
+                "https://" + uri.getHost().toLowerCase(Locale.ROOT) + ":" + BRIDGE_PORT,
+                "",
+                normalizeFingerprint(rawFingerprint),
+                normalizeDeviceName(rawDeviceName));
+    }
+
+    private static String normalizeFingerprint(String rawFingerprint) {
         String fingerprint = value(rawFingerprint)
                 .replace(":", "")
                 .replace("-", "")
@@ -38,7 +58,10 @@ public final class BridgeConfig {
         if (!FINGERPRINT.matcher(fingerprint).matches()) {
             throw new IllegalArgumentException("Certificate fingerprint must contain 64 hex digits");
         }
+        return fingerprint;
+    }
 
+    private static String normalizeDeviceName(String rawDeviceName) {
         String deviceName = value(rawDeviceName);
         if (deviceName.isEmpty()) {
             deviceName = "Xiaomi Android";
@@ -46,12 +69,7 @@ public final class BridgeConfig {
         if (deviceName.length() > 80) {
             throw new IllegalArgumentException("Device name is too long");
         }
-
-        return new BridgeConfig(
-                "https://" + uri.getHost().toLowerCase(Locale.ROOT) + ":" + BRIDGE_PORT,
-                code,
-                fingerprint,
-                deviceName);
+        return deviceName;
     }
 
     private static URI parseUri(String rawUrl) {

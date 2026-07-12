@@ -1,0 +1,189 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/canvas"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingLeft="18dp"
+        android:paddingTop="24dp"
+        android:paddingRight="18dp"
+        android:paddingBottom="28dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingBottom="16dp">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="HUMHUM"
+                android:textColor="@color/ink"
+                android:textSize="24sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/statusText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:maxWidth="180dp"
+                android:text="等待连接"
+                android:textColor="@color/muted"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/connectPanel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/panel_background"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="连接这台 Mac"
+                android:textColor="@color/ink"
+                android:textSize="20sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="在 Mac 的 Hexa 中开启移动访问并生成可控制配对码。"
+                android:textColor="@color/muted"
+                android:textSize="13sp" />
+
+            <EditText
+                android:id="@+id/urlInput"
+                android:layout_width="match_parent"
+                android:layout_height="50dp"
+                android:layout_marginTop="18dp"
+                android:autofillHints=""
+                android:background="@drawable/input_background"
+                android:hint="https://192.168.x.x:31276"
+                android:inputType="textUri"
+                android:singleLine="true"
+                android:textColor="@color/ink"
+                android:textColorHint="#93A4B8" />
+
+            <EditText
+                android:id="@+id/codeInput"
+                android:layout_width="match_parent"
+                android:layout_height="50dp"
+                android:layout_marginTop="10dp"
+                android:background="@drawable/input_background"
+                android:hint="8 位配对码"
+                android:inputType="textCapCharacters"
+                android:maxLength="8"
+                android:singleLine="true"
+                android:textColor="@color/ink"
+                android:textColorHint="#93A4B8" />
+
+            <EditText
+                android:id="@+id/fingerprintInput"
+                android:layout_width="match_parent"
+                android:layout_height="72dp"
+                android:layout_marginTop="10dp"
+                android:background="@drawable/input_background"
+                android:gravity="top"
+                android:hint="TLS SHA-256 指纹"
+                android:inputType="textNoSuggestions"
+                android:maxLength="95"
+                android:textColor="@color/ink"
+                android:textColorHint="#93A4B8"
+                android:textSize="13sp" />
+
+            <EditText
+                android:id="@+id/deviceNameInput"
+                android:layout_width="match_parent"
+                android:layout_height="50dp"
+                android:layout_marginTop="10dp"
+                android:background="@drawable/input_background"
+                android:hint="设备名称（例如 Xiaomi 14）"
+                android:inputType="textCapWords"
+                android:maxLength="80"
+                android:singleLine="true"
+                android:textColor="@color/ink"
+                android:textColorHint="#93A4B8" />
+
+            <Button
+                android:id="@+id/connectButton"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:layout_marginTop="14dp"
+                android:backgroundTint="@color/primary"
+                android:text="安全配对"
+                android:textAllCaps="false"
+                android:textColor="@color/surface"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/connectError"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:textColor="#C2413B"
+                android:textSize="13sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/sessionPanel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/scopeText"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:textColor="@color/muted"
+                    android:textSize="13sp" />
+
+                <Button
+                    android:id="@+id/refreshButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="42dp"
+                    android:background="@drawable/button_secondary"
+                    android:text="刷新"
+                    android:textAllCaps="false"
+                    android:textColor="@color/primary" />
+
+                <Button
+                    android:id="@+id/disconnectButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="42dp"
+                    android:layout_marginLeft="8dp"
+                    android:background="@drawable/button_secondary"
+                    android:text="断开"
+                    android:textAllCaps="false"
+                    android:textColor="#9A4C45" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/sessionsContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:orientation="vertical" />
+        </LinearLayout>
+    </LinearLayout>
+</ScrollView>

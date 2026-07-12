@@ -190,7 +190,7 @@ public final class MobileProtocol {
                 }
                 output.write(buffer, 0, count);
             }
-            return output.toString(StandardCharsets.UTF_8);
+            return new String(output.toByteArray(), StandardCharsets.UTF_8);
         }
     }
 
