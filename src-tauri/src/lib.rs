@@ -28,6 +28,7 @@ mod session_store;
 mod sound_pack;
 mod stats_store;
 mod tailnet;
+mod transcript_reader;
 mod wake_crypto;
 mod wake_guard;
 mod window_focus;

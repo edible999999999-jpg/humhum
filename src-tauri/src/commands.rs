@@ -19,6 +19,7 @@ use crate::pi_sidecar::{self, PiSessionStatus, PiSidecarState, PiStartOptions};
 use crate::remote_bridge::{RemoteBridgeState, RemoteBridgeStatus};
 use crate::session_store::{Session, SessionStatus, SessionStore};
 use crate::stats_store::StatsStore;
+use crate::transcript_reader::parse_transcript_signals;
 use crate::wake_guard::{WakeGuardState, WakeGuardStatus};
 use crate::window_focus;
 use serde::{Deserialize, Serialize};
@@ -3210,13 +3211,6 @@ pub struct HexaReadout {
     pub evidence: Vec<String>,
 }
 
-#[derive(Debug, Default)]
-struct TranscriptSignals {
-    user_messages: Vec<String>,
-    assistant_messages: Vec<String>,
-    tool_names: Vec<String>,
-}
-
 /// Build Hexa's human-readable readouts from local Claude/Codex transcripts when available.
 #[tauri::command]
 pub async fn get_hexa_readouts(
@@ -3243,7 +3237,7 @@ fn build_hexa_readout(session: &crate::session_store::Session) -> HexaReadout {
     let signals = session
         .transcript_path
         .as_ref()
-        .and_then(|path| parse_transcript_signals(path).ok())
+        .and_then(|path| parse_transcript_signals(Path::new(path)).ok())
         .unwrap_or_default();
 
     let project_intent = session
@@ -3359,112 +3353,6 @@ fn build_hexa_readout(session: &crate::session_store::Session) -> HexaReadout {
     }
 }
 
-fn parse_transcript_signals(path: &str) -> Result<TranscriptSignals, String> {
-    let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
-    let mut signals = TranscriptSignals::default();
-    let mut recent_lines = content.lines().rev().take(500).collect::<Vec<_>>();
-    recent_lines.reverse();
-
-    for line in recent_lines {
-        let Ok(value) = serde_json::from_str::<Value>(line) else {
-            continue;
-        };
-
-        if is_user_entry(&value) {
-            if let Some(text) = extract_text(&value) {
-                push_limited(&mut signals.user_messages, text, 10);
-            }
-        } else if is_assistant_entry(&value) {
-            if let Some(text) = extract_text(&value) {
-                push_limited(&mut signals.assistant_messages, text, 6);
-            }
-        }
-
-        for tool in extract_tool_names(&value) {
-            push_limited(&mut signals.tool_names, tool, 12);
-        }
-    }
-
-    Ok(signals)
-}
-
-fn is_user_entry(value: &Value) -> bool {
-    value.get("type").and_then(|v| v.as_str()) == Some("user")
-        || value
-            .get("message")
-            .and_then(|m| m.get("role"))
-            .and_then(|v| v.as_str())
-            == Some("user")
-        || value.get("role").and_then(|v| v.as_str()) == Some("user")
-}
-
-fn is_assistant_entry(value: &Value) -> bool {
-    value.get("type").and_then(|v| v.as_str()) == Some("assistant")
-        || value
-            .get("message")
-            .and_then(|m| m.get("role"))
-            .and_then(|v| v.as_str())
-            == Some("assistant")
-        || value.get("role").and_then(|v| v.as_str()) == Some("assistant")
-}
-
-fn extract_text(value: &Value) -> Option<String> {
-    let candidates = [
-        value.pointer("/message/content"),
-        value.pointer("/content"),
-        value.pointer("/payload/message"),
-        value.pointer("/payload/content"),
-    ];
-
-    for candidate in candidates.into_iter().flatten() {
-        if let Some(text) = text_from_value(candidate) {
-            return Some(truncate_text(&text, 220));
-        }
-    }
-    None
-}
-
-fn text_from_value(value: &Value) -> Option<String> {
-    if let Some(text) = value.as_str() {
-        return clean_text(text);
-    }
-    if let Some(arr) = value.as_array() {
-        let parts = arr
-            .iter()
-            .filter_map(|item| {
-                item.get("text")
-                    .and_then(|v| v.as_str())
-                    .or_else(|| item.get("content").and_then(|v| v.as_str()))
-            })
-            .filter_map(clean_text)
-            .collect::<Vec<_>>();
-        if !parts.is_empty() {
-            return Some(parts.join(" "));
-        }
-    }
-    None
-}
-
-fn extract_tool_names(value: &Value) -> Vec<String> {
-    let mut names = Vec::new();
-    if let Some(name) = value.pointer("/payload/name").and_then(|v| v.as_str()) {
-        names.push(name.to_string());
-    }
-    if let Some(name) = value.get("tool_name").and_then(|v| v.as_str()) {
-        names.push(name.to_string());
-    }
-    if let Some(content) = value.pointer("/message/content").and_then(|v| v.as_array()) {
-        for item in content {
-            if item.get("type").and_then(|v| v.as_str()) == Some("tool_use") {
-                if let Some(name) = item.get("name").and_then(|v| v.as_str()) {
-                    names.push(name.to_string());
-                }
-            }
-        }
-    }
-    names
-}
-
 fn summarize_recent_user_intent(messages: &[String]) -> String {
     if messages.is_empty() {
         return "暂未从 transcript 读到最近用户消息，只能依赖 hook 事件。".to_string();
@@ -3479,25 +3367,6 @@ fn summarize_recent_user_intent(messages: &[String]) -> String {
         .rev()
         .collect::<Vec<_>>();
     format!("最近用户主要在说: {}", recent.join(" / "))
-}
-
-fn push_limited(items: &mut Vec<String>, value: String, limit: usize) {
-    if value.trim().is_empty() {
-        return;
-    }
-    items.push(value);
-    if items.len() > limit {
-        items.remove(0);
-    }
-}
-
-fn clean_text(text: &str) -> Option<String> {
-    let compact = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    if compact.is_empty() {
-        None
-    } else {
-        Some(compact)
-    }
 }
 
 fn truncate_text(text: &str, max_chars: usize) -> String {
