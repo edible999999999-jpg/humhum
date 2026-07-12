@@ -73,8 +73,8 @@
 - Pair response adds optional `wake_relay` bundle with subscriber-only material.
 
 - [x] **Step 1: Write failing Rust tests** for URL policy, legacy config migration, secret-file permissions/isolation, no secret status serialization and pairing response separation.
-- [ ] **Step 2: Implement strict config/secret storage and channel registration**, failing relay-selected pairing closed while preserving ordinary pairing.
-- [ ] **Step 3: Implement one/all/self revoke remote deletion with local-first cleanup and bounded timeout**, run Rust tests and commit `feat(mobile): provision encrypted wake channels`.
+- [x] **Step 2: Implement strict config/secret storage and channel registration**, failing relay-selected pairing closed while preserving ordinary pairing.
+- [x] **Step 3: Implement one/all/self revoke remote deletion with local-first cleanup and bounded timeout**, run Rust tests and commit `feat(mobile): provision encrypted wake channels`.
 
 ### Task 4: Desktop Wake Publisher
 
@@ -86,9 +86,9 @@
 - One publisher task coalesces newest per-device wake, allocates sequence and uploads encrypted envelopes.
 - Status is credential-free `disabled | connected | retrying | errored`.
 
-- [ ] **Step 1: Write failing clock/transport tests** for changed-cursor-only publication, one-second coalescing, 5/15/30/60 backoff, newest-only retry and shutdown/revocation cancellation.
-- [ ] **Step 2: Implement publisher state machine and internal change notification**, then run all Rust/relay tests.
-- [ ] **Step 3: Commit** `feat(mobile): publish encrypted wake signals`.
+- [x] **Step 1: Write failing clock/transport tests** for changed-cursor-only publication, one-second coalescing, 5/15/30/60 backoff, newest-only retry and shutdown/revocation cancellation.
+- [x] **Step 2: Implement publisher state machine and internal change notification**, then run all Rust/relay tests.
+- [x] **Step 3: Commit** `feat(mobile): publish encrypted wake signals`.
 
 ### Task 5: Android Relay Subscription And Hexa Configuration
 
@@ -106,9 +106,9 @@
 - Subscriber long poll validates platform HTTPS, sequence, envelope bounds and authenticated decryption.
 - Hexa accepts explicit relay URL, performs health check and never displays credentials.
 
-- [ ] **Step 1: Write failing Android tests** for bundle persistence/migration, URL rules, request auth, decrypt sequencing and relay/direct fallback decisions.
-- [ ] **Step 2: Implement subscriber client and monitor state machine**, keeping direct event wait available during relay failure.
-- [ ] **Step 3: Add tested Hexa relay settings/status and commit** `feat(android): consume encrypted relay wakes`.
+- [x] **Step 1: Write failing Android tests** for bundle persistence/migration, URL rules, request auth, decrypt sequencing and relay/direct fallback decisions.
+- [x] **Step 2: Implement subscriber client and monitor state machine**, keeping direct event wait available during relay failure.
+- [x] **Step 3: Add tested Hexa relay settings/status and commit** `feat(android): consume encrypted relay wakes`.
 
 ### Task 6: End-To-End Release Evidence
 
@@ -118,8 +118,8 @@
 - Modify: this plan.
 - Generate ignored release APK/AAB.
 
-- [ ] **Step 1: Start a real local relay with persistent SQLite**, build/relaunch desktop, visibly pair API 36 release Android and verify only ciphertext/digests exist in SQLite.
-- [ ] **Step 2: Trigger a disposable state change**, require relay upload, Java authentication/decryption and pinned private session refresh; then stop/restart relay and prove bounded recovery.
-- [ ] **Step 3: Revoke from Android**, require remote channel deletion, local secret deletion, zero devices and stopped emulator.
-- [ ] **Step 4: Run relay, Rust, frontend and Android full tests/builds**, verify exact permissions, APK/AAB signatures and hashes.
-- [ ] **Step 5: Update docs with truthful local-relay evidence and remaining FCM/public-host/physical-Xiaomi gaps**, commit `docs(relay): verify encrypted Android wake`.
+- [x] **Step 1: Start a real local relay with persistent SQLite**, build/relaunch desktop, visibly pair API 36 release Android and verify only ciphertext/digests exist in SQLite.
+- [x] **Step 2: Trigger a disposable state change**, require relay upload, Java authentication/decryption and pinned private session refresh; then stop/restart relay and prove bounded recovery.
+- [x] **Step 3: Revoke from Android**, require remote channel deletion, local secret deletion, zero devices and stopped emulator.
+- [x] **Step 4: Run relay, Rust, frontend and Android full tests/builds**, verify exact permissions, APK/AAB signatures and hashes.
+- [x] **Step 5: Update docs with truthful local-relay evidence and remaining FCM/public-host/physical-Xiaomi gaps**, commit `docs(relay): verify encrypted Android wake`.
