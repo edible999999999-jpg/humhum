@@ -54,11 +54,11 @@
 - Consumes: Task 1 codec/cipher and `ConnectionStore.Connection`.
 - Produces: `write(ConnectionStore.Connection, List<Models.Session>, long): void`, `read(ConnectionStore.Connection, long): SessionSnapshot`, and `clear(): void`.
 
-- [ ] Write a source/contract test requiring `AndroidKeyStore`, AES/GCM, a 256-bit randomized key, `getNoBackupFilesDir`, `AtomicFile`, the fixed alias/file name, and deletion of both file and alias in `clear()`.
-- [ ] Write binding tests against a package-visible pure `binding(ConnectionStore.Connection)` helper: URL/fingerprint/scope changes must change the 64-hex digest while token and device-name changes must not enter the source material.
-- [ ] Run the focused contract test and require missing-class compilation failure.
-- [ ] Implement lazy key creation with `KeyGenParameterSpec`, fresh `SecureRandom` nonce, atomic write, strict read cap, codec/cipher delegation, and fail-closed deletion on every read error.
-- [ ] Run focused and complete Android JVM tests, then commit `feat(android): store snapshots in Android Keystore`.
+- [x] Write a source/contract test requiring `AndroidKeyStore`, AES/GCM, a 256-bit randomized key, `getNoBackupFilesDir`, `AtomicFile`, the fixed alias/file name, and deletion of both file and alias in `clear()`.
+- [x] Write binding tests against a package-visible pure `binding(ConnectionStore.Connection)` helper: URL/fingerprint/scope changes must change the 64-hex digest while token and device-name changes must not enter the source material.
+- [x] Run the focused contract test and require missing-class compilation failure.
+- [x] Implement lazy key creation with `KeyGenParameterSpec`, fresh `SecureRandom` nonce, atomic write, strict read cap, codec/cipher delegation, and fail-closed deletion on every read error.
+- [x] Run focused and complete Android JVM tests, then commit `feat(android): store snapshots in Android Keystore`.
 
 ### Task 3: Live-To-Offline UI And Release Evidence
 
