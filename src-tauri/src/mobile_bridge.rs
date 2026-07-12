@@ -1642,6 +1642,63 @@ mod tests {
     }
 
     #[test]
+    fn mobile_presence_is_cleared_by_every_bridge_revocation_boundary() {
+        let temp = tempfile::tempdir().unwrap();
+        let bridge = MobileBridgeState::load_or_create(temp.path()).unwrap();
+        let first = bridge
+            .devices
+            .lock()
+            .unwrap()
+            .add_device("Phone", "phone-token", MobileDeviceScope::Read)
+            .unwrap();
+        bridge
+            .presence
+            .lock()
+            .unwrap()
+            .report(&first.id, MobilePresenceMode::Foreground, 1_000);
+
+        bridge.revoke_device(&first.id).unwrap();
+        assert!(bridge
+            .presence
+            .lock()
+            .unwrap()
+            .fresh(&first.id, 1_000)
+            .is_none());
+
+        let second = bridge
+            .devices
+            .lock()
+            .unwrap()
+            .add_device("Tablet", "tablet-token", MobileDeviceScope::Control)
+            .unwrap();
+        bridge
+            .presence
+            .lock()
+            .unwrap()
+            .report(&second.id, MobilePresenceMode::Monitoring, 1_000);
+        bridge.revoke_devices().unwrap();
+        assert!(bridge
+            .presence
+            .lock()
+            .unwrap()
+            .fresh(&second.id, 1_000)
+            .is_none());
+
+        bridge
+            .presence
+            .lock()
+            .unwrap()
+            .report("ephemeral", MobilePresenceMode::Monitoring, 1_000);
+        bridge.disable().unwrap();
+        assert!(bridge
+            .presence
+            .lock()
+            .unwrap()
+            .fresh("ephemeral", 1_000)
+            .is_none());
+    }
+
+    #[test]
     fn mobile_presence_endpoint_records_only_the_authenticated_device() {
         let temp = tempfile::tempdir().unwrap();
         let bridge = MobileBridgeState::load_or_create(temp.path()).unwrap();
