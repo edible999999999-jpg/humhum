@@ -38,6 +38,7 @@ public final class MainActivity extends Activity {
     };
 
     private ConnectionStore connectionStore;
+    private EncryptedSessionSnapshotStore snapshotStore;
     private MonitorStore monitorStore;
     private ConnectionStore.Connection connection;
     private MobileProtocol protocol;
@@ -73,6 +74,7 @@ public final class MainActivity extends Activity {
         setContentView(R.layout.activity_main);
         bindViews();
         connectionStore = new ConnectionStore(getSharedPreferences("humhum_connection", MODE_PRIVATE));
+        snapshotStore = new EncryptedSessionSnapshotStore(this);
         monitorStore = AgentMonitorService.monitorStore(this);
         pushPreferences = getSharedPreferences("humhum_push", MODE_PRIVATE);
         connectButton.setOnClickListener(view -> pair());
@@ -183,6 +185,7 @@ public final class MainActivity extends Activity {
         network.execute(() -> {
             try {
                 Models.PairResult result = new MobileProtocol(config, "", Models.Scope.READ).pair();
+                clearSnapshotSafely();
                 connectionStore.save(config, result);
                 ConnectionStore.Connection saved = connectionStore.load();
                 main.post(() -> {
@@ -278,6 +281,7 @@ public final class MainActivity extends Activity {
                 warning = "本机连接已清除；Mac 未确认撤销，请在 Hexa 中撤销旧设备。";
             }
             String finalWarning = warning;
+            clearSnapshotSafely();
             connectionStore.clear();
             main.post(() -> {
                 disconnectButton.setEnabled(true);
@@ -383,30 +387,71 @@ public final class MainActivity extends Activity {
     }
 
     private void refreshSessions(boolean userInitiated) {
-        if (protocol == null || refreshInFlight) return;
+        if (protocol == null || connection == null || refreshInFlight) return;
         refreshInFlight = true;
         refreshButton.setEnabled(false);
         if (userInitiated) statusText.setText("正在刷新");
         MobileProtocol current = protocol;
+        ConnectionStore.Connection currentConnection = connection;
         network.execute(() -> {
             try {
                 Models.SessionPage page = current.sessions();
+                long savedAtMillis = System.currentTimeMillis();
+                if (protocol == current && connection == currentConnection) {
+                    writeSnapshotSafely(currentConnection, page.sessions(), savedAtMillis);
+                }
                 main.post(() -> {
-                    if (protocol != current) return;
+                    if (protocol != current || connection != currentConnection) return;
                     refreshInFlight = false;
                     refreshButton.setEnabled(true);
                     statusText.setText("刚刚同步");
                     renderSessions(page.sessions());
                 });
             } catch (Exception error) {
+                long nowMillis = System.currentTimeMillis();
+                SessionSnapshot snapshot = readSnapshotSafely(currentConnection, nowMillis);
                 main.post(() -> {
-                    if (protocol != current) return;
+                    if (protocol != current || connection != currentConnection) return;
                     refreshInFlight = false;
                     refreshButton.setEnabled(true);
-                    statusText.setText(safeError(error));
+                    if (snapshot == null) {
+                        statusText.setText(safeError(error));
+                        return;
+                    }
+                    statusText.setText(
+                            SessionSnapshotCodec.ageCopy(snapshot.savedAtMillis(), nowMillis));
+                    renderSessions(snapshot.sessions());
                 });
             }
         });
+    }
+
+    private void writeSnapshotSafely(
+            ConnectionStore.Connection activeConnection,
+            List<Models.Session> sessions,
+            long savedAtMillis) {
+        try {
+            snapshotStore.write(activeConnection, sessions, savedAtMillis);
+        } catch (RuntimeException ignored) {
+            // The live response remains authoritative when local caching is unavailable.
+        }
+    }
+
+    private SessionSnapshot readSnapshotSafely(
+            ConnectionStore.Connection activeConnection, long nowMillis) {
+        try {
+            return snapshotStore.read(activeConnection, nowMillis);
+        } catch (RuntimeException ignored) {
+            return null;
+        }
+    }
+
+    private void clearSnapshotSafely() {
+        try {
+            snapshotStore.clear();
+        } catch (RuntimeException ignored) {
+            // Connection lifecycle must continue even when cache cleanup is unavailable.
+        }
     }
 
     private void renderSessions(List<Models.Session> sessions) {

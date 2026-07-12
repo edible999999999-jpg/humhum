@@ -74,10 +74,10 @@
 - Consumes: Task 2 store.
 - Behavior: live success writes before rendering; network failure reads and renders stale read-only sessions; pairing/disconnect clears old material.
 
-- [ ] Extend the layout/source contract test to forbid storage/media permissions and require snapshot clearing before `ConnectionStore.clear()` and before saving a new pair.
-- [ ] Run the focused contract test and confirm the new ordering assertions fail.
-- [ ] Instantiate the store in `MainActivity`; write after a successful current-protocol refresh; on failure read for the same connection and render with `SessionSnapshotCodec.ageCopy`; preserve the network error when no snapshot exists.
-- [ ] Clear cache/key before saving a newly successful pairing and before clearing connection state on disconnect; cache failures must never suppress live sessions or disconnection.
-- [ ] Bump Android to `0.3.2` / `versionCode 5`, run all Android JVM tests, release lint, APK/AAB builds, signature, permission, and non-debuggable checks.
+- [x] Extend the layout/source contract test to forbid storage/media permissions and require snapshot clearing before `ConnectionStore.clear()` and before saving a new pair.
+- [x] Run the focused contract test and confirm the new ordering assertions fail.
+- [x] Instantiate the store in `MainActivity`; write after a successful current-protocol refresh; on failure read for the same connection and render with `SessionSnapshotCodec.ageCopy`; preserve the network error when no snapshot exists.
+- [x] Clear cache/key before saving a newly successful pairing and before clearing connection state on disconnect; cache failures must never suppress live sessions or disconnection.
+- [x] Bump Android to `0.3.2` / `versionCode 5`, run all Android JVM tests, release lint, APK/AAB builds, signature, permission, and non-debuggable checks.
 - [ ] Install the signed APK over 0.3.1 on API 36. Pair through the visible form, load live sessions, disable emulator networking, refresh and verify **离线快照** appears with no approval/message controls; restore networking and verify **刚刚同步**; disconnect and verify the snapshot file and keystore alias are gone.
 - [ ] Copy final APK/AAB to `build/releases`, record SHA-256 values, update installation/parity docs and this checklist, commit `docs(android): verify encrypted offline snapshot`, rebuild/relaunch desktop, and leave the overall Xiaomi goal active.

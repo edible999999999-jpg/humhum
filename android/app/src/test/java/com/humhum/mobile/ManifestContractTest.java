@@ -5,6 +5,8 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.Set;
@@ -38,6 +40,12 @@ public class ManifestContractTest {
                 "android.permission.RECEIVE_BOOT_COMPLETED"), permissions);
         assertFalse(permissions.contains("android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"));
         assertFalse(permissions.contains("android.permission.QUERY_ALL_PACKAGES"));
+        assertFalse(permissions.contains("android.permission.READ_EXTERNAL_STORAGE"));
+        assertFalse(permissions.contains("android.permission.WRITE_EXTERNAL_STORAGE"));
+        assertFalse(permissions.contains("android.permission.MANAGE_EXTERNAL_STORAGE"));
+        assertFalse(permissions.contains("android.permission.READ_MEDIA_AUDIO"));
+        assertFalse(permissions.contains("android.permission.READ_MEDIA_IMAGES"));
+        assertFalse(permissions.contains("android.permission.READ_MEDIA_VIDEO"));
 
         NodeList visiblePackages = document.getElementsByTagName("package");
         assertEquals(1, visiblePackages.getLength());
@@ -128,6 +136,46 @@ public class ManifestContractTest {
         assertFalse(visible.contains("token"));
     }
 
+    @Test
+    public void encryptedSnapshotLifecycleIsOrderedAroundLiveConnectionState() throws Exception {
+        String source = new String(Files.readAllBytes(
+                Path.of("src/main/java/com/humhum/mobile/MainActivity.java")), StandardCharsets.UTF_8);
+
+        String creation = "snapshotStore = new EncryptedSessionSnapshotStore(this);";
+        assertTrue(source.contains(creation));
+
+        String pairing = methodSource(source, "private void pair()", "private void pasteSetup()");
+        assertOrdered(
+                pairing,
+                "clearSnapshotSafely();",
+                "connectionStore.save(config, result);");
+
+        String disconnect = methodSource(
+                source, "private void disconnect()", "private void onMonitorChanged(boolean checked)");
+        assertOrdered(disconnect, "clearSnapshotSafely();", "connectionStore.clear();");
+
+        String refresh = methodSource(
+                source, "private void refreshSessions(boolean userInitiated)",
+                "private void renderSessions(List<Models.Session> sessions)");
+        assertOrdered(
+                refresh,
+                "Models.SessionPage page = current.sessions();",
+                "writeSnapshotSafely(currentConnection, page.sessions(), savedAtMillis);",
+                "renderSessions(page.sessions());");
+        assertOrdered(
+                refresh,
+                "} catch (Exception error) {",
+                "SessionSnapshot snapshot = readSnapshotSafely(currentConnection, nowMillis);",
+                "SessionSnapshotCodec.ageCopy(snapshot.savedAtMillis(), nowMillis)",
+                "renderSessions(snapshot.sessions());");
+        assertTrue(refresh.contains("statusText.setText(safeError(error));"));
+
+        assertTrue(source.contains("private void writeSnapshotSafely("));
+        assertTrue(source.contains("private SessionSnapshot readSnapshotSafely("));
+        assertTrue(source.contains("private void clearSnapshotSafely()"));
+        assertTrue(source.contains("catch (RuntimeException ignored)"));
+    }
+
     private static Element component(Document document, String tag, String name) {
         NodeList nodes = document.getElementsByTagName(tag);
         for (int index = 0; index < nodes.getLength(); index++) {
@@ -135,5 +183,22 @@ public class ManifestContractTest {
             if (name.equals(element.getAttributeNS(ANDROID, "name"))) return element;
         }
         throw new AssertionError(tag + " not found: " + name);
+    }
+
+    private static String methodSource(String source, String start, String end) {
+        int startIndex = source.indexOf(start);
+        int endIndex = source.indexOf(end, startIndex);
+        assertTrue("Missing method start: " + start, startIndex >= 0);
+        assertTrue("Missing method end: " + end, endIndex > startIndex);
+        return source.substring(startIndex, endIndex);
+    }
+
+    private static void assertOrdered(String source, String... fragments) {
+        int previous = -1;
+        for (String fragment : fragments) {
+            int index = source.indexOf(fragment, previous + 1);
+            assertTrue("Missing or out-of-order source: " + fragment, index > previous);
+            previous = index;
+        }
     }
 }
