@@ -15,6 +15,8 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "test": "vitest run",
+    "test:relay": "node --test relay/test/*.test.mjs",
+    "test:all": "npm test && npm run test:relay",
     "preview": "vite preview",
     "tauri": "tauri"
   },

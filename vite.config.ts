@@ -12,6 +12,9 @@ export default defineConfig(async () => ({
     },
   },
   clearScreen: false,
+  test: {
+    include: ["src/**/*.test.{ts,tsx}"],
+  },
   server: {
     port: 1420,
     strictPort: true,
