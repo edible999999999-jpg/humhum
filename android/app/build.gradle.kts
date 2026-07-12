@@ -1,5 +1,31 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     id("com.android.application")
+}
+
+val signingPropertyNames = setOf("storeFile", "storePassword", "keyAlias", "keyPassword")
+val signingPropertiesFile = file("${System.getProperty("user.home")}/.humhum/android-signing.properties")
+val signingProperties = Properties()
+val releaseSigningConfigured = signingPropertiesFile.isFile.also { exists ->
+    if (exists) {
+        FileInputStream(signingPropertiesFile).use(signingProperties::load)
+        require(signingProperties.stringPropertyNames() == signingPropertyNames) {
+            "HUMHUM Android signing properties must contain exactly four required values"
+        }
+        require(signingPropertyNames.all { !signingProperties.getProperty(it).isNullOrBlank() }) {
+            "HUMHUM Android signing properties contain an empty value"
+        }
+        require(signingProperties.getProperty("keyAlias") == "humhum-release") {
+            "HUMHUM Android signing alias is invalid"
+        }
+        val home = file(System.getProperty("user.home")).canonicalFile.toPath()
+        val store = file(signingProperties.getProperty("storeFile")).canonicalFile
+        require(store.isFile && store.toPath().startsWith(home)) {
+            "HUMHUM Android release keystore must be a file under the current user home"
+        }
+    }
 }
 
 android {
@@ -16,10 +42,29 @@ android {
         testInstrumentationRunner = "android.test.InstrumentationTestRunner"
     }
 
+    signingConfigs {
+        if (releaseSigningConfigured) {
+            create("humhumRelease") {
+                storeFile = file(signingProperties.getProperty("storeFile"))
+                storePassword = signingProperties.getProperty("storePassword")
+                keyAlias = signingProperties.getProperty("keyAlias")
+                keyPassword = signingProperties.getProperty("keyPassword")
+                enableV1Signing = true
+                enableV2Signing = true
+                enableV3Signing = true
+                enableV4Signing = false
+            }
+        }
+    }
+
     buildTypes {
         release {
+            isDebuggable = false
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            if (releaseSigningConfigured) {
+                signingConfig = signingConfigs.getByName("humhumRelease")
+            }
         }
     }
 
@@ -30,6 +75,19 @@ android {
 
     testOptions {
         unitTests.isReturnDefaultValues = true
+    }
+}
+
+if (!releaseSigningConfigured) {
+    tasks.configureEach {
+        val lower = name.lowercase()
+        if (lower.contains("release")
+                && listOf("assemble", "package", "bundle", "sign").any(lower::startsWith)) {
+            doFirst {
+                throw GradleException(
+                        "Release signing is not configured. Run android/scripts/setup-release-signing.sh first.")
+            }
+        }
     }
 }
 

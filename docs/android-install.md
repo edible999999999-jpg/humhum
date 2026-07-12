@@ -4,12 +4,17 @@ HUMHUM Android is a native LAN client for the desktop Mobile Bridge. It supports
 
 ## Installable APK
 
-- Local artifact: `build/releases/HUMHUM-Android-0.1.0-debug.apk`
+- Release APK: `build/releases/HUMHUM-Android-0.1.0.apk`
+- Play-compatible bundle: `build/releases/HUMHUM-Android-0.1.0.aab`
 - Package: `com.humhum.mobile`
 - Version: `0.1.0` (`versionCode 1`)
-- SHA-256: `f1da4af4ec1749496f54b32c5d286f8d76f9afd2f7188730a904e90e0fe2639a`
+- APK SHA-256: `2ce57ecea5de3b53c1cb851d56b8bd45a7b505d75e6f190b144c748957c70f6e`
+- AAB SHA-256: `45145dd446b0f4714556cc1f571480c05f09b46c562d57416f2800828c985d05`
+- Release certificate SHA-256: `C2:8C:FF:BE:03:98:B2:DB:58:DB:B7:14:DD:39:4F:06:36:CB:55:A6:90:EE:FE:6F:DA:20:2A:78:ED:4E:12:F8`
 
-This is a developer build signed with the Android debug certificate. It is installable, but it is not a Xiaomi Store or Google Play release.
+The APK and AAB use HUMHUM's durable local release certificate. They are installable and update-compatible with later builds signed by the same key, but they have not been published to Xiaomi GetApps or Google Play.
+
+If a debug build is already installed, uninstall it once before installing the release APK. Android does not allow the debug and release certificates to update each other. Uninstalling clears the phone's local pairing, so pair with the Mac again afterward.
 
 ## Install On A Xiaomi Phone
 
@@ -25,7 +30,7 @@ Connect an authorized phone, then run:
 
 ```bash
 ~/Library/Android/sdk/platform-tools/adb install -r \
-  build/releases/HUMHUM-Android-0.1.0-debug.apk
+  build/releases/HUMHUM-Android-0.1.0.apk
 ```
 
 ## Pair With The Mac
@@ -48,7 +53,7 @@ Background monitoring is visible and user-controlled. It uses Android's `remoteM
 
 ## Runtime Validation
 
-The debug APK was installed through Android's real Package Manager on an ARM64 Android 16/API 36 emulator and cold-launched successfully. Runtime validation used the visible connect form rather than injecting app preferences:
+The release APK was installed through Android's real Package Manager on an ARM64 Android 16/API 36 emulator and cold-launched successfully. Reinstalling it with `adb install -r` preserved `firstInstallTime` while changing `lastUpdateTime`; trying to install the debug APK over it failed with Android's expected `INSTALL_FAILED_UPDATE_INCOMPATIBLE`. Earlier paired-flow validation used the visible connect form rather than injecting app preferences:
 
 - Exact pinned-TLS pairing reached the Mac over its LAN address and returned control scope plus 23 redacted sessions.
 - Enabling background monitoring while the Activity was visible created a foreground service with runtime type `0x200` (`remoteMessaging`) and a low-importance private ongoing notification.
@@ -70,7 +75,7 @@ This proves Android platform lifecycle behavior, not Xiaomi-specific battery-man
 
 The APK requests only network state, internet, foreground remote messaging, notification, and opt-in boot restoration permissions. It does not request wake lock, location, nearby-device, contacts, files, camera, microphone, overlay, or accessibility access.
 
-Not yet included: FCM server push, guaranteed Xiaomi process survival, an internet relay, attachments, iOS packaging, release-key signing, store distribution, or automatic updates.
+Not yet included: FCM server push, guaranteed Xiaomi process survival, an internet relay, attachments, iOS packaging, store distribution, or automatic updates.
 
 ## Build Locally
 
@@ -82,3 +87,24 @@ ANDROID_HOME="$HOME/Library/Android/sdk" \
 ```
 
 The Gradle wrapper is pinned to 9.4.1. The project compiles and targets SDK 36 with minimum SDK 26.
+
+## Build A Signed Release
+
+Release signing is intentionally stored outside the repository. On a new release machine, create the project key once:
+
+```bash
+JAVA_HOME="$HOME/.humhum/toolchains/jdk-17.0.19+10/Contents/Home" \
+android/scripts/setup-release-signing.sh
+```
+
+Then build both public artifacts:
+
+```bash
+cd android
+JAVA_HOME="$HOME/.humhum/toolchains/jdk-17.0.19+10/Contents/Home" \
+ANDROID_HOME="$HOME/Library/Android/sdk" \
+./gradlew :app:testDebugUnitTest :app:lintRelease \
+  :app:assembleRelease :app:bundleRelease
+```
+
+Back up `~/.humhum/android-signing/humhum-release.jks` and `~/.humhum/android-signing.properties` together in a secure offline location. Do not commit or share either file. Losing the key prevents future APKs from updating existing installations. The setup script refuses to overwrite an existing identity, and release tasks fail instead of silently creating an unsigned artifact when signing is unavailable.
