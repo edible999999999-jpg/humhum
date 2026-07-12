@@ -1,0 +1,183 @@
+import { createServer } from "node:http";
+import { pathToFileURL } from "node:url";
+import { RelayStore } from "./store.mjs";
+
+const CHANNEL_PATH = /^\/v1\/channels\/([a-f0-9]{64})$/;
+const MESSAGES_PATH = /^\/v1\/channels\/([a-f0-9]{64})\/messages$/;
+const TOKEN = /^[a-f0-9]{64}$/;
+const BASE64URL = /^[A-Za-z0-9_-]+$/;
+
+function send(response, status, value = null) {
+  response.setHeader("cache-control", "no-store");
+  response.setHeader("x-content-type-options", "nosniff");
+  if (value === null) {
+    response.writeHead(status).end();
+    return;
+  }
+  const body = JSON.stringify(value);
+  response.setHeader("content-type", "application/json; charset=utf-8");
+  response.writeHead(status, { "content-length": Buffer.byteLength(body) }).end(body);
+}
+
+function unauthorized(response) {
+  send(response, 401, { error: "Unauthorized" });
+}
+
+function bearer(request) {
+  const value = request.headers.authorization;
+  if (typeof value !== "string" || !value.startsWith("Bearer ")) return null;
+  const token = value.slice(7);
+  return TOKEN.test(token) ? token : null;
+}
+
+async function readJson(request, maxBytes) {
+  if (request.headers["content-type"] !== "application/json") throw new Error("content-type");
+  const chunks = [];
+  let total = 0;
+  for await (const chunk of request) {
+    total += chunk.length;
+    if (total > maxBytes) {
+      const error = new Error("too-large");
+      error.tooLarge = true;
+      throw error;
+    }
+    chunks.push(chunk);
+  }
+  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+}
+
+function exactObject(value, fields) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const keys = Object.keys(value).sort();
+  return keys.length === fields.length
+    && keys.every((key, index) => key === [...fields].sort()[index]);
+}
+
+function validEnvelope(value) {
+  return exactObject(value, ["version", "sequence", "nonce", "ciphertext"])
+    && value.version === 1
+    && Number.isSafeInteger(value.sequence)
+    && value.sequence > 0
+    && typeof value.nonce === "string"
+    && value.nonce.length === 16
+    && BASE64URL.test(value.nonce)
+    && Buffer.from(value.nonce, "base64url").length === 12
+    && typeof value.ciphertext === "string"
+    && value.ciphertext.length > 0
+    && value.ciphertext.length <= 4_096
+    && BASE64URL.test(value.ciphertext);
+}
+
+function query(url) {
+  if ([...url.searchParams.keys()].some((key) => key !== "after" && key !== "wait")) {
+    return null;
+  }
+  if (url.searchParams.getAll("after").length !== 1
+      || url.searchParams.getAll("wait").length !== 1) return null;
+  const afterText = url.searchParams.get("after");
+  const waitText = url.searchParams.get("wait");
+  if (!/^\d+$/.test(afterText) || !/^\d+$/.test(waitText)) return null;
+  const after = Number(afterText);
+  const wait = Number(waitText);
+  if (!Number.isSafeInteger(after) || after < 0 || !Number.isInteger(wait) || wait < 0 || wait > 20) {
+    return null;
+  }
+  return { after, wait };
+}
+
+function limiter(clock) {
+  const buckets = new Map();
+  return (key) => {
+    const minute = Math.floor(clock() / 60_000);
+    const current = buckets.get(key);
+    const count = current?.minute === minute ? current.count + 1 : 1;
+    buckets.set(key, { minute, count });
+    return count <= 300;
+  };
+}
+
+export function createRelayServer({ databasePath, clock = Date.now }) {
+  if (!databasePath) throw new Error("databasePath is required");
+  const store = new RelayStore(databasePath, clock);
+  const allow = limiter(clock);
+  const server = createServer(async (request, response) => {
+    try {
+      const host = request.headers.host || "localhost";
+      const url = new URL(request.url, `http://${host}`);
+      const remote = request.socket.remoteAddress || "unknown";
+      if (!allow(`ip:${remote}`)) return send(response, 429, { error: "Rate limited" });
+
+      if (request.method === "GET" && url.pathname === "/health" && !url.search) {
+        return send(response, 200, { status: "ok", name: "HUMHUM Wake Relay" });
+      }
+      if (request.method === "POST" && url.pathname === "/v1/channels" && !url.search) {
+        const body = await readJson(request, 64);
+        if (!exactObject(body, [])) return send(response, 400, { error: "Invalid request" });
+        return send(response, 201, store.createChannel());
+      }
+
+      const messageMatch = MESSAGES_PATH.exec(url.pathname);
+      if (messageMatch && !allow(`channel:${messageMatch[1]}`)) {
+        return send(response, 429, { error: "Rate limited" });
+      }
+      if (request.method === "POST" && messageMatch && !url.search) {
+        const token = bearer(request);
+        if (!token) return unauthorized(response);
+        let body;
+        try {
+          body = await readJson(request, 4_608);
+        } catch (error) {
+          return send(response, error.tooLarge ? 413 : 400, { error: "Invalid envelope" });
+        }
+        if (!validEnvelope(body)) {
+          return send(response, body?.ciphertext?.length > 4_096 ? 413 : 400, { error: "Invalid envelope" });
+        }
+        const result = store.publish(messageMatch[1], token, body);
+        if (result === "unauthorized") return unauthorized(response);
+        if (result === "sequence") return send(response, 409, { error: "Invalid sequence" });
+        return send(response, 201, { sequence: body.sequence });
+      }
+      if (request.method === "GET" && messageMatch) {
+        const token = bearer(request);
+        const options = query(url);
+        if (!token) return unauthorized(response);
+        if (!options) return send(response, 400, { error: "Invalid query" });
+        const deadline = clock() + options.wait * 1_000;
+        while (true) {
+          const messages = store.messages(messageMatch[1], token, options.after);
+          if (messages === null) return unauthorized(response);
+          if (messages.length || options.wait === 0 || clock() >= deadline) {
+            return send(response, 200, { messages });
+          }
+          await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+      }
+
+      const channelMatch = CHANNEL_PATH.exec(url.pathname);
+      if (request.method === "DELETE" && channelMatch && !url.search) {
+        const token = bearer(request);
+        if (!token || !store.delete(channelMatch[1], token)) return unauthorized(response);
+        return send(response, 204);
+      }
+      return send(response, 404, { error: "Not found" });
+    } catch {
+      if (!response.headersSent) send(response, 400, { error: "Invalid request" });
+      else response.destroy();
+    }
+  });
+  const close = server.close.bind(server);
+  server.close = (callback) => close(() => {
+    store.close();
+    callback?.();
+  });
+  return server;
+}
+
+if (import.meta.url === pathToFileURL(process.argv[1] || "").href) {
+  const databasePath = process.env.HUMHUM_RELAY_DB || "./humhum-relay.sqlite";
+  const port = Number(process.env.PORT || 3005);
+  const server = createRelayServer({ databasePath });
+  server.listen(port, "0.0.0.0", () => {
+    process.stdout.write(`HUMHUM Wake Relay listening on ${port}\n`);
+  });
+}
