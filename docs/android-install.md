@@ -46,6 +46,18 @@ For stronger survival on HyperOS or MIUI, open HUMHUM's system App info and enab
 
 Background monitoring is visible and user-controlled. It uses Android's `remoteMessaging` foreground-service type, polls every 15 seconds, and backs off to at most 60 seconds while Wi-Fi is unavailable. It does not hold a wake lock, request location, or bypass Android/Xiaomi power controls. Xiaomi may still stop it under aggressive battery policy; physical-device behavior has not yet been verified on this Mac.
 
+## Runtime Validation
+
+The debug APK was installed through Android's real Package Manager on an ARM64 Android 16/API 36 emulator and cold-launched successfully. Runtime validation used the visible connect form rather than injecting app preferences:
+
+- Exact pinned-TLS pairing reached the Mac over its LAN address and returned control scope plus 23 redacted sessions.
+- Enabling background monitoring while the Activity was visible created a foreground service with runtime type `0x200` (`remoteMessaging`) and a low-importance private ongoing notification.
+- A disposable desktop permission request produced one high-importance private attention notification and one stored SHA-256 digest. Its notification update timestamp remained unchanged across later polls, proving deduplication at runtime.
+- Rebooting Android restored the explicitly enabled monitor, foreground type and ongoing notification after `BOOT_COMPLETED`.
+- Revoking the device token on the Mac made the next Android poll stop the service, remove the ongoing notification and clear monitor preferences. Both disposable devices were removed from the desktop store.
+
+This proves Android platform lifecycle behavior, not Xiaomi-specific battery-manager behavior. A physical HyperOS/MIUI device is still required before claiming manufacturer-level sleep survival.
+
 ## Current Scope
 
 - Native session list, redacted to project, agent, status, recency, attention state, and bounded approval summaries.
