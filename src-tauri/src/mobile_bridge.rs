@@ -484,6 +484,7 @@ async fn handle_mobile_request(
         (&Method::GET, "/") => html_response(MOBILE_HTML),
         (&Method::POST, "/api/pair") => pair_device(request, &bridge).await,
         (&Method::DELETE, "/api/device") => revoke_mobile_device(&request, &bridge),
+        (&Method::POST, "/api/presence") => report_mobile_presence(request, &bridge).await,
         (&Method::GET, "/api/events") => wait_for_mobile_event(&request, &app, &bridge).await,
         (&Method::GET, "/api/sessions") => {
             if let Some(scope) = request_scope(&request, &bridge) {
@@ -669,13 +670,28 @@ fn revoke_mobile_device(
     let Some(token) = request_token(request) else {
         return json_error(StatusCode::UNAUTHORIZED, "Pair this device first");
     };
+    let device_id = bridge
+        .devices
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .authorize_device(token)
+        .map(|device| device.id);
     match bridge
         .devices
         .lock()
         .unwrap_or_else(|error| error.into_inner())
         .revoke_token(token)
     {
-        Ok(()) => json_response(StatusCode::OK, &serde_json::json!({ "status": "revoked" })),
+        Ok(()) => {
+            if let Some(device_id) = device_id {
+                bridge
+                    .presence
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .remove(&device_id);
+            }
+            json_response(StatusCode::OK, &serde_json::json!({ "status": "revoked" }))
+        }
         Err(error) if error == "Paired mobile device not found" => {
             json_error(StatusCode::UNAUTHORIZED, "Pair this device first")
         }
@@ -684,6 +700,61 @@ fn revoke_mobile_device(
             "Could not revoke this device",
         ),
     }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MobilePresenceRequest {
+    mode: MobilePresenceMode,
+}
+
+async fn report_mobile_presence(
+    request: Request<hyper::body::Incoming>,
+    bridge: &MobileBridgeState,
+) -> Response<HttpBody> {
+    let token = request_token(&request).map(str::to_owned);
+    let body = match request.into_body().collect().await {
+        Ok(body) => body.to_bytes(),
+        Err(_) => return json_error(StatusCode::BAD_REQUEST, "Invalid presence report"),
+    };
+    match record_mobile_presence(
+        token.as_deref(),
+        &body,
+        bridge,
+        chrono::Utc::now().timestamp(),
+    ) {
+        Ok(value) => json_response(StatusCode::OK, &value),
+        Err(StatusCode::UNAUTHORIZED) => {
+            json_error(StatusCode::UNAUTHORIZED, "Pair this device first")
+        }
+        Err(_) => json_error(StatusCode::BAD_REQUEST, "Invalid presence report"),
+    }
+}
+
+fn record_mobile_presence(
+    token: Option<&str>,
+    body: &[u8],
+    bridge: &MobileBridgeState,
+    now: i64,
+) -> Result<serde_json::Value, StatusCode> {
+    if body.len() > 256 {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let token = token.ok_or(StatusCode::UNAUTHORIZED)?;
+    let device = bridge
+        .devices
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .authorize_device(token)
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+    let input: MobilePresenceRequest =
+        serde_json::from_slice(body).map_err(|_| StatusCode::BAD_REQUEST)?;
+    bridge
+        .presence
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .report(&device.id, input.mode, now);
+    Ok(serde_json::json!({"status": "recorded"}))
 }
 
 #[derive(Deserialize)]
@@ -1568,6 +1639,85 @@ mod tests {
         presence.report(&device.id, MobilePresenceMode::Monitoring, 1_000);
         presence.clear();
         assert!(presence.fresh(&device.id, 1_000).is_none());
+    }
+
+    #[test]
+    fn mobile_presence_endpoint_records_only_the_authenticated_device() {
+        let temp = tempfile::tempdir().unwrap();
+        let bridge = MobileBridgeState::load_or_create(temp.path()).unwrap();
+        let device = bridge
+            .devices
+            .lock()
+            .unwrap()
+            .add_device("Xiaomi 14", "phone-token", MobileDeviceScope::Control)
+            .unwrap();
+
+        let response = record_mobile_presence(
+            Some("phone-token"),
+            br#"{"mode":"foreground"}"#,
+            &bridge,
+            2_000,
+        );
+
+        assert_eq!(response, Ok(serde_json::json!({"status": "recorded"})));
+        assert_eq!(
+            bridge
+                .presence
+                .lock()
+                .unwrap()
+                .fresh(&device.id, 2_000)
+                .unwrap()
+                .mode,
+            MobilePresenceMode::Foreground
+        );
+    }
+
+    #[test]
+    fn mobile_presence_endpoint_rejects_missing_or_revoked_credentials() {
+        let temp = tempfile::tempdir().unwrap();
+        let bridge = MobileBridgeState::load_or_create(temp.path()).unwrap();
+
+        assert_eq!(
+            record_mobile_presence(None, br#"{"mode":"monitoring"}"#, &bridge, 2_000),
+            Err(StatusCode::UNAUTHORIZED)
+        );
+        assert_eq!(
+            record_mobile_presence(
+                Some("revoked-token"),
+                br#"{"mode":"monitoring"}"#,
+                &bridge,
+                2_000,
+            ),
+            Err(StatusCode::UNAUTHORIZED)
+        );
+    }
+
+    #[test]
+    fn mobile_presence_endpoint_rejects_unbounded_or_ambiguous_bodies() {
+        let temp = tempfile::tempdir().unwrap();
+        let bridge = MobileBridgeState::load_or_create(temp.path()).unwrap();
+        bridge
+            .devices
+            .lock()
+            .unwrap()
+            .add_device("Xiaomi 14", "phone-token", MobileDeviceScope::Read)
+            .unwrap();
+
+        for body in [
+            br#"{"mode":"offline"}"#.as_slice(),
+            br#"{"mode":"foreground","device_id":"other"}"#.as_slice(),
+            br#"{"mode":"foreground","extra":true}"#.as_slice(),
+            br#"not-json"#.as_slice(),
+        ] {
+            assert_eq!(
+                record_mobile_presence(Some("phone-token"), body, &bridge, 2_000),
+                Err(StatusCode::BAD_REQUEST)
+            );
+        }
+        assert_eq!(
+            record_mobile_presence(Some("phone-token"), &[b'x'; 257], &bridge, 2_000),
+            Err(StatusCode::BAD_REQUEST)
+        );
     }
 
     #[test]
