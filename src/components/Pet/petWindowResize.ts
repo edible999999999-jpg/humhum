@@ -7,6 +7,7 @@ export async function resizePetWindow(
     await resize();
   } catch (error) {
     report(error);
+    return false;
   }
   return expanded;
 }

@@ -10,7 +10,8 @@ const USER_LIMIT: usize = 10;
 const ASSISTANT_LIMIT: usize = 6;
 const TOOL_LIMIT: usize = 12;
 const MESSAGE_LIMIT: usize = 12;
-const MAX_TEXT_CHARS: usize = 220;
+const SUMMARY_MAX_TEXT_CHARS: usize = 220;
+const MESSAGE_MAX_TEXT_CHARS: usize = 500;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -85,6 +86,10 @@ pub(crate) fn parse_transcript_signals(path: &Path) -> Result<TranscriptSignals,
 fn read_recent_lines(path: &Path) -> Result<Vec<String>, String> {
     let mut file = File::open(path).map_err(|error| error.to_string())?;
     let file_len = file.metadata().map_err(|error| error.to_string())?.len();
+    read_recent_lines_from_snapshot(&mut file, file_len)
+}
+
+fn read_recent_lines_from_snapshot(file: &mut File, file_len: u64) -> Result<Vec<String>, String> {
     let start = file_len.saturating_sub(MAX_TAIL_BYTES);
     let mut skip_partial_first_record = false;
     if start > 0 {
@@ -98,8 +103,9 @@ fn read_recent_lines(path: &Path) -> Result<Vec<String>, String> {
     file.seek(SeekFrom::Start(start))
         .map_err(|error| error.to_string())?;
 
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes)
+    let mut bytes = Vec::with_capacity((file_len - start) as usize);
+    file.take(file_len - start)
+        .read_to_end(&mut bytes)
         .map_err(|error| error.to_string())?;
 
     let slice = if skip_partial_first_record {
@@ -130,6 +136,14 @@ fn is_user_entry(value: &Value) -> bool {
             .and_then(|role| role.as_str())
             == Some("user")
         || value.get("role").and_then(|role| role.as_str()) == Some("user")
+        || (value
+            .pointer("/payload/type")
+            .and_then(|kind| kind.as_str())
+            == Some("message")
+            && value
+                .pointer("/payload/role")
+                .and_then(|role| role.as_str())
+                == Some("user"))
 }
 
 fn is_assistant_entry(value: &Value) -> bool {
@@ -140,6 +154,14 @@ fn is_assistant_entry(value: &Value) -> bool {
             .and_then(|role| role.as_str())
             == Some("assistant")
         || value.get("role").and_then(|role| role.as_str()) == Some("assistant")
+        || (value
+            .pointer("/payload/type")
+            .and_then(|kind| kind.as_str())
+            == Some("message")
+            && value
+                .pointer("/payload/role")
+                .and_then(|role| role.as_str())
+                == Some("assistant"))
 }
 
 fn extract_text(value: &Value) -> Option<String> {
@@ -152,7 +174,7 @@ fn extract_text(value: &Value) -> Option<String> {
 
     for candidate in candidates.into_iter().flatten() {
         if let Some(text) = text_from_value(candidate) {
-            return Some(truncate_text(&text, MAX_TEXT_CHARS));
+            return Some(truncate_text(&text, SUMMARY_MAX_TEXT_CHARS));
         }
     }
     None
@@ -168,7 +190,7 @@ fn extract_message_text(value: &Value) -> Option<String> {
 
     for candidate in candidates.into_iter().flatten() {
         if let Some(text) = visible_text_from_value(candidate) {
-            return Some(truncate_text(&text, MAX_TEXT_CHARS));
+            return Some(truncate_text(&text, MESSAGE_MAX_TEXT_CHARS));
         }
     }
     None
@@ -284,7 +306,12 @@ fn truncate_text(text: &str, max_chars: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_transcript_signals, TranscriptMessage, TranscriptRole, MAX_TAIL_BYTES};
+    use super::{
+        parse_transcript_signals, read_recent_lines_from_snapshot, TranscriptMessage,
+        TranscriptRole, MAX_TAIL_BYTES,
+    };
+    use std::fs::OpenOptions;
+    use std::io::Write;
     use std::path::Path;
 
     fn write_lines(path: &Path, lines: &[String]) {
@@ -353,6 +380,53 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn parses_real_codex_response_item_message_envelopes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("codex.jsonl");
+        write_lines(
+            &path,
+            &[
+                r#"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"真实问题"}]}}"#.to_string(),
+                r#"{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"真实回答"}]}}"#.to_string(),
+            ],
+        );
+
+        let signals = parse(&path);
+
+        assert_eq!(signals.user_messages, vec!["真实问题".to_string()]);
+        assert_eq!(signals.assistant_messages, vec!["真实回答".to_string()]);
+        assert_eq!(
+            signals.messages,
+            vec![
+                TranscriptMessage {
+                    role: TranscriptRole::User,
+                    text: "真实问题".to_string(),
+                },
+                TranscriptMessage {
+                    role: TranscriptRole::Assistant,
+                    text: "真实回答".to_string(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn snapshot_reader_ignores_bytes_appended_after_metadata_snapshot() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("growing.jsonl");
+        write_content(&path, &json_line("user", "before-snapshot"));
+
+        let mut reader = OpenOptions::new().read(true).open(&path).unwrap();
+        let snapshot_len = reader.metadata().unwrap().len();
+        let mut writer = OpenOptions::new().append(true).open(&path).unwrap();
+        writeln!(writer, "\n{}", json_line("assistant", "after-snapshot")).unwrap();
+
+        let lines = read_recent_lines_from_snapshot(&mut reader, snapshot_len).unwrap();
+
+        assert_eq!(lines, vec![json_line("user", "before-snapshot")]);
     }
 
     #[test]
@@ -431,13 +505,11 @@ mod tests {
 
         assert_eq!(signals.assistant_messages.len(), 1);
         assert!(signals.assistant_messages[0].starts_with("keep-boundary"));
-        assert_eq!(
-            signals.messages,
-            vec![TranscriptMessage {
-                role: TranscriptRole::Assistant,
-                text: signals.assistant_messages[0].clone(),
-            }]
-        );
+        assert_eq!(signals.messages.len(), 1);
+        assert_eq!(signals.messages[0].role, TranscriptRole::Assistant);
+        assert!(signals.messages[0].text.starts_with("keep-boundary"));
+        assert_eq!(signals.messages[0].text.chars().count(), 501);
+        assert!(signals.messages[0].text.ends_with('…'));
     }
 
     #[test]
@@ -553,6 +625,7 @@ mod tests {
         assert_eq!(text.chars().count(), 221);
         assert!(text.ends_with('…'));
         assert_eq!(text.chars().next().unwrap(), '你');
+        assert_eq!(signals.messages[0].text, long);
     }
 
     #[test]

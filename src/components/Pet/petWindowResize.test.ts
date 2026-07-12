@@ -5,7 +5,7 @@ import {
 } from "./petWindowResize";
 
 describe("resizePetWindow", () => {
-  it("keeps an expanded overlay renderable when the native resize fails", async () => {
+  it("does not expose an expanded overlay when the native resize fails", async () => {
     const report = vi.fn();
 
     const ready = await resizePetWindow(
@@ -16,7 +16,7 @@ describe("resizePetWindow", () => {
       report,
     );
 
-    expect(ready).toBe(true);
+    expect(ready).toBe(false);
     expect(report).toHaveBeenCalledOnce();
   });
 

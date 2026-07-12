@@ -1,5 +1,5 @@
 use http_body_util::{BodyExt, Full};
-use hyper::body::Bytes;
+use hyper::body::{Body, Bytes};
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode};
@@ -1384,8 +1384,9 @@ async fn read_mobile_session_conversation(
     let Some(scope) = request_scope(&request, bridge) else {
         return json_error(StatusCode::UNAUTHORIZED, "Pair this device first");
     };
-    let body = match request.into_body().collect().await {
-        Ok(body) => body.to_bytes(),
+    let body = match collect_bounded_body(request.into_body(), MAX_CONVERSATION_REQUEST_BYTES).await
+    {
+        Ok(body) => body,
         Err(_) => return json_error(StatusCode::BAD_REQUEST, "Invalid conversation request"),
     };
     let Some(home_dir) = dirs::home_dir() else {
@@ -1408,6 +1409,32 @@ async fn read_mobile_session_conversation(
             json_error(StatusCode::NOT_FOUND, "Conversation unavailable")
         }
     }
+}
+
+async fn collect_bounded_body<B>(mut body: B, max_bytes: usize) -> Result<Bytes, ()>
+where
+    B: Body<Data = Bytes> + Unpin,
+{
+    if body.size_hint().lower() > max_bytes as u64 {
+        return Err(());
+    }
+    let mut output = Vec::with_capacity(
+        usize::try_from(body.size_hint().lower())
+            .unwrap_or(max_bytes)
+            .min(max_bytes),
+    );
+    while let Some(frame) = body.frame().await {
+        let frame = frame.map_err(|_| ())?;
+        let Ok(data) = frame.into_data() else {
+            continue;
+        };
+        let remaining = max_bytes.checked_sub(output.len()).ok_or(())?;
+        if data.len() > remaining {
+            return Err(());
+        }
+        output.extend_from_slice(&data);
+    }
+    Ok(Bytes::from(output))
 }
 
 fn mobile_conversation_from_request(
@@ -1496,8 +1523,7 @@ fn provider_transcript_root(provider: &str, home_dir: &Path) -> Option<PathBuf> 
 fn project_mobile_conversation_message(
     message: &crate::transcript_reader::TranscriptMessage,
 ) -> Option<MobileConversationMessage> {
-    let redacted = redact_local_path_text(&message.text);
-    let compacted = compact_whitespace(&redacted);
+    let compacted = crate::user_safe_text::project_user_safe_text(&message.text);
     if compacted.is_empty() || compacted == "[本机路径]" {
         return None;
     }
@@ -1520,64 +1546,8 @@ fn bound_mobile_conversation_response(
     response
 }
 
-fn compact_whitespace(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
 fn truncate_scalar_value(text: &str, max_chars: usize) -> String {
     text.chars().take(max_chars).collect()
-}
-
-fn redact_local_path_text(text: &str) -> String {
-    let mut redacted = String::with_capacity(text.len());
-    let mut index = 0;
-    let mut previous = None;
-    while index < text.len() {
-        let remaining = &text[index..];
-        let at_boundary = previous.is_none_or(is_path_boundary_char);
-        if let Some(len) = local_path_match_len(remaining, at_boundary) {
-            redacted.push_str("[本机路径]");
-            index += len;
-            continue;
-        }
-        let ch = remaining.chars().next().unwrap();
-        redacted.push(ch);
-        index += ch.len_utf8();
-        previous = Some(ch);
-    }
-    redacted
-}
-
-fn local_path_match_len(candidate: &str, at_boundary: bool) -> Option<usize> {
-    if !at_boundary {
-        return None;
-    }
-    let prefixes = ["file://", "/Users/", "/home/", "~/"];
-    if prefixes.iter().any(|prefix| candidate.starts_with(prefix)) {
-        return Some(path_token_len(candidate));
-    }
-    let bytes = candidate.as_bytes();
-    if bytes.len() >= 10
-        && bytes[0].is_ascii_alphabetic()
-        && bytes[1] == b':'
-        && matches!(bytes[2], b'\\' | b'/')
-        && candidate[3..].starts_with("Users")
-        && matches!(bytes.get(8).copied(), Some(b'\\' | b'/'))
-    {
-        return Some(path_token_len(candidate));
-    }
-    None
-}
-
-fn path_token_len(candidate: &str) -> usize {
-    candidate
-        .char_indices()
-        .find_map(|(index, ch)| (index > 0 && is_path_boundary_char(ch)).then_some(index))
-        .unwrap_or(candidate.len())
-}
-
-fn is_path_boundary_char(ch: char) -> bool {
-    ch.is_whitespace() || matches!(ch, '"' | '\'' | ')' | ']' | '}' | '<' | '>' | ',' | ';')
 }
 
 #[derive(Deserialize)]
@@ -2159,7 +2129,31 @@ fn set_owner_only(path: &Path) -> Result<(), String> {
 mod tests {
     use super::*;
     use crate::event_bus::HookEvent;
+    use hyper::body::{Body, Frame, SizeHint};
     use serde_json::json;
+    use std::collections::VecDeque;
+    use std::pin::Pin;
+    use std::task::{Context, Poll};
+
+    struct ChunkedBody {
+        chunks: VecDeque<Bytes>,
+    }
+
+    impl Body for ChunkedBody {
+        type Data = Bytes;
+        type Error = Infallible;
+
+        fn poll_frame(
+            mut self: Pin<&mut Self>,
+            _context: &mut Context<'_>,
+        ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+            Poll::Ready(self.chunks.pop_front().map(|chunk| Ok(Frame::data(chunk))))
+        }
+
+        fn size_hint(&self) -> SizeHint {
+            SizeHint::default()
+        }
+    }
 
     fn hook_session(
         session_id: &str,
@@ -2206,6 +2200,21 @@ mod tests {
     fn write_lines(path: &Path, lines: &[String]) {
         let body = lines.join("\n");
         std::fs::write(path, format!("{body}\n")).unwrap();
+    }
+
+    #[tokio::test]
+    async fn bounded_body_reader_rejects_chunked_overflow_before_collecting_the_rest() {
+        let body = ChunkedBody {
+            chunks: VecDeque::from([
+                Bytes::from(vec![b'a'; 3_000]),
+                Bytes::from(vec![b'b'; 1_097]),
+                Bytes::from_static(b"not-consumed"),
+            ]),
+        };
+
+        assert!(collect_bounded_body(body, MAX_CONVERSATION_REQUEST_BYTES)
+            .await
+            .is_err());
     }
 
     #[test]

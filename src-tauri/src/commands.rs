@@ -20,6 +20,7 @@ use crate::remote_bridge::{RemoteBridgeState, RemoteBridgeStatus};
 use crate::session_store::{Session, SessionStatus, SessionStore};
 use crate::stats_store::StatsStore;
 use crate::transcript_reader::parse_transcript_signals;
+use crate::user_safe_text::project_user_safe_text;
 use crate::wake_guard::{WakeGuardState, WakeGuardStatus};
 use crate::window_focus;
 use serde::{Deserialize, Serialize};
@@ -3250,7 +3251,12 @@ fn build_hexa_readout(session: &crate::session_store::Session) -> HexaReadout {
     let agent_current_work = if let Some(tool) = session.last_tool_name.as_ref() {
         format!("正在围绕 {} 推进，最近工具是 {}", project_intent, tool)
     } else if let Some(msg) = signals.assistant_messages.last() {
-        format!("最近在回应: {}", truncate_text(msg, 90))
+        let safe = project_user_safe_text(msg);
+        if safe.is_empty() {
+            "已有响应，但内容只包含本机内部信息。".to_string()
+        } else {
+            format!("最近在回应: {}", truncate_text(&safe, 90))
+        }
     } else {
         "已有 hook 事件，但还缺少 transcript 里的具体动作描述".to_string()
     };
@@ -3354,10 +3360,15 @@ fn build_hexa_readout(session: &crate::session_store::Session) -> HexaReadout {
 }
 
 fn summarize_recent_user_intent(messages: &[String]) -> String {
-    if messages.is_empty() {
+    let safe_messages = messages
+        .iter()
+        .map(|message| project_user_safe_text(message))
+        .filter(|message| !message.is_empty())
+        .collect::<Vec<_>>();
+    if safe_messages.is_empty() {
         return "暂未从 transcript 读到最近用户消息，只能依赖 hook 事件。".to_string();
     }
-    let recent = messages
+    let recent = safe_messages
         .iter()
         .rev()
         .take(3)

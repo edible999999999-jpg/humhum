@@ -29,6 +29,7 @@ mod sound_pack;
 mod stats_store;
 mod tailnet;
 mod transcript_reader;
+mod user_safe_text;
 mod wake_crypto;
 mod wake_guard;
 mod window_focus;

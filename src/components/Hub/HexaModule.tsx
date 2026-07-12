@@ -63,12 +63,6 @@ function formatTimeAgo(ms: number): string {
   return `${hours}h`;
 }
 
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return n.toString();
-}
-
 function scoreColor(score: number): string {
   if (score >= 78) return "#22c55e";
   if (score >= 58) return "#38bdf8";
@@ -215,7 +209,6 @@ function SessionCard({
 }) {
   const color = getClientColor(item.session.client_type);
   const eventNames = item.session.event_names.slice(-6);
-  const stats = item.stats;
   const isCompleted = item.session.status === "completed";
   const showReadout = !isCompleted || reviewOpen;
   const [focusState, setFocusState] = useState<"idle" | "busy" | "exact" | "fallback" | "failed">("idle");
@@ -400,10 +393,9 @@ function SessionCard({
         </>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 8 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8 }}>
         <MiniStat label="last seen" value={formatTimeAgo(item.last_seen_ms)} />
         <MiniStat label="evidence" value={item.evidence.length} />
-        <MiniStat label="tokens" value={stats ? formatTokens(stats.total_tokens) : "-"} />
         <MiniStat label="loop" value={item.loop_status} />
       </div>
 
