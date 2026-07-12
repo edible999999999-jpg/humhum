@@ -106,6 +106,28 @@ public class ManifestContractTest {
         assertFalse(document.getDocumentElement().getTextContent().contains("firebase.analytics"));
     }
 
+    @Test
+    public void pairedScreenHasOneInterpretedPushStatus() throws Exception {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        factory.setNamespaceAware(true);
+        Document document = factory.newDocumentBuilder()
+                .parse(Path.of("src/main/res/layout/activity_main.xml").toFile());
+        NodeList textViews = document.getElementsByTagName("TextView");
+        int matches = 0;
+        for (int index = 0; index < textViews.getLength(); index++) {
+            Element element = (Element) textViews.item(index);
+            if ("@+id/pushStatusText".equals(element.getAttributeNS(ANDROID, "id"))) {
+                matches++;
+                assertEquals("系统推送尚未配置", element.getAttributeNS(ANDROID, "text"));
+            }
+        }
+        assertEquals(1, matches);
+        String visible = document.getDocumentElement().getTextContent();
+        assertFalse(visible.contains("FCM"));
+        assertFalse(visible.contains("HTTP"));
+        assertFalse(visible.contains("token"));
+    }
+
     private static Element component(Document document, String tag, String name) {
         NodeList nodes = document.getElementsByTagName(tag);
         for (int index = 0; index < nodes.getLength(); index++) {

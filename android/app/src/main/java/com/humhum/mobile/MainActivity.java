@@ -5,6 +5,7 @@ import android.app.Activity;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -57,10 +58,14 @@ public final class MainActivity extends Activity {
     private Switch monitorSwitch;
     private TextView monitorStatusText;
     private TextView batteryStatusText;
+    private TextView pushStatusText;
     private Button batterySettingsButton;
     private Button autostartSettingsButton;
     private boolean updatingMonitorSwitch;
     private boolean pendingMonitorEnable;
+    private SharedPreferences pushPreferences;
+    private final SharedPreferences.OnSharedPreferenceChangeListener pushStateListener =
+            (preferences, key) -> main.post(this::updatePushStatus);
 
     @Override
     protected void onCreate(Bundle state) {
@@ -69,6 +74,7 @@ public final class MainActivity extends Activity {
         bindViews();
         connectionStore = new ConnectionStore(getSharedPreferences("humhum_connection", MODE_PRIVATE));
         monitorStore = AgentMonitorService.monitorStore(this);
+        pushPreferences = getSharedPreferences("humhum_push", MODE_PRIVATE);
         connectButton.setOnClickListener(view -> pair());
         findViewById(R.id.pasteSetupButton).setOnClickListener(view -> pasteSetup());
         refreshButton.setOnClickListener(view -> refreshSessions(true));
@@ -88,6 +94,13 @@ public final class MainActivity extends Activity {
     }
 
     @Override
+    protected void onStart() {
+        super.onStart();
+        pushPreferences.registerOnSharedPreferenceChangeListener(pushStateListener);
+        updatePushStatus();
+    }
+
+    @Override
     protected void onResume() {
         super.onResume();
         if (connection != null) {
@@ -101,6 +114,7 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onStop() {
+        pushPreferences.unregisterOnSharedPreferenceChangeListener(pushStateListener);
         main.removeCallbacks(poll);
         super.onStop();
     }
@@ -128,6 +142,7 @@ public final class MainActivity extends Activity {
         monitorSwitch = findViewById(R.id.monitorSwitch);
         monitorStatusText = findViewById(R.id.monitorStatusText);
         batteryStatusText = findViewById(R.id.batteryStatusText);
+        pushStatusText = findViewById(R.id.pushStatusText);
         batterySettingsButton = findViewById(R.id.batterySettingsButton);
         autostartSettingsButton = findViewById(R.id.autostartSettingsButton);
     }
@@ -222,6 +237,7 @@ public final class MainActivity extends Activity {
         syncMonitorState();
         reportForegroundPresence();
         PushRegistration.refresh(this);
+        updatePushStatus();
         refreshSessions(true);
     }
 
@@ -251,6 +267,7 @@ public final class MainActivity extends Activity {
         MobileProtocol current = protocol;
         if (current == null) return;
         disableMonitor();
+        PushRegistration.cancel(this);
         disconnectButton.setEnabled(false);
         statusText.setText("正在安全断开");
         network.execute(() -> {
@@ -338,6 +355,18 @@ public final class MainActivity extends Activity {
         return Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
                 || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
                         == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private void updatePushStatus() {
+        if (pushStatusText == null || connectionStore == null) return;
+        ConnectionStore.Connection current = connectionStore.load();
+        String channel = current == null || current.wakeRelay() == null
+                ? null
+                : current.wakeRelay().channelId();
+        PushStateStore.State state = PushRegistration.stateStore(this).read(
+                channel,
+                HumHumApplication.isFcmConfigured());
+        pushStatusText.setText(PushStateStore.copy(state));
     }
 
     @Override
