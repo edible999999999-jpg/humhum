@@ -24,8 +24,18 @@ pub struct AppConfig {
     #[serde(default)]
     pub pi: PiConfig,
 
+    #[serde(default)]
+    pub mobile_relay: MobileRelayConfig,
+
     /// UI preferences
     pub ui: UiConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(default)]
+pub struct MobileRelayConfig {
+    pub enabled: bool,
+    pub base_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -183,6 +193,7 @@ impl Default for AppConfig {
                 max_tokens: 500,
             },
             pi: PiConfig::default(),
+            mobile_relay: MobileRelayConfig::default(),
             ui: UiConfig::default(),
         }
     }
@@ -279,6 +290,8 @@ mod tests {
         assert!(config.ui.mascot_overrides.is_empty());
         assert!(config.ui.auto_confirm_sessions.is_empty());
         assert!(config.ui.analytics_enabled);
+        assert!(!config.mobile_relay.enabled);
+        assert_eq!(config.mobile_relay.base_url, None);
     }
 
     #[test]
@@ -310,5 +323,7 @@ mod tests {
         assert!(config.ui.notifications.approval);
         assert!(config.ui.auto_confirm_sessions.is_empty());
         assert!(config.ui.analytics_enabled);
+        assert!(!config.mobile_relay.enabled);
+        assert_eq!(config.mobile_relay.base_url, None);
     }
 }
