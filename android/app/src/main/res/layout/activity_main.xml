@@ -229,6 +229,69 @@
             </LinearLayout>
 
             <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:background="@drawable/panel_background"
+                android:orientation="vertical"
+                android:padding="12dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="后台可靠性"
+                        android:textColor="@color/ink"
+                        android:textSize="14sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/batteryStatusText"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginLeft="10dp"
+                        android:layout_weight="1"
+                        android:gravity="right"
+                        android:textColor="@color/muted"
+                        android:textSize="11sp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="42dp"
+                    android:layout_marginTop="10dp"
+                    android:orientation="horizontal">
+
+                    <Button
+                        android:id="@+id/batterySettingsButton"
+                        android:layout_width="0dp"
+                        android:layout_height="42dp"
+                        android:layout_weight="1"
+                        android:background="@drawable/button_secondary"
+                        android:text="电池设置"
+                        android:textAllCaps="false"
+                        android:textColor="@color/primary" />
+
+                    <Button
+                        android:id="@+id/autostartSettingsButton"
+                        android:layout_width="0dp"
+                        android:layout_height="42dp"
+                        android:layout_marginLeft="8dp"
+                        android:layout_weight="1"
+                        android:background="@drawable/button_secondary"
+                        android:text="自启动设置"
+                        android:textAllCaps="false"
+                        android:textColor="@color/primary"
+                        android:visibility="gone" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <LinearLayout
                 android:id="@+id/sessionsContainer"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"

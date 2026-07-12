@@ -13,6 +13,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.view.View;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.Button;
@@ -55,6 +56,9 @@ public final class MainActivity extends Activity {
     private Button disconnectButton;
     private Switch monitorSwitch;
     private TextView monitorStatusText;
+    private TextView batteryStatusText;
+    private Button batterySettingsButton;
+    private Button autostartSettingsButton;
     private boolean updatingMonitorSwitch;
     private boolean pendingMonitorEnable;
 
@@ -70,6 +74,10 @@ public final class MainActivity extends Activity {
         refreshButton.setOnClickListener(view -> refreshSessions(true));
         disconnectButton.setOnClickListener(view -> disconnect());
         monitorSwitch.setOnCheckedChangeListener((button, checked) -> onMonitorChanged(checked));
+        batterySettingsButton.setOnClickListener(view -> openBatterySettings());
+        autostartSettingsButton.setOnClickListener(view -> openAutostartSettings());
+        autostartSettingsButton.setVisibility(
+                DeviceCarePlan.isXiaomiFamily(Build.MANUFACTURER) ? View.VISIBLE : View.GONE);
 
         connection = connectionStore.load();
         if (connection == null) {
@@ -83,6 +91,7 @@ public final class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         if (connection != null) syncMonitorState();
+        updateDeviceCareStatus();
         main.removeCallbacks(poll);
         main.post(poll);
     }
@@ -115,6 +124,28 @@ public final class MainActivity extends Activity {
         disconnectButton = findViewById(R.id.disconnectButton);
         monitorSwitch = findViewById(R.id.monitorSwitch);
         monitorStatusText = findViewById(R.id.monitorStatusText);
+        batteryStatusText = findViewById(R.id.batteryStatusText);
+        batterySettingsButton = findViewById(R.id.batterySettingsButton);
+        autostartSettingsButton = findViewById(R.id.autostartSettingsButton);
+    }
+
+    private void updateDeviceCareStatus() {
+        if (batteryStatusText == null) return;
+        PowerManager power = getSystemService(PowerManager.class);
+        boolean exempt = power != null && power.isIgnoringBatteryOptimizations(getPackageName());
+        batteryStatusText.setText(DeviceCarePlan.batteryStatus(exempt));
+    }
+
+    private void openBatterySettings() {
+        if (!DeviceCareNavigator.openBatterySettings(this)) {
+            batteryStatusText.setText("无法打开系统设置");
+        }
+    }
+
+    private void openAutostartSettings() {
+        if (!DeviceCareNavigator.openAutostartSettings(this, Build.MANUFACTURER)) {
+            batteryStatusText.setText("无法打开系统设置");
+        }
     }
 
     private void pair() {
