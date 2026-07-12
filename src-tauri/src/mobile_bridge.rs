@@ -370,61 +370,13 @@ async fn handle_mobile_request(
         (&Method::POST, "/api/pair") => pair_device(request, &bridge).await,
         (&Method::DELETE, "/api/device") => revoke_mobile_device(&request, &bridge),
         (&Method::GET, "/api/sessions") => {
-            let scope = request_scope(&request, &bridge);
-            if scope.is_none() {
-                json_error(StatusCode::UNAUTHORIZED, "Pair this device first")
-            } else {
-                let scope = scope.unwrap_or(MobileDeviceScope::Read);
-                let mut hook_actions =
-                    std::collections::HashMap::<String, Vec<MobileApprovalSummary>>::new();
-                if scope.allows_control() {
-                    if let Some(pending) = app.try_state::<crate::hook_server::PendingMap>() {
-                        for request in pending.lock().await.values() {
-                            if let Some(action) = mobile_hook_approval(&request.event) {
-                                hook_actions
-                                    .entry(request.event.session_id.clone())
-                                    .or_default()
-                                    .push(action);
-                            }
-                        }
-                    }
-                }
-                let store = app.state::<Arc<Mutex<crate::session_store::SessionStore>>>();
-                let codex = app.state::<Arc<crate::codex_bridge::CodexBridgeState>>();
-                let mut sessions = codex
-                    .sessions()
-                    .iter()
-                    .map(|session| {
-                        MobileSessionSummary::from_codex(session, scope.allows_control())
-                    })
-                    .collect::<Vec<_>>();
-                let known_ids = sessions
-                    .iter()
-                    .map(|session| session.id.clone())
-                    .collect::<std::collections::HashSet<_>>();
-                sessions.extend(
-                    store
-                        .lock()
-                        .unwrap_or_else(|error| error.into_inner())
-                        .get_all_sessions_with_history()
-                        .into_iter()
-                        .filter(|session| !known_ids.contains(&session.session_id))
-                        .take(30)
-                        .map(|session| {
-                            let mut summary =
-                                MobileSessionSummary::from_hook(&session, scope.allows_control());
-                            summary.pending_actions =
-                                hook_actions.remove(&session.session_id).unwrap_or_default();
-                            summary.needs_attention |= !summary.pending_actions.is_empty();
-                            summary
-                        }),
-                );
-                sessions.sort_by(|left, right| right.last_activity_at.cmp(&left.last_activity_at));
-                sessions.truncate(30);
+            if let Some(scope) = request_scope(&request, &bridge) {
                 json_response(
                     StatusCode::OK,
-                    &serde_json::json!({ "scope": scope, "sessions": sessions }),
+                    &with_mobile_cursor(mobile_session_page(&app, scope).await),
                 )
+            } else {
+                json_error(StatusCode::UNAUTHORIZED, "Pair this device first")
             }
         }
         (&Method::POST, "/api/codex/approval") => {
@@ -465,6 +417,68 @@ async fn handle_mobile_request(
         _ => json_error(StatusCode::NOT_FOUND, "Not found"),
     };
     Ok(with_security_headers(response))
+}
+
+async fn mobile_session_page(
+    app: &tauri::AppHandle,
+    scope: MobileDeviceScope,
+) -> serde_json::Value {
+    let mut hook_actions = std::collections::HashMap::<String, Vec<MobileApprovalSummary>>::new();
+    if scope.allows_control() {
+        if let Some(pending) = app.try_state::<crate::hook_server::PendingMap>() {
+            for request in pending.lock().await.values() {
+                if let Some(action) = mobile_hook_approval(&request.event) {
+                    hook_actions
+                        .entry(request.event.session_id.clone())
+                        .or_default()
+                        .push(action);
+                }
+            }
+        }
+    }
+    let store = app.state::<Arc<Mutex<crate::session_store::SessionStore>>>();
+    let codex = app.state::<Arc<crate::codex_bridge::CodexBridgeState>>();
+    let mut sessions = codex
+        .sessions()
+        .iter()
+        .map(|session| MobileSessionSummary::from_codex(session, scope.allows_control()))
+        .collect::<Vec<_>>();
+    let known_ids = sessions
+        .iter()
+        .map(|session| session.id.clone())
+        .collect::<std::collections::HashSet<_>>();
+    sessions.extend(
+        store
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .get_all_sessions_with_history()
+            .into_iter()
+            .filter(|session| !known_ids.contains(&session.session_id))
+            .map(|session| {
+                let mut summary = MobileSessionSummary::from_hook(&session, scope.allows_control());
+                summary.pending_actions =
+                    hook_actions.remove(&session.session_id).unwrap_or_default();
+                summary.needs_attention |= !summary.pending_actions.is_empty();
+                summary
+            }),
+    );
+    sessions.sort_by(|left, right| {
+        right
+            .last_activity_at
+            .cmp(&left.last_activity_at)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    sessions.truncate(30);
+    serde_json::json!({ "scope": scope, "sessions": sessions })
+}
+
+fn with_mobile_cursor(mut page: serde_json::Value) -> serde_json::Value {
+    let digest = Sha256::digest(serde_json::to_vec(&page).unwrap_or_default());
+    let cursor = format!("{digest:x}");
+    if let Some(object) = page.as_object_mut() {
+        object.insert("cursor".into(), serde_json::Value::String(cursor));
+    }
+    page
 }
 
 fn revoke_mobile_device(
@@ -1110,6 +1124,60 @@ fn set_owner_only(path: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scoped_mobile_cursor_is_stable_and_changes_with_visible_state() {
+        let first = serde_json::json!({
+            "scope": "read",
+            "sessions": [{
+                "id": "session-1",
+                "agent": "codex",
+                "project": "humhum",
+                "status": "idle"
+            }]
+        });
+        let identical = first.clone();
+        let changed = serde_json::json!({
+            "scope": "read",
+            "sessions": [{
+                "id": "session-1",
+                "agent": "codex",
+                "project": "humhum",
+                "status": "active"
+            }]
+        });
+
+        let first = with_mobile_cursor(first);
+        let identical = with_mobile_cursor(identical);
+        let changed = with_mobile_cursor(changed);
+
+        let cursor = first["cursor"].as_str().unwrap();
+        assert!(cursor
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()));
+        assert_eq!(cursor.len(), 64);
+        assert_eq!(first["cursor"], identical["cursor"]);
+        assert_ne!(first["cursor"], changed["cursor"]);
+    }
+
+    #[test]
+    fn scoped_mobile_cursor_response_contains_no_private_source_fields() {
+        let page = with_mobile_cursor(serde_json::json!({
+            "scope": "control",
+            "sessions": [{
+                "id": "session-1",
+                "agent": "claude-code",
+                "project": "humhum",
+                "status": "waiting"
+            }]
+        }));
+        let serialized = page.to_string();
+
+        assert!(!serialized.contains("/Users/private/project"));
+        assert!(!serialized.contains("transcript_path"));
+        assert!(!serialized.contains("private-message-sentinel"));
+        assert_eq!(page["cursor"].as_str().unwrap().len(), 64);
+    }
 
     #[test]
     fn pairing_code_expires_and_locks_after_five_failures() {
