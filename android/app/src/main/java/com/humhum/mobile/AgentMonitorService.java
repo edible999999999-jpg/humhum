@@ -28,6 +28,7 @@ public final class AgentMonitorService extends Service {
     private final ScheduledExecutorService network = Executors.newSingleThreadScheduledExecutor();
     private final NetworkRecoveryGate recoveryGate = new NetworkRecoveryGate();
     private final WakeRelayClient relayClient = new WakeRelayClient();
+    private final ServiceLifecycleGate lifecycle = new ServiceLifecycleGate();
     private ScheduledFuture<?> nextPoll;
     private MonitorStore monitorStore;
     private AttentionTracker tracker;
@@ -81,11 +82,13 @@ public final class AgentMonitorService extends Service {
     }
 
     @Override public void onDestroy() {
-        destroyed = true;
-        relayClient.cancel();
-        unregisterNetworkRecovery();
-        if (nextPoll != null) nextPoll.cancel(true);
-        network.shutdownNow();
+        lifecycle.close(() -> {
+            destroyed = true;
+            relayClient.cancel();
+            unregisterNetworkRecovery();
+            if (nextPoll != null) nextPoll.cancel(true);
+            network.shutdownNow();
+        });
         super.onDestroy();
     }
 
@@ -102,16 +105,19 @@ public final class AgentMonitorService extends Service {
     }
 
     private void schedule(Runnable task, long delaySeconds) {
-        if (destroyed) return;
-        if (nextPoll != null) nextPoll.cancel(false);
-        nextPoll = network.schedule(task, delaySeconds, TimeUnit.SECONDS);
+        lifecycle.commit(() -> {
+            if (nextPoll != null) nextPoll.cancel(false);
+            nextPoll = network.schedule(task, delaySeconds, TimeUnit.SECONDS);
+        });
     }
 
     private void pollOnce() {
         ConnectionStore.Connection connection = connectionStore(this).load();
         if (!monitorStore.isEnabled() || connection == null) {
-            monitorStore.clear();
-            stopSelf();
+            lifecycle.commit(() -> {
+                monitorStore.clear();
+                stopSelf();
+            });
             return;
         }
         try {
@@ -119,27 +125,31 @@ public final class AgentMonitorService extends Service {
                     connection.config(), connection.token(), connection.scope());
             Models.SessionPage page = protocol.sessions();
             AttentionTracker.Result result = tracker.evaluate(page);
-            monitorStore.saveKnownDigests(result.knownDigests());
-            failures = 0;
-            updateOngoing(getString(R.string.monitor_notification_text));
-            if (result.newCount() > 0) notifyAttention(result.newCount());
             reportMonitoringPresence(protocol);
-            lastCursor = page.cursor();
-            switch (MonitorRoute.afterSessions(
-                    relaySupported && connection.wakeRelay() != null,
-                    realtimeSupported,
-                    monitorStore.isEnabled(),
-                    lastCursor)) {
-                case RELAY -> scheduleRelay(monitorStore.relaySequence(
-                        connection.wakeRelay().channelId()));
-                case DIRECT_WATCH -> scheduleWatch(lastCursor);
-                default -> schedulePoll(RETRY_SECONDS[0]);
-            }
+            lifecycle.commit(() -> {
+                monitorStore.saveKnownDigests(result.knownDigests());
+                failures = 0;
+                updateOngoing(getString(R.string.monitor_notification_text));
+                if (result.newCount() > 0) notifyAttention(result.newCount());
+                lastCursor = page.cursor();
+                switch (MonitorRoute.afterSessions(
+                        relaySupported && connection.wakeRelay() != null,
+                        realtimeSupported,
+                        monitorStore.isEnabled(),
+                        lastCursor)) {
+                    case RELAY -> scheduleRelay(monitorStore.relaySequence(
+                            connection.wakeRelay().channelId()));
+                    case DIRECT_WATCH -> scheduleWatch(lastCursor);
+                    default -> schedulePoll(RETRY_SECONDS[0]);
+                }
+            });
         } catch (MobileProtocol.HttpStatusException error) {
             if (destroyed) return;
             if (error.status() == 401 || error.status() == 403) {
-                monitorStore.clear();
-                stopSelf();
+                lifecycle.commit(() -> {
+                    monitorStore.clear();
+                    stopSelf();
+                });
             } else {
                 retryAfterPrivateFailure(connection);
             }
@@ -152,8 +162,10 @@ public final class AgentMonitorService extends Service {
     private void relayOnce(long previousSequence) {
         ConnectionStore.Connection connection = connectionStore(this).load();
         if (!monitorStore.isEnabled() || connection == null) {
-            monitorStore.clear();
-            stopSelf();
+            lifecycle.commit(() -> {
+                monitorStore.clear();
+                stopSelf();
+            });
             return;
         }
         Models.WakeRelayConfig relay = connection.wakeRelay();
@@ -174,30 +186,38 @@ public final class AgentMonitorService extends Service {
                     destroyed, monitorStore.isEnabled(), sameChannel)) {
                 return;
             }
-            failures = 0;
-            updateOngoing(getString(R.string.monitor_notification_text));
-            if (MonitorRoute.afterRelay(accepted, previousSequence)
-                    == MonitorRoute.Next.PRIVATE_REFRESH) {
-                monitorStore.saveRelaySequence(relay.channelId(), accepted);
-                schedulePoll(0);
-            } else {
-                scheduleRelay(accepted);
-            }
+            lifecycle.commit(() -> {
+                if (!MonitorRoute.canCommitRelayResult(
+                        destroyed, monitorStore.isEnabled(), sameChannel)) return;
+                failures = 0;
+                updateOngoing(getString(R.string.monitor_notification_text));
+                if (MonitorRoute.afterRelay(accepted, previousSequence)
+                        == MonitorRoute.Next.PRIVATE_REFRESH) {
+                    monitorStore.saveRelaySequence(relay.channelId(), accepted);
+                    schedulePoll(0);
+                } else {
+                    scheduleRelay(accepted);
+                }
+            });
         } catch (WakeRelayClient.RelayStatusException error) {
             if (destroyed) return;
             if (WakeRelayClient.isPermanentlyUnavailable(error.status())) {
-                relaySupported = false;
-                failures = 0;
-                updateOngoing(getString(R.string.monitor_notification_text));
-                scheduleDirectFallback();
+                lifecycle.commit(() -> {
+                    relaySupported = false;
+                    failures = 0;
+                    updateOngoing(getString(R.string.monitor_notification_text));
+                    scheduleDirectFallback();
+                });
             } else {
                 retryAfterRelayFailure();
             }
         } catch (java.security.GeneralSecurityException | org.json.JSONException error) {
             if (destroyed) return;
-            relaySupported = false;
-            failures = 0;
-            scheduleDirectFallback();
+            lifecycle.commit(() -> {
+                relaySupported = false;
+                failures = 0;
+                scheduleDirectFallback();
+            });
         } catch (Exception error) {
             if (destroyed) return;
             retryAfterRelayFailure();
@@ -205,42 +225,51 @@ public final class AgentMonitorService extends Service {
     }
 
     private void scheduleDirectFallback() {
-        if (destroyed) return;
-        if (realtimeSupported && lastCursor.matches("[a-f0-9]{64}")) {
-            scheduleWatch(lastCursor);
-        } else {
-            schedulePoll(RETRY_SECONDS[0]);
-        }
+        lifecycle.commit(() -> {
+            if (realtimeSupported && lastCursor.matches("[a-f0-9]{64}")) {
+                scheduleWatch(lastCursor);
+            } else {
+                schedulePoll(RETRY_SECONDS[0]);
+            }
+        });
     }
 
     private void watchOnce(String cursor) {
         ConnectionStore.Connection connection = connectionStore(this).load();
         if (!monitorStore.isEnabled() || connection == null) {
-            monitorStore.clear();
-            stopSelf();
+            lifecycle.commit(() -> {
+                monitorStore.clear();
+                stopSelf();
+            });
             return;
         }
         try {
             MobileProtocol protocol = new MobileProtocol(
                     connection.config(), connection.token(), connection.scope());
             Models.EventSignal signal = protocol.waitForChange(cursor);
-            failures = 0;
             reportMonitoringPresence(protocol);
-            if (signal.changed() || !cursor.equals(signal.cursor())) {
-                schedulePoll(0);
-            } else {
-                scheduleWatch(signal.cursor());
-            }
+            lifecycle.commit(() -> {
+                failures = 0;
+                if (signal.changed() || !cursor.equals(signal.cursor())) {
+                    schedulePoll(0);
+                } else {
+                    scheduleWatch(signal.cursor());
+                }
+            });
         } catch (MobileProtocol.HttpStatusException error) {
             if (destroyed) return;
             if (error.status() == 401 || error.status() == 403) {
-                monitorStore.clear();
-                stopSelf();
+                lifecycle.commit(() -> {
+                    monitorStore.clear();
+                    stopSelf();
+                });
             } else if (error.status() == 404) {
-                realtimeSupported = false;
-                failures = 0;
-                updateOngoing(getString(R.string.monitor_notification_text));
-                schedulePoll(RETRY_SECONDS[0]);
+                lifecycle.commit(() -> {
+                    realtimeSupported = false;
+                    failures = 0;
+                    updateOngoing(getString(R.string.monitor_notification_text));
+                    schedulePoll(RETRY_SECONDS[0]);
+                });
             } else {
                 retryAfterPrivateFailure(connection);
             }
@@ -265,20 +294,20 @@ public final class AgentMonitorService extends Service {
     }
 
     private void retryAfterPrivateFailure(ConnectionStore.Connection connection) {
-        if (destroyed) return;
-        long delay = nextRetryDelay();
-        if (MonitorRoute.afterPrivateFailure(
-                relaySupported && connection.wakeRelay() != null) == MonitorRoute.Next.RELAY) {
-            Models.WakeRelayConfig relay = connection.wakeRelay();
-            schedule(() -> relayOnce(monitorStore.relaySequence(relay.channelId())), delay);
-        } else {
-            schedulePoll(delay);
-        }
+        lifecycle.commit(() -> {
+            long delay = nextRetryDelay();
+            if (MonitorRoute.afterPrivateFailure(
+                    relaySupported && connection.wakeRelay() != null) == MonitorRoute.Next.RELAY) {
+                Models.WakeRelayConfig relay = connection.wakeRelay();
+                schedule(() -> relayOnce(monitorStore.relaySequence(relay.channelId())), delay);
+            } else {
+                schedulePoll(delay);
+            }
+        });
     }
 
     private void retryAfterRelayFailure() {
-        if (destroyed) return;
-        schedulePoll(nextRetryDelay());
+        lifecycle.commit(() -> schedulePoll(nextRetryDelay()));
     }
 
     private void registerNetworkRecovery() {
@@ -289,8 +318,10 @@ public final class AgentMonitorService extends Service {
                 if (destroyed || !recoveryGate.onNetworkAvailable()) return;
                 try {
                     network.execute(() -> {
-                    failures = 0;
-                    schedulePoll(0);
+                        lifecycle.commit(() -> {
+                            failures = 0;
+                            schedulePoll(0);
+                        });
                     });
                 } catch (RejectedExecutionException ignored) {
                     // Service shutdown won the race with this connectivity callback.
