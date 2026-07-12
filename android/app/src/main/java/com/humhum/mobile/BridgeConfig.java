@@ -11,12 +11,15 @@ public final class BridgeConfig {
     private static final Pattern FINGERPRINT = Pattern.compile("[A-F0-9]{64}");
 
     private final String baseUrl;
+    private final String host;
     private final String pairingCode;
     private final String fingerprint;
     private final String deviceName;
 
-    private BridgeConfig(String baseUrl, String pairingCode, String fingerprint, String deviceName) {
+    private BridgeConfig(
+            String baseUrl, String host, String pairingCode, String fingerprint, String deviceName) {
         this.baseUrl = baseUrl;
+        this.host = host;
         this.pairingCode = pairingCode;
         this.fingerprint = fingerprint;
         this.deviceName = deviceName;
@@ -33,8 +36,10 @@ public final class BridgeConfig {
         String fingerprint = normalizeFingerprint(rawFingerprint);
         String deviceName = normalizeDeviceName(rawDeviceName);
 
+        String host = uri.getHost().toLowerCase(Locale.ROOT);
         return new BridgeConfig(
-                "https://" + uri.getHost().toLowerCase(Locale.ROOT) + ":" + BRIDGE_PORT,
+                "https://" + host + ":" + BRIDGE_PORT,
+                host,
                 code,
                 fingerprint,
                 deviceName);
@@ -42,8 +47,10 @@ public final class BridgeConfig {
 
     public static BridgeConfig restore(String rawUrl, String rawFingerprint, String rawDeviceName) {
         URI uri = parseUri(rawUrl);
+        String host = uri.getHost().toLowerCase(Locale.ROOT);
         return new BridgeConfig(
-                "https://" + uri.getHost().toLowerCase(Locale.ROOT) + ":" + BRIDGE_PORT,
+                "https://" + host + ":" + BRIDGE_PORT,
+                host,
                 "",
                 normalizeFingerprint(rawFingerprint),
                 normalizeDeviceName(rawDeviceName));
@@ -84,7 +91,7 @@ public final class BridgeConfig {
                     || uri.getQuery() != null
                     || uri.getFragment() != null
                     || !(path == null || path.isEmpty() || "/".equals(path))
-                    || !isLanHost(host)) {
+                    || !isPrivateHost(host)) {
                 throw new IllegalArgumentException("Use the private HTTPS bridge URL shown by HUMHUM");
             }
             return uri;
@@ -93,34 +100,54 @@ public final class BridgeConfig {
         }
     }
 
-    private static boolean isLanHost(String host) {
+    private static boolean isPrivateHost(String host) {
         String normalized = host.toLowerCase(Locale.ROOT);
         if (normalized.endsWith(".local") && normalized.length() > ".local".length()) {
             return true;
         }
-        String[] parts = normalized.split("\\.", -1);
-        if (parts.length != 4) {
-            return false;
-        }
-        int[] octets = new int[4];
-        try {
-            for (int index = 0; index < parts.length; index++) {
-                if (parts[index].isEmpty() || (parts[index].length() > 1 && parts[index].startsWith("0"))) {
-                    return false;
-                }
-                octets[index] = Integer.parseInt(parts[index]);
-                if (octets[index] < 0 || octets[index] > 255) {
-                    return false;
-                }
-            }
-        } catch (NumberFormatException error) {
+        int[] octets = parseIpv4(normalized);
+        if (octets == null) {
             return false;
         }
         return octets[0] == 10
                 || (octets[0] == 172 && octets[1] >= 16 && octets[1] <= 31)
                 || (octets[0] == 192 && octets[1] == 168)
                 || (octets[0] == 169 && octets[1] == 254)
-                || (octets[0] == 100 && octets[1] >= 64 && octets[1] <= 127);
+                || isTailnetAddress(octets);
+    }
+
+    private static int[] parseIpv4(String normalized) {
+        String[] parts = normalized.split("\\.", -1);
+        if (parts.length != 4) {
+            return null;
+        }
+        int[] octets = new int[4];
+        try {
+            for (int index = 0; index < parts.length; index++) {
+                if (parts[index].isEmpty() || (parts[index].length() > 1 && parts[index].startsWith("0"))) {
+                    return null;
+                }
+                octets[index] = Integer.parseInt(parts[index]);
+                if (octets[index] < 0 || octets[index] > 255) {
+                    return null;
+                }
+            }
+        } catch (NumberFormatException error) {
+            return null;
+        }
+        return octets;
+    }
+
+    private static boolean isTailnetAddress(int[] octets) {
+        if (octets[0] != 100 || octets[1] < 64 || octets[1] > 127) {
+            return false;
+        }
+        if ((octets[1] == 64 && octets[2] == 0 && octets[3] == 0)
+                || (octets[1] == 127 && octets[2] == 255 && octets[3] == 255)) {
+            return false;
+        }
+        return !(octets[1] == 100
+                && (octets[2] == 0 || octets[2] == 100));
     }
 
     private static String value(String input) {
@@ -129,6 +156,15 @@ public final class BridgeConfig {
 
     public String baseUrl() {
         return baseUrl;
+    }
+
+    String host() {
+        return host;
+    }
+
+    public boolean isTailnet() {
+        int[] octets = parseIpv4(host);
+        return octets != null && isTailnetAddress(octets);
     }
 
     public String pairingCode() {

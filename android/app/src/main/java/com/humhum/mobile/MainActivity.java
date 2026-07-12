@@ -211,7 +211,10 @@ public final class MainActivity extends Activity {
         protocol = new MobileProtocol(saved.config(), saved.token(), saved.scope());
         connectPanel.setVisibility(View.GONE);
         sessionPanel.setVisibility(View.VISIBLE);
-        scopeText.setText(saved.scope() == Models.Scope.CONTROL ? "已安全连接 · 可控制" : "已安全连接 · 只读");
+        String route = saved.config().isTailnet() ? "Tailnet · " : "";
+        scopeText.setText(saved.scope() == Models.Scope.CONTROL
+                ? "已安全连接 · " + route + "可控制"
+                : "已安全连接 · " + route + "只读");
         statusText.setText("正在同步");
         syncMonitorState();
         refreshSessions(true);

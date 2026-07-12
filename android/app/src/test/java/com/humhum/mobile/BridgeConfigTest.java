@@ -1,7 +1,9 @@
 package com.humhum.mobile;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
+import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
 
@@ -31,6 +33,43 @@ public class BridgeConfigTest {
 
         assertEquals("https://humhum.local:31276", config.baseUrl());
         assertEquals("Xiaomi Android", config.deviceName());
+    }
+
+    @Test
+    public void identifiesBoundedTailnetRoutes() {
+        BridgeConfig first = BridgeConfig.parse(
+                "https://100.64.0.1:31276", "A1B2C3D4", FINGERPRINT, "Phone");
+        BridgeConfig last = BridgeConfig.parse(
+                "https://100.127.255.254:31276", "A1B2C3D4", FINGERPRINT, "Phone");
+        BridgeConfig lan = BridgeConfig.parse(
+                "https://192.168.1.20:31276", "A1B2C3D4", FINGERPRINT, "Phone");
+
+        assertTrue(first.isTailnet());
+        assertTrue(last.isTailnet());
+        assertFalse(lan.isTailnet());
+    }
+
+    @Test
+    public void rejectsTailnetBoundariesAndReservedServiceAddresses() {
+        for (String address : new String[] {
+                "100.64.0.0", "100.127.255.255", "100.100.0.1", "100.100.100.100"
+        }) {
+            assertThrows(IllegalArgumentException.class, () -> BridgeConfig.parse(
+                    "https://" + address + ":31276",
+                    "A1B2C3D4",
+                    FINGERPRINT,
+                    "Phone"));
+        }
+    }
+
+    @Test
+    public void pinnedTlsHostMustMatchTheSelectedPrivateRoute() {
+        BridgeConfig config = BridgeConfig.parse(
+                "https://100.101.2.3:31276", "A1B2C3D4", FINGERPRINT, "Phone");
+
+        assertTrue(PinnedTlsClient.hostMatchesConfig("100.101.2.3", config));
+        assertFalse(PinnedTlsClient.hostMatchesConfig("192.168.1.20", config));
+        assertFalse(PinnedTlsClient.hostMatchesConfig("example.com", config));
     }
 
     @Test

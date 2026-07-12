@@ -87,6 +87,7 @@ public final class PinnedTlsClient {
             HttpsURLConnection connection = (HttpsURLConnection)
                     new URL(config.baseUrl() + path).openConnection();
             connection.setSSLSocketFactory(context.getSocketFactory());
+            connection.setHostnameVerifier((hostname, session) -> hostMatchesConfig(hostname, config));
             connection.setRequestMethod(method);
             connection.setConnectTimeout(TIMEOUT_MILLIS);
             connection.setReadTimeout(readTimeoutMillis);
@@ -99,5 +100,11 @@ public final class PinnedTlsClient {
         } catch (GeneralSecurityException error) {
             throw new IOException("Could not initialize pinned TLS", error);
         }
+    }
+
+    static boolean hostMatchesConfig(String hostname, BridgeConfig config) {
+        return hostname != null
+                && config != null
+                && hostname.trim().equalsIgnoreCase(config.host());
     }
 }
