@@ -145,6 +145,36 @@ public class SessionSnapshotGenerationGateTest {
     }
 
     @Test
+    public void restoredStartedOwnerCanExplicitlyReclaimOwnership() {
+        SessionSnapshotGenerationGate previous = SessionSnapshotGenerationGate.open();
+        SessionSnapshotGenerationGate replacement = SessionSnapshotGenerationGate.open();
+        replacement.close();
+        try {
+            previous.claimLatestOwner();
+            long generation = previous.capture();
+            assertTrue(previous.isLatestOwner());
+            assertTrue(previous.isCurrent(generation));
+        } finally {
+            previous.close();
+        }
+    }
+
+    @Test
+    public void startCanClaimOnlyAfterLatestOwnerCloses() {
+        SessionSnapshotGenerationGate previous = SessionSnapshotGenerationGate.open();
+        SessionSnapshotGenerationGate replacement = SessionSnapshotGenerationGate.open();
+        try {
+            assertFalse(previous.claimLatestOwnerIfVacant());
+            replacement.close();
+            assertTrue(previous.claimLatestOwnerIfVacant());
+            assertTrue(previous.isLatestOwner());
+        } finally {
+            previous.close();
+            replacement.close();
+        }
+    }
+
+    @Test
     public void exclusiveTransitionPreservesClearBeforeCommitOrdering() {
         List<String> events = new ArrayList<>();
         String result = SessionSnapshotGenerationGate.callExclusiveTransition(() -> {

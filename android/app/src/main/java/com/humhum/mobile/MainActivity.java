@@ -31,7 +31,9 @@ public final class MainActivity extends Activity {
     private static final int NOTIFICATION_PERMISSION_REQUEST = 4103;
     private static final StartedOwnerRegistry<MainActivity> STARTED_ACTIVITIES =
             new StartedOwnerRegistry<>();
-    private static final ExecutorService DURABLE_TRANSITIONS = Executors.newSingleThreadExecutor();
+    private static final DurableConnectionTransitionCoordinator TRANSITIONS =
+            new DurableConnectionTransitionCoordinator(
+                    MainActivity::notifyStartedActivityOfTransitionCompletion);
     private final ExecutorService network = Executors.newSingleThreadExecutor();
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Runnable poll = new Runnable() {
@@ -105,7 +107,15 @@ public final class MainActivity extends Activity {
     protected void onStart() {
         super.onStart();
         STARTED_ACTIVITIES.start(this);
-        reconcileDurableConnection(null);
+        boolean ownsProcessState = snapshotGenerationGate.isLatestOwner()
+                || snapshotGenerationGate.claimLatestOwnerIfVacant();
+        if (ownsProcessState) {
+            DurableConnectionTransitionCoordinator.State transitionState = TRANSITIONS.state();
+            adoptTransitionState();
+            if (transitionState == DurableConnectionTransitionCoordinator.State.IDLE) {
+                reconcileDurableConnection(null);
+            }
+        }
         pushPreferences.registerOnSharedPreferenceChangeListener(pushStateListener);
         updatePushStatus();
     }
@@ -125,6 +135,7 @@ public final class MainActivity extends Activity {
     @Override
     protected void onStop() {
         STARTED_ACTIVITIES.stop(this);
+        notifyPreviousStartedActivity();
         pushPreferences.unregisterOnSharedPreferenceChangeListener(pushStateListener);
         main.removeCallbacks(poll);
         super.onStop();
@@ -191,27 +202,23 @@ public final class MainActivity extends Activity {
             connectError.setText(error.getMessage());
             return;
         }
-        setPairing(true);
-        long pairRequestGeneration = snapshotGenerationGate.capture();
-        DURABLE_TRANSITIONS.execute(() -> {
-            try {
-                Models.PairResult result = new MobileProtocol(config, "", Models.Scope.READ).pair();
-                try {
+        boolean started = TRANSITIONS.begin(
+                DurableConnectionTransitionCoordinator.State.PAIRING,
+                () -> {
+                    Models.PairResult result =
+                            new MobileProtocol(config, "", Models.Scope.READ).pair();
                     SessionSnapshotGenerationGate.callExclusiveTransition(() -> {
                         clearSnapshotSafely();
                         connectionStore.save(config, result);
                         return null;
                     });
-                } finally {
-                    notifyStartedActivityOfDurableChange("");
-                }
-            } catch (Exception error) {
-                postIfCurrent(pairRequestGeneration, null, null, () -> {
-                    setPairing(false);
-                    connectError.setText(safeError(error));
+                    return "";
                 });
-            }
-        });
+        if (!started) {
+            adoptTransitionState();
+            return;
+        }
+        setPairing(true);
     }
 
     private void pasteSetup() {
@@ -281,27 +288,28 @@ public final class MainActivity extends Activity {
     private void disconnect() {
         MobileProtocol current = protocol;
         if (current == null || connection == null) return;
+        boolean started = TRANSITIONS.begin(
+                DurableConnectionTransitionCoordinator.State.DISCONNECTING,
+                () -> {
+                    String warning = "";
+                    try {
+                        current.disconnect();
+                    } catch (Exception error) {
+                        warning = "本机连接已清除；Mac 未确认撤销，请在 Hexa 中撤销旧设备。";
+                    }
+                    SessionSnapshotGenerationGate.runExclusiveTransition(() -> {
+                        clearSnapshotSafely();
+                        connectionStore.clear();
+                    });
+                    return warning;
+                });
+        if (!started) {
+            adoptTransitionState();
+            return;
+        }
         disableMonitor();
         PushRegistration.cancel(this);
-        disconnectButton.setEnabled(false);
-        statusText.setText("正在安全断开");
-        DURABLE_TRANSITIONS.execute(() -> {
-            String warning = "";
-            try {
-                current.disconnect();
-            } catch (Exception error) {
-                warning = "本机连接已清除；Mac 未确认撤销，请在 Hexa 中撤销旧设备。";
-            }
-            String finalWarning = warning;
-            try {
-                SessionSnapshotGenerationGate.runExclusiveTransition(() -> {
-                    clearSnapshotSafely();
-                    connectionStore.clear();
-                });
-            } finally {
-                notifyStartedActivityOfDurableChange(finalWarning);
-            }
-        });
+        setDisconnecting(true);
     }
 
     private void onMonitorChanged(boolean checked) {
@@ -462,17 +470,53 @@ public final class MainActivity extends Activity {
         main.post(() -> {
             if (!snapshotGenerationGate.isLatestOwner()) return;
             if (!snapshotGenerationGate.isCurrent(generation)) return;
+            if (TRANSITIONS.state() != DurableConnectionTransitionCoordinator.State.IDLE) return;
             if (!isCurrentConnection(expectedProtocol, expectedConnection)) return;
             action.run();
         });
     }
 
-    private static void notifyStartedActivityOfDurableChange(String notice) {
+    private static void notifyPreviousStartedActivity() {
+        STARTED_ACTIVITIES.dispatch(activity -> activity.main.post(() -> {
+            if (!STARTED_ACTIVITIES.isCurrent(activity)) return;
+            activity.reclaimStartedOwnershipAndReconcile();
+        }));
+    }
+
+    private void reclaimStartedOwnershipAndReconcile() {
+        if (!STARTED_ACTIVITIES.isCurrent(this)) return;
+        snapshotGenerationGate.claimLatestOwner();
+        DurableConnectionTransitionCoordinator.State state = TRANSITIONS.state();
+        adoptTransitionState();
+        if (state == DurableConnectionTransitionCoordinator.State.IDLE) {
+            reconcileDurableConnection(null);
+        }
+    }
+
+    private static void notifyStartedActivityOfTransitionCompletion(
+            DurableConnectionTransitionCoordinator.Completion completion) {
         STARTED_ACTIVITIES.dispatch(activity -> activity.main.post(() -> {
             if (!STARTED_ACTIVITIES.isCurrent(activity)) return;
             if (!activity.snapshotGenerationGate.isLatestOwner()) return;
-            activity.reconcileDurableConnection(notice);
+            activity.handleTransitionCompletion(completion);
         }));
+    }
+
+    private void handleTransitionCompletion(
+            DurableConnectionTransitionCoordinator.Completion completion) {
+        adoptTransitionState();
+        if (completion.failure() == null) {
+            reconcileDurableConnection(completion.notice());
+            return;
+        }
+        reconcileDurableConnection(null);
+        if (completion.state() == DurableConnectionTransitionCoordinator.State.PAIRING) {
+            setPairing(false);
+            connectError.setText(safeError(completion.failure()));
+        } else {
+            setDisconnecting(false);
+            statusText.setText(safeError(completion.failure()));
+        }
     }
 
     private void reconcileDurableConnection(String notice) {
@@ -482,6 +526,7 @@ public final class MainActivity extends Activity {
         ConnectionStore.Connection saved = connectionStore.load();
         if (saved == null) {
             if (connection == null && notice == null) return;
+            PushRegistration.cancel(this);
             disconnectButton.setEnabled(true);
             codeInput.setText("");
             refreshInFlight = false;
@@ -503,6 +548,27 @@ public final class MainActivity extends Activity {
             refreshButton.setEnabled(true);
             refreshSessions(true);
         }
+    }
+
+    private void adoptTransitionState() {
+        DurableConnectionTransitionCoordinator.State state = TRANSITIONS.state();
+        if (state == DurableConnectionTransitionCoordinator.State.PAIRING) {
+            setPairing(true);
+            return;
+        }
+        if (state == DurableConnectionTransitionCoordinator.State.DISCONNECTING) {
+            setDisconnecting(true);
+            return;
+        }
+        connectButton.setEnabled(true);
+        connectButton.setText("安全配对");
+        setDisconnecting(false);
+    }
+
+    private void setDisconnecting(boolean disconnecting) {
+        disconnectButton.setEnabled(!disconnecting);
+        refreshButton.setEnabled(!disconnecting);
+        if (disconnecting) statusText.setText("正在安全断开");
     }
 
     private void ensureCurrentSnapshotGeneration() {
@@ -764,7 +830,7 @@ public final class MainActivity extends Activity {
         return getColor(resource);
     }
 
-    private static String safeError(Exception error) {
+    private static String safeError(Throwable error) {
         String message = error.getMessage();
         if (message == null || message.isBlank()) return "操作失败，请检查 Mac 是否在线";
         return message.length() <= 120 ? message : message.substring(0, 120);

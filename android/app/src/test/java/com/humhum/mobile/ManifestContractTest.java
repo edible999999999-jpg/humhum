@@ -147,16 +147,21 @@ public class ManifestContractTest {
         assertTrue(source.contains(
                 "StartedOwnerRegistry<MainActivity> STARTED_ACTIVITIES"));
         assertTrue(source.contains(
-                "ExecutorService DURABLE_TRANSITIONS = Executors.newSingleThreadExecutor()"));
+                "DurableConnectionTransitionCoordinator TRANSITIONS"));
+        assertFalse(source.contains("DURABLE_TRANSITIONS"));
 
         String start = methodSource(source, "protected void onStart()", "protected void onResume()");
         assertOrdered(
                 start,
                 "STARTED_ACTIVITIES.start(this);",
-                "reconcileDurableConnection(null);");
+                "adoptTransitionState();");
+        assertTrue(start.contains("TRANSITIONS.state()"));
 
         String stop = methodSource(source, "protected void onStop()", "protected void onDestroy()");
-        assertTrue(stop.contains("STARTED_ACTIVITIES.stop(this);"));
+        assertOrdered(
+                stop,
+                "STARTED_ACTIVITIES.stop(this);",
+                "notifyPreviousStartedActivity();");
 
         String destruction = methodSource(
                 source, "protected void onDestroy()", "private void bindViews()");
@@ -165,22 +170,24 @@ public class ManifestContractTest {
         String pairing = methodSource(source, "private void pair()", "private void pasteSetup()");
         assertOrdered(
                 pairing,
-                "DURABLE_TRANSITIONS.execute(",
+                "TRANSITIONS.begin(",
+                "DurableConnectionTransitionCoordinator.State.PAIRING",
                 "SessionSnapshotGenerationGate.callExclusiveTransition(",
                 "clearSnapshotSafely();",
                 "connectionStore.save(config, result);",
-                "notifyStartedActivityOfDurableChange(\"\");");
+                "setPairing(true);");
         assertFalse(pairing.contains("callIfCurrent"));
 
         String disconnect = methodSource(
                 source, "private void disconnect()", "private void onMonitorChanged(boolean checked)");
         assertOrdered(
                 disconnect,
-                "DURABLE_TRANSITIONS.execute(",
+                "TRANSITIONS.begin(",
+                "DurableConnectionTransitionCoordinator.State.DISCONNECTING",
                 "SessionSnapshotGenerationGate.runExclusiveTransition(",
                 "clearSnapshotSafely();",
                 "connectionStore.clear();",
-                "notifyStartedActivityOfDurableChange(finalWarning);");
+                "disableMonitor();");
         assertFalse(disconnect.contains("callIfCurrent"));
         assertFalse(disconnect.contains("snapshotGenerationGate.renew"));
 
@@ -210,15 +217,45 @@ public class ManifestContractTest {
         assertTrue(callback.contains("snapshotGenerationGate.isLatestOwner()"));
         assertTrue(callback.contains("snapshotGenerationGate.isCurrent(generation)"));
         assertTrue(callback.contains(
+                "TRANSITIONS.state() != DurableConnectionTransitionCoordinator.State.IDLE"));
+        assertTrue(callback.contains(
                 "isCurrentConnection(expectedProtocol, expectedConnection)"));
         assertFalse(callback.contains("runIfCurrent"));
 
         String notification = methodSource(
                 source,
-                "private static void notifyStartedActivityOfDurableChange(",
-                "private void reconcileDurableConnection(");
+                "private static void notifyStartedActivityOfTransitionCompletion(",
+                "private void handleTransitionCompletion(");
         assertTrue(notification.contains("STARTED_ACTIVITIES.dispatch("));
         assertTrue(notification.contains("STARTED_ACTIVITIES.isCurrent(activity)"));
+
+        String fallback = methodSource(
+                source,
+                "private static void notifyPreviousStartedActivity()",
+                "private void reclaimStartedOwnershipAndReconcile()");
+        assertTrue(fallback.contains("STARTED_ACTIVITIES.dispatch("));
+        assertTrue(fallback.contains("STARTED_ACTIVITIES.isCurrent(activity)"));
+
+        String reclaim = methodSource(
+                source,
+                "private void reclaimStartedOwnershipAndReconcile()",
+                "private void handleTransitionCompletion(");
+        assertTrue(reclaim.contains("snapshotGenerationGate.claimLatestOwner();"));
+        assertTrue(reclaim.contains("adoptTransitionState();"));
+
+        String completion = methodSource(
+                source,
+                "private void handleTransitionCompletion(",
+                "private void reconcileDurableConnection(");
+        assertTrue(completion.contains("completion.failure()"));
+        assertTrue(completion.contains("reconcileDurableConnection(completion.notice())"));
+
+        String adoption = methodSource(
+                source, "private void adoptTransitionState()", "private void setDisconnecting(");
+        assertTrue(adoption.contains("State.PAIRING"));
+        assertTrue(adoption.contains("State.DISCONNECTING"));
+        assertTrue(adoption.contains("setPairing(true)"));
+        assertTrue(adoption.contains("setDisconnecting(true)"));
 
         String reconciliation = methodSource(
                 source, "private void reconcileDurableConnection(",
@@ -227,6 +264,7 @@ public class ManifestContractTest {
                 reconciliation,
                 "ensureCurrentSnapshotGeneration();",
                 "connectionStore.load()",
+                "PushRegistration.cancel(this)",
                 "showConnect()");
         assertTrue(reconciliation.contains("activate(saved)"));
     }

@@ -59,6 +59,22 @@ final class SessionSnapshotGenerationGate implements AutoCloseable {
         }
     }
 
+    void claimLatestOwner() {
+        synchronized (PROCESS_LOCK) {
+            requireOpen();
+            claimLatestOwnerLocked();
+        }
+    }
+
+    boolean claimLatestOwnerIfVacant() {
+        synchronized (PROCESS_LOCK) {
+            requireOpen();
+            if (latestOwnerId != 0L && latestOwnerId != ownerId) return false;
+            claimLatestOwnerLocked();
+            return true;
+        }
+    }
+
     boolean runIfCurrent(long generation, Runnable operation) {
         Objects.requireNonNull(operation, "operation");
         synchronized (PROCESS_LOCK) {
@@ -103,6 +119,7 @@ final class SessionSnapshotGenerationGate implements AutoCloseable {
             if (activeGeneration == ownedGeneration) {
                 activeGeneration = nextGeneration();
             }
+            if (latestOwnerId == ownerId) latestOwnerId = 0L;
             ownedGeneration = 0L;
         }
     }
@@ -115,6 +132,12 @@ final class SessionSnapshotGenerationGate implements AutoCloseable {
 
     private void requireOpen() {
         if (ownedGeneration == 0L) throw new IllegalStateException("Generation owner is closed");
+    }
+
+    private void claimLatestOwnerLocked() {
+        latestOwnerId = ownerId;
+        ownedGeneration = nextGeneration();
+        activeGeneration = ownedGeneration;
     }
 
     private static long nextGeneration() {

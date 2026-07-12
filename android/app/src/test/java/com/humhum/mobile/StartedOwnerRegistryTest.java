@@ -53,4 +53,21 @@ public class StartedOwnerRegistryTest {
         assertTrue(notified.isEmpty());
         assertFalse(registry.isCurrent(owner));
     }
+
+    @Test
+    public void stoppingReplacementRestoresPreviousStartedOwner() {
+        StartedOwnerRegistry<Object> registry = new StartedOwnerRegistry<>();
+        Object previous = new Object();
+        Object replacement = new Object();
+        List<Object> notified = new ArrayList<>();
+
+        registry.start(previous);
+        registry.start(replacement);
+        registry.stop(replacement);
+        registry.dispatch(notified::add);
+
+        assertEquals(List.of(previous), notified);
+        assertTrue(registry.isCurrent(previous));
+        assertFalse(registry.isCurrent(replacement));
+    }
 }
