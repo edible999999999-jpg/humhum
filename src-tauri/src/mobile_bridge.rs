@@ -29,6 +29,8 @@ type HttpBody = Full<Bytes>;
 pub struct MobileBridgeStatus {
     pub enabled: bool,
     pub url: Option<String>,
+    pub lan_url: Option<String>,
+    pub tailnet_url: Option<String>,
     pub certificate_fingerprint: Option<String>,
     pub paired_devices: usize,
     pub devices: Vec<MobileDeviceSummary>,
@@ -41,6 +43,7 @@ pub struct MobilePairingInfo {
     pub url: String,
     pub certificate_fingerprint: String,
     pub scope: MobileDeviceScope,
+    pub network: MobileNetwork,
     pub android_setup: String,
 }
 
@@ -49,6 +52,14 @@ pub struct MobilePairingInfo {
 pub enum MobileDeviceScope {
     Read,
     Control,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MobileNetwork {
+    #[default]
+    Lan,
+    Tailnet,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -72,6 +83,7 @@ fn default_mobile_scope() -> MobileDeviceScope {
 struct MobileRuntime {
     enabled: bool,
     url: Option<String>,
+    tailnet_url: Option<String>,
     certificate_fingerprint: Option<String>,
     pairing: Option<PairingChallenge>,
     shutdown: Option<oneshot::Sender<()>>,
@@ -93,6 +105,7 @@ impl MobileBridgeState {
             runtime: Mutex::new(MobileRuntime {
                 enabled: false,
                 url: None,
+                tailnet_url: None,
                 certificate_fingerprint: None,
                 pairing: None,
                 shutdown: None,
@@ -113,6 +126,8 @@ impl MobileBridgeState {
         MobileBridgeStatus {
             enabled: runtime.enabled,
             url: runtime.url.clone(),
+            lan_url: runtime.url.clone(),
+            tailnet_url: runtime.tailnet_url.clone(),
             certificate_fingerprint: runtime.certificate_fingerprint.clone(),
             paired_devices: devices.len(),
             devices,
@@ -128,7 +143,8 @@ impl MobileBridgeState {
         }
 
         let local_ip = local_lan_ip()?;
-        let cert = ensure_certificate(&self.humhum_dir, local_ip)?;
+        let tailnet_ip = crate::tailnet::discover_tailnet_ipv4().await;
+        let cert = ensure_certificate(&self.humhum_dir)?;
         let tls_config = load_tls_config(&cert.cert_path, &cert.key_path)?;
         let listener = TcpListener::bind(SocketAddr::new(
             IpAddr::V4(Ipv4Addr::UNSPECIFIED),
@@ -137,11 +153,13 @@ impl MobileBridgeState {
         .await
         .map_err(|error| format!("Could not open mobile HTTPS port: {error}"))?;
         let url = format!("https://{local_ip}:{DEFAULT_MOBILE_PORT}");
+        let tailnet_url = tailnet_ip.map(|ip| format!("https://{ip}:{DEFAULT_MOBILE_PORT}"));
         let (shutdown_tx, mut shutdown_rx) = oneshot::channel();
         {
             let mut runtime = self.runtime.lock().map_err(|error| error.to_string())?;
             runtime.enabled = true;
             runtime.url = Some(url);
+            runtime.tailnet_url = tailnet_url;
             runtime.certificate_fingerprint = Some(cert.fingerprint);
             runtime.shutdown = Some(shutdown_tx);
         }
@@ -181,12 +199,21 @@ impl MobileBridgeState {
         runtime.enabled = false;
         runtime.pairing = None;
         runtime.url = None;
+        runtime.tailnet_url = None;
         runtime.certificate_fingerprint = None;
         drop(runtime);
         Ok(self.status())
     }
 
     pub fn create_pairing(&self, scope: MobileDeviceScope) -> Result<MobilePairingInfo, String> {
+        self.create_pairing_on(scope, MobileNetwork::Lan)
+    }
+
+    pub fn create_pairing_on(
+        &self,
+        scope: MobileDeviceScope,
+        network: MobileNetwork,
+    ) -> Result<MobilePairingInfo, String> {
         let mut runtime = self.runtime.lock().map_err(|error| error.to_string())?;
         if !runtime.enabled {
             return Err("Enable mobile access before pairing a device".into());
@@ -194,7 +221,8 @@ impl MobileBridgeState {
         let now = chrono::Utc::now().timestamp();
         let code = uuid::Uuid::new_v4().simple().to_string()[..8].to_ascii_uppercase();
         let challenge = PairingChallenge::new(&code, now, scope);
-        let url = runtime.url.clone().ok_or("Mobile URL is unavailable")?;
+        let lan_url = runtime.url.as_deref().ok_or("Mobile URL is unavailable")?;
+        let url = select_mobile_url(lan_url, runtime.tailnet_url.as_deref(), network)?.to_string();
         let fingerprint = runtime
             .certificate_fingerprint
             .clone()
@@ -206,6 +234,7 @@ impl MobileBridgeState {
             url,
             certificate_fingerprint: fingerprint,
             scope,
+            network,
             android_setup,
         };
         runtime.pairing = Some(challenge);
@@ -226,6 +255,17 @@ impl MobileBridgeState {
             .map_err(|error| error.to_string())?
             .revoke_device(device_id)?;
         Ok(self.status())
+    }
+}
+
+fn select_mobile_url<'a>(
+    lan_url: &'a str,
+    tailnet_url: Option<&'a str>,
+    network: MobileNetwork,
+) -> Result<&'a str, String> {
+    match network {
+        MobileNetwork::Lan => Ok(lan_url),
+        MobileNetwork::Tailnet => tailnet_url.ok_or_else(|| "Tailnet access is unavailable".into()),
     }
 }
 
@@ -256,24 +296,19 @@ struct MobileCertificate {
     fingerprint: String,
 }
 
-fn ensure_certificate(humhum_dir: &Path, local_ip: Ipv4Addr) -> Result<MobileCertificate, String> {
+fn ensure_certificate(humhum_dir: &Path) -> Result<MobileCertificate, String> {
     let cert_path = humhum_dir.join("mobile-cert.pem");
     let key_path = humhum_dir.join("mobile-key.pem");
-    let certificate_matches_ip = cert_path.exists()
-        && std::process::Command::new("/usr/bin/openssl")
-            .args(["x509", "-in"])
-            .arg(&cert_path)
-            .args(["-noout", "-text"])
-            .output()
-            .ok()
-            .filter(|output| output.status.success())
-            .is_some_and(|output| {
-                String::from_utf8_lossy(&output.stdout).contains(&format!("IP Address:{local_ip}"))
-            });
-    if !key_path.exists() || !certificate_matches_ip {
+    match (cert_path.exists(), key_path.exists()) {
+        (true, false) | (false, true) => {
+            return Err("Mobile TLS identity is incomplete; restore both certificate files".into())
+        }
+        _ => {}
+    }
+    if !cert_path.exists() {
         let output = std::process::Command::new("/usr/bin/openssl")
             .args([
-                "req", "-x509", "-newkey", "rsa:2048", "-sha256", "-days", "365", "-nodes",
+                "req", "-x509", "-newkey", "rsa:2048", "-sha256", "-days", "3650", "-nodes",
                 "-keyout",
             ])
             .arg(&key_path)
@@ -283,7 +318,7 @@ fn ensure_certificate(humhum_dir: &Path, local_ip: Ipv4Addr) -> Result<MobileCer
                 "-subj",
                 "/CN=HumHum Mobile",
                 "-addext",
-                &format!("subjectAltName=IP:{local_ip},DNS:humhum.local"),
+                "subjectAltName=DNS:humhum.local",
             ])
             .output()
             .map_err(|error| format!("Could not start OpenSSL: {error}"))?;
@@ -1335,6 +1370,26 @@ mod tests {
     }
 
     #[test]
+    fn pairing_transport_defaults_to_lan_and_requires_available_tailnet() {
+        let lan = "https://192.168.1.20:31276";
+        let tailnet = "https://100.101.2.3:31276";
+
+        assert_eq!(
+            select_mobile_url(lan, Some(tailnet), MobileNetwork::Lan).unwrap(),
+            lan
+        );
+        assert_eq!(
+            select_mobile_url(lan, Some(tailnet), MobileNetwork::Tailnet).unwrap(),
+            tailnet
+        );
+        assert_eq!(
+            select_mobile_url(lan, None, MobileNetwork::Tailnet).unwrap_err(),
+            "Tailnet access is unavailable"
+        );
+        assert_eq!(MobileNetwork::default(), MobileNetwork::Lan);
+    }
+
+    #[test]
     fn device_store_persists_only_token_digest() {
         let temp = tempfile::tempdir().unwrap();
         let mut store = MobileDeviceStore::load_or_create(temp.path()).unwrap();
@@ -1428,14 +1483,17 @@ mod tests {
     }
 
     #[test]
-    fn certificate_is_reused_while_the_lan_address_is_unchanged() {
+    fn certificate_identity_is_reused_across_private_address_changes() {
         let temp = tempfile::tempdir().unwrap();
-        let ip = Ipv4Addr::new(192, 168, 1, 25);
 
-        let first = ensure_certificate(temp.path(), ip).unwrap();
-        let second = ensure_certificate(temp.path(), ip).unwrap();
+        let first = ensure_certificate(temp.path()).unwrap();
+        let cert_before = std::fs::read(&first.cert_path).unwrap();
+        let key_before = std::fs::read(&first.key_path).unwrap();
+        let second = ensure_certificate(temp.path()).unwrap();
 
         assert_eq!(first.fingerprint, second.fingerprint);
+        assert_eq!(cert_before, std::fs::read(&second.cert_path).unwrap());
+        assert_eq!(key_before, std::fs::read(&second.key_path).unwrap());
     }
 
     #[test]

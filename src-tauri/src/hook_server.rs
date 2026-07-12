@@ -258,7 +258,10 @@ async fn handle_mobile_pairing(
     app_handle: tauri::AppHandle,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     let state = app_handle.state::<Arc<MobileBridgeState>>();
-    match state.create_pairing(mobile_pairing_scope(req.uri().query())) {
+    match state.create_pairing_on(
+        mobile_pairing_scope(req.uri().query()),
+        mobile_pairing_network(req.uri().query()),
+    ) {
         Ok(pairing) => Ok(json_response(
             StatusCode::OK,
             &serde_json::to_value(pairing).unwrap_or_default(),
@@ -279,6 +282,18 @@ fn mobile_pairing_scope(query: Option<&str>) -> crate::mobile_bridge::MobileDevi
         crate::mobile_bridge::MobileDeviceScope::Control
     } else {
         crate::mobile_bridge::MobileDeviceScope::Read
+    }
+}
+
+fn mobile_pairing_network(query: Option<&str>) -> crate::mobile_bridge::MobileNetwork {
+    let tailnet = query.unwrap_or_default().split('&').any(|pair| {
+        pair.split_once('=')
+            .is_some_and(|(key, value)| key == "network" && value == "tailnet")
+    });
+    if tailnet {
+        crate::mobile_bridge::MobileNetwork::Tailnet
+    } else {
+        crate::mobile_bridge::MobileNetwork::Lan
     }
 }
 
@@ -942,6 +957,22 @@ mod mobile_pairing_scope_tests {
         assert_eq!(
             mobile_pairing_scope(None),
             crate::mobile_bridge::MobileDeviceScope::Read
+        );
+    }
+
+    #[test]
+    fn tailnet_pairing_requires_an_explicit_query_value() {
+        assert_eq!(
+            mobile_pairing_network(Some("scope=control&network=tailnet")),
+            crate::mobile_bridge::MobileNetwork::Tailnet
+        );
+        assert_eq!(
+            mobile_pairing_network(Some("scope=control&network=lan")),
+            crate::mobile_bridge::MobileNetwork::Lan
+        );
+        assert_eq!(
+            mobile_pairing_network(None),
+            crate::mobile_bridge::MobileNetwork::Lan
         );
     }
 }

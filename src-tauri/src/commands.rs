@@ -13,7 +13,7 @@ use crate::hush_store::{HushInboxSummary, HushStore};
 use crate::intervention_queue::{InterventionProvider, InterventionQueue, QueuedIntervention};
 use crate::knowledge_store::{AgentAsset, AgentAssetRootDiagnostic, KnowledgeStore, Preference};
 use crate::mobile_bridge::{
-    MobileBridgeState, MobileBridgeStatus, MobileDeviceScope, MobilePairingInfo,
+    MobileBridgeState, MobileBridgeStatus, MobileDeviceScope, MobileNetwork, MobilePairingInfo,
 };
 use crate::pi_sidecar::{self, PiSessionStatus, PiSidecarState, PiStartOptions};
 use crate::remote_bridge::{RemoteBridgeState, RemoteBridgeStatus};
@@ -247,8 +247,9 @@ pub async fn disable_mobile_bridge(
 pub async fn start_mobile_pairing(
     state: State<'_, Arc<MobileBridgeState>>,
     scope: MobileDeviceScope,
+    network: Option<MobileNetwork>,
 ) -> Result<MobilePairingInfo, String> {
-    state.create_pairing(scope)
+    state.create_pairing_on(scope, network.unwrap_or_default())
 }
 
 #[tauri::command]
