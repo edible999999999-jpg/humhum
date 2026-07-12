@@ -141,9 +141,11 @@ public class WakeRelayClientTest {
     @Test
     public void cancelIsForwardedToTheActiveTransport() {
         final boolean[] cancelled = {false};
+        final int[] executions = {0};
         WakeRelayClient.Transport transport = new WakeRelayClient.Transport() {
             @Override public WakeRelayClient.TransportResponse execute(
                     WakeRelayClient.RequestSpec request) throws IOException {
+                executions[0]++;
                 return new WakeRelayClient.TransportResponse(500, new byte[0]);
             }
 
@@ -156,6 +158,9 @@ public class WakeRelayClientTest {
         client.cancel();
 
         assertTrue(cancelled[0]);
+        assertThrows(IOException.class,
+                () -> client.poll(vectorRelay(), 6, 1_783_836_001));
+        assertEquals(0, executions[0]);
     }
 
     private static Models.WakeRelayConfig relay() {

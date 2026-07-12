@@ -68,7 +68,7 @@ public class ManifestContractTest {
             assertEquals("false", domain.getAttribute("includeSubdomains"));
             values.add(domain.getTextContent().trim());
         }
-        assertEquals(Set.of("localhost", "127.0.0.1", "::1"), values);
+        assertEquals(Set.of("localhost", "127.0.0.1", "[::1]"), values);
     }
 
     private static Element component(Document document, String tag, String name) {

@@ -136,6 +136,7 @@ public final class AgentMonitorService extends Service {
                 default -> schedulePoll(RETRY_SECONDS[0]);
             }
         } catch (MobileProtocol.HttpStatusException error) {
+            if (destroyed) return;
             if (error.status() == 401 || error.status() == 403) {
                 monitorStore.clear();
                 stopSelf();
@@ -143,6 +144,7 @@ public final class AgentMonitorService extends Service {
                 retryAfterPrivateFailure(connection);
             }
         } catch (Exception error) {
+            if (destroyed) return;
             retryAfterPrivateFailure(connection);
         }
     }
@@ -182,6 +184,7 @@ public final class AgentMonitorService extends Service {
                 scheduleRelay(accepted);
             }
         } catch (WakeRelayClient.RelayStatusException error) {
+            if (destroyed) return;
             if (WakeRelayClient.isPermanentlyUnavailable(error.status())) {
                 relaySupported = false;
                 failures = 0;
@@ -191,15 +194,18 @@ public final class AgentMonitorService extends Service {
                 retryAfterRelayFailure();
             }
         } catch (java.security.GeneralSecurityException | org.json.JSONException error) {
+            if (destroyed) return;
             relaySupported = false;
             failures = 0;
             scheduleDirectFallback();
         } catch (Exception error) {
+            if (destroyed) return;
             retryAfterRelayFailure();
         }
     }
 
     private void scheduleDirectFallback() {
+        if (destroyed) return;
         if (realtimeSupported && lastCursor.matches("[a-f0-9]{64}")) {
             scheduleWatch(lastCursor);
         } else {
@@ -226,6 +232,7 @@ public final class AgentMonitorService extends Service {
                 scheduleWatch(signal.cursor());
             }
         } catch (MobileProtocol.HttpStatusException error) {
+            if (destroyed) return;
             if (error.status() == 401 || error.status() == 403) {
                 monitorStore.clear();
                 stopSelf();
@@ -238,6 +245,7 @@ public final class AgentMonitorService extends Service {
                 retryAfterPrivateFailure(connection);
             }
         } catch (Exception error) {
+            if (destroyed) return;
             retryAfterPrivateFailure(connection);
         }
     }
@@ -257,6 +265,7 @@ public final class AgentMonitorService extends Service {
     }
 
     private void retryAfterPrivateFailure(ConnectionStore.Connection connection) {
+        if (destroyed) return;
         long delay = nextRetryDelay();
         if (MonitorRoute.afterPrivateFailure(
                 relaySupported && connection.wakeRelay() != null) == MonitorRoute.Next.RELAY) {
@@ -268,6 +277,7 @@ public final class AgentMonitorService extends Service {
     }
 
     private void retryAfterRelayFailure() {
+        if (destroyed) return;
         schedulePoll(nextRetryDelay());
     }
 

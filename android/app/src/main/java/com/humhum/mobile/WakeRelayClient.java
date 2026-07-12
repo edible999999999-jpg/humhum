@@ -12,6 +12,7 @@ import java.security.GeneralSecurityException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -22,6 +23,7 @@ public final class WakeRelayClient {
     private static final int MAX_MESSAGES = 128;
     private static final int MAX_RESPONSE_BYTES = 1_048_576;
     private final Transport transport;
+    private final AtomicBoolean cancelled = new AtomicBoolean();
 
     public WakeRelayClient() {
         this(new UrlConnectionTransport());
@@ -162,7 +164,9 @@ public final class WakeRelayClient {
 
     public long poll(Models.WakeRelayConfig config, long expectedAfter, long nowSeconds)
             throws IOException, GeneralSecurityException, JSONException {
+        if (cancelled.get()) throw new IOException("Relay polling was cancelled");
         TransportResponse response = transport.execute(pollRequest(config, expectedAfter));
+        if (cancelled.get()) throw new IOException("Relay polling was cancelled");
         if (response.status() != HttpURLConnection.HTTP_OK) {
             throw new RelayStatusException(response.status());
         }
@@ -176,6 +180,7 @@ public final class WakeRelayClient {
     }
 
     public void cancel() {
+        cancelled.set(true);
         transport.cancel();
     }
 
@@ -211,11 +216,18 @@ public final class WakeRelayClient {
 
     private static final class UrlConnectionTransport implements Transport {
         private final AtomicReference<HttpURLConnection> active = new AtomicReference<>();
+        private final AtomicBoolean cancelled = new AtomicBoolean();
 
         @Override
         public TransportResponse execute(RequestSpec request) throws IOException {
+            if (cancelled.get()) throw new IOException("Relay polling was cancelled");
             HttpURLConnection connection = (HttpURLConnection) new URL(request.url()).openConnection();
             active.set(connection);
+            if (cancelled.get()) {
+                active.compareAndSet(connection, null);
+                connection.disconnect();
+                throw new IOException("Relay polling was cancelled");
+            }
             connection.setInstanceFollowRedirects(false);
             connection.setRequestMethod(request.method());
             connection.setConnectTimeout(8_000);
@@ -237,6 +249,7 @@ public final class WakeRelayClient {
 
         @Override
         public void cancel() {
+            cancelled.set(true);
             HttpURLConnection connection = active.getAndSet(null);
             if (connection != null) connection.disconnect();
         }
