@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RelayBaseUrl(String);
@@ -60,9 +61,129 @@ pub struct WakeRelayBundle {
     pub wake_key: String,
 }
 
-struct RelayProvision {
-    desktop: RelayDeviceSecret,
-    android: WakeRelayBundle,
+pub(crate) struct RelayProvision {
+    pub desktop: RelayDeviceSecret,
+    pub android: WakeRelayBundle,
+}
+
+pub struct RelayClient {
+    base_url: RelayBaseUrl,
+    client: reqwest::Client,
+}
+
+impl RelayClient {
+    pub fn new(base_url: RelayBaseUrl) -> Result<Self, String> {
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(Duration::from_secs(3))
+            .timeout(Duration::from_secs(5))
+            .user_agent("HUMHUM-Wake-Relay/0.1")
+            .build()
+            .map_err(|_| "Could not configure relay client".to_string())?;
+        Ok(Self { base_url, client })
+    }
+
+    fn endpoint(&self, path: &str) -> Result<reqwest::Url, String> {
+        reqwest::Url::parse(&format!("{}{path}", self.base_url.as_str()))
+            .map_err(|_| "Relay endpoint is invalid".into())
+    }
+
+    fn registration_request(&self) -> Result<reqwest::Request, String> {
+        self.client
+            .post(self.endpoint("/v1/channels")?)
+            .header(reqwest::header::ACCEPT, "application/json")
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body("{}")
+            .build()
+            .map_err(|_| "Could not build relay registration".into())
+    }
+
+    fn deletion_request(&self, secret: &RelayDeviceSecret) -> Result<reqwest::Request, String> {
+        secret.validate()?;
+        if secret.base_url != self.base_url.as_str() {
+            return Err("Relay device secret uses another server".into());
+        }
+        self.client
+            .delete(self.endpoint(&format!("/v1/channels/{}", secret.channel_id))?)
+            .header(
+                reqwest::header::AUTHORIZATION,
+                format!("Bearer {}", secret.publisher_token),
+            )
+            .header(reqwest::header::ACCEPT, "application/json")
+            .build()
+            .map_err(|_| "Could not build relay deletion".into())
+    }
+
+    pub async fn health(&self) -> Result<(), String> {
+        let response = self
+            .client
+            .get(self.endpoint("/health")?)
+            .header(reqwest::header::ACCEPT, "application/json")
+            .send()
+            .await
+            .map_err(|_| "Wake relay is unreachable".to_string())?;
+        if response.status() != reqwest::StatusCode::OK {
+            return Err("Wake relay health check failed".into());
+        }
+        let bytes = bounded_response(response, 256).await?;
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Health {
+            status: String,
+            name: String,
+        }
+        let health: Health = serde_json::from_slice(&bytes)
+            .map_err(|_| "Wake relay returned invalid health data".to_string())?;
+        if health.status != "ok" || health.name != "HUMHUM Wake Relay" {
+            return Err("Wake relay returned invalid health data".into());
+        }
+        Ok(())
+    }
+
+    pub async fn register(&self, device_id: &str) -> Result<RelayProvision, String> {
+        let response = self
+            .client
+            .execute(self.registration_request()?)
+            .await
+            .map_err(|_| "Could not register wake relay channel".to_string())?;
+        if response.status() != reqwest::StatusCode::CREATED {
+            return Err("Wake relay rejected channel registration".into());
+        }
+        let bytes = bounded_response(response, 1024).await?;
+        let mut wake_key = [0_u8; 32];
+        getrandom::fill(&mut wake_key)
+            .map_err(|_| "Could not create wake encryption key".to_string())?;
+        split_registration(device_id, &self.base_url, &bytes, &hex::encode(wake_key))
+    }
+
+    pub async fn delete(&self, secret: &RelayDeviceSecret) -> Result<(), String> {
+        let response = self
+            .client
+            .execute(self.deletion_request(secret)?)
+            .await
+            .map_err(|_| "Could not delete wake relay channel".to_string())?;
+        if response.status() != reqwest::StatusCode::NO_CONTENT {
+            return Err("Wake relay rejected channel deletion".into());
+        }
+        Ok(())
+    }
+}
+
+async fn bounded_response(response: reqwest::Response, limit: usize) -> Result<Vec<u8>, String> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > limit as u64)
+    {
+        return Err("Wake relay response is too large".into());
+    }
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|_| "Could not read wake relay response".to_string())?;
+    if bytes.len() > limit {
+        return Err("Wake relay response is too large".into());
+    }
+    Ok(bytes.to_vec())
 }
 
 #[derive(Deserialize)]
@@ -184,13 +305,34 @@ impl MobileRelaySecretStore {
     }
 
     pub fn remove(&mut self, device_id: &str) -> Result<(), String> {
-        self.devices.remove(device_id);
-        self.persist()
+        let _ = self.take(device_id)?;
+        Ok(())
     }
 
     pub fn clear(&mut self) -> Result<(), String> {
-        self.devices.clear();
-        self.persist()
+        let _ = self.take_all()?;
+        Ok(())
+    }
+
+    pub fn take(&mut self, device_id: &str) -> Result<Option<RelayDeviceSecret>, String> {
+        let removed = self.devices.remove(device_id);
+        if let Err(error) = self.persist() {
+            if let Some(secret) = removed.clone() {
+                self.devices.insert(device_id.to_string(), secret);
+            }
+            return Err(error);
+        }
+        Ok(removed)
+    }
+
+    pub fn take_all(&mut self) -> Result<Vec<RelayDeviceSecret>, String> {
+        let previous = std::mem::take(&mut self.devices);
+        if let Err(error) = self.persist() {
+            self.devices = previous;
+            return Err(error);
+        }
+        let removed = previous.into_values().collect();
+        Ok(removed)
     }
 
     fn persist(&self) -> Result<(), String> {
@@ -357,5 +499,45 @@ mod tests {
             &"44".repeat(32),
         )
         .is_err());
+    }
+
+    #[test]
+    fn relay_client_builds_bounded_registration_and_deletion_requests() {
+        let client =
+            RelayClient::new(RelayBaseUrl::parse("https://relay.example.com:8443").unwrap())
+                .unwrap();
+        let registration = client.registration_request().unwrap();
+        assert_eq!(registration.method(), reqwest::Method::POST);
+        assert_eq!(
+            registration.url().as_str(),
+            "https://relay.example.com:8443/v1/channels"
+        );
+        assert_eq!(registration.body().unwrap().as_bytes().unwrap(), b"{}");
+        assert!(registration
+            .headers()
+            .get(reqwest::header::AUTHORIZATION)
+            .is_none());
+
+        let secret = RelayDeviceSecret {
+            device_id: "device-phone".into(),
+            base_url: "https://relay.example.com:8443".into(),
+            channel_id: "11".repeat(32),
+            wake_key: "22".repeat(32),
+            publisher_token: "33".repeat(32),
+            next_sequence: 1,
+        };
+        let deletion = client.deletion_request(&secret).unwrap();
+        assert_eq!(deletion.method(), reqwest::Method::DELETE);
+        assert_eq!(
+            deletion.url().as_str(),
+            format!(
+                "https://relay.example.com:8443/v1/channels/{}",
+                secret.channel_id
+            )
+        );
+        assert_eq!(
+            deletion.headers()[reqwest::header::AUTHORIZATION],
+            format!("Bearer {}", secret.publisher_token)
+        );
     }
 }

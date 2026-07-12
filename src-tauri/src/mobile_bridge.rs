@@ -35,6 +35,8 @@ pub struct MobileBridgeStatus {
     pub certificate_fingerprint: Option<String>,
     pub paired_devices: usize,
     pub devices: Vec<MobileDeviceSummary>,
+    pub relay_status: String,
+    pub relay_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -143,12 +145,14 @@ struct MobileRuntime {
     certificate_fingerprint: Option<String>,
     pairing: Option<PairingChallenge>,
     shutdown: Option<oneshot::Sender<()>>,
+    relay_base_url: Option<crate::mobile_relay::RelayBaseUrl>,
 }
 
 pub struct MobileBridgeState {
     humhum_dir: PathBuf,
     devices: Arc<Mutex<MobileDeviceStore>>,
     presence: Mutex<MobilePresenceStore>,
+    relay_secrets: Mutex<crate::mobile_relay::MobileRelaySecretStore>,
     event_waiters: Arc<Semaphore>,
     runtime: Mutex<MobileRuntime>,
 }
@@ -159,6 +163,9 @@ impl MobileBridgeState {
             humhum_dir: humhum_dir.to_path_buf(),
             devices: Arc::new(Mutex::new(MobileDeviceStore::load_or_create(humhum_dir)?)),
             presence: Mutex::new(MobilePresenceStore::default()),
+            relay_secrets: Mutex::new(crate::mobile_relay::MobileRelaySecretStore::load_or_create(
+                humhum_dir,
+            )?),
             event_waiters: Arc::new(Semaphore::new(MAX_EVENT_WAITERS)),
             runtime: Mutex::new(MobileRuntime {
                 enabled: false,
@@ -167,6 +174,7 @@ impl MobileBridgeState {
                 certificate_fingerprint: None,
                 pairing: None,
                 shutdown: None,
+                relay_base_url: None,
             }),
         })
     }
@@ -195,6 +203,15 @@ impl MobileBridgeState {
             certificate_fingerprint: runtime.certificate_fingerprint.clone(),
             paired_devices: devices.len(),
             devices,
+            relay_status: if runtime.relay_base_url.is_some() {
+                "connected".into()
+            } else {
+                "disabled".into()
+            },
+            relay_url: runtime
+                .relay_base_url
+                .as_ref()
+                .map(|url| url.as_str().to_string()),
         }
     }
 
@@ -204,6 +221,19 @@ impl MobileBridgeState {
     ) -> Result<MobileBridgeStatus, String> {
         if self.status().enabled {
             return Ok(self.status());
+        }
+
+        let relay_config = app
+            .state::<Arc<std::sync::Mutex<crate::config::AppConfig>>>()
+            .lock()
+            .map_err(|error| error.to_string())?
+            .mobile_relay
+            .clone();
+        let relay_base_url = relay_base_from_config(&relay_config)?;
+        if let Some(base_url) = relay_base_url.clone() {
+            crate::mobile_relay::RelayClient::new(base_url)?
+                .health()
+                .await?;
         }
 
         let local_ip = local_lan_ip()?;
@@ -226,6 +256,7 @@ impl MobileBridgeState {
             runtime.tailnet_url = tailnet_url;
             runtime.certificate_fingerprint = Some(cert.fingerprint);
             runtime.shutdown = Some(shutdown_tx);
+            runtime.relay_base_url = relay_base_url;
         }
 
         let bridge = Arc::clone(self);
@@ -265,6 +296,7 @@ impl MobileBridgeState {
         runtime.url = None;
         runtime.tailnet_url = None;
         runtime.certificate_fingerprint = None;
+        runtime.relay_base_url = None;
         drop(runtime);
         self.presence
             .lock()
@@ -314,6 +346,12 @@ impl MobileBridgeState {
             .lock()
             .map_err(|error| error.to_string())?
             .revoke_all()?;
+        let relay_secrets = self
+            .relay_secrets
+            .lock()
+            .map_err(|error| error.to_string())?
+            .take_all()?;
+        schedule_relay_deletions(relay_secrets);
         self.presence
             .lock()
             .map_err(|error| error.to_string())?
@@ -326,6 +364,12 @@ impl MobileBridgeState {
             .lock()
             .map_err(|error| error.to_string())?
             .revoke_device(device_id)?;
+        let relay_secret = self
+            .relay_secrets
+            .lock()
+            .map_err(|error| error.to_string())?
+            .take(device_id)?;
+        schedule_relay_deletions(relay_secret.into_iter().collect());
         self.presence
             .lock()
             .map_err(|error| error.to_string())?
@@ -342,6 +386,69 @@ fn select_mobile_url<'a>(
     match network {
         MobileNetwork::Lan => Ok(lan_url),
         MobileNetwork::Tailnet => tailnet_url.ok_or_else(|| "Tailnet access is unavailable".into()),
+    }
+}
+
+fn relay_base_from_config(
+    config: &crate::config::MobileRelayConfig,
+) -> Result<Option<crate::mobile_relay::RelayBaseUrl>, String> {
+    if !config.enabled {
+        return Ok(None);
+    }
+    let value = config
+        .base_url
+        .as_deref()
+        .ok_or("Wake relay URL is required")?;
+    crate::mobile_relay::RelayBaseUrl::parse(value).map(Some)
+}
+
+fn pair_success_value(
+    token: &str,
+    scope: MobileDeviceScope,
+    wake_relay: Option<crate::mobile_relay::WakeRelayBundle>,
+) -> serde_json::Value {
+    let mut value = serde_json::json!({ "token": token, "scope": scope });
+    if let (Some(object), Some(bundle)) = (value.as_object_mut(), wake_relay) {
+        object.insert(
+            "wake_relay".into(),
+            serde_json::to_value(bundle).unwrap_or_default(),
+        );
+    }
+    value
+}
+
+fn rollback_paired_device(bridge: &MobileBridgeState, device_id: &str) {
+    let _ = bridge
+        .devices
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .revoke_device(device_id);
+    let _ = bridge
+        .relay_secrets
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .remove(device_id);
+    bridge
+        .presence
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .remove(device_id);
+}
+
+fn schedule_relay_deletions(secrets: Vec<crate::mobile_relay::RelayDeviceSecret>) {
+    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+        return;
+    };
+    for secret in secrets {
+        runtime.spawn(async move {
+            let deleted = crate::mobile_relay::RelayBaseUrl::parse(&secret.base_url)
+                .and_then(crate::mobile_relay::RelayClient::new);
+            if let Ok(client) = deleted {
+                if client.delete(&secret).await.is_err() {
+                    log::warn!("Could not delete a wake relay channel");
+                }
+            }
+        });
     }
 }
 
@@ -684,6 +791,14 @@ fn revoke_mobile_device(
     {
         Ok(()) => {
             if let Some(device_id) = device_id {
+                let relay_secret = bridge
+                    .relay_secrets
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .take(&device_id)
+                    .ok()
+                    .flatten();
+                schedule_relay_deletions(relay_secret.into_iter().collect());
                 bridge
                     .presence
                     .lock()
@@ -799,21 +914,62 @@ async fn pair_device(
         uuid::Uuid::new_v4().simple()
     );
     let name = input.device_name.as_deref().unwrap_or("Mobile browser");
-    if bridge
+    let device = match bridge
         .devices
         .lock()
         .map_err(|error| error.to_string())
         .and_then(|mut devices| devices.add_device(name, &token, challenge_scope))
-        .is_err()
     {
-        return json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Could not save this device",
-        );
-    }
+        Ok(device) => device,
+        Err(_) => {
+            return json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Could not save this device",
+            )
+        }
+    };
+    let relay_base_url = bridge
+        .runtime
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .relay_base_url
+        .clone();
+    let wake_relay = if let Some(base_url) = relay_base_url {
+        let client = match crate::mobile_relay::RelayClient::new(base_url) {
+            Ok(client) => client,
+            Err(_) => {
+                rollback_paired_device(bridge, &device.id);
+                return json_error(StatusCode::BAD_GATEWAY, "Wake relay pairing failed");
+            }
+        };
+        let provision = match client.register(&device.id).await {
+            Ok(provision) => provision,
+            Err(_) => {
+                rollback_paired_device(bridge, &device.id);
+                return json_error(StatusCode::BAD_GATEWAY, "Wake relay pairing failed");
+            }
+        };
+        if bridge
+            .relay_secrets
+            .lock()
+            .map_err(|error| error.to_string())
+            .and_then(|mut secrets| secrets.put(provision.desktop.clone()))
+            .is_err()
+        {
+            let _ = client.delete(&provision.desktop).await;
+            rollback_paired_device(bridge, &device.id);
+            return json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Wake relay pairing failed",
+            );
+        }
+        Some(provision.android)
+    } else {
+        None
+    };
     json_response(
         StatusCode::OK,
-        &serde_json::json!({ "token": token, "scope": challenge_scope }),
+        &pair_success_value(&token, challenge_scope, wake_relay),
     )
 }
 
@@ -1567,6 +1723,152 @@ mod tests {
             "Tailnet access is unavailable"
         );
         assert_eq!(MobileNetwork::default(), MobileNetwork::Lan);
+    }
+
+    #[test]
+    fn relay_pair_response_is_backward_compatible_and_subscriber_only() {
+        let plain = pair_success_value("aa", MobileDeviceScope::Read, None);
+        assert_eq!(plain.as_object().unwrap().len(), 2);
+        assert_eq!(plain["token"], "aa");
+        assert_eq!(plain["scope"], "read");
+
+        let bundle = crate::mobile_relay::WakeRelayBundle {
+            version: 1,
+            base_url: "https://relay.example.com".into(),
+            channel_id: "11".repeat(32),
+            subscriber_token: "22".repeat(32),
+            wake_key: "33".repeat(32),
+        };
+        let relayed = pair_success_value("aa", MobileDeviceScope::Control, Some(bundle));
+        assert_eq!(relayed.as_object().unwrap().len(), 3);
+        assert_eq!(relayed["wake_relay"]["subscriber_token"], "22".repeat(32));
+        let serialized = serde_json::to_string(&relayed).unwrap();
+        assert!(!serialized.contains("publisher_token"));
+    }
+
+    #[test]
+    fn failed_relay_pairing_rolls_back_device_and_secret() {
+        let temp = tempfile::tempdir().unwrap();
+        let bridge = MobileBridgeState::load_or_create(temp.path()).unwrap();
+        let device = bridge
+            .devices
+            .lock()
+            .unwrap()
+            .add_device("Phone", "phone-token", MobileDeviceScope::Control)
+            .unwrap();
+        bridge
+            .relay_secrets
+            .lock()
+            .unwrap()
+            .put(crate::mobile_relay::RelayDeviceSecret {
+                device_id: device.id.clone(),
+                base_url: "https://relay.example.com".into(),
+                channel_id: "11".repeat(32),
+                wake_key: "22".repeat(32),
+                publisher_token: "33".repeat(32),
+                next_sequence: 1,
+            })
+            .unwrap();
+
+        rollback_paired_device(&bridge, &device.id);
+
+        assert!(bridge
+            .devices
+            .lock()
+            .unwrap()
+            .authorize("phone-token")
+            .is_none());
+        assert!(bridge
+            .relay_secrets
+            .lock()
+            .unwrap()
+            .get(&device.id)
+            .is_none());
+    }
+
+    #[test]
+    fn relay_secrets_follow_one_and_all_device_revocation() {
+        let temp = tempfile::tempdir().unwrap();
+        let bridge = MobileBridgeState::load_or_create(temp.path()).unwrap();
+        let first = bridge
+            .devices
+            .lock()
+            .unwrap()
+            .add_device("Phone", "phone-token", MobileDeviceScope::Read)
+            .unwrap();
+        let second = bridge
+            .devices
+            .lock()
+            .unwrap()
+            .add_device("Tablet", "tablet-token", MobileDeviceScope::Control)
+            .unwrap();
+        for (device, byte) in [(&first, "11"), (&second, "44")] {
+            bridge
+                .relay_secrets
+                .lock()
+                .unwrap()
+                .put(crate::mobile_relay::RelayDeviceSecret {
+                    device_id: device.id.clone(),
+                    base_url: "https://relay.example.com".into(),
+                    channel_id: byte.repeat(32),
+                    wake_key: "22".repeat(32),
+                    publisher_token: "33".repeat(32),
+                    next_sequence: 1,
+                })
+                .unwrap();
+        }
+
+        bridge.revoke_device(&first.id).unwrap();
+        assert!(bridge
+            .relay_secrets
+            .lock()
+            .unwrap()
+            .get(&first.id)
+            .is_none());
+        assert!(bridge
+            .relay_secrets
+            .lock()
+            .unwrap()
+            .get(&second.id)
+            .is_some());
+
+        bridge.revoke_devices().unwrap();
+        assert!(bridge
+            .relay_secrets
+            .lock()
+            .unwrap()
+            .get(&second.id)
+            .is_none());
+    }
+
+    #[test]
+    fn relay_configuration_is_explicit_and_status_is_credential_free() {
+        let disabled = crate::config::MobileRelayConfig {
+            enabled: false,
+            base_url: Some("http://public.example.com".into()),
+        };
+        assert!(relay_base_from_config(&disabled).unwrap().is_none());
+        assert!(relay_base_from_config(&crate::config::MobileRelayConfig {
+            enabled: true,
+            base_url: None,
+        })
+        .is_err());
+        let enabled = relay_base_from_config(&crate::config::MobileRelayConfig {
+            enabled: true,
+            base_url: Some("https://relay.example.com".into()),
+        })
+        .unwrap()
+        .unwrap();
+
+        let temp = tempfile::tempdir().unwrap();
+        let bridge = MobileBridgeState::load_or_create(temp.path()).unwrap();
+        bridge.runtime.lock().unwrap().relay_base_url = Some(enabled);
+        let status = serde_json::to_string(&bridge.status()).unwrap();
+        assert!(status.contains(r#""relay_status":"connected""#));
+        assert!(status.contains(r#""relay_url":"https://relay.example.com""#));
+        assert!(!status.contains("publisher_token"));
+        assert!(!status.contains("subscriber_token"));
+        assert!(!status.contains("wake_key"));
     }
 
     #[test]

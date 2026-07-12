@@ -1900,6 +1900,7 @@ dependencies = [
  "dirs 5.0.1",
  "dispatch",
  "env_logger",
+ "getrandom 0.3.4",
  "hex",
  "http-body-util",
  "hyper",
