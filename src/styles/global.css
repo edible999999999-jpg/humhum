@@ -1661,3 +1661,464 @@ option {
   0%, 100% { opacity: 0.4; transform: scale(0.95); }
   50% { opacity: 1; transform: scale(1.05); }
 }
+
+/* ===== HUMHUM Orbital Intro ===== */
+
+html[data-page="intro"],
+html[data-page="intro"] body,
+html[data-page="intro"] #root {
+  background: #010828 !important;
+}
+
+.orbital-page {
+  position: relative;
+  overflow: hidden;
+  background: #010828;
+  color: #eff4ff;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.orbital-page * { box-sizing: border-box; }
+
+.orbital-shell {
+  width: min(100% - 48px, 1831px);
+  margin: 0 auto;
+}
+
+.orbital-texture {
+  position: fixed;
+  z-index: 30;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.22;
+  mix-blend-mode: screen;
+  background-image:
+    radial-gradient(circle at 20% 17%, rgba(239, 244, 255, 0.8) 0 0.6px, transparent 0.8px),
+    radial-gradient(circle at 76% 38%, rgba(111, 255, 0, 0.7) 0 0.55px, transparent 0.75px),
+    radial-gradient(circle at 48% 69%, rgba(239, 244, 255, 0.65) 0 0.45px, transparent 0.7px);
+  background-size: 17px 21px, 29px 31px, 37px 41px;
+}
+
+.orbital-nav {
+  position: absolute;
+  z-index: 12;
+  top: 26px;
+  left: 50%;
+  display: flex;
+  width: min(100% - 48px, 1831px);
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  transform: translateX(-50%);
+}
+
+.orbital-brand {
+  color: #eff4ff;
+  font-family: Anton, Impact, sans-serif;
+  font-size: 19px;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  text-decoration: none;
+  text-transform: uppercase;
+}
+
+.orbital-brand span { color: #6fff00; }
+
+.orbital-nav-links,
+.orbital-nav-action,
+.orbital-role-card,
+.orbital-mobile-menu {
+  background: rgba(255, 255, 255, 0.035);
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.16);
+  backdrop-filter: blur(10px) saturate(125%);
+  -webkit-backdrop-filter: blur(10px) saturate(125%);
+}
+
+.orbital-nav-links {
+  display: flex;
+  align-items: center;
+  gap: clamp(16px, 3vw, 46px);
+  padding: 15px 36px;
+  border-radius: 999px;
+}
+
+.orbital-nav-links a,
+.orbital-nav-action,
+.orbital-menu-button,
+.orbital-mobile-menu a,
+.orbital-mobile-menu button {
+  color: #eff4ff;
+  font-family: Anton, Impact, sans-serif;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-decoration: none;
+  text-transform: uppercase;
+}
+
+.orbital-nav-links a { transition: color 180ms ease; }
+.orbital-nav-links a:hover,
+.orbital-nav-links a:focus-visible { color: #6fff00; }
+
+.orbital-nav-action {
+  display: inline-flex;
+  min-height: 49px;
+  align-items: center;
+  gap: 12px;
+  padding: 0 19px;
+  border: 1px solid rgba(239, 244, 255, 0.21);
+  border-radius: 9px;
+  transition: color 180ms ease, background 180ms ease, transform 180ms ease;
+}
+
+.orbital-nav-action:hover,
+.orbital-nav-action:focus-visible { background: rgba(111, 255, 0, 0.12); color: #6fff00; transform: translateY(-2px); }
+
+.orbital-menu-button { display: none; padding: 9px; border: 0; background: transparent; cursor: pointer; }
+
+.orbital-mobile-menu {
+  position: fixed;
+  z-index: 50;
+  inset: 0;
+  display: none;
+  min-height: 100vh;
+  padding: 26px 24px;
+  background: rgba(1, 8, 40, 0.98);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 250ms ease;
+}
+
+.orbital-mobile-menu.is-open { opacity: 1; pointer-events: auto; }
+
+.orbital-mobile-menu-top { display: flex; align-items: center; justify-content: space-between; }
+.orbital-mobile-menu button { padding: 6px; border: 0; background: transparent; cursor: pointer; }
+.orbital-mobile-menu nav { display: grid; gap: 14px; margin-top: 18vh; }
+.orbital-mobile-menu nav a { font-size: clamp(42px, 14vw, 70px); line-height: 0.95; opacity: 0; transform: translateY(18px); transition: opacity 260ms ease, transform 260ms ease; }
+.orbital-mobile-menu.is-open nav a { opacity: 1; transform: translateY(0); }
+.orbital-mobile-github { display: inline-flex; align-items: center; gap: 9px; margin-top: 46px; color: #6fff00 !important; }
+
+.orbital-hero,
+.orbital-join { position: relative; overflow: hidden; }
+
+.orbital-hero {
+  display: grid;
+  min-height: 100svh;
+  align-items: end;
+  padding: 150px 0 58px;
+  border-radius: 0 0 32px 32px;
+}
+
+.orbital-hero-media,
+.orbital-hero-scrim,
+.orbital-join-image,
+.orbital-join-shade { position: absolute; inset: 0; }
+
+.orbital-hero-media { background: #071145; }
+.orbital-hero-media img { width: 100%; height: 100%; object-fit: cover; object-position: 67% center; opacity: 0.54; filter: saturate(0.78) contrast(1.1); }
+.orbital-hero-scrim { background: linear-gradient(90deg, rgba(1, 8, 40, 0.94) 0%, rgba(1, 8, 40, 0.67) 46%, rgba(1, 8, 40, 0.15) 100%), linear-gradient(0deg, rgba(1, 8, 40, 0.74), transparent 48%); }
+
+.orbital-hero-content { position: relative; z-index: 1; max-width: 1035px; margin-left: max(24px, calc((100vw - 1831px) / 2 + 9vw)); }
+.orbital-eyebrow,
+.orbital-index { display: inline-flex; align-items: center; gap: 8px; margin: 0 0 22px; color: #6fff00; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; }
+
+.orbital-hero h1,
+.orbital-section-heading h2,
+.orbital-roles-heading h2,
+.orbital-join h2 {
+  margin: 0;
+  font-family: Anton, Impact, sans-serif;
+  font-weight: 400;
+  letter-spacing: 0.015em;
+  text-transform: uppercase;
+}
+
+.orbital-hero h1 { max-width: 850px; font-size: clamp(51px, 7.2vw, 126px); line-height: 0.94; }
+.orbital-page em { color: #6fff00; font-family: Condiment, cursive; font-weight: 400; letter-spacing: 0; text-transform: none; }
+.orbital-hero h1 em { display: inline-block; margin-right: 8px; font-size: 1.12em; transform: rotate(-5deg) translateY(4px); }
+
+.orbital-lede { max-width: 520px; margin: 31px 0 0; color: rgba(239, 244, 255, 0.78); font-size: clamp(14px, 1.35vw, 17px); line-height: 1.65; }
+.orbital-hero-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 23px; margin-top: 30px; }
+.orbital-primary-link,
+.orbital-text-link,
+.orbital-arrow-link,
+.orbital-view-link,
+.orbital-join-content > a { text-decoration: none; }
+.orbital-primary-link { display: inline-flex; align-items: center; gap: 12px; padding: 15px 18px; background: #6fff00; color: #010828; font-family: Anton, Impact, sans-serif; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; transition: transform 180ms ease; }
+.orbital-primary-link:hover,
+.orbital-primary-link:focus-visible { transform: translateY(-3px); }
+.orbital-text-link { color: #eff4ff; font-family: Anton, Impact, sans-serif; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; }
+.orbital-text-link:hover,
+.orbital-text-link:focus-visible { color: #6fff00; }
+.orbital-hero-mark { position: absolute; z-index: 1; right: 4.3vw; bottom: 52px; display: flex; align-items: center; gap: 10px; color: rgba(239, 244, 255, 0.65); font-size: 10px; letter-spacing: 0.11em; }
+.orbital-hero-mark i { width: 4px; height: 4px; border-radius: 50%; background: #6fff00; }
+
+.orbital-section { padding: clamp(88px, 11vw, 166px) 0; }
+.orbital-signal { background: #010828; }
+.orbital-signal-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(260px, 0.52fr); gap: clamp(44px, 11vw, 170px); align-items: end; }
+.orbital-section-heading h2,
+.orbital-roles-heading h2 { font-size: clamp(52px, 6.2vw, 106px); line-height: 0.92; }
+.orbital-section-heading h2 em,
+.orbital-roles-heading h2 em { font-size: 1.14em; }
+.orbital-intro-copy { max-width: 410px; }
+.orbital-intro-copy p { margin: 0; color: rgba(239, 244, 255, 0.76); font-size: 14px; line-height: 1.7; text-transform: uppercase; }
+.orbital-intro-copy p + p { margin-top: 24px; }
+.orbital-arrow-link { display: inline-flex; align-items: center; gap: 11px; margin-top: 34px; color: #6fff00; font-family: Anton, Impact, sans-serif; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; }
+.orbital-arrow-link:hover,
+.orbital-arrow-link:focus-visible { color: #eff4ff; }
+.orbital-signal-rail { display: flex; justify-content: space-between; gap: 18px; margin-top: clamp(80px, 14vw, 180px); padding-top: 16px; border-top: 1px solid rgba(239, 244, 255, 0.2); color: rgba(239, 244, 255, 0.42); font-size: 10px; letter-spacing: 0.11em; }
+
+.orbital-roles { padding-top: clamp(60px, 8vw, 116px); background: #010828; }
+.orbital-roles-heading { display: flex; align-items: end; justify-content: space-between; gap: 32px; margin-bottom: 48px; }
+.orbital-view-link { display: inline-flex; align-items: center; gap: 9px; padding-bottom: 10px; border-bottom: 7px solid #6fff00; color: #eff4ff; font-family: Anton, Impact, sans-serif; font-size: clamp(16px, 2.4vw, 28px); letter-spacing: 0.04em; }
+.orbital-view-link:hover,
+.orbital-view-link:focus-visible { color: #6fff00; }
+.orbital-role-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+.orbital-role-card { position: relative; display: flex; min-height: 390px; flex-direction: column; justify-content: space-between; overflow: hidden; padding: 20px; border: 1px solid rgba(239, 244, 255, 0.22); border-radius: 12px; transition: transform 220ms ease, background 220ms ease; }
+.orbital-role-card:hover { background: rgba(255, 255, 255, 0.09); transform: translateY(-7px); }
+.orbital-role-top { position: relative; z-index: 1; display: flex; justify-content: space-between; color: rgba(239, 244, 255, 0.72); font-family: Anton, Impact, sans-serif; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; }
+.orbital-role-orbit { position: absolute; top: 27%; left: 50%; width: 178px; height: 178px; border: 1px solid currentColor; border-radius: 50%; color: #6fff00; opacity: 0.82; transform: translateX(-50%); }
+.orbital-role-orbit::before,
+.orbital-role-orbit::after { position: absolute; inset: 50% -27px auto; height: 1px; content: ""; background: currentColor; transform: rotate(43deg); transform-origin: center; }
+.orbital-role-orbit::after { transform: rotate(-43deg); }
+.orbital-role-orbit span { position: absolute; top: 35px; left: 40px; width: 24px; height: 24px; border-radius: 50%; background: currentColor; box-shadow: 0 0 28px currentColor; }
+.orbital-role-lavender .orbital-role-orbit { color: #bca8ff; }
+.orbital-role-peach .orbital-role-orbit { color: #ffbb93; }
+.orbital-role-blue .orbital-role-orbit { color: #82d3ff; }
+.orbital-role-copy { position: relative; z-index: 1; }
+.orbital-role-copy h3 { max-width: 190px; margin: 0; font-family: Anton, Impact, sans-serif; font-size: 26px; font-weight: 400; letter-spacing: 0.02em; line-height: 1; text-transform: uppercase; }
+.orbital-role-copy p { margin: 13px 0 0; color: rgba(239, 244, 255, 0.63); font-size: 11px; line-height: 1.58; }
+.orbital-role-card > a { position: absolute; z-index: 2; right: 18px; bottom: 18px; display: grid; width: 42px; height: 42px; place-items: center; border-radius: 50%; background: #6fff00; color: #010828; transition: transform 180ms ease; }
+.orbital-role-card > a:hover,
+.orbital-role-card > a:focus-visible { transform: scale(1.1); }
+
+.orbital-join { min-height: min(62vw, 820px); display: grid; align-items: center; border-radius: 32px 32px 0 0; }
+.orbital-join-image { background: #071145; }
+.orbital-join-image img { width: 100%; height: 100%; object-fit: cover; object-position: center 30%; opacity: 0.42; filter: hue-rotate(16deg) saturate(0.72); }
+.orbital-join-shade { background: linear-gradient(90deg, rgba(1, 8, 40, 0.35), rgba(1, 8, 40, 0.84)); }
+.orbital-join-content { position: relative; z-index: 1; display: grid; justify-items: end; max-width: 1200px; margin-right: max(24px, calc((100vw - 1831px) / 2 + 6vw)); text-align: right; }
+.orbital-join-content > p { margin: 0 0 -6px; color: #6fff00; font-family: Condiment, cursive; font-size: clamp(36px, 5vw, 85px); line-height: 1; transform: rotate(-6deg) translateX(-10px); }
+.orbital-join h2 { max-width: 920px; font-size: clamp(27px, 4.7vw, 76px); line-height: 0.96; }
+.orbital-join-content > a { display: inline-flex; align-items: center; gap: 10px; margin-top: 31px; padding: 16px 19px; border: 1px solid rgba(239, 244, 255, 0.48); color: #eff4ff; font-family: Anton, Impact, sans-serif; font-size: 14px; letter-spacing: 0.08em; text-transform: uppercase; transition: color 180ms ease, background 180ms ease; }
+.orbital-join-content > a:hover,
+.orbital-join-content > a:focus-visible { background: #6fff00; color: #010828; }
+
+.orbital-page a:focus-visible,
+.orbital-page button:focus-visible { outline: 2px solid #6fff00; outline-offset: 4px; }
+
+@media (max-width: 900px) {
+  .orbital-nav-links,
+  .orbital-nav-action { display: none; }
+  .orbital-menu-button,
+  .orbital-mobile-menu { display: block; }
+  .orbital-role-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .orbital-join { min-height: 660px; }
+}
+
+@media (max-width: 640px) {
+  .orbital-shell { width: min(100% - 36px, 1831px); }
+  .orbital-nav { top: 19px; width: min(100% - 36px, 1831px); }
+  .orbital-hero { min-height: 100svh; padding: 128px 0 42px; }
+  .orbital-hero-media img { object-position: 61% center; opacity: 0.31; }
+  .orbital-hero-scrim { background: linear-gradient(90deg, rgba(1, 8, 40, 0.95), rgba(1, 8, 40, 0.4)), linear-gradient(0deg, rgba(1, 8, 40, 0.86), transparent 55%); }
+  .orbital-hero-content { margin-left: 18px; margin-right: 18px; }
+  .orbital-hero h1 { font-size: clamp(48px, 14vw, 74px); }
+  .orbital-hero-mark { right: 18px; bottom: 19px; gap: 6px; font-size: 8px; }
+  .orbital-signal-grid { grid-template-columns: 1fr; gap: 42px; }
+  .orbital-signal-rail { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 15px; }
+  .orbital-roles-heading { display: block; }
+  .orbital-view-link { margin-top: 32px; }
+  .orbital-role-grid { grid-template-columns: 1fr; }
+  .orbital-role-card { min-height: 330px; }
+  .orbital-join { min-height: 570px; }
+  .orbital-join-image img { object-position: 44% center; }
+  .orbital-join-shade { background: linear-gradient(0deg, rgba(1, 8, 40, 0.86), rgba(1, 8, 40, 0.3)); }
+  .orbital-join-content { justify-items: start; margin: 0 18px; text-align: left; }
+  .orbital-join-content > p { transform: rotate(-6deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .orbital-page *,
+  .orbital-page *::before,
+  .orbital-page *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; }
+}
+
+/* ===== HUMHUM companion model carousel ===== */
+
+.role-model-stage {
+  position: relative;
+  min-height: 100svh;
+  overflow: hidden;
+  isolation: isolate;
+  background: var(--role-stage-color, #dff8ef);
+  color: #263241;
+  transition: background-color 650ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.role-model-grain {
+  position: absolute;
+  z-index: 8;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.25;
+  background-image:
+    radial-gradient(circle at 20% 22%, rgba(38, 50, 65, 0.4) 0 0.55px, transparent 0.72px),
+    radial-gradient(circle at 75% 67%, rgba(38, 50, 65, 0.28) 0 0.45px, transparent 0.68px);
+  background-size: 13px 17px, 19px 23px;
+}
+
+.role-model-ghost {
+  position: absolute;
+  z-index: 1;
+  top: 17%;
+  right: 0;
+  left: 0;
+  margin: 0;
+  color: rgba(255, 255, 255, 0.8);
+  font-family: Anton, Impact, sans-serif;
+  font-size: clamp(86px, 25vw, 365px);
+  font-weight: 400;
+  letter-spacing: 0;
+  line-height: 0.85;
+  pointer-events: none;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.role-model-poster {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.role-model-poster img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  opacity: 1;
+}
+
+.role-model-canvas-wrap {
+  position: absolute;
+  z-index: 3;
+  inset: 0;
+  transition: opacity 250ms ease;
+}
+
+.role-model-canvas-wrap[data-ready="false"] { opacity: 0; }
+.role-model-canvas { display: block; width: 100%; height: 100%; }
+
+.role-model-top {
+  position: absolute;
+  z-index: 10;
+  top: 30px;
+  right: clamp(22px, 5vw, 80px);
+  left: clamp(22px, 5vw, 80px);
+  display: flex;
+  justify-content: space-between;
+  color: rgba(38, 50, 65, 0.7);
+  font-family: Anton, Impact, sans-serif;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+}
+
+.role-model-copy {
+  position: absolute;
+  z-index: 10;
+  bottom: clamp(28px, 7vw, 90px);
+  left: clamp(22px, 7vw, 122px);
+  max-width: 360px;
+}
+
+.role-model-copy > p {
+  margin: 0 0 11px;
+  color: var(--role-stage-accent, #77caae);
+  font-family: Condiment, cursive;
+  font-size: clamp(33px, 4vw, 62px);
+  line-height: 0.82;
+  transform: rotate(-5deg) translateX(6px);
+}
+
+.role-model-copy h2 {
+  max-width: 320px;
+  margin: 0;
+  color: #263241;
+  font-family: Anton, Impact, sans-serif;
+  font-size: clamp(30px, 3.1vw, 52px);
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  line-height: 0.92;
+  text-transform: uppercase;
+}
+
+.role-model-copy > span {
+  display: block;
+  max-width: 310px;
+  margin-top: 15px;
+  color: rgba(38, 50, 65, 0.76);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.role-model-copy > div { display: flex; gap: 10px; margin-top: 22px; }
+
+.role-model-copy button {
+  display: grid;
+  width: 54px;
+  height: 54px;
+  place-items: center;
+  border: 1px solid rgba(38, 50, 65, 0.44);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.14);
+  color: #263241;
+  cursor: pointer;
+  transition: transform 160ms ease, background 160ms ease;
+}
+
+.role-model-copy button:hover,
+.role-model-copy button:focus-visible { background: rgba(255, 255, 255, 0.58); transform: scale(1.08); }
+
+.role-model-link {
+  position: absolute;
+  z-index: 10;
+  right: clamp(22px, 5vw, 80px);
+  bottom: clamp(35px, 7vw, 90px);
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: #263241;
+  font-family: Anton, Impact, sans-serif;
+  font-size: clamp(22px, 3vw, 48px);
+  font-weight: 400;
+  letter-spacing: 0.01em;
+  line-height: 1;
+  text-decoration: none;
+  text-transform: uppercase;
+}
+
+.role-model-link:hover,
+.role-model-link:focus-visible { color: var(--role-stage-accent, #77caae); }
+
+.role-model-stage a:focus-visible,
+.role-model-stage button:focus-visible { outline: 2px solid #263241; outline-offset: 4px; }
+
+@media (max-width: 640px) {
+  .role-model-stage { min-height: 760px; }
+  .role-model-ghost { top: 15%; font-size: 33vw; }
+  .role-model-poster img {
+    object-position: 72% center;
+  }
+  .role-model-top { top: 21px; font-size: 10px; }
+  .role-model-copy { right: 22px; bottom: 29px; max-width: 240px; }
+  .role-model-copy h2 { font-size: 34px; }
+  .role-model-copy > span { display: none; }
+  .role-model-copy > div { margin-top: 17px; }
+  .role-model-copy button { width: 46px; height: 46px; }
+  .role-model-link { right: 22px; bottom: 42px; font-size: 18px; }
+  .role-model-link svg { width: 18px; }
+}
