@@ -19,6 +19,7 @@ export const AGENT_COLORS: Record<string, AgentCreatureColors> = {
   "kimi-k1":     { light: "#d8b4fe", med: "#a855f7", dark: "#7c3aed" },
   qoderwork:     { light: "#86efac", med: "#4ade80", dark: "#16a34a" },
   wukong:        { light: "#fcd34d", med: "#eab308", dark: "#a16207" },
+  openclaw:      { light: "#fca5a5", med: "#e85d4a", dark: "#b9382b" },
 };
 
 export const AGENT_BRAND_COLOR: Record<string, string> = {
@@ -29,6 +30,7 @@ export const AGENT_BRAND_COLOR: Record<string, string> = {
   "kimi-k1":     "#a855f7",
   qoderwork:     "#4ade80",
   wukong:        "#eab308",
+  openclaw:      "#e85d4a",
 };
 
 export const AGENT_ICON_SRC: Record<string, string> = {
@@ -39,6 +41,7 @@ export const AGENT_ICON_SRC: Record<string, string> = {
   "kimi-k1":     "/agents/kimi-k1.png",
   qoderwork:     "/agents/qoderwork.png",
   wukong:        "/agents/wukong.png",
+  openclaw:      "/agents/openclaw.png",
 };
 
 export const BABY_THRESHOLD = 4;
