@@ -10,10 +10,12 @@
 <p align="center">
   <a href="https://github.com/edible999999999-jpg/humhum/releases/download/v0.3.4/HUMHUM-macOS-0.1.0-arm64.dmg"><strong>Download for macOS</strong></a>
   ·
+  <a href="https://github.com/edible999999999-jpg/humhum/releases/download/v0.3.4/HUMHUM-Android-0.3.4.apk"><strong>Download for Android</strong></a>
+  ·
   <a href="https://github.com/edible999999999-jpg/humhum/releases">Latest Release</a>
 </p>
 
-<p align="center"><em>macOS Apple Silicon build available now. Windows and Linux are on the roadmap.</em></p>
+<p align="center"><em>Available for macOS Apple Silicon and Android 8.0+. Windows and Linux are on the roadmap.</em></p>
 
 ---
 

@@ -10,10 +10,12 @@
 <p align="center">
   <a href="https://github.com/edible999999999-jpg/humhum/releases/download/v0.3.4/HUMHUM-macOS-0.1.0-arm64.dmg"><strong>下载 macOS 版</strong></a>
   ·
+  <a href="https://github.com/edible999999999-jpg/humhum/releases/download/v0.3.4/HUMHUM-Android-0.3.4.apk"><strong>下载 Android 版</strong></a>
+  ·
   <a href="https://github.com/edible999999999-jpg/humhum/releases">最新 Release</a>
 </p>
 
-<p align="center"><em>当前提供 macOS Apple Silicon 安装包，Windows / Linux 在路线图中。</em></p>
+<p align="center"><em>当前提供 macOS Apple Silicon 与 Android 8.0+ 安装包，Windows / Linux 在路线图中。</em></p>
 
 ---
 
