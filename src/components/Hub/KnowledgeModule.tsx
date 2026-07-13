@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { AgentAsset, AgentRule, KnowledgeData, ObsidianNote, Preference } from "@/types";
+import type { AgentAsset, AgentRule, AppConfig, KnowledgeData, ObsidianNote, Preference } from "@/types";
 
 const CATEGORIES = ["coding_style", "tools", "workflow", "communication", "other"];
 
@@ -45,6 +45,76 @@ const DEFAULT_ASSET_ROOTS = [
 
 type Tab = "assets" | "preferences" | "rules" | "obsidian";
 
+interface CodexBridgeHealth {
+  status: "starting" | "connected" | "codex_missing" | "unsupported" | "disconnected" | "error";
+  version: string | null;
+  last_connected_at: string | null;
+  message: string;
+}
+
+interface QoderAcpStatus {
+  installed: boolean;
+  version?: string | null;
+  acp_supported: boolean;
+  hint: string;
+  error?: string | null;
+}
+
+interface ReviewEngineState {
+  codex: CodexBridgeHealth | null;
+  hooks: Record<string, boolean>;
+  qoder: QoderAcpStatus | null;
+  config: AppConfig | null;
+}
+
+function inferReviewWorkspace(assets: AgentAsset[]): string {
+  const firstPath = assets.find((asset) => asset.file_path.startsWith("/"))?.file_path;
+  if (!firstPath) return ".";
+  const homeMatch = firstPath.match(/^(\/Users\/[^/]+|\/home\/[^/]+)/);
+  if (homeMatch?.[1]) return homeMatch[1];
+  const lastSlash = firstPath.lastIndexOf("/");
+  return lastSlash > 0 ? firstPath.slice(0, lastSlash) : ".";
+}
+
+function buildContextAuditPrompt(assets: AgentAsset[], noteCount: number, ruleCount: number): string {
+  const typeCounts = assets.reduce<Record<string, number>>((acc, asset) => {
+    acc[asset.asset_type] = (acc[asset.asset_type] || 0) + 1;
+    return acc;
+  }, {});
+  const agentCounts = assets.reduce<Record<string, number>>((acc, asset) => {
+    acc[asset.agent_id] = (acc[asset.agent_id] || 0) + 1;
+    return acc;
+  }, {});
+  const samples = assets.slice(0, 24).map((asset) => ({
+    type: asset.asset_type,
+    agent: asset.agent_id,
+    name: asset.name,
+    path: asset.relative_path,
+    tags: asset.tags.slice(0, 6),
+  }));
+
+  return [
+    "你是 HUMHUM 的 Hype 上下文体检 reviewer。",
+    "目标用户是不懂编程的新手，所以不要输出技术术语堆砌，也不要假装本地启发式判断足够可靠。",
+    "请基于下面的扫描摘要，给 Humi 一份可执行的上下文整理建议：哪些值得保留、哪些需要用户确认、哪些可能是噪声、哪些只适合特定 agent。",
+    "不要删除或改写任何文件。只输出建议和需要进一步读取的文件路径。",
+    "",
+    `扫描到 agent assets: ${assets.length}`,
+    `扫描到 rules: ${ruleCount}`,
+    `扫描到 Obsidian notes: ${noteCount}`,
+    `类型分布: ${JSON.stringify(typeCounts)}`,
+    `Agent 分布: ${JSON.stringify(agentCounts)}`,
+    `样本清单: ${JSON.stringify(samples, null, 2)}`,
+    "",
+    "请按这个结构回答：",
+    "1. 一句话结论",
+    "2. 建议保留的上下文类型",
+    "3. 需要用户确认的内容",
+    "4. 可能造成噪声或误导的内容",
+    "5. 下一步建议 Humi 怎么问用户",
+  ].join("\n");
+}
+
 type AgentAssetRootDiagnostic = {
   raw_path: string;
   path: string;
@@ -70,6 +140,18 @@ export function KnowledgeModule() {
   const [vaultPath, setVaultPath] = useState("");
   const [vaultError, setVaultError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [reviewEngine, setReviewEngine] = useState<ReviewEngineState>({
+    codex: null,
+    hooks: {},
+    qoder: null,
+    config: null,
+  });
+  const [reviewBusy, setReviewBusy] = useState(false);
+  const [reviewMessage, setReviewMessage] = useState<string | null>(null);
+  const [showAdvancedReview, setShowAdvancedReview] = useState(false);
+  const [piUrl, setPiUrl] = useState("");
+  const [piModel, setPiModel] = useState("");
+  const [piToken, setPiToken] = useState("");
 
   // New preference form
   const [newContent, setNewContent] = useState("");
@@ -86,9 +168,25 @@ export function KnowledgeModule() {
     }
   }, []);
 
+  const fetchReviewEngine = useCallback(async () => {
+    const [codex, hooks, qoder, config] = await Promise.all([
+      invoke<CodexBridgeHealth>("get_codex_bridge_health").catch(() => null),
+      invoke<Record<string, boolean>>("check_hooks_status").catch(() => ({})),
+      invoke<QoderAcpStatus>("check_qoder_acp_support").catch(() => null),
+      invoke<AppConfig>("get_config").catch(() => null),
+    ]);
+    setReviewEngine({ codex, hooks, qoder, config });
+    if (config) {
+      setPiUrl(config.pi.url);
+      setPiModel(config.pi.model_name);
+      setPiToken(config.pi.token ?? "");
+    }
+  }, []);
+
   useEffect(() => {
     fetchData();
-  }, [fetchData]);
+    fetchReviewEngine();
+  }, [fetchData, fetchReviewEngine]);
 
   const handleSave = async () => {
     if (!newContent.trim()) return;
@@ -178,6 +276,44 @@ export function KnowledgeModule() {
     }
   };
 
+  const handleSaveCustomReviewer = async () => {
+    if (!reviewEngine.config) return;
+    const nextConfig: AppConfig = {
+      ...reviewEngine.config,
+      pi: {
+        url: piUrl.trim(),
+        model_name: piModel.trim(),
+        token: piToken.trim() || undefined,
+      },
+    };
+    await invoke("save_config", { newConfig: nextConfig });
+    setReviewMessage("自定义 AI 助手配置已保存。");
+    await fetchReviewEngine();
+  };
+
+  const handleStartCodexReview = async () => {
+    if (reviewEngine.codex?.status !== "connected") {
+      setReviewMessage("还没有可借用的 Codex。请先打开或连接 Codex。");
+      return;
+    }
+    setReviewBusy(true);
+    setReviewMessage(null);
+    try {
+      const threadId = await invoke<string>("hexa_start_codex_thread", {
+        workspace: inferReviewWorkspace(assets),
+      });
+      await invoke("hexa_send_codex_message", {
+        threadId,
+        message: buildContextAuditPrompt(assets, notes.length, data?.agent_rules.length ?? 0),
+      });
+      setReviewMessage("已把 Hype 上下文体检任务交给 Codex。你可以在 Hexa 里跟进这个整理会话。");
+    } catch (error) {
+      setReviewMessage(`借用 Codex 失败：${String(error)}`);
+    } finally {
+      setReviewBusy(false);
+    }
+  };
+
   const handleUpdatePriority = async (pref: Preference, newPriority: number) => {
     await invoke("save_preference", {
       id: pref.id,
@@ -238,6 +374,23 @@ export function KnowledgeModule() {
         Connect your Obsidian vault, agent rules, preferences, skills, and memories into reusable personal context.
       </p>
 
+      <ReviewEnginePanel
+        assetsCount={assets.length}
+        reviewEngine={reviewEngine}
+        busy={reviewBusy}
+        message={reviewMessage}
+        showAdvanced={showAdvancedReview}
+        piUrl={piUrl}
+        piModel={piModel}
+        piToken={piToken}
+        onToggleAdvanced={() => setShowAdvancedReview((value) => !value)}
+        onPiUrlChange={setPiUrl}
+        onPiModelChange={setPiModel}
+        onPiTokenChange={setPiToken}
+        onStartCodexReview={handleStartCodexReview}
+        onSaveCustomReviewer={handleSaveCustomReviewer}
+      />
+
       <div
         style={{
           display: "grid",
@@ -256,7 +409,7 @@ export function KnowledgeModule() {
             Agent Asset Connector
           </div>
           <div style={{ marginTop: 4, fontSize: 11, color: "rgba(255,255,255,0.42)", lineHeight: 1.45 }}>
-            Merge local skills, agents, soul, memory, rules, yaml configs, and Obsidian notes into one personal context base.
+            Hype 只负责扫描证据；哪些真的有用，需要借用一个已连接的 AI 助手来判断。
           </div>
         </div>
         <button
@@ -752,6 +905,166 @@ function KnowledgeStat({ label, value, color }: { label: string; value: number; 
       <div style={{ fontSize: 10, color, fontWeight: 700 }}>{label}</div>
       <div style={{ fontSize: 18, color: "rgba(255,255,255,0.78)", fontWeight: 700 }}>
         {value}
+      </div>
+    </div>
+  );
+}
+
+function bridgeTone(ok: boolean): string {
+  return ok ? "#34d399" : "#94a3b8";
+}
+
+function ReviewEnginePanel({
+  assetsCount,
+  reviewEngine,
+  busy,
+  message,
+  showAdvanced,
+  piUrl,
+  piModel,
+  piToken,
+  onToggleAdvanced,
+  onPiUrlChange,
+  onPiModelChange,
+  onPiTokenChange,
+  onStartCodexReview,
+  onSaveCustomReviewer,
+}: {
+  assetsCount: number;
+  reviewEngine: ReviewEngineState;
+  busy: boolean;
+  message: string | null;
+  showAdvanced: boolean;
+  piUrl: string;
+  piModel: string;
+  piToken: string;
+  onToggleAdvanced: () => void;
+  onPiUrlChange: (value: string) => void;
+  onPiModelChange: (value: string) => void;
+  onPiTokenChange: (value: string) => void;
+  onStartCodexReview: () => void;
+  onSaveCustomReviewer: () => Promise<void>;
+}) {
+  const codexReady = reviewEngine.codex?.status === "connected";
+  const claudeReady = !!reviewEngine.hooks["claude-code"];
+  const qoderReady = !!reviewEngine.qoder?.acp_supported;
+  const customReady = !!reviewEngine.config?.pi.token;
+  const anyReviewer = codexReady || claudeReady || qoderReady || customReady;
+
+  return (
+    <div
+      style={{
+        display: "grid",
+        gap: 12,
+        padding: 14,
+        borderRadius: 8,
+        background: anyReviewer
+          ? "linear-gradient(135deg, rgba(52,211,153,0.09), rgba(148,239,244,0.06))"
+          : "linear-gradient(135deg, rgba(251,191,36,0.09), rgba(255,255,255,0.04))",
+        border: `1px solid ${anyReviewer ? "rgba(52,211,153,0.22)" : "rgba(251,191,36,0.2)"}`,
+        marginBottom: 14,
+      }}
+    >
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 12, alignItems: "start" }}>
+        <div>
+          <div style={{ color: "#263241", fontSize: 13, fontWeight: 850 }}>Hype Review Engine</div>
+          <div style={{ marginTop: 4, color: "#64748b", fontSize: 11, lineHeight: 1.5 }}>
+            已扫描 {assetsCount} 个上下文资产。Humi 不做低可信本地判断；会优先借用你已经登录的 AI 助手来判断哪些真的有用。
+          </div>
+        </div>
+        <button
+          type="button"
+          className="kawaii-save-btn"
+          disabled={!codexReady || busy || assetsCount === 0}
+          onClick={onStartCodexReview}
+          style={{ minWidth: 132, padding: "8px 12px", fontSize: 12 }}
+          title={codexReady ? "借用 Codex 做上下文体检" : "需要先连接 Codex"}
+        >
+          {busy ? "整理中..." : codexReady ? "借用 Codex 整理" : "等待 AI 助手"}
+        </button>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 8 }}>
+        <ReviewerPill label="Codex" ok={codexReady} detail={reviewEngine.codex?.message ?? "未连接"} />
+        <ReviewerPill label="Claude" ok={claudeReady} detail={claudeReady ? "hook 可用" : "未检测到 hook"} />
+        <ReviewerPill label="Qoder" ok={qoderReady} detail={reviewEngine.qoder?.hint ?? "未检测到 ACP"} />
+        <ReviewerPill label="自定义" ok={customReady} detail={customReady ? reviewEngine.config?.pi.model_name ?? "已配置" : "高级连接"} />
+      </div>
+
+      {!anyReviewer && (
+        <div style={{ color: "#8a6a12", fontSize: 11, lineHeight: 1.5 }}>
+          现在只会展示扫描证据，不会判断好坏。请连接 Codex、Claude、Qoder，或在高级选项里连接一个自定义 AI 服务。
+        </div>
+      )}
+
+      {message && (
+        <div style={{ color: message.includes("失败") ? "#fb7185" : "#0f9f8f", fontSize: 11, fontWeight: 750 }}>
+          {message}
+        </div>
+      )}
+
+      <button
+        type="button"
+        onClick={onToggleAdvanced}
+        className="kawaii-tab"
+        style={{ width: "fit-content", padding: "6px 10px", fontSize: 11 }}
+      >
+        {showAdvanced ? "收起高级 AI 连接" : "高级：自定义 AI 服务"}
+      </button>
+
+      {showAdvanced && (
+        <div style={{ display: "grid", gap: 8, paddingTop: 2 }}>
+          <input
+            value={piUrl}
+            onChange={(event) => onPiUrlChange(event.target.value)}
+            placeholder="https://api.openai.com/v1 或本地模型地址"
+            className="kawaii-input"
+          />
+          <input
+            value={piModel}
+            onChange={(event) => onPiModelChange(event.target.value)}
+            placeholder="model name"
+            className="kawaii-input"
+          />
+          <input
+            value={piToken}
+            onChange={(event) => onPiTokenChange(event.target.value)}
+            placeholder="token"
+            type="password"
+            className="kawaii-input"
+          />
+          <button
+            type="button"
+            onClick={() => void onSaveCustomReviewer()}
+            className="kawaii-save-btn"
+            style={{ width: "fit-content", padding: "8px 12px", fontSize: 12 }}
+          >
+            保存自定义 AI 助手
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ReviewerPill({ label, ok, detail }: { label: string; ok: boolean; detail: string }) {
+  const color = bridgeTone(ok);
+  return (
+    <div
+      style={{
+        minWidth: 0,
+        padding: 9,
+        borderRadius: 8,
+        background: ok ? "rgba(52,211,153,0.08)" : "rgba(255,255,255,0.42)",
+        border: `1px solid ${ok ? "rgba(52,211,153,0.18)" : "rgba(116,143,165,0.12)"}`,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 6, color, fontSize: 11, fontWeight: 850 }}>
+        <span style={{ width: 6, height: 6, borderRadius: 999, background: color }} />
+        {label}
+      </div>
+      <div style={{ marginTop: 4, color: "#64748b", fontSize: 10, lineHeight: 1.35, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        {detail}
       </div>
     </div>
   );
