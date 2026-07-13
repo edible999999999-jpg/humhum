@@ -17,8 +17,16 @@ const PRIORITY: Record<HexaPriorityItem["progress_status"], number> = {
 
 export function sortHexaSessions<T extends HexaPriorityItem>(items: readonly T[]): T[] {
   return [...items].sort((left, right) => {
+    const completion =
+      Number(left.progress_status === "completed") - Number(right.progress_status === "completed");
+    if (completion !== 0) return completion;
+
+    const recency =
+      new Date(right.session.last_event_at).getTime() - new Date(left.session.last_event_at).getTime();
+    if (recency !== 0) return recency;
+
     const urgency = PRIORITY[left.progress_status] - PRIORITY[right.progress_status];
     if (urgency !== 0) return urgency;
-    return new Date(right.session.last_event_at).getTime() - new Date(left.session.last_event_at).getTime();
+    return left.session.session_id.localeCompare(right.session.session_id);
   });
 }

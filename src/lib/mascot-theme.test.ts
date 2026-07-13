@@ -9,6 +9,11 @@ describe("resolveMascotTheme", () => {
     expect(resolveMascotTheme("openclaw").id).toBe("openclaw");
   });
 
+  it("uses icon assets for Wukong and OpenClaw when they are truly active", () => {
+    expect(resolveMascotTheme("wukong").icon).toBe("/agents/wukong.png");
+    expect(resolveMascotTheme("openclaw").icon).toBe("/agents/openclaw.png");
+  });
+
   it("applies a valid per-Agent override", () => {
     expect(resolveMascotTheme("claude-code", { "claude-code": "gemini-cli" }).id).toBe("gemini-cli");
   });

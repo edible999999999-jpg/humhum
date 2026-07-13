@@ -32,7 +32,7 @@ fn run_watcher(app_handle: tauri::AppHandle) {
         }
     };
 
-    let mut last_tool_ts = String::new();
+    let mut last_tool_ts = latest_tool_timestamp(&db_path).unwrap_or_default();
     let mut last_session_id = String::new();
 
     loop {
@@ -80,6 +80,12 @@ fn run_watcher(app_handle: tauri::AppHandle) {
             }
         }
     }
+}
+
+fn latest_tool_timestamp(db_path: &std::path::Path) -> Option<String> {
+    query_new_tool_calls(db_path, "")
+        .and_then(|events| events.into_iter().next())
+        .map(|(ts, _, _, _)| ts)
 }
 
 /// Query session_tool_call table for new wukong entries

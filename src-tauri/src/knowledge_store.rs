@@ -111,14 +111,27 @@ pub struct KnowledgeData {
 pub struct KnowledgeStore {
     data: KnowledgeData,
     file_path: PathBuf,
+    vault_dir: PathBuf,
 }
 
 impl KnowledgeStore {
     pub fn new() -> Self {
         let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-        let file_path = home.join(".humhum").join("knowledge.json");
+        let base = home.join(".humhum");
+        Self::with_paths(base.join("knowledge.json"), base.join("vault"))
+    }
+
+    /// Construct a store rooted at explicit paths. Used by `new()` and tests.
+    fn with_paths(file_path: PathBuf, vault_dir: PathBuf) -> Self {
         let data = Self::load_from_file(&file_path);
-        Self { data, file_path }
+        let mut store = Self {
+            data,
+            file_path,
+            vault_dir,
+        };
+        store.migrate_json_to_vault();
+        store.load_vault();
+        store
     }
 
     fn load_from_file(path: &PathBuf) -> KnowledgeData {
@@ -128,15 +141,99 @@ impl KnowledgeStore {
         }
     }
 
-    fn save(&self) {
-        if let Some(parent) = self.file_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
+    fn preferences_dir(&self) -> PathBuf {
+        self.vault_dir.join("preferences")
+    }
+
+    fn memory_dir(&self) -> PathBuf {
+        self.vault_dir.join("memory")
+    }
+
+    /// One-time, idempotent migration: if the vault has never been created but
+    /// knowledge.json already carries preferences/memory, materialize them as
+    /// Markdown files. Skips entirely once the vault directory exists, so it
+    /// never clobbers user edits made through Obsidian.
+    fn migrate_json_to_vault(&mut self) {
+        if self.vault_dir.exists() {
+            return;
         }
-        let tmp = self.file_path.with_extension("tmp");
-        if let Ok(json) = serde_json::to_string_pretty(&self.data) {
-            if std::fs::write(&tmp, &json).is_ok() {
-                let _ = std::fs::rename(&tmp, &self.file_path);
+        for pref in self.data.preferences.clone() {
+            self.write_preference_file(&pref);
+        }
+        for item in self.data.memory_items.clone() {
+            self.write_memory_file(&item);
+        }
+    }
+
+    /// Load preferences and memory from the Markdown vault, making the vault the
+    /// source of truth for these two collections. Other collections
+    /// (agent_rules, agent_assets, obsidian_notes) stay in knowledge.json.
+    fn load_vault(&mut self) {
+        self.data.preferences = self.read_preferences_from_vault();
+        self.data.memory_items = self.read_memory_from_vault();
+    }
+
+    fn read_preferences_from_vault(&self) -> Vec<Preference> {
+        let dir = self.preferences_dir();
+        let files = collect_markdown_files(&dir, MAX_OBSIDIAN_NOTES).unwrap_or_default();
+        let mut prefs = Vec::new();
+        for path in files {
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                if let Some(pref) = preference_from_markdown(&path, &content) {
+                    prefs.push(pref);
+                }
             }
+        }
+        prefs.sort_by(|a, b| a.id.cmp(&b.id));
+        prefs
+    }
+
+    fn read_memory_from_vault(&self) -> Vec<MemoryItem> {
+        let dir = self.memory_dir();
+        let files = collect_markdown_files(&dir, MAX_OBSIDIAN_NOTES).unwrap_or_default();
+        let mut items = Vec::new();
+        for path in files {
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                if let Some(item) = memory_from_markdown(&path, &content) {
+                    items.push(item);
+                }
+            }
+        }
+        items.sort_by(|a, b| a.id.cmp(&b.id));
+        items
+    }
+
+    fn write_preference_file(&self, pref: &Preference) {
+        let mut frontmatter = Map::new();
+        frontmatter.insert("id".into(), Value::String(pref.id.clone()));
+        frontmatter.insert("type".into(), Value::String("preference".into()));
+        frontmatter.insert("category".into(), Value::String(pref.category.clone()));
+        frontmatter.insert("source".into(), Value::String(pref.source.clone()));
+        frontmatter.insert("priority".into(), Value::Number(pref.priority.into()));
+        let contents = serialize_note(&frontmatter, &pref.content);
+        let path = self
+            .preferences_dir()
+            .join(format!("{}.md", slugify(&pref.id)));
+        atomic_write(&path, &contents);
+    }
+
+    fn write_memory_file(&self, item: &MemoryItem) {
+        let mut frontmatter = Map::new();
+        frontmatter.insert("id".into(), Value::String(item.id.clone()));
+        frontmatter.insert("type".into(), Value::String("memory".into()));
+        frontmatter.insert("agent_id".into(), Value::String(item.agent_id.clone()));
+        frontmatter.insert(
+            "temperature".into(),
+            Value::String(item.temperature.clone()),
+        );
+        let contents = serialize_note(&frontmatter, &item.content);
+        let path = self.memory_dir().join(format!("{}.md", slugify(&item.id)));
+        atomic_write(&path, &contents);
+    }
+
+    fn save(&self) {
+        if let Ok(json) = serde_json::to_string_pretty(&self.data) {
+            atomic_write(&self.file_path, &json);
         }
     }
 
@@ -145,12 +242,21 @@ impl KnowledgeStore {
     }
 
     pub fn save_preference(&mut self, pref: Preference) {
+        self.write_preference_file(&pref);
         if let Some(existing) = self.data.preferences.iter_mut().find(|p| p.id == pref.id) {
             *existing = pref;
         } else {
             self.data.preferences.push(pref);
         }
-        self.save();
+    }
+
+    pub fn save_memory(&mut self, item: MemoryItem) {
+        self.write_memory_file(&item);
+        if let Some(existing) = self.data.memory_items.iter_mut().find(|m| m.id == item.id) {
+            *existing = item;
+        } else {
+            self.data.memory_items.push(item);
+        }
     }
 
     pub fn delete_preference(&mut self, id: &str) -> bool {
@@ -158,7 +264,8 @@ impl KnowledgeStore {
         self.data.preferences.retain(|p| p.id != id);
         let removed = self.data.preferences.len() < before;
         if removed {
-            self.save();
+            let path = self.preferences_dir().join(format!("{}.md", slugify(id)));
+            let _ = std::fs::remove_file(path);
         }
         removed
     }
@@ -1150,4 +1257,315 @@ fn build_excerpt(content: &str, limit: usize) -> String {
         excerpt.push_str("...");
     }
     excerpt
+}
+
+/// Atomic write via a sibling `.tmp` file + rename. Silently no-ops on IO
+/// errors, matching the store's previous best-effort persistence behavior.
+fn atomic_write(path: &Path, contents: &str) {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let tmp = path.with_extension("tmp");
+    if std::fs::write(&tmp, contents).is_ok() {
+        let _ = std::fs::rename(&tmp, path);
+    }
+}
+
+/// Turn an id into a filesystem-safe filename stem. Keeps ASCII alphanumerics,
+/// `-` and `_`; everything else becomes `-`. Empty results fall back to "note".
+fn slugify(id: &str) -> String {
+    let mut slug = String::with_capacity(id.len());
+    for ch in id.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+            slug.push(ch);
+        } else {
+            slug.push('-');
+        }
+    }
+    let trimmed = slug.trim_matches('-').to_string();
+    if trimmed.is_empty() {
+        "note".to_string()
+    } else {
+        trimmed
+    }
+}
+
+/// Serialize a frontmatter map + body into a Markdown note whose frontmatter is
+/// round-trip compatible with `parse_simple_yaml`. Scalars render as
+/// `key: value`; arrays render as an empty key followed by `- item` lines.
+fn serialize_note(frontmatter: &Map<String, Value>, body: &str) -> String {
+    let mut out = String::from("---\n");
+    for (key, value) in frontmatter {
+        match value {
+            Value::Array(items) => {
+                out.push_str(key);
+                out.push_str(":\n");
+                for item in items {
+                    out.push_str("- ");
+                    out.push_str(&scalar_to_yaml(item));
+                    out.push('\n');
+                }
+            }
+            _ => {
+                out.push_str(key);
+                out.push_str(": ");
+                out.push_str(&scalar_to_yaml(value));
+                out.push('\n');
+            }
+        }
+    }
+    out.push_str("---\n");
+    out.push_str(body);
+    if !body.ends_with('\n') {
+        out.push('\n');
+    }
+    out
+}
+
+fn scalar_to_yaml(value: &Value) -> String {
+    match value {
+        Value::String(s) => s.clone(),
+        Value::Bool(b) => b.to_string(),
+        Value::Number(n) => n.to_string(),
+        _ => String::new(),
+    }
+}
+
+/// Rebuild a `Preference` from a vault Markdown file. The frontmatter `id`
+/// wins; the filename stem is a fallback. Returns None only if no id can be
+/// determined.
+fn preference_from_markdown(path: &Path, content: &str) -> Option<Preference> {
+    let (frontmatter, body) = parse_frontmatter(content);
+    let id = frontmatter_string(&frontmatter, "id")
+        .or_else(|| file_stem(path))
+        .filter(|id| !id.is_empty())?;
+    Some(Preference {
+        id,
+        category: frontmatter_string(&frontmatter, "category").unwrap_or_default(),
+        content: body.trim().to_string(),
+        source: frontmatter_string(&frontmatter, "source").unwrap_or_default(),
+        priority: frontmatter_u8(&frontmatter, "priority"),
+    })
+}
+
+/// Rebuild a `MemoryItem` from a vault Markdown file.
+fn memory_from_markdown(path: &Path, content: &str) -> Option<MemoryItem> {
+    let (frontmatter, body) = parse_frontmatter(content);
+    let id = frontmatter_string(&frontmatter, "id")
+        .or_else(|| file_stem(path))
+        .filter(|id| !id.is_empty())?;
+    let note_type = frontmatter_string(&frontmatter, "type").unwrap_or_else(|| "memory".into());
+    let tags = collect_frontmatter_tags(&frontmatter);
+    let temperature = frontmatter_string(&frontmatter, "temperature")
+        .unwrap_or_else(|| classify_temperature(&tags, &frontmatter, &note_type));
+    Some(MemoryItem {
+        id,
+        agent_id: frontmatter_string(&frontmatter, "agent_id").unwrap_or_default(),
+        content: body.trim().to_string(),
+        temperature,
+    })
+}
+
+fn frontmatter_string(frontmatter: &Map<String, Value>, key: &str) -> Option<String> {
+    frontmatter.get(key).and_then(|value| match value {
+        Value::String(s) => Some(s.clone()),
+        Value::Number(n) => Some(n.to_string()),
+        Value::Bool(b) => Some(b.to_string()),
+        _ => None,
+    })
+}
+
+fn frontmatter_u8(frontmatter: &Map<String, Value>, key: &str) -> u8 {
+    frontmatter
+        .get(key)
+        .and_then(|value| match value {
+            Value::Number(n) => n.as_u64(),
+            Value::String(s) => s.trim().parse::<u64>().ok(),
+            _ => None,
+        })
+        .map(|n| n.min(u8::MAX as u64) as u8)
+        .unwrap_or(0)
+}
+
+fn file_stem(path: &Path) -> Option<String> {
+    path.file_stem()
+        .and_then(|stem| stem.to_str())
+        .map(str::to_string)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_root(tag: &str) -> PathBuf {
+        let unique = format!(
+            "humhum-knowledge-test-{}-{}-{}",
+            tag,
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        std::env::temp_dir().join(unique)
+    }
+
+    fn store_at(root: &Path) -> KnowledgeStore {
+        KnowledgeStore::with_paths(root.join("knowledge.json"), root.join("vault"))
+    }
+
+    #[test]
+    fn serialize_note_round_trips_through_frontmatter_parser() {
+        let mut frontmatter = Map::new();
+        frontmatter.insert("id".into(), Value::String("pref-1".into()));
+        frontmatter.insert("category".into(), Value::String("风格".into()));
+        frontmatter.insert("priority".into(), Value::Number(3.into()));
+        frontmatter.insert(
+            "tags".into(),
+            Value::Array(vec![
+                Value::String("hot".into()),
+                Value::String("style".into()),
+            ]),
+        );
+
+        let body = "用户偏好简洁、直接的中文表达。";
+        let serialized = serialize_note(&frontmatter, body);
+        let (parsed, parsed_body) = parse_frontmatter(&serialized);
+
+        assert_eq!(parsed.get("id").and_then(Value::as_str), Some("pref-1"));
+        assert_eq!(parsed.get("category").and_then(Value::as_str), Some("风格"));
+        assert_eq!(parsed.get("priority").and_then(Value::as_i64), Some(3));
+        assert_eq!(
+            parsed
+                .get("tags")
+                .and_then(Value::as_array)
+                .map(|a| a.len()),
+            Some(2)
+        );
+        assert_eq!(parsed_body.trim(), body);
+    }
+
+    #[test]
+    fn save_preference_writes_and_reloads_from_vault() {
+        let root = temp_root("save-pref");
+        let mut store = store_at(&root);
+        store.save_preference(Preference {
+            id: "pref-42".into(),
+            category: "style".into(),
+            content: "简洁优先".into(),
+            source: "humi".into(),
+            priority: 4,
+        });
+
+        let md = root.join("vault").join("preferences").join("pref-42.md");
+        assert!(md.exists(), "preference markdown file should exist");
+
+        // A fresh store reads the vault as source of truth.
+        let reloaded = store_at(&root);
+        let prefs = &reloaded.get_all().preferences;
+        assert_eq!(prefs.len(), 1);
+        assert_eq!(prefs[0].id, "pref-42");
+        assert_eq!(prefs[0].content, "简洁优先");
+        assert_eq!(prefs[0].priority, 4);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn delete_preference_removes_vault_file() {
+        let root = temp_root("delete-pref");
+        let mut store = store_at(&root);
+        store.save_preference(Preference {
+            id: "pref-del".into(),
+            category: "style".into(),
+            content: "临时".into(),
+            source: "humi".into(),
+            priority: 1,
+        });
+        let md = root.join("vault").join("preferences").join("pref-del.md");
+        assert!(md.exists());
+
+        assert!(store.delete_preference("pref-del"));
+        assert!(!md.exists(), "markdown file should be deleted");
+        assert!(store.get_all().preferences.is_empty());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn save_memory_populates_memory_items() {
+        // Regression: memory_items used to have no writer at all.
+        let root = temp_root("save-memory");
+        let mut store = store_at(&root);
+        store.save_memory(MemoryItem {
+            id: "mem-1".into(),
+            agent_id: "claude-code".into(),
+            content: "用户在做本地 Agent 中枢".into(),
+            temperature: "hot".into(),
+        });
+
+        let md = root.join("vault").join("memory").join("mem-1.md");
+        assert!(md.exists());
+
+        let reloaded = store_at(&root);
+        let items = &reloaded.get_all().memory_items;
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, "mem-1");
+        assert_eq!(items[0].agent_id, "claude-code");
+        assert_eq!(items[0].temperature, "hot");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn migrates_legacy_json_preferences_into_vault_idempotently() {
+        let root = temp_root("migrate");
+        std::fs::create_dir_all(&root).unwrap();
+        let legacy = KnowledgeData {
+            preferences: vec![Preference {
+                id: "legacy-1".into(),
+                category: "style".into(),
+                content: "旧 JSON 里的偏好".into(),
+                source: "import".into(),
+                priority: 2,
+            }],
+            ..Default::default()
+        };
+        std::fs::write(
+            root.join("knowledge.json"),
+            serde_json::to_string_pretty(&legacy).unwrap(),
+        )
+        .unwrap();
+
+        // First construction migrates the preference into the vault.
+        let store = store_at(&root);
+        let md = root.join("vault").join("preferences").join("legacy-1.md");
+        assert!(md.exists(), "legacy preference should be materialized");
+        assert_eq!(store.get_all().preferences.len(), 1);
+
+        // User edits the file; a second construction must NOT clobber it.
+        let edited = serialize_note(
+            &{
+                let mut m = Map::new();
+                m.insert("id".into(), Value::String("legacy-1".into()));
+                m.insert("type".into(), Value::String("preference".into()));
+                m.insert("category".into(), Value::String("style".into()));
+                m.insert("source".into(), Value::String("import".into()));
+                m.insert("priority".into(), Value::Number(2.into()));
+                m
+            },
+            "用户手动编辑过的内容",
+        );
+        std::fs::write(&md, &edited).unwrap();
+
+        let reopened = store_at(&root);
+        assert_eq!(reopened.get_all().preferences.len(), 1);
+        assert_eq!(
+            reopened.get_all().preferences[0].content,
+            "用户手动编辑过的内容",
+            "migration must be idempotent and not overwrite user edits"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }

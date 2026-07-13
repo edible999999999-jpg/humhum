@@ -478,6 +478,7 @@ impl MobileBridgeState {
         Ok(self.status())
     }
 
+    #[allow(dead_code)]
     pub fn create_pairing(&self, scope: MobileDeviceScope) -> Result<MobilePairingInfo, String> {
         self.create_pairing_on(scope, MobileNetwork::Lan)
     }
@@ -571,6 +572,7 @@ impl MobileBridgeState {
     }
 }
 
+#[allow(dead_code)]
 fn wake_envelope_for_secret(
     secret: &crate::mobile_relay::RelayDeviceSecret,
     issued_at: i64,
@@ -955,11 +957,7 @@ async fn mobile_session_page(
         .map(|session| {
             let can_read_conversation = home_dir
                 .as_deref()
-                .and_then(|home| {
-                    store
-                        .get_session_with_history(&session.session_id)
-                        .map(|stored| (home, stored))
-                })
+                .zip(store.get_session_with_history(&session.session_id))
                 .is_some_and(|(home, stored)| session_supports_mobile_conversation(stored, home));
             MobileSessionSummary::from_codex(session, scope.allows_control(), can_read_conversation)
         })
@@ -978,7 +976,7 @@ async fn mobile_session_page(
                     .as_deref()
                     .is_some_and(|home| session_supports_mobile_conversation(session, home));
                 let mut summary = MobileSessionSummary::from_hook(
-                    &session,
+                    session,
                     scope.allows_control(),
                     can_read_conversation,
                 );
@@ -1894,6 +1892,7 @@ impl MobileDeviceStore {
             })
     }
 
+    #[allow(dead_code)]
     fn summaries(&self) -> Vec<MobileDeviceSummary> {
         self.devices
             .iter()

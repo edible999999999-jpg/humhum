@@ -135,6 +135,43 @@ const DEFAULT_KERNEL_ROOTS = [
   "~/Desktop/my_station/devpod-ai-companion",
 ].join("\n");
 
+const HUMI_CHAT_STORAGE_KEY = "humhum:humi:chatMessages";
+const HUMI_ASK_TIMEOUT_MS = 45_000;
+const DEFAULT_HUMI_CHAT_MESSAGES: HumiChatMessage[] = [
+  {
+    id: "humi-welcome",
+    role: "assistant",
+    text: "你好，我是 Humi。想了解最近的工作、技能或偏好吗？",
+  },
+];
+
+function loadHumiChatMessages(): HumiChatMessage[] {
+  try {
+    const raw = sessionStorage.getItem(HUMI_CHAT_STORAGE_KEY);
+    if (!raw) return DEFAULT_HUMI_CHAT_MESSAGES;
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return DEFAULT_HUMI_CHAT_MESSAGES;
+    return parsed.filter(
+      (message): message is HumiChatMessage =>
+        typeof message?.id === "string" &&
+        (message.role === "user" || message.role === "assistant") &&
+        typeof message.text === "string",
+    );
+  } catch {
+    return DEFAULT_HUMI_CHAT_MESSAGES;
+  }
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
 export function HumiModule() {
   const { t } = useTranslation();
   const [sessions, setSessions] = useState<ActiveSession[]>([]);
@@ -149,13 +186,7 @@ export function HumiModule() {
   const [localKernelResult, setLocalKernelResult] = useState<LocalAgentKernelResult | null>(null);
   const [appConfig, setAppConfig] = useState<AppConfig | null>(null);
   const [humiProgress, setHumiProgress] = useState("Humi 正在等你说话");
-  const [chatMessages, setChatMessages] = useState<HumiChatMessage[]>([
-    {
-      id: "humi-welcome",
-      role: "assistant",
-      text: "你好，我是 Humi。想了解最近的工作、技能或偏好吗？",
-    },
-  ]);
+  const [chatMessages, setChatMessages] = useState<HumiChatMessage[]>(loadHumiChatMessages);
   const [agentKernelStatus, setAgentKernelStatus] = useState<AgentKernelStatus | null>(null);
   const [showDetails, setShowDetails] = useState(false);
   const piRuntimeRef = useRef<HumiPiRuntime | null>(null);
@@ -225,6 +256,10 @@ export function HumiModule() {
     piRuntimeRef.current = null;
   }, [appConfig?.pi.url, appConfig?.pi.token, appConfig?.pi.model_name]);
 
+  useEffect(() => {
+    sessionStorage.setItem(HUMI_CHAT_STORAGE_KEY, JSON.stringify(chatMessages));
+  }, [chatMessages]);
+
   const startPiKernel = useCallback(async () => {
     setKernelLoading(true);
     setKernelMessage(null);
@@ -266,18 +301,23 @@ export function HumiModule() {
         onProgress: ({ label }) => setHumiProgress(label),
       });
       piRuntimeRef.current = runtime;
-      const answer = await runtime.ask(prompt);
+      const answer = await withTimeout(
+        runtime.ask(prompt),
+        HUMI_ASK_TIMEOUT_MS,
+        "Humi 等了太久还没有收到 AI 助手回复，请检查 URL、Token 或模型服务是否可用。",
+      );
       setChatMessages((messages) => [
         ...messages,
         { id: `assistant-${Date.now()}`, role: "assistant", text: answer },
       ]);
       setHumiProgress("我整理好啦");
     } catch (e) {
-      setKernelMessage(String(e));
+      const errorMessage = String(e instanceof Error ? e.message : e);
+      setKernelMessage(errorMessage);
       setHumiProgress("这次没有连上 Pi");
       setChatMessages((messages) => [
         ...messages,
-        { id: `error-${Date.now()}`, role: "assistant", text: "我暂时没有连上 Pi，请检查 URL、Token 和 model_name。" },
+        { id: `error-${Date.now()}`, role: "assistant", text: errorMessage || "我暂时没有连上 Pi，请检查 URL、Token 和 model_name。" },
       ]);
     } finally {
       setKernelLoading(false);

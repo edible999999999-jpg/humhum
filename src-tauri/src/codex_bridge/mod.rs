@@ -824,12 +824,12 @@ pub(crate) fn normalize_codex_message(method: &str, params: Value) -> Option<Hex
             };
             (kind, json!({"turn_id": turn_id, "status": status}))
         }
-        "item/started" => normalize_item(item?, &thread_id, true)?,
-        "item/completed" => normalize_item(item?, &thread_id, false)?,
+        "item/started" => normalize_item(item?, thread_id, true)?,
+        "item/completed" => normalize_item(item?, thread_id, false)?,
         "item/agentMessage/delta" => (
             HexaEventKind::AssistantTextDelta,
             json!({
-                "item_id": scope_provider_item(Some(&thread_id), string_at(&params, "itemId")?),
+                "item_id": scope_provider_item(Some(thread_id), string_at(&params, "itemId")?),
                 "delta": string_at(&params, "delta").unwrap_or_default(),
             }),
         ),
@@ -848,12 +848,12 @@ pub(crate) fn normalize_codex_message(method: &str, params: Value) -> Option<Hex
             }),
         ),
         "item/commandExecution/requestApproval" => {
-            normalize_approval(&params, &thread_id, "command")
+            normalize_approval(&params, thread_id, "command")
         }
-        "item/fileChange/requestApproval" => normalize_approval(&params, &thread_id, "file_change"),
+        "item/fileChange/requestApproval" => normalize_approval(&params, thread_id, "file_change"),
         "item/tool/requestUserInput" => {
             let item_id = scope_provider_item(
-                Some(&thread_id),
+                Some(thread_id),
                 string_at(&params, "itemId").unwrap_or("unknown"),
             );
             (

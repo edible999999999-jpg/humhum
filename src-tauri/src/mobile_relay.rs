@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+#[allow(dead_code)]
 const COALESCE_MILLIS: u64 = 1_000;
 const RETRY_MILLIS: [u64; 4] = [5_000, 15_000, 30_000, 60_000];
 const MAX_RELAY_SEQUENCE: u64 = 9_007_199_254_740_991;
@@ -50,6 +51,7 @@ pub(crate) struct PublisherState {
 }
 
 impl PublisherState {
+    #[allow(dead_code)]
     pub(crate) fn observe(&mut self, device_id: &str, cursor: &str, now: u64) {
         self.observe_after(device_id, cursor, now, COALESCE_MILLIS);
     }
@@ -74,11 +76,10 @@ impl PublisherState {
     pub(crate) fn ready(&self, now: u64) -> Vec<PendingWake> {
         self.devices
             .iter()
-            .filter_map(|(device_id, state)| {
-                (state.pending_cursor.is_some() && now >= state.due_at).then(|| PendingWake {
-                    device_id: device_id.clone(),
-                    cursor: state.pending_cursor.clone().unwrap_or_default(),
-                })
+            .filter(|&(_device_id, state)| state.pending_cursor.is_some() && now >= state.due_at)
+            .map(|(device_id, state)| PendingWake {
+                device_id: device_id.clone(),
+                cursor: state.pending_cursor.clone().unwrap_or_default(),
             })
             .collect()
     }
@@ -93,6 +94,7 @@ impl PublisherState {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn failed(&mut self, device_id: &str, now: u64) {
         self.failed_after(device_id, now, RETRY_MILLIS);
     }
@@ -914,6 +916,7 @@ impl MobileRelaySecretStore {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn clear(&mut self) -> Result<(), String> {
         let _ = self.take_all()?;
         Ok(())
@@ -1757,11 +1760,8 @@ mod tests {
             .await
             .is_ok();
         let next_request = tokio::time::timeout(Duration::from_millis(100), requests.recv()).await;
-        match next_request {
-            Ok(Some(request)) => {
-                let _ = request.respond.send((201, r#"{"sequence":7}"#.into()));
-            }
-            Ok(None) | Err(_) => {}
+        if let Ok(Some(request)) = next_request {
+            let _ = request.respond.send((201, r#"{"sequence":7}"#.into()));
         }
         stop_publisher(publisher).await;
         server.abort();

@@ -16,6 +16,7 @@ pub struct HookEvent {
 
 /// State shared across the application for pending permission requests
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct PendingPermission {
     pub event_id: String,
     pub sender: tokio::sync::oneshot::Sender<PermissionDecision>,
@@ -30,6 +31,7 @@ pub struct PermissionDecision {
 
 /// Event history for the frontend
 #[derive(Debug, Default)]
+#[allow(dead_code)]
 pub struct EventBusState {
     pub events: Vec<HookEvent>,
     pub pending_permission: Option<PendingPermission>,

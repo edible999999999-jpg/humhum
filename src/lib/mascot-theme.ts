@@ -21,9 +21,9 @@ export const MASCOT_THEMES: MascotTheme[] = [
   { id: "github-copilot", label: "Copilot", accent: "#6366f1", monogram: "GH" },
   { id: "opencode", label: "OpenCode", accent: "#14b8a6", monogram: "O" },
   { id: "hermes", label: "Hermes Agent", accent: "#0f9f8f", monogram: "H" },
-  { id: "openclaw", label: "OpenClaw", accent: "#e85d4a", monogram: "OC" },
+  { id: "openclaw", label: "OpenClaw", accent: "#e85d4a", icon: "/agents/openclaw.png", monogram: "OC" },
   { id: "pi", label: "Pi Agent", accent: "#38bdf8", monogram: "π" },
-  { id: "wukong", label: "Wukong", accent: "#eab308", monogram: "W" },
+  { id: "wukong", label: "Wukong", accent: "#eab308", icon: "/agents/wukong.png", monogram: "W" },
 ];
 
 const THEMES_BY_ID = new Map(MASCOT_THEMES.map((theme) => [theme.id, theme]));

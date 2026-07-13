@@ -228,6 +228,7 @@ impl SessionStore {
         sessions
     }
 
+    #[allow(dead_code)]
     pub fn get_all_sessions(&self) -> Vec<&Session> {
         let mut sessions: Vec<&Session> = self.sessions.values().collect();
         sessions.sort_by(|a, b| b.last_event_at.cmp(&a.last_event_at));

@@ -22,6 +22,7 @@ import { useVoiceCommand } from "../../hooks/useVoiceCommand";
 import { useKeyboardShortcuts } from "../../hooks/useKeyboardShortcuts";
 import { useAudioQueue } from "../../hooks/useAudioQueue";
 import { getPipeline } from "../../lib/bootstrap";
+import { activeClientTypesFromSessions, isPetPresenceEvent } from "./agentPresence";
 import { nativeNotificationKind, shouldSendNativeNotification } from "../../lib/notification-policy";
 import { t } from "../../lib/i18n";
 import { setLanguage } from "../../lib/i18n";
@@ -31,6 +32,7 @@ import type { AppConfig, HookEvent, VoiceCommand, TranscriptEntry } from "../../
 interface SessionInfo {
   session_id: string;
   client_type: string;
+  event_names?: string[];
 }
 
 const PIPELINE_TO_PET: Record<PipelineState, string> = {
@@ -100,9 +102,8 @@ export function PetView() {
           invoke<SessionInfo[]>("get_active_sessions"),
           invoke<AppConfig>("get_config"),
         ]);
-        const unique = [...new Set(sessions.map((s) => s.client_type))];
+        const unique = activeClientTypesFromSessions(sessions);
         setActiveClients(unique);
-        setPrimaryClient((current) => current ?? unique[0] ?? null);
         configRef.current = cfg;
         setLanguage(cfg.ui.language as "zh" | "en");
       } catch {
@@ -309,7 +310,7 @@ export function PetView() {
 
     console.log("[PetView] Event received:", eventName, "pipeline:", pipeline ? "OK" : "NULL");
 
-    if (latestEvent.client_type) {
+    if (isPetPresenceEvent(latestEvent)) {
       setPrimaryClient(latestEvent.client_type);
       setActiveClients((prev) =>
         prev.includes(latestEvent.client_type) ? prev : [...prev, latestEvent.client_type],

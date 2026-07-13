@@ -11,6 +11,13 @@ edition = "2021"
 name = "humhum_lib"
 crate-type = ["lib", "cdylib", "staticlib"]
 
+# The `objc` 0.2 crate's `sel_impl!` macro expands to `cfg(feature = "cargo-clippy")`,
+# which Rust's `unexpected_cfgs` lint flags because we declare no such feature.
+# Declaring it here as a known cfg silences those warnings crate-wide without
+# touching the intentional macOS private-API code that uses `msg_send!`.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-clippy"))'] }
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

@@ -899,9 +899,8 @@ async fn handle_knowledge_query(
     let keyword = query_string
         .split('&')
         .find_map(|pair| {
-            let mut parts = pair.splitn(2, '=');
-            let key = parts.next()?;
-            let val = parts.next()?;
+            let (key, val) = pair.split_once('=')?;
+
             if key == "q" {
                 Some(val.to_string())
             } else {
