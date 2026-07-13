@@ -5,6 +5,7 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 
 const VERSION: u8 = 1;
+#[allow(dead_code)]
 const MAX_CLOCK_SKEW_SECONDS: i64 = 600;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -92,6 +93,7 @@ pub fn encrypt_wake(
     })
 }
 
+#[allow(dead_code)]
 pub fn decrypt_wake(
     key_hex: &str,
     channel: &str,

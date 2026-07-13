@@ -136,6 +136,7 @@ pub struct StatsStore {
 }
 
 impl StatsStore {
+    #[allow(dead_code)]
     pub fn new(file_path: PathBuf) -> Self {
         Self::new_with_backfill(file_path, true)
     }
@@ -266,7 +267,7 @@ impl StatsStore {
             .timestamp
             .get(0..10)
             .filter(|s| s.len() == 10)
-            .unwrap_or_else(|| "");
+            .unwrap_or("");
         let bucket_date = if day.is_empty() {
             chrono::Local::now().format("%Y-%m-%d").to_string()
         } else {
@@ -446,7 +447,7 @@ impl StatsStore {
                 let n = total_sessions.max(1) as f64;
 
                 let mut top_tools: Vec<(String, u64)> = tool_counts.into_iter().collect();
-                top_tools.sort_by(|a, b| b.1.cmp(&a.1));
+                top_tools.sort_by_key(|entry| std::cmp::Reverse(entry.1));
                 top_tools.truncate(5);
 
                 let mut models_used: Vec<String> = model_set.into_iter().collect();
@@ -699,7 +700,7 @@ fn parse_transcript(
     }
 
     // Sum deduplicated message usages
-    let (mut input_tokens, mut output_tokens, mut cache_creation, mut cache_read) = msg_usages
+    let (mut input_tokens, mut output_tokens, cache_creation, mut cache_read) = msg_usages
         .values()
         .fold((0u64, 0u64, 0u64, 0u64), |acc, u| {
             (

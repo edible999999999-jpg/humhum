@@ -120,7 +120,7 @@ fn discover_recent(home: &Path) -> Result<Vec<DiscoveredSession>, String> {
             });
         }
     }
-    discovered.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+    discovered.sort_by_key(|item| std::cmp::Reverse(item.updated_at));
     discovered.truncate(MAX_RECENT_SESSIONS);
     Ok(discovered)
 }

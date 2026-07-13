@@ -379,7 +379,7 @@ fn decode_payload(
 fn string_for_keys(dictionary: &Dictionary, keys: &[&str]) -> Option<String> {
     keys.iter().find_map(|key| {
         dictionary
-            .get(*key)
+            .get(key)
             .and_then(Value::as_string)
             .map(str::trim)
             .filter(|value| !value.is_empty())

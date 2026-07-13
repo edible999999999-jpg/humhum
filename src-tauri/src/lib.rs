@@ -296,6 +296,7 @@ pub fn run() {
 }
 
 #[cfg(target_os = "macos")]
+#[allow(deprecated, unexpected_cfgs)]
 pub(crate) fn reassert_window_level(window: &tauri::WebviewWindow) {
     use cocoa::base::id;
     use objc::{msg_send, sel, sel_impl};
@@ -318,6 +319,7 @@ pub(crate) fn reassert_window_level(window: &tauri::WebviewWindow) {
 }
 
 #[cfg(target_os = "macos")]
+#[allow(deprecated, unexpected_cfgs)]
 fn apply_macos_transparency(window: &tauri::WebviewWindow) {
     use cocoa::appkit::{NSColor, NSWindow, NSWindowStyleMask};
     use cocoa::base::{id, nil};
@@ -390,6 +392,7 @@ fn apply_macos_transparency(window: &tauri::WebviewWindow) {
 }
 
 #[cfg(target_os = "macos")]
+#[allow(deprecated, unexpected_cfgs)]
 pub(crate) fn move_to_skylight_space(ns_window: cocoa::base::id) {
     use cocoa::base::id;
     use objc::{class, msg_send, sel, sel_impl};
@@ -483,11 +486,10 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .menu(&menu)
         .tooltip("HumHum - AI Coding Companion")
         .show_menu_on_left_click(false)
-        .on_menu_event(|app, event| match event.id.as_ref() {
-            "hub" => {
+        .on_menu_event(|app, event| {
+            if event.id.as_ref() == "hub" {
                 let _ = tauri::async_runtime::block_on(commands::toggle_hub(app.clone()));
             }
-            _ => {}
         })
         .on_tray_icon_event(|tray, event| {
             if let TrayIconEvent::Click {

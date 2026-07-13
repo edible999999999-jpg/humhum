@@ -11,7 +11,9 @@ use crate::hexa_protocol::HexaSessionProjection;
 use crate::hook_server::PendingMap;
 use crate::hush_store::{HushInboxSummary, HushStore};
 use crate::intervention_queue::{InterventionProvider, InterventionQueue, QueuedIntervention};
-use crate::knowledge_store::{AgentAsset, AgentAssetRootDiagnostic, KnowledgeStore, Preference};
+use crate::knowledge_store::{
+    AgentAsset, AgentAssetRootDiagnostic, KnowledgeStore, MemoryItem, Preference,
+};
 use crate::mobile_bridge::{
     MobileBridgeState, MobileBridgeStatus, MobileDeviceScope, MobileNetwork, MobilePairingInfo,
 };
@@ -1144,7 +1146,7 @@ pub async fn get_hush_notification_bridge_status(app: tauri::AppHandle) -> Resul
             .lock()
             .map_err(|error| format!("Lock error: {error}"))?
             .clone();
-        return serde_json::to_value(status).map_err(|error| error.to_string());
+        serde_json::to_value(status).map_err(|error| error.to_string())
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -1171,7 +1173,7 @@ pub async fn open_full_disk_access_settings() -> Result<(), String> {
         if output.status.success() {
             return Ok(());
         }
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -1901,6 +1903,7 @@ pub async fn get_events() -> Result<Vec<Value>, String> {
 
 /// Toggle the settings window visibility
 #[tauri::command]
+#[allow(deprecated, unexpected_cfgs)]
 pub async fn toggle_settings(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(win) = app.get_webview_window("settings") {
         if win.is_visible().unwrap_or(false) {
@@ -1998,6 +2001,7 @@ pub async fn toggle_settings(app: tauri::AppHandle) -> Result<(), String> {
 
 /// Toggle the Hub window
 #[tauri::command]
+#[allow(deprecated, unexpected_cfgs)]
 pub async fn toggle_hub(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(win) = app.get_webview_window("hub") {
         if win.is_visible().unwrap_or(false) {
@@ -3226,10 +3230,7 @@ pub async fn get_hexa_readouts(
             .collect::<Vec<_>>()
     };
 
-    let readouts: Vec<HexaReadout> = sessions
-        .iter()
-        .map(|session| build_hexa_readout(session))
-        .collect();
+    let readouts: Vec<HexaReadout> = sessions.iter().map(build_hexa_readout).collect();
 
     serde_json::to_value(readouts).map_err(|e| format!("Serialize error: {}", e))
 }
@@ -3584,14 +3585,18 @@ pub async fn save_humi_memory(
     confirmed: bool,
 ) -> Result<(), String> {
     require_memory_confirmation(confirmed)?;
+    let _ = priority;
     let content = bounded_tool_text(&content, HUMI_TOOL_MAX_TEXT);
+    let temperature = match category.trim().to_lowercase().as_str() {
+        "cold" => "cold".to_string(),
+        _ => "hot".to_string(),
+    };
     let mut store = store.lock().map_err(|e| format!("Lock error: {}", e))?;
-    store.save_preference(Preference {
+    store.save_memory(MemoryItem {
         id,
-        category,
+        agent_id: bounded_tool_text(&source, 240),
         content,
-        source: bounded_tool_text(&source, 240),
-        priority,
+        temperature,
     });
     Ok(())
 }
@@ -4251,6 +4256,7 @@ mod humi_tool_tests {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_humi_context_packet(
     prompt: &str,
     assets: &[AgentAsset],
