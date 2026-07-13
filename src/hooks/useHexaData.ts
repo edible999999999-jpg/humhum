@@ -541,7 +541,7 @@ export function useHexaData() {
 
   const fetchSessions = useCallback(async () => {
     try {
-      const [sessionData, statsData, readoutData, bridgeData, healthData, queueData] = await Promise.all([
+      const [sessionResult, statsResult, readoutResult, bridgeResult, healthResult, queueResult] = await Promise.allSettled([
         invoke<HexaSession[]>("get_all_sessions_history"),
         invoke<AgentStats[]>("get_agent_stats"),
         invoke<HexaReadout[]>("get_hexa_readouts"),
@@ -549,6 +549,12 @@ export function useHexaData() {
         invoke<CodexBridgeHealth>("get_codex_bridge_health"),
         invoke<QueuedIntervention[]>("get_intervention_queue"),
       ]);
+      const sessionData = sessionResult.status === "fulfilled" ? sessionResult.value : [];
+      const statsData = statsResult.status === "fulfilled" ? statsResult.value : [];
+      const readoutData = readoutResult.status === "fulfilled" ? readoutResult.value : [];
+      const bridgeData = bridgeResult.status === "fulfilled" ? bridgeResult.value : [];
+      const healthData = healthResult.status === "fulfilled" ? healthResult.value : null;
+      const queueData = queueResult.status === "fulfilled" ? queueResult.value : [];
       const remoteData = await invoke<CodexRemoteControlState>("get_codex_remote_control").catch(() => null);
       const mobileData = await invoke<MobileBridgeStatus>("get_mobile_bridge_status").catch(() => null);
       const configData = await invoke<AppConfig>("get_config").catch(() => null);
@@ -568,7 +574,7 @@ export function useHexaData() {
       setAgentStats(statsData);
       setSupervisorSessions(sortHexaSessions(snapshots));
       setAlerts(allAlerts);
-      setBridgeHealth(healthData);
+      if (healthData) setBridgeHealth(healthData);
       setQueuedInterventions(queueData);
       if (remoteData) setRemoteControl(remoteData);
       if (mobileData) setMobileBridge(mobileData);

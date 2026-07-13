@@ -33,6 +33,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command as StdCommand;
 use std::sync::Arc;
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::process::Command;
 
@@ -2949,7 +2950,10 @@ pub fn webview_log(level: String, msg: String) {
 /// Proxy HTTP POST request through Rust — returns text (bypasses CORS)
 #[tauri::command]
 pub async fn proxy_post(url: String, headers: Value, body: String) -> Result<String, String> {
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(45))
+        .build()
+        .map_err(|e| format!("Create HTTP client failed: {}", e))?;
     let mut req = client.post(&url);
 
     if let Some(obj) = headers.as_object() {
