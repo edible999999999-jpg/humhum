@@ -82,11 +82,9 @@ export function SessionDashboard({ visible, onOpenHub }: SessionDashboardProps) 
     <div
       className="inline-flex w-fit min-w-[220px] max-w-[300px] flex-col rounded-[18px] overflow-hidden"
       style={{
-        background: "rgba(255,250,247,0.88)",
-        backdropFilter: "blur(16px) saturate(150%)",
-        WebkitBackdropFilter: "blur(16px) saturate(150%)",
+        background: "#fffaf7",
         border: "1px solid rgba(116,143,165,0.16)",
-        boxShadow: "0 14px 34px rgba(90,115,150,0.18)",
+        boxShadow: "0 10px 24px rgba(90,115,150,0.14)",
         color: "#263241",
       }}
     >
