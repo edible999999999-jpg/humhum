@@ -1,18 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/rootScroll"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/rootLayout"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/canvas"
-    android:fillViewport="true">
+    android:orientation="vertical">
+
+    <ScrollView
+        android:id="@+id/rootScroll"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:fillViewport="true">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:paddingLeft="18dp"
+        android:paddingStart="18dp"
         android:paddingTop="24dp"
-        android:paddingRight="18dp"
+        android:paddingEnd="18dp"
         android:paddingBottom="28dp">
 
         <LinearLayout
@@ -35,10 +42,12 @@
                 android:id="@+id/statusText"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:maxWidth="180dp"
+                android:ellipsize="end"
+                android:maxWidth="140dp"
+                android:singleLine="true"
                 android:text="等待连接"
                 android:textColor="@color/muted"
-                android:textSize="12sp" />
+                android:textSize="11sp" />
         </LinearLayout>
 
         <LinearLayout
@@ -49,21 +58,44 @@
             android:orientation="vertical"
             android:padding="16dp">
 
-            <TextView
-                android:layout_width="wrap_content"
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="连接这台 Mac"
-                android:textColor="@color/ink"
-                android:textSize="20sp"
-                android:textStyle="bold" />
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:text="在 Mac 的 Hexa 中开启移动访问并生成可控制配对码。"
-                android:textColor="@color/muted"
-                android:textSize="13sp" />
+                <ImageView
+                    android:id="@+id/connectMascot"
+                    android:layout_width="72dp"
+                    android:layout_height="72dp"
+                    android:importantForAccessibility="no"
+                    android:scaleType="centerCrop"
+                    android:src="@drawable/mascot_humi" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="10dp"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="连接这台 Mac"
+                        android:textColor="@color/ink"
+                        android:textSize="20sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="在 Hexa 中开启移动访问并生成配对码。"
+                        android:textColor="@color/muted"
+                        android:textSize="12sp" />
+                </LinearLayout>
+            </LinearLayout>
 
             <Button
                 android:id="@+id/pasteSetupButton"
@@ -72,7 +104,7 @@
                 android:minHeight="44dp"
                 android:layout_marginTop="14dp"
                 android:background="@drawable/button_secondary"
-                android:text="从剪贴板粘贴 Android 配对资料"
+                android:text="粘贴配对资料"
                 android:textAllCaps="false"
                 android:textColor="@color/primary" />
 
@@ -171,9 +203,11 @@
                     android:id="@+id/scopeText"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:textColor="@color/muted"
-                    android:textSize="13sp" />
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:singleLine="true"
+                android:textColor="@color/muted"
+                android:textSize="11sp" />
 
                 <Button
                     android:id="@+id/refreshButton"
@@ -190,12 +224,88 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:minHeight="42dp"
-                    android:layout_marginLeft="8dp"
+                    android:layout_marginStart="8dp"
                     android:background="@drawable/button_secondary"
                     android:text="断开"
                     android:textAllCaps="false"
                     android:textColor="#9A4C45" />
             </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/roleHero"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:background="@drawable/role_hero_background"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:padding="14dp">
+
+                <ImageView
+                    android:id="@+id/roleHeroMascot"
+                    android:layout_width="88dp"
+                    android:layout_height="88dp"
+                    android:importantForAccessibility="no"
+                    android:scaleType="centerCrop"
+                    android:src="@drawable/mascot_humi" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="12dp"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/roleKicker"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="HUMI · 今天"
+                        android:textColor="@color/humi_accent"
+                        android:textSize="11sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/roleTitle"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="我替你留意今天的重要进展"
+                        android:textColor="@color/ink"
+                        android:textSize="20sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/roleDescription"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="5dp"
+                        android:text="先解释与你有关的事，再给出一个小而有用的下一步。"
+                        android:textColor="@color/muted"
+                        android:textSize="12sp" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/roleContent"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:orientation="vertical" />
+
+            <LinearLayout
+                android:id="@+id/hexaDetailContent"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+            <LinearLayout
+                android:id="@+id/sessionsContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:orientation="vertical" />
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -205,8 +315,8 @@
                 android:background="@drawable/panel_background"
                 android:gravity="center_vertical"
                 android:orientation="horizontal"
-                android:paddingLeft="12dp"
-                android:paddingRight="8dp">
+                android:paddingStart="12dp"
+                android:paddingEnd="8dp">
 
                 <LinearLayout
                     android:layout_width="0dp"
@@ -264,9 +374,9 @@
                         android:id="@+id/batteryStatusText"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
-                        android:layout_marginLeft="10dp"
+                        android:layout_marginStart="10dp"
                         android:layout_weight="1"
-                        android:gravity="right"
+                        android:gravity="end"
                         android:textColor="@color/muted"
                         android:textSize="11sp" />
                 </LinearLayout>
@@ -303,7 +413,7 @@
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:minHeight="42dp"
-                        android:layout_marginLeft="8dp"
+                        android:layout_marginStart="8dp"
                         android:layout_weight="1"
                         android:background="@drawable/button_secondary"
                         android:text="自启动设置"
@@ -313,12 +423,146 @@
                 </LinearLayout>
             </LinearLayout>
 
-            <LinearLayout
-                android:id="@+id/sessionsContainer"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
-                android:orientation="vertical" />
+            </LinearLayout>
         </LinearLayout>
     </LinearLayout>
-</ScrollView>
+    </ScrollView>
+
+    <LinearLayout
+        android:id="@+id/roleNavigation"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@drawable/role_nav_background"
+        android:baselineAligned="false"
+        android:orientation="horizontal"
+        android:paddingStart="8dp"
+        android:paddingTop="6dp"
+        android:paddingEnd="8dp"
+        android:paddingBottom="6dp"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:id="@+id/humiTab"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:minHeight="56dp"
+            android:background="@drawable/role_tab_selected"
+            android:clickable="true"
+            android:contentDescription="@string/role_humi"
+            android:focusable="true"
+            android:gravity="center"
+            android:orientation="vertical">
+
+            <ImageView
+                android:id="@+id/humiTabMascot"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:importantForAccessibility="no"
+                android:scaleType="centerCrop"
+                android:src="@drawable/mascot_humi" />
+
+            <TextView
+                android:id="@+id/humiTabLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Humi"
+                android:textColor="@color/humi_accent"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/hypeTab"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="4dp"
+            android:layout_weight="1"
+            android:minHeight="56dp"
+            android:background="@drawable/role_tab_idle"
+            android:clickable="true"
+            android:contentDescription="@string/role_hype"
+            android:focusable="true"
+            android:gravity="center"
+            android:orientation="vertical">
+
+            <ImageView
+                android:id="@+id/hypeTabMascot"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:importantForAccessibility="no"
+                android:scaleType="centerCrop"
+                android:src="@drawable/mascot_hype" />
+
+            <TextView
+                android:id="@+id/hypeTabLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Hype"
+                android:textColor="@color/muted"
+                android:textSize="11sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/hushTab"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="4dp"
+            android:layout_weight="1"
+            android:minHeight="56dp"
+            android:background="@drawable/role_tab_idle"
+            android:clickable="true"
+            android:contentDescription="@string/role_hush"
+            android:focusable="true"
+            android:gravity="center"
+            android:orientation="vertical">
+
+            <ImageView
+                android:id="@+id/hushTabMascot"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:importantForAccessibility="no"
+                android:scaleType="centerCrop"
+                android:src="@drawable/mascot_hush" />
+
+            <TextView
+                android:id="@+id/hushTabLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Hush"
+                android:textColor="@color/muted"
+                android:textSize="11sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/hexaTab"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="4dp"
+            android:layout_weight="1"
+            android:minHeight="56dp"
+            android:background="@drawable/role_tab_idle"
+            android:clickable="true"
+            android:contentDescription="@string/role_hexa"
+            android:focusable="true"
+            android:gravity="center"
+            android:orientation="vertical">
+
+            <ImageView
+                android:id="@+id/hexaTabMascot"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:importantForAccessibility="no"
+                android:scaleType="centerCrop"
+                android:src="@drawable/mascot_hexa" />
+
+            <TextView
+                android:id="@+id/hexaTabLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Hexa"
+                android:textColor="@color/muted"
+                android:textSize="11sp" />
+        </LinearLayout>
+    </LinearLayout>
+</LinearLayout>

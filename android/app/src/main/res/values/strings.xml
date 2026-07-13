@@ -7,4 +7,8 @@
     <string name="monitor_notification_text">已通过受信任的 Wi-Fi 连接</string>
     <string name="monitor_notification_unreachable">暂时无法连接 Mac，正在重试</string>
     <string name="attention_notification_title">有 Agent 操作需要确认</string>
+    <string name="role_humi">Humi</string>
+    <string name="role_hype">Hype</string>
+    <string name="role_hush">Hush</string>
+    <string name="role_hexa">Hexa</string>
 </resources>
