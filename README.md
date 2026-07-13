@@ -8,7 +8,7 @@
 [中文文档](./README.zh-CN.md)
 
 <p align="center">
-  <a href="https://github.com/edible999999999-jpg/humhum/releases/download/v0.1.0/HumHum_0.1.0_aarch64.dmg"><strong>Download for macOS</strong></a>
+  <a href="https://github.com/edible999999999-jpg/humhum/releases/download/v0.3.4/HUMHUM-macOS-0.1.0-arm64.dmg"><strong>Download for macOS</strong></a>
   ·
   <a href="https://github.com/edible999999999-jpg/humhum/releases">Latest Release</a>
 </p>

@@ -8,7 +8,7 @@
 **让所有 Agent 围绕你工作** —— 个人生活的 Agent 中枢
 
 <p align="center">
-  <a href="https://github.com/edible999999999-jpg/humhum/releases/download/v0.1.0/HumHum_0.1.0_aarch64.dmg"><strong>下载 macOS 版</strong></a>
+  <a href="https://github.com/edible999999999-jpg/humhum/releases/download/v0.3.4/HUMHUM-macOS-0.1.0-arm64.dmg"><strong>下载 macOS 版</strong></a>
   ·
   <a href="https://github.com/edible999999999-jpg/humhum/releases">最新 Release</a>
 </p>
