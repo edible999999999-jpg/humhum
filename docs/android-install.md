@@ -1,15 +1,15 @@
-# HUMHUM Android 0.3.3
+# HUMHUM Android 0.3.4
 
 HUMHUM Android is a native private-network client for the desktop Mobile Bridge. It supports Android 8.0 and newer, including current Xiaomi and Redmi phones. Pair on the same LAN by default, or use an optional Tailscale tailnet when the Mac and phone are on different networks.
 
 ## Installable APK
 
-- Release APK: `build/releases/HUMHUM-Android-0.3.3.apk`
-- Play-compatible bundle: `build/releases/HUMHUM-Android-0.3.3.aab`
+- Release APK: `build/releases/HUMHUM-Android-0.3.4.apk`
+- Play-compatible bundle: `build/releases/HUMHUM-Android-0.3.4.aab`
 - Package: `com.humhum.mobile`
-- Version: `0.3.3` (`versionCode 6`)
-- APK SHA-256: `a67f86a87c20e878977d2c5ae01b769a890db3323a41171773d3e5d19b1fc4a7`
-- AAB SHA-256: `ca5fc46497baf411b88921e6312667e3611dae86886c0d183f826a953aabae6e`
+- Version: `0.3.4` (`versionCode 7`)
+- APK SHA-256: `1748decd6627b76d2b714a23b0d967e63897cd6b7547c9ef3ab4af8c111f5537`
+- AAB SHA-256: `6b0ec728d40eb3ab3bfdee5850ce1579d3575d4b2934b71a7db903eb066a2116`
 - Release certificate SHA-256: `C2:8C:FF:BE:03:98:B2:DB:58:DB:B7:14:DD:39:4F:06:36:CB:55:A6:90:EE:FE:6F:DA:20:2A:78:ED:4E:12:F8`
 
 The APK and AAB use HUMHUM's durable local release certificate. They are installable and update-compatible with later builds signed by the same key, but they have not been published to Xiaomi GetApps or Google Play.
@@ -30,7 +30,7 @@ Connect an authorized phone, then run:
 
 ```bash
 ~/Library/Android/sdk/platform-tools/adb install -r \
-  build/releases/HUMHUM-Android-0.3.3.apk
+  build/releases/HUMHUM-Android-0.3.4.apk
 ```
 
 ## Pair With The Mac
@@ -71,26 +71,26 @@ Background monitoring is visible and user-controlled. It uses Android's `remoteM
 
 For cross-network wakeups, Hexa can optionally connect each newly paired phone to a self-hosted encrypted wake relay. The relay receives only AES-256-GCM ciphertext, opaque channel IDs, sequence numbers and credential digests; it never receives session names, messages, approvals, device names or encryption keys. Public relay URLs must use HTTPS, while loopback HTTP is accepted only for local development. A wake tells Android to refresh through the existing certificate-pinned LAN or Tailnet Mobile Bridge, so session reading, approvals and follow-ups are never sent through the relay. If the relay is unavailable, the private-network event wait remains the fallback.
 
-Version 0.3.3 contains an optional FCM transport for system-reclaimed Android processes. The relay encrypts one opaque FCM token per channel at rest and sends an exact high-priority data payload containing only `kind`, opaque channel ID and sequence. Android accepts it only when the channel matches, the sequence is valid, FCM retained high priority and the user previously enabled monitoring. Normal-priority, malformed, wrong-channel and disabled-monitor messages cannot start the service. User-initiated **Force stop** remains an Android hard boundary until the app is opened again.
+Version 0.3.4 contains an optional FCM transport for system-reclaimed Android processes. The relay encrypts one opaque FCM token per channel at rest and sends an exact high-priority data payload containing only `kind`, opaque channel ID and sequence. Android accepts it only when the channel matches, the sequence is valid, FCM retained high priority and the user previously enabled monitoring. Normal-priority, malformed, wrong-channel and disabled-monitor messages cannot start the service. User-initiated **Force stop** remains an Android hard boundary until the app is opened again.
 
 FCM registration is generation- and relay-channel-bound. Transient network, `429`, and `5xx` failures retry after 15, 60, and then 300 seconds; `401`, `404`, and `410` stop and ask for a fresh pairing. Every retry rechecks the current pairing before request and before committing state, while disconnect invalidates queued and in-flight work. The paired screen shows only interpreted states such as **系统推送尚未配置**, **正在连接系统推送**, or **需要重新配对**; it never displays or persists the FCM token.
 
-The downloadable 0.3.3 artifacts were deliberately built with empty Firebase client identifiers because no production HUMHUM Firebase project is configured on this machine. They therefore use encrypted relay/private-network monitoring but do not request an FCM token or registration network call. A real Firebase project and matching release build are still required before claiming killed-process delivery.
+The downloadable 0.3.4 artifacts were deliberately built with empty Firebase client identifiers because no production HUMHUM Firebase project is configured on this machine. They therefore use encrypted relay/private-network monitoring but do not request an FCM token or registration network call. A real Firebase project and matching release build are still required before claiming killed-process delivery.
 
 Hexa now shows whether each paired phone is **正在使用**, **后台监控**, or **离线**. Android reports only one bounded mode through the authenticated pinned-HTTPS bridge; the Mac supplies the timestamp and keeps it in memory. If no report arrives for 90 seconds, both mode and last-seen time disappear and Hexa shows offline. This prevents a stopped Xiaomi process from looking healthy without collecting app activity, location, network names, or message content.
 
-Version 0.3.3 keeps one encrypted offline snapshot of at most 30 redacted sessions for at most seven days. It stores only project, Agent, status, last activity and attention state in `noBackupFilesDir`, encrypted by an Android Keystore AES-256-GCM key and authenticated against the current Mac URL, pinned certificate and pairing scope. If the Mac becomes unreachable, the header explicitly says **离线快照** and every stale card is read-only: session IDs, approvals, approval summaries, follow-up drafts, messages, tokens and credentials are never cached. Reconnecting replaces the snapshot with live state. Pairing changes, corruption, authentication failure, expiration and in-app disconnect delete both ciphertext and key.
+Version 0.3.4 keeps one encrypted offline snapshot of at most 30 redacted sessions for at most seven days. It stores only project, Agent, status, last activity and attention state in `noBackupFilesDir`, encrypted by an Android Keystore AES-256-GCM key and authenticated against the current Mac URL, pinned certificate and pairing scope. If the Mac becomes unreachable, the header explicitly says **离线快照** and every stale card is read-only: session IDs, approvals, approval summaries, follow-up drafts, messages, tokens and credentials are never cached. Reconnecting replaces the snapshot with live state. Pairing changes, corruption, authentication failure, expiration and in-app disconnect delete both ciphertext and key.
 
 ## Runtime Validation
 
-The release APK was installed through Android's real Package Manager on an ARM64 Android 16/API 36 emulator and cold-launched successfully. Reinstalling it with `adb install -r` preserved `firstInstallTime` while changing `lastUpdateTime`; trying to install the debug APK over it failed with Android's expected `INSTALL_FAILED_UPDATE_INCOMPATIBLE`. Earlier paired-flow validation used the visible connect form rather than injecting app preferences:
+The release APK was installed through Android's real Package Manager on ARM64 Android 8.0/API 26 and Android 16/API 36 emulators and cold-launched successfully. Reinstalling it with `adb install -r` preserved `firstInstallTime` while changing `lastUpdateTime`; trying to install the debug APK over it failed with Android's expected `INSTALL_FAILED_UPDATE_INCOMPATIBLE`. On API 26, 0.3.3 reproduced an unsolicited cold-launch soft keyboard that hid the lower pairing form. The same-key 0.3.4 upgrade preserved first-install state, reported `mInputShown=false` on cold launch, kept the full pairing button visible, and still opened the keyboard after an explicit field tap. Earlier paired-flow validation used the visible connect form rather than injecting app preferences:
 
 - Exact pinned-TLS pairing reached the Mac over its LAN address and returned control scope plus 23 redacted sessions.
 - Enabling background monitoring while the Activity was visible created a foreground service with runtime type `0x200` (`remoteMessaging`) and a low-importance private ongoing notification.
 - A disposable desktop permission request produced one high-importance private attention notification and one stored SHA-256 digest. Its notification update timestamp remained unchanged across later polls, proving deduplication at runtime.
 - Rebooting Android restored the explicitly enabled monitor, foreground type and ongoing notification after `BOOT_COMPLETED`.
 - Revoking the device token on the Mac made the next Android poll stop the service, remove the ongoing notification and clear monitor preferences. Both disposable devices were removed from the desktop store.
-- The reliability control opened Android 16's real Battery Optimization screen and returned to HUMHUM without requesting a new runtime permission. The 0.3.3 merged manifest contains the original six permissions plus Firebase's `WAKE_LOCK`, C2DM receive and one package-scoped AndroidX dynamic-receiver permission. It still contains no direct battery-exemption, location, storage or all-packages permission.
+- The reliability control opened Android 16's real Battery Optimization screen and returned to HUMHUM without requesting a new runtime permission. The 0.3.4 merged manifest contains the original six permissions plus Firebase's `WAKE_LOCK`, C2DM receive and one package-scoped AndroidX dynamic-receiver permission. It still contains no direct battery-exemption, location, storage or all-packages permission.
 - After Wi-Fi loss moved monitoring into its 60-second retry window, restoring Wi-Fi changed the foreground notification from unreachable to connected in 0 seconds through the registered default-network callback. A full reboot restored both the `0x200` service and callback; token revocation stopped the service, emitted Connectivity `RELEASE`, and left zero paired devices.
 - The realtime Mobile Bridge returned a scoped change signal in 1,051 ms when a redacted session changed. A real disposable Claude permission request updated Android's private attention notification in 1,349 ms and was then denied and removed. An unchanged wait returned `changed=false` after 21 seconds and immediately established the next wait.
 - The event endpoint revalidates the device token every second, permits 16 concurrent waits, returns `429` plus `Retry-After: 1` for the seventeenth, rejects missing credentials with `401`, rejects missing or malformed cursors with `400`, and lets read-only devices receive only the same three-field wake signal. Revocation during an open Android wait stopped the service and released its network callback in 898 ms.

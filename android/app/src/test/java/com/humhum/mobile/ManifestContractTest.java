@@ -87,6 +87,20 @@ public class ManifestContractTest {
     }
 
     @Test
+    public void coldLaunchKeepsThePairingKeyboardHiddenUntilUserInput() throws Exception {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        factory.setNamespaceAware(true);
+        Document document = factory.newDocumentBuilder()
+                .parse(Path.of("src/main/AndroidManifest.xml").toFile());
+        Element activity = component(document, "activity", ".MainActivity");
+        Set<String> softInputModes = Set.of(
+                activity.getAttributeNS(ANDROID, "windowSoftInputMode").split("\\|"));
+
+        assertTrue(softInputModes.contains("stateAlwaysHidden"));
+        assertTrue(softInputModes.contains("adjustResize"));
+    }
+
+    @Test
     public void cleartextIsLimitedToExactLoopbackDevelopmentHosts() throws Exception {
         Document document = DocumentBuilderFactory.newInstance().newDocumentBuilder()
                 .parse(Path.of("src/main/res/xml/network_security_config.xml").toFile());
