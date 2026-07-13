@@ -10,7 +10,7 @@ function item(
 }
 
 describe("sortHexaSessions", () => {
-  it("puts intervention urgency ahead of raw recency", () => {
+  it("puts recent live activity ahead of stale urgency", () => {
     const sorted = sortHexaSessions([
       item("completed", "completed", "2026-07-12T00:05:00Z"),
       item("working", "working", "2026-07-12T00:04:00Z"),
@@ -20,10 +20,10 @@ describe("sortHexaSessions", () => {
     ]);
 
     expect(sorted.map((entry) => entry.session.session_id)).toEqual([
-      "waiting",
-      "stalled",
-      "working",
       "idle",
+      "working",
+      "stalled",
+      "waiting",
       "completed",
     ]);
   });

@@ -152,6 +152,7 @@ export interface HexaSupervisorSession {
 }
 
 const PRIMARY_CLIENTS = new Set(["claude-code", "codex"]);
+const PASSIVE_EVENT_NAMES = new Set(["TranscriptBackfill"]);
 
 const CLIENT_LABELS: Record<string, string> = {
   "claude-code": "Claude Code",
@@ -244,6 +245,10 @@ function detectAlerts(session: HexaSession): HexaAlert[] {
   }
 
   return alerts;
+}
+
+function isPassiveHistorySession(session: HexaSession): boolean {
+  return session.event_names.length > 0 && session.event_names.every((name) => PASSIVE_EVENT_NAMES.has(name));
 }
 
 export function agentLabel(clientType: string): string {
@@ -549,7 +554,8 @@ export function useHexaData() {
       const configData = await invoke<AppConfig>("get_config").catch(() => null);
       const statsByClient = new Map(statsData.map((stat) => [stat.client_type, stat]));
       const readoutBySession = new Map(readoutData.map((readout) => [readout.session_id, readout]));
-      const merged = mergeHexaSessions(sessionData, bridgeData);
+      const merged = mergeHexaSessions(sessionData, bridgeData)
+        .filter((item) => !isPassiveHistorySession(item.session));
       const mergedSessions = merged.map((item) => item.session);
       const snapshots = merged.map((item) =>
         buildSupervisorSession(item.session, statsByClient, readoutBySession, item.source, item.bridge),

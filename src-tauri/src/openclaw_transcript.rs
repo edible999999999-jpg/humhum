@@ -29,6 +29,10 @@ pub fn start_watcher(app: tauri::AppHandle) {
         };
         let mut seen = HashMap::<String, i64>::new();
         loop {
+            if !humhum_openclaw_hook_installed(&home) {
+                std::thread::sleep(Duration::from_secs(20));
+                continue;
+            }
             match discover_recent(&home) {
                 Ok(sessions) => {
                     for session in sessions {
@@ -50,6 +54,12 @@ pub fn start_watcher(app: tauri::AppHandle) {
             std::thread::sleep(Duration::from_secs(20));
         }
     });
+}
+
+fn humhum_openclaw_hook_installed(home: &Path) -> bool {
+    let hook_dir = home.join(".openclaw/hooks/humhum-openclaw");
+    let config_path = home.join(".openclaw/openclaw.json");
+    crate::openclaw_hook::is_installed_at(&hook_dir, &config_path)
 }
 
 impl DiscoveredSession {
@@ -229,6 +239,14 @@ mod tests {
         assert_eq!(sessions.len(), 30);
         assert_eq!(sessions[0].session_id, "openclaw-session-34");
         assert_eq!(sessions[29].session_id, "openclaw-session-05");
+    }
+
+    #[test]
+    fn requires_humhum_openclaw_hook_before_background_scan() {
+        let temp = tempfile::tempdir().unwrap();
+        write_session(temp.path(), "main", "session-a", 1_783_824_060_000);
+
+        assert!(!humhum_openclaw_hook_installed(temp.path()));
     }
 
     #[test]

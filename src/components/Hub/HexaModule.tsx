@@ -1065,9 +1065,10 @@ export function HexaModule() {
     setAutoConfirmSessions(new Set(sessions));
   };
 
-  const active = activeSupervisorSessions;
+  const recentActivity = activeSupervisorSessions;
+  const active = recentActivity.filter((item) => item.progress_status !== "idle");
   const recentCompleted = completedSupervisorSessions.slice(0, 6);
-  const visibleSessions = [...active, ...recentCompleted];
+  const visibleSessions = [...recentActivity, ...recentCompleted];
   const pendingCount = active.reduce((sum, item) => sum + item.pending_confirmations, 0);
   const workingCount = active.filter((item) => item.progress_status === "working").length;
   const attentionCount = active.filter((item) =>
@@ -1089,7 +1090,7 @@ export function HexaModule() {
         <div>
           <h2 className="hub-module-title" style={{ marginBottom: 4 }}>Hexa Agent 看板</h2>
           <p className="hub-module-desc">
-            每个活跃会话一张感官反馈卡：项目是什么、用户最近想要什么、agent 干得如何。
+            最近活跃的并行 Agent 排在最前：看谁在推进、谁卡住、谁只是历史复盘样本。
           </p>
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 7, color: "rgba(255,255,255,0.34)", fontSize: 10 }}>
             <span style={{ width: 6, height: 6, borderRadius: "50%", background: bridgeHealth.status === "connected" ? "#22c55e" : bridgeHealth.status === "starting" ? "#facc15" : "#f87171" }} />
@@ -1150,10 +1151,10 @@ export function HexaModule() {
               letterSpacing: 0.4,
             }}
           >
-            Sessions ({supervisorSessions.length})
+            Recent activity ({recentActivity.length})
           </div>
           <div style={{ color: "rgba(255,255,255,0.25)", fontSize: 10 }}>
-            score 优先基于 transcript 最近用户消息 + hook 事件推断
+            最近活动优先；纯 transcript backfill 不进入主看板
           </div>
         </div>
 
