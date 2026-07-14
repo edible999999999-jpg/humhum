@@ -970,7 +970,15 @@ async fn handle_hexa_register(
                 ));
             }
         };
-        store.register(request)
+        match store.register(request) {
+            Ok(session) => session,
+            Err(error) => {
+                return Ok(json_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &serde_json::json!({"error": format!("could not persist watched session: {error}")}),
+                ));
+            }
+        }
     };
 
     app_handle
@@ -1016,7 +1024,15 @@ async fn handle_hexa_update(
                 ));
             }
         };
-        store.update(request)
+        match store.update(request) {
+            Ok(session) => session,
+            Err(error) => {
+                return Ok(json_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &serde_json::json!({"error": format!("could not persist watched session: {error}")}),
+                ));
+            }
+        }
     };
 
     let Some(session) = session else {
@@ -1069,7 +1085,15 @@ async fn handle_hexa_delete(
                 ));
             }
         };
-        store.delete(&request.session_id)
+        match store.delete(&request.session_id) {
+            Ok(session) => session,
+            Err(error) => {
+                return Ok(json_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &serde_json::json!({"error": format!("could not persist watched session: {error}")}),
+                ));
+            }
+        }
     };
 
     if deleted.is_none() {

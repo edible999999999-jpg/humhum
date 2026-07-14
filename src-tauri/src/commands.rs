@@ -327,7 +327,9 @@ pub async fn delete_hexa_watched_session(
         let mut store = state
             .lock()
             .map_err(|error| format!("Lock error: {error}"))?;
-        store.delete(&session_id);
+        store
+            .delete(&session_id)
+            .map_err(|error| format!("Could not persist watched session deletion: {error}"))?;
         store.sessions()
     };
     app.emit("humhum://hexa-session-changed", &session_id)

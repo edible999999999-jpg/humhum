@@ -157,9 +157,20 @@ pub fn run() {
             app.manage(Arc::new(std::sync::Mutex::new(hush_store)));
 
             // Hexa watched sessions are agent-declared high-confidence supervision targets.
-            app.manage(Arc::new(std::sync::Mutex::new(
-                hexa_watch_store::HexaWatchStore::default(),
-            )));
+            let hexa_watch_store = match hexa_watch_store::HexaWatchStore::load_or_create(
+                &dirs::home_dir()
+                    .unwrap_or_else(|| std::path::PathBuf::from("."))
+                    .join(".humhum"),
+            ) {
+                Ok(store) => store,
+                Err(error) => {
+                    log::warn!(
+                        "Could not load Hexa watch store; using an in-memory fallback: {error}"
+                    );
+                    hexa_watch_store::HexaWatchStore::default()
+                }
+            };
+            app.manage(Arc::new(std::sync::Mutex::new(hexa_watch_store)));
 
             #[cfg(target_os = "macos")]
             app.manage(Arc::new(std::sync::Mutex::new(
