@@ -18,7 +18,10 @@
     "test:relay": "node --test relay/test/*.test.mjs",
     "test:all": "npm test && npm run test:relay",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "hexa:watch": "node scripts/hexa-watch.mjs",
+    "hexa:update": "node scripts/hexa-update.mjs",
+    "hexa:unwatch": "node scripts/hexa-unwatch.mjs"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "^0.80.6",

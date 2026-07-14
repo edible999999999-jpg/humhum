@@ -50,17 +50,9 @@ const STATUS_COLORS: Record<HexaSupervisorSession["progress_status"], string> = 
   completed: "rgba(255,255,255,0.42)",
 };
 
-const HEXA_REGISTER_COMMAND = `TOKEN=$(tr -d '\\n' < ~/.humhum/local-api-token)
-curl -sS -X POST http://127.0.0.1:31275/hexa/register \\
-  -H "content-type: application/json" \\
-  -H "x-humhum-token: $TOKEN" \\
-  -d '{"agent":"codex","name":"重点监控会话","workspace":"'"$PWD"'","goal":"请把这里改成这轮任务目标"}'`;
-
-const HEXA_DELETE_COMMAND = `TOKEN=$(tr -d '\\n' < ~/.humhum/local-api-token)
-curl -sS -X POST http://127.0.0.1:31275/hexa/delete \\
-  -H "content-type: application/json" \\
-  -H "x-humhum-token: $TOKEN" \\
-  -d '{"session_id":"填入要删除的托管 session_id"}'`;
+const HEXA_REGISTER_COMMAND = `npm run hexa:watch -- "请把这里改成这轮任务目标"`;
+const HEXA_UPDATE_COMMAND = `npm run hexa:update -- "我正在推进当前步骤"`;
+const HEXA_DELETE_COMMAND = `npm run hexa:unwatch`;
 
 function getClientColor(client: string): string {
   return CLIENT_COLORS[client] || "#94eff4";
@@ -1089,8 +1081,8 @@ function SessionSection({
 }
 
 function WatchCommandPanel() {
-  const [copied, setCopied] = useState<"register" | "delete" | null>(null);
-  const copy = async (kind: "register" | "delete", command: string) => {
+  const [copied, setCopied] = useState<"register" | "update" | "delete" | null>(null);
+  const copy = async (kind: "register" | "update" | "delete", command: string) => {
     await navigator.clipboard.writeText(command);
     setCopied(kind);
     setTimeout(() => setCopied(null), 1600);
@@ -1112,7 +1104,7 @@ function WatchCommandPanel() {
         <div>
           <div style={{ color: "rgba(255,255,255,0.78)", fontSize: 12, fontWeight: 900 }}>主动加入 Hexa 托管</div>
           <div style={{ color: "rgba(255,255,255,0.34)", fontSize: 10, lineHeight: 1.45, marginTop: 4 }}>
-            自动扫描会按 Agent 折叠。真正重点监控哪一轮，由你在对应终端执行下面命令决定。
+            自动扫描会按 Agent 折叠。任何 agent 只要看到用户说“重点监控这个会话”，就应该执行下面短命令绑定到 Hexa。
           </div>
         </div>
         <button type="button" className="kawaii-toggle-btn connected" onClick={() => void copy("register", HEXA_REGISTER_COMMAND)}>
@@ -1135,13 +1127,18 @@ function WatchCommandPanel() {
       >
         {HEXA_REGISTER_COMMAND}
       </pre>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
         <div style={{ color: "rgba(255,255,255,0.28)", fontSize: 10 }}>
-          删除托管会话也可以走命令；界面里托管卡片右上角也有删除按钮。
+          后续进展用 update；结束托管用 unwatch。界面里托管卡片右上角也有删除按钮。
         </div>
-        <button type="button" className="kawaii-toggle-btn" onClick={() => void copy("delete", HEXA_DELETE_COMMAND)}>
-          <Trash2 size={14} /> {copied === "delete" ? "已复制" : "复制删除命令"}
-        </button>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <button type="button" className="kawaii-toggle-btn" onClick={() => void copy("update", HEXA_UPDATE_COMMAND)}>
+            <Send size={14} /> {copied === "update" ? "已复制" : "复制更新命令"}
+          </button>
+          <button type="button" className="kawaii-toggle-btn" onClick={() => void copy("delete", HEXA_DELETE_COMMAND)}>
+            <Trash2 size={14} /> {copied === "delete" ? "已复制" : "复制删除命令"}
+          </button>
+        </div>
       </div>
     </div>
   );

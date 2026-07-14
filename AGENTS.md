@@ -73,6 +73,30 @@ Hexa is the user's Agent supervisor.
 
 It does not try to become another multi-agent orchestration framework. It shows what different Agents are doing, which conversations need confirmation, what went well, what drifted, and what should be remembered for future work.
 
+#### Hexa Watch Protocol
+
+When the user says a session should be "重点监控", "加入 Hexa", "让 Hexa 看着这轮", "watch this session", or similar, the current agent should bind itself to Hexa without asking the user to copy curl commands.
+
+Use:
+
+```bash
+npm run hexa:watch -- "<one-sentence goal for this session>"
+```
+
+Then keep Hexa updated at meaningful milestones:
+
+```bash
+npm run hexa:update -- "<current progress, blocker, or next step>"
+```
+
+If the watched session should be removed:
+
+```bash
+npm run hexa:unwatch
+```
+
+These commands read `~/.humhum/local-api-token`, call the local Hexa API, and store the current watched session id in `.humhum/hexa-watch-session.json`. Do not ask non-technical users to edit JSON or run the raw HTTP API unless debugging.
+
 ## Design Direction
 
 The UI should match the Humi character: soft, bright, translucent, gentle, and personal.
