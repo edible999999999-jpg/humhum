@@ -8,9 +8,9 @@
 **让所有 Agent 围绕你工作** —— 个人生活的 Agent 中枢
 
 <p align="center">
-  <a href="https://github.com/edible999999999-jpg/humhum/releases/download/v0.3.4/HUMHUM-macOS-0.1.0-arm64.dmg"><strong>下载 macOS 版</strong></a>
+  <a href="https://github.com/edible999999999-jpg/humhum/releases/download/v0.3.5/HUMHUM-macOS-0.1.0-arm64.dmg"><strong>下载 macOS 版</strong></a>
   ·
-  <a href="https://github.com/edible999999999-jpg/humhum/releases/download/v0.3.4/HUMHUM-Android-0.3.4.apk"><strong>下载 Android 版</strong></a>
+  <a href="https://github.com/edible999999999-jpg/humhum/releases/download/v0.3.5/HUMHUM-Android-0.3.5.apk"><strong>下载 Android 版</strong></a>
   ·
   <a href="https://yuxilab.cn/intro"><strong>访问官网</strong></a>
   ·
