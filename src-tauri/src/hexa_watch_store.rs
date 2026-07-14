@@ -91,25 +91,33 @@ impl Default for HexaWatchStore {
 }
 
 impl HexaWatchStore {
+    pub(crate) fn empty_at(humhum_dir: &Path) -> Self {
+        Self {
+            agents: HashMap::new(),
+            storage_path: Some(humhum_dir.join("hexa-watch.json")),
+        }
+    }
+
     pub fn load_or_create(humhum_dir: &Path) -> Result<Self, String> {
         let storage_path = humhum_dir.join("hexa-watch.json");
         let agents = match fs::read_to_string(&storage_path) {
-            Ok(contents) => {
-                serde_json::from_str::<HexaWatchStoreSnapshot>(&contents)
-                    .map_err(|error| {
-                        format!(
-                            "Could not parse Hexa watch store {}: {error}",
-                            storage_path.display()
-                        )
-                    })?
-                    .agents
-            }
+            Ok(contents) => match serde_json::from_str::<HexaWatchStoreSnapshot>(&contents) {
+                Ok(snapshot) => snapshot.agents,
+                Err(error) => {
+                    log::warn!(
+                        "Could not parse Hexa watch store {}; starting with an empty durable store: {error}",
+                        storage_path.display()
+                    );
+                    HashMap::new()
+                }
+            },
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => HashMap::new(),
             Err(error) => {
-                return Err(format!(
-                    "Could not read Hexa watch store {}: {error}",
+                log::warn!(
+                    "Could not read Hexa watch store {}; starting with an empty durable store: {error}",
                     storage_path.display()
-                ));
+                );
+                HashMap::new()
             }
         };
 
@@ -144,7 +152,7 @@ impl HexaWatchStore {
             })
             .unwrap_or_else(|| format!("{} watched session", agent));
 
-        let workspace = request.workspace.and_then(clean_text);
+        let requested_workspace = request.workspace.and_then(clean_text);
         let goal = request.goal.and_then(clean_text);
         let mut agents = self.agents.clone();
 
@@ -152,63 +160,75 @@ impl HexaWatchStore {
             watched_agent
                 .runs
                 .iter()
-                .find(|session| session.session_id == session_id)
-                .map(|_| key.clone())
+                .position(|session| session.session_id == session_id)
+                .map(|index| (key.clone(), index))
         });
 
-        let session = if let Some(agent_key) = existing_run {
-            let watched_agent = agents
-                .get_mut(&agent_key)
-                .expect("agent containing a found run must exist");
-            let session = watched_agent
-                .runs
-                .iter_mut()
-                .find(|session| session.session_id == session_id)
-                .expect("a found run must still exist");
-            session.agent = agent;
-            session.name = name;
-            session.provider = provider;
-            if let Some(workspace) = workspace {
-                session.workspace = Some(workspace);
-            }
-            if let Some(goal) = goal {
-                session.goal = Some(goal);
-            }
-            session.updated_at = now;
-            watched_agent.updated_at = session.updated_at.clone();
-            session.clone()
-        } else {
-            let key = agent_key(&provider, workspace.as_deref(), &name);
-            let watched_agent = agents
-                .entry(key.clone())
+        let (session, target_agent_key) =
+            if let Some((previous_agent_key, run_index)) = existing_run {
+                let mut session = agents
+                    .get_mut(&previous_agent_key)
+                    .expect("agent containing a found run must exist")
+                    .runs
+                    .remove(run_index);
+                let workspace = requested_workspace
+                    .clone()
+                    .or_else(|| session.workspace.clone());
+                session.agent = agent.clone();
+                session.name = name.clone();
+                session.provider = provider.clone();
+                session.workspace = workspace.clone();
+                if let Some(goal) = goal {
+                    session.goal = Some(goal);
+                }
+                session.updated_at = now.clone();
+
+                let target_agent_key = agent_key(&provider, workspace.as_deref());
+                if previous_agent_key != target_agent_key
+                    && agents
+                        .get(&previous_agent_key)
+                        .is_some_and(|watched_agent| watched_agent.runs.is_empty())
+                {
+                    agents.remove(&previous_agent_key);
+                }
+                (session, target_agent_key)
+            } else {
+                let session = HexaWatchedSession {
+                    session_id,
+                    agent,
+                    name: name.clone(),
+                    provider: provider.clone(),
+                    workspace: requested_workspace.clone(),
+                    goal,
+                    status: HexaWatchStatus::Starting,
+                    current_step: None,
+                    blocked_reason: None,
+                    need_user: false,
+                    confidence: None,
+                    started_at: now.clone(),
+                    updated_at: now.clone(),
+                };
+                let target_agent_key = agent_key(&provider, requested_workspace.as_deref());
+                (session, target_agent_key)
+            };
+
+        let watched_agent =
+            agents
+                .entry(target_agent_key.clone())
                 .or_insert_with(|| HexaWatchedAgent {
-                    key,
+                    key: target_agent_key,
                     provider: provider.clone(),
                     name: name.clone(),
-                    workspace: workspace.clone(),
+                    workspace: session.workspace.clone(),
                     created_at: now.clone(),
                     updated_at: now.clone(),
                     runs: Vec::new(),
                 });
-            let session = HexaWatchedSession {
-                session_id,
-                agent,
-                name,
-                provider,
-                workspace,
-                goal,
-                status: HexaWatchStatus::Starting,
-                current_step: None,
-                blocked_reason: None,
-                need_user: false,
-                confidence: None,
-                started_at: now.clone(),
-                updated_at: now,
-            };
-            watched_agent.updated_at = session.updated_at.clone();
-            watched_agent.runs.push(session.clone());
-            session
-        };
+        watched_agent.provider = provider;
+        watched_agent.name = name;
+        watched_agent.workspace = session.workspace.clone();
+        watched_agent.updated_at = session.updated_at.clone();
+        watched_agent.runs.push(session.clone());
 
         self.persist_agents(&agents)?;
         self.agents = agents;
@@ -354,6 +374,7 @@ impl HexaWatchStore {
                     storage_path.display()
                 )
             })?;
+            sync_parent_directory(parent)?;
             Ok(())
         })();
         if write_result.is_err() {
@@ -363,9 +384,27 @@ impl HexaWatchStore {
     }
 }
 
-fn agent_key(provider: &str, workspace: Option<&str>, name: &str) -> String {
-    serde_json::to_string(&(provider, workspace.unwrap_or_default(), name))
+fn agent_key(provider: &str, workspace: Option<&str>) -> String {
+    serde_json::to_string(&(provider, workspace.unwrap_or_default()))
         .expect("agent key components are serializable")
+}
+
+#[cfg(unix)]
+fn sync_parent_directory(parent: &Path) -> Result<(), String> {
+    fs::File::open(parent)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|error| {
+            format!(
+                "Could not sync Hexa watch store directory {}: {error}",
+                parent.display()
+            )
+        })
+}
+
+#[cfg(not(unix))]
+fn sync_parent_directory(_parent: &Path) -> Result<(), String> {
+    // std::fs cannot portably sync directory handles on non-Unix platforms.
+    Ok(())
 }
 
 fn clean_text(value: String) -> Option<String> {
@@ -448,5 +487,66 @@ mod tests {
 
         assert!(restored.sessions().is_empty());
         assert!(restored.agents().is_empty());
+    }
+
+    #[test]
+    fn reuses_agent_when_display_name_changes() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut store = HexaWatchStore::load_or_create(directory.path()).unwrap();
+        store.register(register_request()).unwrap();
+        store
+            .register(HexaWatchRegisterRequest {
+                session_id: Some("run-2".to_string()),
+                name: Some("Codex nightly".to_string()),
+                ..register_request()
+            })
+            .unwrap();
+
+        let agents = store.agents();
+
+        assert_eq!(agents.len(), 1);
+        assert_eq!(agents[0].name, "Codex nightly");
+        assert_eq!(agents[0].runs.len(), 2);
+    }
+
+    #[test]
+    fn moves_reregistered_run_to_new_provider_workspace_agent() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut store = HexaWatchStore::load_or_create(directory.path()).unwrap();
+        store.register(register_request()).unwrap();
+        store
+            .register(HexaWatchRegisterRequest {
+                session_id: Some("run-1".to_string()),
+                agent: "claude".to_string(),
+                name: Some("Claude review".to_string()),
+                provider: Some("anthropic".to_string()),
+                workspace: Some("/workspace/review".to_string()),
+                goal: Some("Review persistence".to_string()),
+            })
+            .unwrap();
+        drop(store);
+
+        let restored = HexaWatchStore::load_or_create(directory.path()).unwrap();
+        let agents = restored.agents();
+
+        assert_eq!(agents.len(), 1);
+        assert_eq!(agents[0].provider, "anthropic");
+        assert_eq!(agents[0].workspace.as_deref(), Some("/workspace/review"));
+        assert_eq!(agents[0].name, "Claude review");
+        assert_eq!(agents[0].runs[0].session_id, "run-1");
+    }
+
+    #[test]
+    fn recovers_invalid_snapshot_with_a_durable_store() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(directory.path().join("hexa-watch.json"), "not JSON").unwrap();
+
+        let mut store = HexaWatchStore::load_or_create(directory.path()).unwrap();
+        store.register(register_request()).unwrap();
+        drop(store);
+
+        let restored = HexaWatchStore::load_or_create(directory.path()).unwrap();
+
+        assert_eq!(restored.sessions().len(), 1);
     }
 }

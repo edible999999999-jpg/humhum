@@ -100,6 +100,21 @@ pub fn run() {
                         .map_err(std::io::Error::other)?;
                 app.manage(Arc::new(mobile_bridge));
                 app.manage(Arc::new(remote_bridge::RemoteBridgeState::default()));
+
+                // Hexa watched sessions are agent-declared high-confidence supervision targets.
+                let hexa_watch_dir = home.join(".humhum");
+                let hexa_watch_store = match hexa_watch_store::HexaWatchStore::load_or_create(
+                    &hexa_watch_dir,
+                ) {
+                    Ok(store) => store,
+                    Err(error) => {
+                        log::warn!(
+                            "Could not load Hexa watch store; using an empty durable recovery store: {error}"
+                        );
+                        hexa_watch_store::HexaWatchStore::empty_at(&hexa_watch_dir)
+                    }
+                };
+                app.manage(Arc::new(std::sync::Mutex::new(hexa_watch_store)));
             } else {
                 return Err(std::io::Error::other("Could not determine home directory").into());
             }
@@ -155,22 +170,6 @@ pub fn run() {
             // Hush inbox store (persistent)
             let hush_store = hush_store::HushStore::new();
             app.manage(Arc::new(std::sync::Mutex::new(hush_store)));
-
-            // Hexa watched sessions are agent-declared high-confidence supervision targets.
-            let hexa_watch_store = match hexa_watch_store::HexaWatchStore::load_or_create(
-                &dirs::home_dir()
-                    .unwrap_or_else(|| std::path::PathBuf::from("."))
-                    .join(".humhum"),
-            ) {
-                Ok(store) => store,
-                Err(error) => {
-                    log::warn!(
-                        "Could not load Hexa watch store; using an in-memory fallback: {error}"
-                    );
-                    hexa_watch_store::HexaWatchStore::default()
-                }
-            };
-            app.manage(Arc::new(std::sync::Mutex::new(hexa_watch_store)));
 
             #[cfg(target_os = "macos")]
             app.manage(Arc::new(std::sync::Mutex::new(

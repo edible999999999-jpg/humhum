@@ -60,3 +60,43 @@ Cargo also reported an existing future-incompatibility notice for transitive dep
 
 - The save path syncs the temporary file before rename but does not sync the parent directory after rename. Rename is atomic, as required, but a power-loss-hardening follow-up could add directory syncing where supported.
 - Invalid or unreadable JSON intentionally triggers the setup warning and in-memory fallback. It does not repair or overwrite the source file automatically, so recovery remains an operator decision.
+
+## Fix Review
+
+### RED
+
+Command:
+
+```bash
+cargo test hexa_watch_store --manifest-path src-tauri/Cargo.toml
+```
+
+Result: failed as expected with three targeted regressions:
+
+```text
+reuses_agent_when_display_name_changes: left 2, right 1
+moves_reregistered_run_to_new_provider_workspace_agent: left "openai", right "anthropic"
+recovers_invalid_snapshot_with_a_durable_store: load_or_create returned a JSON parse error
+```
+
+### GREEN
+
+Command:
+
+```bash
+cargo fmt --manifest-path src-tauri/Cargo.toml && cargo test hexa_watch_store --manifest-path src-tauri/Cargo.toml
+```
+
+Result: passed.
+
+```text
+running 6 tests
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 207 filtered out
+```
+
+### Review Fixes
+
+- Agent identity now derives only from provider and workspace. Registering the same provider/workspace with a different display name reuses the Agent and updates its display metadata.
+- Re-registering an existing run under a new provider/workspace removes it from the prior Agent, moves it to the target Agent, and prunes the old Agent when empty.
+- Invalid or unreadable snapshots log a warning but return an empty store bound to the intended `hexa-watch.json` path. Tauri setup retains that durable recovery path even if `load_or_create` returns an error.
+- After the temporary file is renamed, Unix builds sync the parent directory. Non-Unix builds deliberately retain the atomic rename without directory syncing because `std::fs` does not expose a portable directory-sync operation there.
