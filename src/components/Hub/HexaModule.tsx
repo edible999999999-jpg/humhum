@@ -1082,6 +1082,7 @@ function SessionSection({
 
 function WatchCommandPanel() {
   const [copied, setCopied] = useState<"register" | "update" | "delete" | null>(null);
+  const [expanded, setExpanded] = useState(false);
   const copy = async (kind: "register" | "update" | "delete", command: string) => {
     await navigator.clipboard.writeText(command);
     setCopied(kind);
@@ -1092,54 +1093,78 @@ function WatchCommandPanel() {
     <div
       style={{
         display: "grid",
-        gap: 10,
-        padding: 12,
+        gap: expanded ? 10 : 8,
+        padding: 10,
         marginBottom: 14,
         borderRadius: 8,
         background: "rgba(52,211,153,0.055)",
         border: "1px solid rgba(52,211,153,0.18)",
       }}
     >
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
         <div>
           <div style={{ color: "rgba(255,255,255,0.78)", fontSize: 12, fontWeight: 900 }}>主动加入 Hexa 托管</div>
           <div style={{ color: "rgba(255,255,255,0.34)", fontSize: 10, lineHeight: 1.45, marginTop: 4 }}>
             自动扫描会按 Agent 折叠。任何 agent 只要看到用户说“重点监控这个会话”，就应该执行下面短命令绑定到 Hexa。
           </div>
         </div>
-        <button type="button" className="kawaii-toggle-btn connected" onClick={() => void copy("register", HEXA_REGISTER_COMMAND)}>
-          <Copy size={14} /> {copied === "register" ? "已复制" : "复制注册命令"}
-        </button>
-      </div>
-      <pre
-        style={{
-          margin: 0,
-          padding: 10,
-          borderRadius: 8,
-          background: "rgba(0,0,0,0.22)",
-          border: "1px solid rgba(255,255,255,0.08)",
-          color: "rgba(255,255,255,0.72)",
-          fontSize: 10,
-          lineHeight: 1.45,
-          overflowX: "auto",
-          whiteSpace: "pre-wrap",
-        }}
-      >
-        {HEXA_REGISTER_COMMAND}
-      </pre>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-        <div style={{ color: "rgba(255,255,255,0.28)", fontSize: 10 }}>
-          后续进展用 update；结束托管用 unwatch。界面里托管卡片右上角也有删除按钮。
-        </div>
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          <button type="button" className="kawaii-toggle-btn" onClick={() => void copy("update", HEXA_UPDATE_COMMAND)}>
-            <Send size={14} /> {copied === "update" ? "已复制" : "复制更新命令"}
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          <button type="button" className="kawaii-toggle-btn" onClick={() => setExpanded((value) => !value)}>
+            {expanded ? "收起命令" : "展开命令"}
           </button>
-          <button type="button" className="kawaii-toggle-btn" onClick={() => void copy("delete", HEXA_DELETE_COMMAND)}>
-            <Trash2 size={14} /> {copied === "delete" ? "已复制" : "复制删除命令"}
+          <button type="button" className="kawaii-toggle-btn connected" onClick={() => void copy("register", HEXA_REGISTER_COMMAND)}>
+            <Copy size={14} /> {copied === "register" ? "已复制" : "复制注册命令"}
           </button>
         </div>
       </div>
+      {expanded ? (
+        <>
+          <pre
+            style={{
+              margin: 0,
+              padding: 10,
+              borderRadius: 8,
+              background: "rgba(0,0,0,0.22)",
+              border: "1px solid rgba(255,255,255,0.08)",
+              color: "rgba(255,255,255,0.72)",
+              fontSize: 10,
+              lineHeight: 1.45,
+              overflowX: "auto",
+              whiteSpace: "pre-wrap",
+            }}
+          >
+            {HEXA_REGISTER_COMMAND}
+          </pre>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ color: "rgba(255,255,255,0.28)", fontSize: 10 }}>
+              后续进展用 update；结束托管用 unwatch。界面里托管卡片右上角也有删除按钮。
+            </div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <button type="button" className="kawaii-toggle-btn" onClick={() => void copy("update", HEXA_UPDATE_COMMAND)}>
+                <Send size={14} /> {copied === "update" ? "已复制" : "复制更新命令"}
+              </button>
+              <button type="button" className="kawaii-toggle-btn" onClick={() => void copy("delete", HEXA_DELETE_COMMAND)}>
+                <Trash2 size={14} /> {copied === "delete" ? "已复制" : "复制删除命令"}
+              </button>
+            </div>
+          </div>
+        </>
+      ) : (
+        <div
+          style={{
+            padding: "8px 10px",
+            borderRadius: 8,
+            background: "rgba(0,0,0,0.16)",
+            border: "1px solid rgba(255,255,255,0.07)",
+            color: "rgba(255,255,255,0.62)",
+            fontSize: 10,
+            fontFamily: "monospace",
+            overflowWrap: "anywhere",
+          }}
+        >
+          {HEXA_REGISTER_COMMAND}
+        </div>
+      )}
     </div>
   );
 }
@@ -1251,6 +1276,7 @@ export function HexaModule() {
   const discoveredSessions = recentActivity.filter((item) => item.source !== "watched");
   const historicalSessions = recentCompleted.filter((item) => item.source !== "watched");
   const visibleSessions = [...watchedSessions, ...discoveredSessions, ...historicalSessions];
+  const secondarySessions = [...discoveredSessions, ...historicalSessions];
   const pendingCount = active.reduce((sum, item) => sum + item.pending_confirmations, 0);
   const workingCount = active.filter((item) => item.progress_status === "working").length;
   const attentionCount = active.filter((item) =>
@@ -1372,7 +1398,13 @@ export function HexaModule() {
         onConfigureRelay={configureMobileRelay}
       />
 
-      <WatchCommandPanel />
+      {watchedSessions.length > 0 && (
+        <section style={{ display: "grid", gap: 10, marginBottom: 14 }}>
+          <SessionSection title="正在托管" count={watchedSessions.length} detail="Agent 主动要求 Hexa 监控，状态可信度最高">
+            {renderSessionGrid(watchedSessions)}
+          </SessionSection>
+        </section>
+      )}
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10, marginBottom: 14 }}>
         <MetricCard label="活跃会话" value={active.length} tone="#22c55e" detail={`${workingCount} 个正在推进`} />
@@ -1380,6 +1412,8 @@ export function HexaModule() {
         <MetricCard label="最近完成" value={recentCompleted.length} tone="#38bdf8" detail="保留最近 6 个复盘样本" />
         <MetricCard label="告警信号" value={alerts.length} tone="#f87171" detail="停滞、循环、低进展" />
       </div>
+
+      <WatchCommandPanel />
 
       <section style={{ display: "grid", gap: 10 }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
@@ -1392,22 +1426,17 @@ export function HexaModule() {
               letterSpacing: 0.4,
             }}
           >
-            Hexa sessions ({visibleSessions.length})
+            Scanned sessions ({secondarySessions.length})
           </div>
           <div style={{ color: "rgba(255,255,255,0.25)", fontSize: 10 }}>
             托管优先；发现到的会话保留轻量推断；历史进入复盘
           </div>
         </div>
 
-        {visibleSessions.length === 0 ? (
+        {secondarySessions.length === 0 ? (
           <EmptyState />
         ) : (
           <div style={{ display: "grid", gap: 14 }}>
-            {watchedSessions.length > 0 && (
-              <SessionSection title="正在托管" count={watchedSessions.length} detail="Agent 主动要求 Hexa 监控，状态可信度最高">
-                {renderSessionGrid(watchedSessions)}
-              </SessionSection>
-            )}
             {discoveredSessions.length > 0 && (
               <SessionSection title="发现到" count={discoveredSessions.length} detail="来自 hook、Codex bridge 或本地会话扫描">
                 <div style={{ display: "grid", gap: 8 }}>
