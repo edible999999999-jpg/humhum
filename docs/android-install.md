@@ -1,15 +1,15 @@
-# HUMHUM Android 0.3.6
+# HUMHUM Android 0.3.7
 
 HUMHUM Android is a native private-network client for the desktop Mobile Bridge. It supports Android 8.0 and newer, including current Xiaomi and Redmi phones. Pair on the same LAN by default, or use an optional Tailscale tailnet when the Mac and phone are on different networks.
 
 ## Installable APK
 
-- Release APK: `build/releases/HUMHUM-Android-0.3.6.apk`
-- Play-compatible bundle: `build/releases/HUMHUM-Android-0.3.6.aab`
+- Release APK: `build/releases/HUMHUM-Android-0.3.7.apk`
+- Play-compatible bundle: `build/releases/HUMHUM-Android-0.3.7.aab`
 - Package: `com.humhum.mobile`
-- Version: `0.3.6` (`versionCode 9`)
-- APK SHA-256: `a2e73160180e26a0fea659dbcdf6a2dfad4f2d0ba71cb8ec37ef840723c1a64e`
-- AAB SHA-256: `984bdb3563041d028960bc8af2c39e301abc864ece35ad1bd364503bd796f3e4`
+- Version: `0.3.7` (`versionCode 10`)
+- APK SHA-256: `b380fcbfc89c61a1b4adb54e85f2edca6f81bda47db4e1203c5483e3da683422`
+- AAB SHA-256: `c84804d83db7aa689d784005f9e98aed9f9d87704a2868fe2dc53296e61a14bc`
 - Release certificate SHA-256: `C2:8C:FF:BE:03:98:B2:DB:58:DB:B7:14:DD:39:4F:06:36:CB:55:A6:90:EE:FE:6F:DA:20:2A:78:ED:4E:12:F8`
 
 The APK and AAB use HUMHUM's durable local release certificate. They are installable and update-compatible with later builds signed by the same key, but they have not been published to Xiaomi GetApps or Google Play.
@@ -30,7 +30,7 @@ Connect an authorized phone, then run:
 
 ```bash
 ~/Library/Android/sdk/platform-tools/adb install -r \
-  build/releases/HUMHUM-Android-0.3.6.apk
+  build/releases/HUMHUM-Android-0.3.7.apk
 ```
 
 ## Pair With The Mac
