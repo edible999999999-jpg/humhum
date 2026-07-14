@@ -98,11 +98,23 @@
             </LinearLayout>
 
             <Button
+                android:id="@+id/scanSetupButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:minHeight="48dp"
+                android:layout_marginTop="14dp"
+                android:backgroundTint="@color/primary"
+                android:text="扫描 Mac 配对二维码"
+                android:textAllCaps="false"
+                android:textColor="@color/surface"
+                android:textStyle="bold" />
+
+            <Button
                 android:id="@+id/pasteSetupButton"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:minHeight="44dp"
-                android:layout_marginTop="14dp"
+                android:layout_marginTop="8dp"
                 android:background="@drawable/button_secondary"
                 android:text="粘贴配对资料"
                 android:textAllCaps="false"

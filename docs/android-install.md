@@ -1,15 +1,15 @@
-# HUMHUM Android 0.3.4
+# HUMHUM Android 0.3.6
 
 HUMHUM Android is a native private-network client for the desktop Mobile Bridge. It supports Android 8.0 and newer, including current Xiaomi and Redmi phones. Pair on the same LAN by default, or use an optional Tailscale tailnet when the Mac and phone are on different networks.
 
 ## Installable APK
 
-- Release APK: `build/releases/HUMHUM-Android-0.3.4.apk`
-- Play-compatible bundle: `build/releases/HUMHUM-Android-0.3.4.aab`
+- Release APK: `build/releases/HUMHUM-Android-0.3.6.apk`
+- Play-compatible bundle: `build/releases/HUMHUM-Android-0.3.6.aab`
 - Package: `com.humhum.mobile`
-- Version: `0.3.4` (`versionCode 7`)
-- APK SHA-256: `1748decd6627b76d2b714a23b0d967e63897cd6b7547c9ef3ab4af8c111f5537`
-- AAB SHA-256: `6b0ec728d40eb3ab3bfdee5850ce1579d3575d4b2934b71a7db903eb066a2116`
+- Version: `0.3.6` (`versionCode 9`)
+- APK SHA-256: `a2e73160180e26a0fea659dbcdf6a2dfad4f2d0ba71cb8ec37ef840723c1a64e`
+- AAB SHA-256: `984bdb3563041d028960bc8af2c39e301abc864ece35ad1bd364503bd796f3e4`
 - Release certificate SHA-256: `C2:8C:FF:BE:03:98:B2:DB:58:DB:B7:14:DD:39:4F:06:36:CB:55:A6:90:EE:FE:6F:DA:20:2A:78:ED:4E:12:F8`
 
 The APK and AAB use HUMHUM's durable local release certificate. They are installable and update-compatible with later builds signed by the same key, but they have not been published to Xiaomi GetApps or Google Play.
@@ -30,7 +30,7 @@ Connect an authorized phone, then run:
 
 ```bash
 ~/Library/Android/sdk/platform-tools/adb install -r \
-  build/releases/HUMHUM-Android-0.3.4.apk
+  build/releases/HUMHUM-Android-0.3.6.apk
 ```
 
 ## Pair With The Mac
@@ -38,8 +38,8 @@ Connect an authorized phone, then run:
 1. Put the Mac and phone on the same trusted Wi-Fi network. Guest Wi-Fi or client isolation can prevent local devices from seeing each other.
 2. Open HUMHUM Hub on the Mac, choose Hexa, and enable mobile access.
 3. Generate a read-only or control pairing code. Control scope is required for approvals and follow-up messages.
-4. Click **Copy Android pairing setup**. Send that short JSON bundle to the phone; it contains an expiring code and the Mac certificate fingerprint, never a durable device token.
-5. In the Android app, paste the setup, name the phone, and pair within five minutes.
+4. Hexa displays a short-lived QR code containing the Mac URL, expiring code, access scope, and certificate fingerprint. It never contains a durable device token.
+5. In the Android app, tap **扫描 Mac 配对二维码**, allow camera access, and scan within five minutes. HUMHUM validates the setup and starts certificate-pinned pairing automatically. **粘贴配对资料** and manual fields remain available as recovery paths.
 
 After pairing, the app stores its token in app-private storage and verifies the exact TLS certificate fingerprint on every connection. Pressing **Disconnect** revokes that device on the Mac before clearing the local credential. If the Mac is unreachable, the app clears the phone and asks the user to revoke the stale device from Hexa.
 
@@ -108,6 +108,7 @@ This proves Android platform lifecycle behavior, not Xiaomi-specific battery-man
 ## Current Scope
 
 - Native session list, redacted to project, agent, status, recency, attention state, and bounded approval summaries.
+- Offline QR pairing from Hexa with strict setup parsing, certificate pinning, and five-minute expiry.
 - Read-only and control pairing scopes.
 - Allow-once/deny for supported Agent approvals.
 - Text follow-ups for known Codex, Claude Code, and OpenCode sessions.
@@ -122,7 +123,7 @@ This proves Android platform lifecycle behavior, not Xiaomi-specific battery-man
 - In-app battery-settings access and Xiaomi-family autostart-settings routing with safe standard fallbacks.
 - HTTPS only, certificate fingerprint pinning, and no backup of app credentials.
 
-The APK requests network state, internet, foreground remote messaging, notification and opt-in boot restoration permissions. Firebase Messaging adds bounded wake-lock and C2DM receive permissions plus one package-scoped AndroidX receiver permission. HUMHUM does not request direct battery exemption, all-package visibility, location, nearby-device, contacts, files, camera, microphone, overlay, or accessibility access.
+The APK requests network state, internet, foreground remote messaging, notification, opt-in boot restoration, and camera permissions. Camera access is requested only after the user opens the QR scanner, camera hardware is optional, and paste/manual pairing remains available. Firebase Messaging adds bounded wake-lock and C2DM receive permissions plus one package-scoped AndroidX receiver permission. HUMHUM does not request direct battery exemption, all-package visibility, location, nearby-device, contacts, files, microphone, overlay, or accessibility access.
 
 Not yet verified or shipped: production-configured FCM delivery, Xiaomi Push, physical HyperOS process-reclaim survival, a HUMHUM-hosted relay service, full encrypted transcript history, attachments, iOS packaging, store distribution, or automatic updates. Xiaomi Push additionally requires an approved Xiaomi developer account, a registered package with AppID/AppKey, server-side AppSecret, and the region-appropriate Xiaomi SDK; none of those credentials are present on this machine, so the release does not pretend to initialize that provider. See Xiaomi's official [enablement guide](https://dev.mi.com/xiaomihyperos/documentation/detail?pId=1691) and [Android AAR integration guide](https://dev.mi.com/xiaomihyperos/documentation/detail?pId=1544).
 

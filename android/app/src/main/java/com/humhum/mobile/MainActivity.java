@@ -5,6 +5,7 @@ import android.app.Activity;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
@@ -37,9 +38,12 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import com.google.zxing.integration.android.IntentIntegrator;
+import com.google.zxing.integration.android.IntentResult;
 
 public final class MainActivity extends Activity {
     private static final int NOTIFICATION_PERMISSION_REQUEST = 4103;
+    private static final int CAMERA_PERMISSION_REQUEST = 4104;
     private static final String SELECTED_ROLE_STATE = "selected_role";
     private static final StartedOwnerRegistry<MainActivity> STARTED_ACTIVITIES =
             new StartedOwnerRegistry<>();
@@ -126,6 +130,7 @@ public final class MainActivity extends Activity {
         monitorStore = AgentMonitorService.monitorStore(this);
         pushPreferences = getSharedPreferences("humhum_push", MODE_PRIVATE);
         connectButton.setOnClickListener(view -> pair());
+        findViewById(R.id.scanSetupButton).setOnClickListener(view -> scanSetup());
         findViewById(R.id.pasteSetupButton).setOnClickListener(view -> pasteSetup());
         refreshButton.setOnClickListener(view -> refreshSessions(true));
         disconnectButton.setOnClickListener(view -> disconnect());
@@ -147,6 +152,20 @@ public final class MainActivity extends Activity {
     protected void onSaveInstanceState(Bundle outState) {
         outState.putString(SELECTED_ROLE_STATE, selectedRole.id());
         super.onSaveInstanceState(outState);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        IntentResult result = IntentIntegrator.parseActivityResult(requestCode, resultCode, data);
+        if (result != null) {
+            if (result.getContents() == null) {
+                connectError.setText("已取消扫描");
+            } else {
+                applyPairingSetup(result.getContents(), true);
+            }
+            return;
+        }
+        super.onActivityResult(requestCode, resultCode, data);
     }
 
     @Override
@@ -540,14 +559,42 @@ public final class MainActivity extends Activity {
             return;
         }
         CharSequence text = data.getItemAt(0).coerceToText(this);
+        applyPairingSetup(text == null ? "" : text.toString(), false);
+    }
+
+    private void scanSetup() {
+        if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(
+                    new String[] {Manifest.permission.CAMERA},
+                    CAMERA_PERMISSION_REQUEST);
+            return;
+        }
+        openQrScanner();
+    }
+
+    private void openQrScanner() {
+        IntentIntegrator integrator = new IntentIntegrator(this);
+        integrator.setCaptureActivity(QrCaptureActivity.class);
+        integrator.setDesiredBarcodeFormats(IntentIntegrator.QR_CODE);
+        integrator.setPrompt("扫描 Mac 上 Hexa 的配对二维码");
+        integrator.setBeepEnabled(false);
+        integrator.setBarcodeImageEnabled(false);
+        integrator.initiateScan();
+    }
+
+    private void applyPairingSetup(String source, boolean connectImmediately) {
         try {
-            PairingSetup setup = PairingSetup.parse(text == null ? "" : text.toString());
+            PairingSetup setup = PairingSetup.parse(source);
             urlInput.setText(setup.url());
             codeInput.setText(setup.code());
             fingerprintInput.setText(setup.fingerprint());
-            connectError.setText(setup.scope() == Models.Scope.CONTROL
-                    ? "已填入可控制配对资料，请点击安全配对"
-                    : "已填入只读配对资料，请点击安全配对");
+            if (connectImmediately) {
+                pair();
+            } else {
+                connectError.setText(setup.scope() == Models.Scope.CONTROL
+                        ? "已填入可控制配对资料，请点击安全配对"
+                        : "已填入只读配对资料，请点击安全配对");
+            }
         } catch (IllegalArgumentException error) {
             connectError.setText(error.getMessage());
         }
@@ -725,6 +772,14 @@ public final class MainActivity extends Activity {
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grants) {
         super.onRequestPermissionsResult(requestCode, permissions, grants);
+        if (requestCode == CAMERA_PERMISSION_REQUEST) {
+            if (grants.length > 0 && grants[0] == PackageManager.PERMISSION_GRANTED) {
+                openQrScanner();
+            } else {
+                connectError.setText("未开启相机权限，可改用粘贴配对资料");
+            }
+            return;
+        }
         if (requestCode != NOTIFICATION_PERMISSION_REQUEST || !pendingMonitorEnable) return;
         pendingMonitorEnable = false;
         if (grants.length > 0 && grants[0] == PackageManager.PERMISSION_GRANTED) {

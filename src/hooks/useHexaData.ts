@@ -42,6 +42,7 @@ export interface MobileBridgeStatus {
   lan_url: string | null;
   tailnet_url: string | null;
   certificate_fingerprint: string | null;
+  pairing_active: boolean;
   paired_devices: number;
   devices: Array<{
     id: string;
@@ -617,6 +618,7 @@ export function useHexaData() {
     lan_url: null,
     tailnet_url: null,
     certificate_fingerprint: null,
+    pairing_active: false,
     paired_devices: 0,
     devices: [],
     relay_status: "disabled",
@@ -690,7 +692,10 @@ export function useHexaData() {
       if (healthData) setBridgeHealth(healthData);
       setQueuedInterventions(queueData);
       if (remoteData) setRemoteControl(remoteData);
-      if (mobileData) setMobileBridge(mobileData);
+      if (mobileData) {
+        setMobileBridge(mobileData);
+        if (!mobileData.pairing_active) setMobilePairing(null);
+      }
       if (configData) setMobileRelayConfig(configData.mobile_relay);
     } catch {
       // Hub may open before the backend is ready.
@@ -723,6 +728,22 @@ export function useHexaData() {
       unlistenRemoteControl.then((fn) => fn());
     };
   }, [fetchSessions]);
+
+  useEffect(() => {
+    if (!mobilePairing) return;
+    let disposed = false;
+    const syncPairingStatus = async () => {
+      const state = await invoke<MobileBridgeStatus>("get_mobile_bridge_status").catch(() => null);
+      if (disposed || !state) return;
+      setMobileBridge(state);
+      if (!state.pairing_active) setMobilePairing(null);
+    };
+    const timer = window.setInterval(syncPairingStatus, 750);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [mobilePairing]);
 
   const activeSessions = sessions.filter((s) => s.status !== "completed");
   const completedSessions = sessions.filter((s) => s.status === "completed");
@@ -848,6 +869,9 @@ export function useHexaData() {
   ) => {
     const pairing = await invoke<MobilePairingInfo>("start_mobile_pairing", { scope, network });
     setMobilePairing(pairing);
+    const state = await invoke<MobileBridgeStatus>("get_mobile_bridge_status");
+    setMobileBridge(state);
+    if (!state.pairing_active) setMobilePairing(null);
     return pairing;
   }, []);
 

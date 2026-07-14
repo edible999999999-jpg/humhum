@@ -1,5 +1,6 @@
 import { useEffect, useReducer, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { QRCodeSVG } from "qrcode.react";
 import { Copy, Crosshair, FileDiff, Flame, Link, Power, RefreshCw, RotateCcw, Save, Send, ShieldCheck, Smartphone, Square, Trash2 } from "lucide-react";
 import {
   useHexaData,
@@ -15,6 +16,10 @@ import {
 } from "../../hooks/useHexaData";
 import { initialInterventionState, interventionReducer } from "../../hooks/interventionState";
 import { mobilePresenceLabel } from "../../hooks/mobilePresence";
+import {
+  mobilePairingSecondsRemaining,
+  shouldShowMobilePairingQr,
+} from "../../hooks/mobilePairingQr";
 import {
   interventionMatches,
   interventionProviderForClient,
@@ -803,6 +808,7 @@ function HumHumMobilePanel({
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [network, setNetwork] = useState<"lan" | "tailnet">("lan");
+  const [nowMs, setNowMs] = useState(Date.now());
   const [relayEnabled, setRelayEnabled] = useState(relayConfig.enabled);
   const [relayUrl, setRelayUrl] = useState(relayConfig.base_url ?? "");
   useEffect(() => {
@@ -812,13 +818,27 @@ function HumHumMobilePanel({
     setRelayEnabled(relayConfig.enabled);
     setRelayUrl(relayConfig.base_url ?? "");
   }, [relayConfig]);
+  useEffect(() => {
+    if (!pairing) return;
+    setNowMs(Date.now());
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [pairing]);
   const run = async (action: () => Promise<unknown>) => {
     setBusy(true);
     setError(null);
     try { await action(); } catch (cause) { setError(String(cause)); } finally { setBusy(false); }
   };
+  const pairingSeconds = pairing
+    ? mobilePairingSecondsRemaining(pairing.expires_at, nowMs)
+    : 0;
+  const pairingQrVisible = pairing
+    ? shouldShowMobilePairingQr(state.pairing_active, pairing.expires_at, nowMs)
+    : false;
   const detail = pairing
-    ? `${copied ? "Android 配对资料已复制 · " : ""}配对码 ${pairing.code} · ${pairing.network === "tailnet" ? "Tailnet" : "同网 LAN"} · ${pairing.scope === "control" ? "可控制" : "只读"} · 5 分钟内有效`
+    ? pairingQrVisible
+      ? `${copied ? "Android 配对资料已复制 · " : ""}配对码 ${pairing.code} · ${pairing.network === "tailnet" ? "Tailnet" : "同网 LAN"} · ${pairing.scope === "control" ? "可控制" : "只读"} · 剩余 ${Math.ceil(pairingSeconds / 60)} 分钟`
+      : "配对二维码已过期，请重新生成"
     : state.enabled
       ? `${state.lan_url ?? state.url} · ${state.paired_devices} 台设备`
       : "默认关闭；开启后仅同一局域网可见";
@@ -896,6 +916,30 @@ function HumHumMobilePanel({
             <button type="button" title={`撤销 ${device.name}`} aria-label={`撤销 ${device.name}`} disabled={busy} onClick={() => run(() => onRevokeDevice(device.id))} className="kawaii-icon-btn" style={{ width: 24, height: 24, minWidth: 24 }}><Trash2 size={12} /></button>
           </div>
         ))}
+        {pairing?.android_setup && pairingQrVisible && (
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12, marginTop: 10, padding: 10, borderRadius: 8, background: "rgba(255,255,255,0.035)", border: "1px solid rgba(255,255,255,0.08)" }}>
+            <div aria-label="Android 配对二维码" style={{ display: "grid", placeItems: "center", width: 176, height: 176, padding: 8, borderRadius: 6, background: "#ffffff", flex: "0 0 auto" }}>
+              <QRCodeSVG
+                value={pairing.android_setup}
+                size={160}
+                bgColor="#ffffff"
+                fgColor="#111827"
+                level="M"
+                marginSize={4}
+                title="HUMHUM Android 安全配对"
+              />
+            </div>
+            <div style={{ minWidth: 150, flex: "1 1 160px" }}>
+              <div style={{ color: "rgba(255,255,255,0.78)", fontSize: 11, fontWeight: 850 }}>手机扫码连接</div>
+              <div style={{ marginTop: 5, color: "rgba(255,255,255,0.58)", fontSize: 11, lineHeight: 1.6 }}>
+                Android 打开 HUMHUM，点击“扫描 Mac 配对二维码”。
+              </div>
+              <div style={{ marginTop: 5, color: "#86efac", fontSize: 10, fontWeight: 750 }}>
+                {`${pairing.network === "tailnet" ? "Tailnet" : "同一网络"} · ${pairing.scope === "control" ? "可控制" : "只读"} · ${pairingSeconds} 秒`}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "flex-end", gap: 6, maxWidth: 144 }}>
         {state.enabled ? (
