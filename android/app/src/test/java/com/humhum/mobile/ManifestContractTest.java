@@ -35,16 +35,22 @@ public class ManifestContractTest {
                     "src/main/res/mipmap-" + density + "/ic_launcher.png")));
             assertTrue(Files.isRegularFile(Path.of(
                     "src/main/res/mipmap-" + density + "/ic_launcher_round.png")));
-            assertTrue(Files.isRegularFile(Path.of(
-                    "src/main/res/mipmap-" + density + "/ic_launcher_foreground.png")));
+            Path foregroundPath = Path.of(
+                    "src/main/res/mipmap-" + density + "/ic_launcher_foreground.png");
+            assertTrue(Files.isRegularFile(foregroundPath));
         }
 
         Document adaptiveIcon = factory.newDocumentBuilder().parse(Path.of(
                 "src/main/res/mipmap-anydpi-v26/ic_launcher.xml").toFile());
         Element background = (Element) adaptiveIcon.getElementsByTagName("background").item(0);
         Element foreground = (Element) adaptiveIcon.getElementsByTagName("foreground").item(0);
+        Element monochrome = (Element) adaptiveIcon.getElementsByTagName("monochrome").item(0);
         assertEquals("@color/ic_launcher_background", background.getAttributeNS(ANDROID, "drawable"));
         assertEquals("@mipmap/ic_launcher_foreground", foreground.getAttributeNS(ANDROID, "drawable"));
+        assertEquals("@drawable/ic_launcher_monochrome",
+                monochrome.getAttributeNS(ANDROID, "drawable"));
+        assertTrue(Files.isRegularFile(Path.of(
+                "src/main/res/drawable/ic_launcher_monochrome.xml")));
     }
 
     @Test
