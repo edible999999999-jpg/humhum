@@ -39,6 +39,7 @@ pub struct MobileBridgeStatus {
     pub lan_url: Option<String>,
     pub tailnet_url: Option<String>,
     pub certificate_fingerprint: Option<String>,
+    pub pairing_active: bool,
     pub paired_devices: usize,
     pub devices: Vec<MobileDeviceSummary>,
     pub relay_status: String,
@@ -202,6 +203,7 @@ impl MobileBridgeState {
     }
 
     pub fn status(&self) -> MobileBridgeStatus {
+        let now = chrono::Utc::now().timestamp();
         let runtime = self
             .runtime
             .lock()
@@ -215,7 +217,7 @@ impl MobileBridgeState {
                     .presence
                     .lock()
                     .unwrap_or_else(|error| error.into_inner()),
-                chrono::Utc::now().timestamp(),
+                now,
             );
         MobileBridgeStatus {
             enabled: runtime.enabled,
@@ -223,6 +225,10 @@ impl MobileBridgeState {
             lan_url: runtime.url.clone(),
             tailnet_url: runtime.tailnet_url.clone(),
             certificate_fingerprint: runtime.certificate_fingerprint.clone(),
+            pairing_active: runtime
+                .pairing
+                .as_ref()
+                .is_some_and(|pairing| pairing.is_active(now)),
             paired_devices: devices.len(),
             devices,
             relay_status: if runtime.relay_base_url.is_some() {
@@ -1822,6 +1828,10 @@ impl PairingChallenge {
         }
         Ok(())
     }
+
+    fn is_active(&self, now: i64) -> bool {
+        now < self.expires_at && self.failed_attempts < MAX_PAIRING_ATTEMPTS
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2333,6 +2343,27 @@ mod tests {
             assert!(locked.verify("WRONG", now + 1).is_err());
         }
         assert!(locked.verify("ABCD1234", now + 1).is_err());
+    }
+
+    #[test]
+    fn status_marks_only_a_live_unlocked_pairing_challenge_active() {
+        let temp = tempfile::tempdir().unwrap();
+        let bridge = MobileBridgeState::load_or_create(temp.path()).unwrap();
+        let now = chrono::Utc::now().timestamp();
+
+        bridge.runtime.lock().unwrap().pairing = Some(PairingChallenge::new(
+            "ABCD1234",
+            now,
+            MobileDeviceScope::Read,
+        ));
+        assert!(bridge.status().pairing_active);
+
+        bridge.runtime.lock().unwrap().pairing.as_mut().unwrap().failed_attempts =
+            MAX_PAIRING_ATTEMPTS;
+        assert!(!bridge.status().pairing_active);
+
+        bridge.runtime.lock().unwrap().pairing = None;
+        assert!(!bridge.status().pairing_active);
     }
 
     #[test]

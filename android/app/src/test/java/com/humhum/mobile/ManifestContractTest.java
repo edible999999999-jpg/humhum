@@ -37,7 +37,8 @@ public class ManifestContractTest {
                 "android.permission.FOREGROUND_SERVICE",
                 "android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING",
                 "android.permission.POST_NOTIFICATIONS",
-                "android.permission.RECEIVE_BOOT_COMPLETED"), permissions);
+                "android.permission.RECEIVE_BOOT_COMPLETED",
+                "android.permission.CAMERA"), permissions);
         assertFalse(permissions.contains("android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"));
         assertFalse(permissions.contains("android.permission.QUERY_ALL_PACKAGES"));
         assertFalse(permissions.contains("android.permission.READ_EXTERNAL_STORAGE"));
@@ -136,6 +137,7 @@ public class ManifestContractTest {
                 "android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING",
                 "android.permission.POST_NOTIFICATIONS",
                 "android.permission.RECEIVE_BOOT_COMPLETED",
+                "android.permission.CAMERA",
                 "android.permission.WAKE_LOCK",
                 "com.google.android.c2dm.permission.RECEIVE",
                 "com.humhum.mobile.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"), permissions);
@@ -172,6 +174,7 @@ public class ManifestContractTest {
                 .parse(Path.of("src/main/res/layout/activity_main.xml").toFile());
 
         assertScalableHeight(document, "pasteSetupButton", "44dp");
+        assertScalableHeight(document, "scanSetupButton", "48dp");
         assertScalableHeight(document, "urlInput", "50dp");
         assertScalableHeight(document, "codeInput", "50dp");
         assertScalableHeight(document, "fingerprintInput", "72dp");
@@ -195,6 +198,70 @@ public class ManifestContractTest {
         assertTrue(button.contains("setMinHeight(dp(48))"));
         String weighted = methodSource(source, "private LinearLayout.LayoutParams weightedButton()", "private LinearLayout.LayoutParams matchWidthWrap()");
         assertTrue(weighted.contains("LinearLayout.LayoutParams.WRAP_CONTENT"));
+    }
+
+    @Test
+    public void qrPairingKeepsCameraOptionalAndUsesTheStrictPairingPath() throws Exception {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        factory.setNamespaceAware(true);
+        Document manifest = factory.newDocumentBuilder()
+                .parse(Path.of("src/main/AndroidManifest.xml").toFile());
+
+        NodeList featureNodes = manifest.getElementsByTagName("uses-feature");
+        Element cameraFeature = null;
+        for (int index = 0; index < featureNodes.getLength(); index++) {
+            Element feature = (Element) featureNodes.item(index);
+            if ("android.hardware.camera.any".equals(
+                    feature.getAttributeNS(ANDROID, "name"))) {
+                cameraFeature = feature;
+                break;
+            }
+        }
+        assertNotNull(cameraFeature);
+        assertEquals("false", cameraFeature.getAttributeNS(ANDROID, "required"));
+
+        Element captureActivity = component(manifest, "activity", ".QrCaptureActivity");
+        assertEquals("false", captureActivity.getAttributeNS(ANDROID, "exported"));
+        assertEquals("portrait", captureActivity.getAttributeNS(ANDROID, "screenOrientation"));
+
+        Document layout = factory.newDocumentBuilder()
+                .parse(Path.of("src/main/res/layout/activity_main.xml").toFile());
+        Element scanButton = elementById(layout, "scanSetupButton");
+        assertEquals("扫描 Mac 配对二维码", scanButton.getAttributeNS(ANDROID, "text"));
+
+        String source = new String(Files.readAllBytes(
+                Path.of("src/main/java/com/humhum/mobile/MainActivity.java")),
+                StandardCharsets.UTF_8);
+        String create = methodSource(source, "protected void onCreate(", "protected void onStart()");
+        assertTrue(create.contains("R.id.scanSetupButton"));
+        assertTrue(create.contains("scanSetup()"));
+
+        String scan = methodSource(source, "private void scanSetup()", "private void applyPairingSetup(");
+        assertTrue(scan.contains("checkSelfPermission(Manifest.permission.CAMERA)"));
+        assertTrue(scan.contains("requestPermissions("));
+        assertTrue(scan.contains("CAMERA_PERMISSION_REQUEST"));
+        assertTrue(scan.contains("openQrScanner()"));
+
+        String openScanner = methodSource(
+                source, "private void openQrScanner()", "private void applyPairingSetup(");
+        assertTrue(openScanner.contains("IntentIntegrator.QR_CODE"));
+        assertTrue(openScanner.contains("setCaptureActivity(QrCaptureActivity.class)"));
+        assertTrue(openScanner.contains("initiateScan()"));
+
+        String permissionResult = methodSource(
+                source, "public void onRequestPermissionsResult(", "private void refreshSessions(");
+        assertTrue(permissionResult.contains("requestCode == CAMERA_PERMISSION_REQUEST"));
+        assertTrue(permissionResult.contains("openQrScanner()"));
+        assertTrue(permissionResult.contains("可改用粘贴配对资料"));
+
+        String apply = methodSource(source, "private void applyPairingSetup(", "private void activate(");
+        assertOrdered(
+                apply,
+                "PairingSetup.parse(",
+                "urlInput.setText(setup.url())",
+                "fingerprintInput.setText(setup.fingerprint())",
+                "if (connectImmediately)",
+                "pair();");
     }
 
     @Test
