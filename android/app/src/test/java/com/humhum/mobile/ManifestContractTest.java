@@ -198,23 +198,107 @@ public class ManifestContractTest {
     }
 
     @Test
-    public void rootScrollViewKeepsContentOutsideSideAndBottomSystemBars() throws Exception {
+    public void rootLayoutKeepsContentAndRoleNavigationOutsideSystemBars() throws Exception {
         DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
         factory.setNamespaceAware(true);
         Document document = factory.newDocumentBuilder()
                 .parse(Path.of("src/main/res/layout/activity_main.xml").toFile());
-        assertEquals("@+id/rootScroll", document.getDocumentElement()
+        assertEquals("@+id/rootLayout", document.getDocumentElement()
                 .getAttributeNS(ANDROID, "id"));
 
         String source = new String(Files.readAllBytes(
                 Path.of("src/main/java/com/humhum/mobile/MainActivity.java")),
                 StandardCharsets.UTF_8);
+        String create = methodSource(source, "protected void onCreate(", "protected void onStart()");
+        assertTrue(create.contains("applySystemBarInsets(findViewById(R.id.rootLayout))"));
         String insets = methodSource(
                 source, "private void applySystemBarInsets(", "private void updateDeviceCareStatus(");
+        assertTrue(insets.contains("getSystemWindowInsetTop()"));
         assertTrue(insets.contains("getSystemWindowInsetRight()"));
-        assertTrue(insets.contains("baseTop"));
+        assertTrue(insets.contains("baseTop + topInset"));
         assertTrue(insets.contains("baseRight + rightInset"));
         assertTrue(insets.contains("baseBottom + bottomInset"));
+    }
+
+    @Test
+    public void pairedScreenHasFourPersistentMascotRoleTabs() throws Exception {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        factory.setNamespaceAware(true);
+        Document document = factory.newDocumentBuilder()
+                .parse(Path.of("src/main/res/layout/activity_main.xml").toFile());
+
+        Element root = elementById(document, "rootLayout");
+        Element scroll = elementById(document, "rootScroll");
+        Element navigation = elementById(document, "roleNavigation");
+        assertEquals(root, scroll.getParentNode());
+        assertEquals(root, navigation.getParentNode());
+        assertEquals("gone", navigation.getAttributeNS(ANDROID, "visibility"));
+
+        String[] roles = {"humi", "hype", "hush", "hexa"};
+        for (String role : roles) {
+            Element tab = elementById(document, role + "Tab");
+            assertEquals("wrap_content", tab.getAttributeNS(ANDROID, "layout_height"));
+            assertEquals("56dp", tab.getAttributeNS(ANDROID, "minHeight"));
+            assertEquals("@string/role_" + role, tab.getAttributeNS(ANDROID, "contentDescription"));
+
+            Element mascot = elementById(document, role + "TabMascot");
+            assertEquals("@drawable/mascot_" + role, mascot.getAttributeNS(ANDROID, "src"));
+            assertEquals("no", mascot.getAttributeNS(ANDROID, "importantForAccessibility"));
+            assertTrue(Files.isRegularFile(
+                    Path.of("src/main/res/drawable-nodpi/mascot_" + role + ".png")));
+        }
+
+        elementById(document, "roleHero");
+        elementById(document, "roleContent");
+        elementById(document, "hexaDetailContent");
+        Element connectMascot = elementById(document, "connectMascot");
+        assertEquals("@drawable/mascot_humi", connectMascot.getAttributeNS(ANDROID, "src"));
+        assertEquals(
+                "粘贴配对资料",
+                elementById(document, "pasteSetupButton").getAttributeNS(ANDROID, "text"));
+
+        Element hexaDetails = elementById(document, "hexaDetailContent");
+        NodeList detailChildren = hexaDetails.getChildNodes();
+        Element firstDetail = null;
+        for (int index = 0; index < detailChildren.getLength(); index++) {
+            if (detailChildren.item(index) instanceof Element element) {
+                firstDetail = element;
+                break;
+            }
+        }
+        assertNotNull(firstDetail);
+        assertEquals(
+                "@+id/sessionsContainer",
+                firstDetail.getAttributeNS(ANDROID, "id"));
+    }
+
+    @Test
+    public void roleSelectionDefaultsToHumiAndSurvivesRotation() throws Exception {
+        String source = new String(Files.readAllBytes(
+                Path.of("src/main/java/com/humhum/mobile/MainActivity.java")),
+                StandardCharsets.UTF_8);
+
+        assertTrue(source.contains(
+                "MobileRoleDashboard.Role selectedRole = MobileRoleDashboard.Role.HUMI"));
+
+        String create = methodSource(source, "protected void onCreate(", "protected void onStart()");
+        assertTrue(create.contains("MobileRoleDashboard.Role.fromId("));
+        assertTrue(create.contains("bindRoleTabs();"));
+
+        String save = methodSource(
+                source, "protected void onSaveInstanceState(", "protected void onStart()");
+        assertTrue(save.contains("outState.putString(SELECTED_ROLE_STATE, selectedRole.id())"));
+
+        String tabs = methodSource(
+                source, "private void bindRoleTabs()", "private void renderSelectedRole()");
+        assertTrue(tabs.contains("R.id.humiTab"));
+        assertTrue(tabs.contains("R.id.hypeTab"));
+        assertTrue(tabs.contains("R.id.hushTab"));
+        assertTrue(tabs.contains("R.id.hexaTab"));
+        assertTrue(tabs.contains("selectRole(MobileRoleDashboard.Role.HUMI)"));
+        assertTrue(tabs.contains("selectRole(MobileRoleDashboard.Role.HYPE)"));
+        assertTrue(tabs.contains("selectRole(MobileRoleDashboard.Role.HUSH)"));
+        assertTrue(tabs.contains("selectRole(MobileRoleDashboard.Role.HEXA)"));
     }
 
     @Test
@@ -533,7 +617,8 @@ public class ManifestContractTest {
                 "isCurrentConnection(current, currentConnection)",
                 "readSnapshotSafely(currentConnection, nowMillis)",
                 "postRefreshIfCurrent(refreshGeneration, current, currentConnection");
-        assertTrue(refresh.contains("statusText.setText(safeError(error));"));
+        assertTrue(refresh.contains("statusText.setText(\"Mac 离线\")"));
+        assertFalse(refresh.contains("statusText.setText(safeError(error))"));
         assertTrue(refresh.contains("postStaleRefreshReset("));
         assertFalse(refresh.contains("postIfCurrent("));
 

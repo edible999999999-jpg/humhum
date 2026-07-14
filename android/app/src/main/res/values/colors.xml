@@ -4,8 +4,16 @@
     <color name="ink">#243247</color>
     <color name="muted">#667A93</color>
     <color name="line">#DCE7F2</color>
-    <color name="primary">#2563EB</color>
-    <color name="primary_soft">#EAF1FF</color>
+    <color name="primary">#8174D6</color>
+    <color name="primary_soft">#F1EEFF</color>
     <color name="attention">#E97843</color>
     <color name="surface">#FFFFFF</color>
+    <color name="humi_accent">#8174D6</color>
+    <color name="humi_soft">#F1EEFF</color>
+    <color name="hype_accent">#EE7B62</color>
+    <color name="hype_soft">#FFF0E9</color>
+    <color name="hush_accent">#4FAF98</color>
+    <color name="hush_soft">#EAF8F4</color>
+    <color name="hexa_accent">#C89A24</color>
+    <color name="hexa_soft">#FFF7DE</color>
 </resources>

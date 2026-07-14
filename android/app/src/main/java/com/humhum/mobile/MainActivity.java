@@ -22,12 +22,16 @@ import android.view.WindowManager;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.Switch;
 import android.widget.TextView;
+import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -36,6 +40,7 @@ import java.util.concurrent.Executors;
 
 public final class MainActivity extends Activity {
     private static final int NOTIFICATION_PERMISSION_REQUEST = 4103;
+    private static final String SELECTED_ROLE_STATE = "selected_role";
     private static final StartedOwnerRegistry<MainActivity> STARTED_ACTIVITIES =
             new StartedOwnerRegistry<>();
     private static final DurableConnectionTransitionCoordinator TRANSITIONS =
@@ -61,9 +66,22 @@ public final class MainActivity extends Activity {
     private ConnectionStore.Connection connection;
     private MobileProtocol protocol;
     private boolean refreshInFlight;
+    private MobileRoleDashboard.Role selectedRole = MobileRoleDashboard.Role.HUMI;
+    private final Map<MobileRoleDashboard.Role, LinearLayout> roleTabs =
+            new EnumMap<>(MobileRoleDashboard.Role.class);
+    private final Map<MobileRoleDashboard.Role, TextView> roleTabLabels =
+            new EnumMap<>(MobileRoleDashboard.Role.class);
     private LinearLayout connectPanel;
     private LinearLayout sessionPanel;
+    private LinearLayout roleNavigation;
+    private LinearLayout roleHero;
+    private LinearLayout roleContent;
+    private LinearLayout hexaDetailContent;
     private LinearLayout sessionsContainer;
+    private ImageView roleHeroMascot;
+    private TextView roleKicker;
+    private TextView roleTitle;
+    private TextView roleDescription;
     private TextView statusText;
     private TextView scopeText;
     private TextView connectError;
@@ -94,9 +112,14 @@ public final class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
+        if (state != null) {
+            selectedRole = MobileRoleDashboard.Role.fromId(
+                    state.getString(SELECTED_ROLE_STATE, MobileRoleDashboard.Role.HUMI.id()));
+        }
         setContentView(R.layout.activity_main);
-        applySystemBarInsets(findViewById(R.id.rootScroll));
+        applySystemBarInsets(findViewById(R.id.rootLayout));
         bindViews();
+        bindRoleTabs();
         connectionStore = new ConnectionStore(getSharedPreferences("humhum_connection", MODE_PRIVATE));
         snapshotStore = new EncryptedSessionSnapshotStore(this);
         snapshotGenerationGate = SessionSnapshotGenerationGate.open();
@@ -118,6 +141,12 @@ public final class MainActivity extends Activity {
         } else {
             activate(connection);
         }
+    }
+
+    @Override
+    protected void onSaveInstanceState(Bundle outState) {
+        outState.putString(SELECTED_ROLE_STATE, selectedRole.id());
+        super.onSaveInstanceState(outState);
     }
 
     @Override
@@ -179,7 +208,15 @@ public final class MainActivity extends Activity {
     private void bindViews() {
         connectPanel = findViewById(R.id.connectPanel);
         sessionPanel = findViewById(R.id.sessionPanel);
+        roleNavigation = findViewById(R.id.roleNavigation);
+        roleHero = findViewById(R.id.roleHero);
+        roleContent = findViewById(R.id.roleContent);
+        hexaDetailContent = findViewById(R.id.hexaDetailContent);
         sessionsContainer = findViewById(R.id.sessionsContainer);
+        roleHeroMascot = findViewById(R.id.roleHeroMascot);
+        roleKicker = findViewById(R.id.roleKicker);
+        roleTitle = findViewById(R.id.roleTitle);
+        roleDescription = findViewById(R.id.roleDescription);
         statusText = findViewById(R.id.statusText);
         scopeText = findViewById(R.id.scopeText);
         connectError = findViewById(R.id.connectError);
@@ -198,6 +235,230 @@ public final class MainActivity extends Activity {
         autostartSettingsButton = findViewById(R.id.autostartSettingsButton);
     }
 
+    private void bindRoleTabs() {
+        roleTabs.put(MobileRoleDashboard.Role.HUMI, findViewById(R.id.humiTab));
+        roleTabs.put(MobileRoleDashboard.Role.HYPE, findViewById(R.id.hypeTab));
+        roleTabs.put(MobileRoleDashboard.Role.HUSH, findViewById(R.id.hushTab));
+        roleTabs.put(MobileRoleDashboard.Role.HEXA, findViewById(R.id.hexaTab));
+        roleTabLabels.put(MobileRoleDashboard.Role.HUMI, findViewById(R.id.humiTabLabel));
+        roleTabLabels.put(MobileRoleDashboard.Role.HYPE, findViewById(R.id.hypeTabLabel));
+        roleTabLabels.put(MobileRoleDashboard.Role.HUSH, findViewById(R.id.hushTabLabel));
+        roleTabLabels.put(MobileRoleDashboard.Role.HEXA, findViewById(R.id.hexaTabLabel));
+
+        findViewById(R.id.humiTab).setOnClickListener(
+                view -> selectRole(MobileRoleDashboard.Role.HUMI));
+        findViewById(R.id.hypeTab).setOnClickListener(
+                view -> selectRole(MobileRoleDashboard.Role.HYPE));
+        findViewById(R.id.hushTab).setOnClickListener(
+                view -> selectRole(MobileRoleDashboard.Role.HUSH));
+        findViewById(R.id.hexaTab).setOnClickListener(
+                view -> selectRole(MobileRoleDashboard.Role.HEXA));
+    }
+
+    private void selectRole(MobileRoleDashboard.Role role) {
+        if (role == null || role == selectedRole) return;
+        if (role != MobileRoleDashboard.Role.HEXA && expandedConversationSessionId != null) {
+            collapseConversationDisclosure();
+            renderSessions(renderedSessions);
+        }
+        selectedRole = role;
+        renderSelectedRole();
+        ScrollView scroll = findViewById(R.id.rootScroll);
+        scroll.smoothScrollTo(0, 0);
+    }
+
+    private void renderSelectedRole() {
+        if (roleContent == null) return;
+        int accent = color(roleAccent(selectedRole));
+        int soft = color(roleSoft(selectedRole));
+        for (MobileRoleDashboard.Role role : MobileRoleDashboard.roles()) {
+            boolean active = role == selectedRole;
+            LinearLayout tab = roleTabs.get(role);
+            TextView label = roleTabLabels.get(role);
+            if (tab != null) {
+                tab.setBackground(active
+                        ? roundedSurface(color(roleSoft(role)), color(roleAccent(role)), 8)
+                        : getDrawable(R.drawable.role_tab_idle));
+                tab.setSelected(active);
+            }
+            if (label != null) {
+                label.setTextColor(active ? color(roleAccent(role)) : color(R.color.muted));
+                label.setTypeface(Typeface.DEFAULT, active ? Typeface.BOLD : Typeface.NORMAL);
+            }
+        }
+
+        roleHero.setBackground(roundedSurface(soft, accent, 8));
+        roleHeroMascot.setImageResource(roleMascot(selectedRole));
+        roleKicker.setText(
+                selectedRole.displayName().toUpperCase(Locale.ROOT)
+                        + " · "
+                        + roleKicker(selectedRole));
+        roleKicker.setTextColor(accent);
+        roleTitle.setText(roleTitle(selectedRole));
+        roleDescription.setText(selectedRole.purpose());
+        roleContent.removeAllViews();
+        hexaDetailContent.setVisibility(
+                selectedRole == MobileRoleDashboard.Role.HEXA ? View.VISIBLE : View.GONE);
+
+        switch (selectedRole) {
+            case HUMI -> renderHumiRole(accent, soft);
+            case HYPE -> renderCapabilityRole(
+                    "你的知识仍安静地留在 Mac 上",
+                    "这台手机还没有获得个人知识摘要权限。Hype 不会把本地记忆、技能文件或路径偷偷同步过来。",
+                    "等桌面端提供经过解释的只读摘要后，这里会显示值得保存的偏好、工作流和知识缺口。",
+                    accent,
+                    soft);
+            case HUSH -> renderCapabilityRole(
+                    "消息内容没有同步到手机",
+                    "Hush 仍在 Mac 上按朋友、工作和家庭整理通知；没有明确授权时，手机只会说明能力边界。",
+                    "未来的移动摘要会继续保持只读，并由你主动决定是否查看具体消息。",
+                    accent,
+                    soft);
+            case HEXA -> renderHexaRole(accent, soft);
+        }
+    }
+
+    private void renderHumiRole(int accent, int soft) {
+        MobileRoleDashboard.Summary summary = MobileRoleDashboard.summarize(renderedSessions);
+        roleContent.addView(roleInfoCard(summary.title(), summary.detail(), accent, soft));
+        if (summary.hasAttention()) {
+            Button action = roleAction("去 Hexa 查看并决定", accent);
+            action.setOnClickListener(view -> selectRole(MobileRoleDashboard.Role.HEXA));
+            LinearLayout.LayoutParams actionParams = matchWidthWrap();
+            actionParams.bottomMargin = dp(8);
+            roleContent.addView(action, actionParams);
+        }
+
+        if (renderedSessions.isEmpty()) return;
+        roleContent.addView(roleSectionLabel("最近在做什么", accent));
+        int visibleCount = Math.min(3, renderedSessions.size());
+        for (int index = 0; index < visibleCount; index++) {
+            Models.Session session = renderedSessions.get(index);
+            int cardAccent = session.needsAttention() ? color(R.color.attention) : accent;
+            String detail = session.agent() + " · " + session.status() + " · " + session.lastActivityAt();
+            roleContent.addView(roleInfoCard(session.project(), detail, cardAccent, color(R.color.surface)));
+        }
+        if (renderedSessions.size() > visibleCount) {
+            TextView remaining = text(
+                    "另外 " + (renderedSessions.size() - visibleCount) + " 个会话可在 Hexa 查看",
+                    11,
+                    color(R.color.muted));
+            remaining.setPadding(dp(2), dp(2), 0, dp(8));
+            roleContent.addView(remaining);
+        }
+    }
+
+    private void renderCapabilityRole(
+            String title,
+            String detail,
+            String nextStep,
+            int accent,
+            int soft) {
+        roleContent.addView(roleInfoCard(title, detail, accent, soft));
+        roleContent.addView(roleSectionLabel("接下来", accent));
+        roleContent.addView(roleInfoCard("保持真实和可控", nextStep, accent, color(R.color.surface)));
+    }
+
+    private void renderHexaRole(int accent, int soft) {
+        MobileRoleDashboard.Summary summary = MobileRoleDashboard.summarize(renderedSessions);
+        String title = summary.sessionCount() == 0
+                ? "暂时没有 Agent 会话"
+                : summary.sessionCount() + " 个 Agent 会话在视野中";
+        String detail = summary.hasAttention()
+                ? summary.attentionCount() + " 件事需要你处理，详细控制保留在下方。"
+                : "目前没有等待确认的操作，可以继续查看最近进展。";
+        roleContent.addView(roleInfoCard(title, detail, accent, soft));
+    }
+
+    private TextView roleSectionLabel(String value, int accent) {
+        TextView label = text(value, 13, accent);
+        label.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        label.setPadding(dp(2), dp(8), 0, dp(8));
+        return label;
+    }
+
+    private View roleInfoCard(String title, String detail, int accent, int fill) {
+        LinearLayout card = vertical();
+        LinearLayout.LayoutParams params = matchWidthWrap();
+        params.bottomMargin = dp(8);
+        card.setLayoutParams(params);
+        card.setPadding(dp(14), dp(13), dp(14), dp(13));
+        card.setBackground(roundedSurface(fill, accent, 8));
+
+        TextView heading = text(title, 15, color(R.color.ink));
+        heading.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        card.addView(heading);
+        TextView body = text(detail, 12, color(R.color.muted));
+        body.setPadding(0, dp(5), 0, 0);
+        card.addView(body);
+        return card;
+    }
+
+    private Button roleAction(String label, int accent) {
+        Button action = new Button(this);
+        action.setText(label);
+        action.setAllCaps(false);
+        action.setMinHeight(dp(48));
+        action.setTextColor(color(R.color.surface));
+        action.setTextSize(13);
+        action.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        action.setBackgroundTintList(android.content.res.ColorStateList.valueOf(accent));
+        return action;
+    }
+
+    private GradientDrawable roundedSurface(int fill, int stroke, int radiusDp) {
+        GradientDrawable background = new GradientDrawable();
+        background.setColor(fill);
+        background.setCornerRadius(dp(radiusDp));
+        background.setStroke(dp(1), (stroke & 0x00FFFFFF) | 0x66000000);
+        return background;
+    }
+
+    private int roleAccent(MobileRoleDashboard.Role role) {
+        return switch (role) {
+            case HUMI -> R.color.humi_accent;
+            case HYPE -> R.color.hype_accent;
+            case HUSH -> R.color.hush_accent;
+            case HEXA -> R.color.hexa_accent;
+        };
+    }
+
+    private int roleSoft(MobileRoleDashboard.Role role) {
+        return switch (role) {
+            case HUMI -> R.color.humi_soft;
+            case HYPE -> R.color.hype_soft;
+            case HUSH -> R.color.hush_soft;
+            case HEXA -> R.color.hexa_soft;
+        };
+    }
+
+    private int roleMascot(MobileRoleDashboard.Role role) {
+        return switch (role) {
+            case HUMI -> R.drawable.mascot_humi;
+            case HYPE -> R.drawable.mascot_hype;
+            case HUSH -> R.drawable.mascot_hush;
+            case HEXA -> R.drawable.mascot_hexa;
+        };
+    }
+
+    private String roleKicker(MobileRoleDashboard.Role role) {
+        return switch (role) {
+            case HUMI -> "今天";
+            case HYPE -> "个人知识";
+            case HUSH -> "消息";
+            case HEXA -> "Agent 监工";
+        };
+    }
+
+    private String roleTitle(MobileRoleDashboard.Role role) {
+        return switch (role) {
+            case HUMI -> "我替你留意今天的重要进展";
+            case HYPE -> "你的工作方式正在成形";
+            case HUSH -> "值得留意的消息，由你决定";
+            case HEXA -> "电脑离开后，我替你看着";
+        };
+    }
+
     @SuppressWarnings("deprecation")
     private void applySystemBarInsets(View root) {
         int baseLeft = root.getPaddingLeft();
@@ -206,11 +467,12 @@ public final class MainActivity extends Activity {
         int baseBottom = root.getPaddingBottom();
         root.setOnApplyWindowInsetsListener((view, insets) -> {
             int leftInset = insets.getSystemWindowInsetLeft();
+            int topInset = insets.getSystemWindowInsetTop();
             int rightInset = insets.getSystemWindowInsetRight();
             int bottomInset = insets.getSystemWindowInsetBottom();
             view.setPadding(
                     baseLeft + leftInset,
-                    baseTop,
+                    baseTop + topInset,
                     baseRight + rightInset,
                     baseBottom + bottomInset);
             return insets;
@@ -305,15 +567,17 @@ public final class MainActivity extends Activity {
         protocol = new MobileProtocol(saved.config(), saved.token(), saved.scope());
         connectPanel.setVisibility(View.GONE);
         sessionPanel.setVisibility(View.VISIBLE);
+        roleNavigation.setVisibility(View.VISIBLE);
         String route = saved.config().isTailnet() ? "Tailnet · " : "";
         scopeText.setText(saved.scope() == Models.Scope.CONTROL
-                ? "已安全连接 · " + route + "可控制"
-                : "已安全连接 · " + route + "只读");
+                ? route + "可控制"
+                : route + "只读");
         statusText.setText("正在同步");
         syncMonitorState();
         reportForegroundPresence();
         PushRegistration.refresh(this);
         updatePushStatus();
+        renderSelectedRole();
         refreshSessions(true);
     }
 
@@ -339,6 +603,7 @@ public final class MainActivity extends Activity {
         connection = null;
         connectPanel.setVisibility(View.VISIBLE);
         sessionPanel.setVisibility(View.GONE);
+        roleNavigation.setVisibility(View.GONE);
         statusText.setText("等待连接");
         sessionsContainer.removeAllViews();
         if (monitorStore != null && monitorStore.isEnabled()) disableMonitor();
@@ -518,7 +783,7 @@ public final class MainActivity extends Activity {
                     refreshInFlight = false;
                     refreshButton.setEnabled(true);
                     if (snapshot == null) {
-                        statusText.setText(safeError(error));
+                        statusText.setText("Mac 离线");
                         renderUnavailableSessions();
                         return;
                     }
@@ -816,11 +1081,13 @@ public final class MainActivity extends Activity {
             empty.setGravity(android.view.Gravity.CENTER);
             empty.setPadding(0, dp(48), 0, dp(48));
             sessionsContainer.addView(empty);
+            renderSelectedRole();
             return;
         }
         for (Models.Session session : sessions) {
             sessionsContainer.addView(sessionCard(session));
         }
+        renderSelectedRole();
     }
 
     private void renderUnavailableSessions() {
@@ -831,6 +1098,7 @@ public final class MainActivity extends Activity {
         unavailable.setGravity(android.view.Gravity.CENTER);
         unavailable.setPadding(0, dp(48), 0, dp(48));
         sessionsContainer.addView(unavailable);
+        renderSelectedRole();
     }
 
     private View sessionCard(Models.Session session) {
