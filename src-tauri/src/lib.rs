@@ -9,6 +9,7 @@ mod event_bus;
 mod git_changes;
 mod hermes_plugin;
 mod hexa_protocol;
+mod hexa_watch_store;
 mod hook_server;
 mod hush_store;
 mod intervention_queue;
@@ -155,6 +156,11 @@ pub fn run() {
             let hush_store = hush_store::HushStore::new();
             app.manage(Arc::new(std::sync::Mutex::new(hush_store)));
 
+            // Hexa watched sessions are agent-declared high-confidence supervision targets.
+            app.manage(Arc::new(std::sync::Mutex::new(
+                hexa_watch_store::HexaWatchStore::default(),
+            )));
+
             #[cfg(target_os = "macos")]
             app.manage(Arc::new(std::sync::Mutex::new(
                 mac_notification_watcher::MacNotificationBridgeStatus::default(),
@@ -215,6 +221,7 @@ pub fn run() {
             commands::get_codex_bridge_health,
             commands::get_codex_remote_control,
             commands::get_hexa_bridge_sessions,
+            commands::get_hexa_watched_sessions,
             commands::get_session_change_summary,
             commands::hexa_enable_codex_remote_control,
             commands::hexa_disable_codex_remote_control,

@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useState } from "react";
+import { useEffect, useReducer, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Copy, Crosshair, FileDiff, Flame, Link, Power, RefreshCw, RotateCcw, Save, Send, ShieldCheck, Smartphone, Square, Trash2 } from "lucide-react";
 import {
@@ -272,6 +272,21 @@ function SessionCard({
         <div style={{ minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 7 }}>
             <span style={{ color, fontSize: 11, fontWeight: 850 }}>{item.agent_label}</span>
+            {item.source === "watched" && (
+              <span
+                style={{
+                  color: "#34d399",
+                  background: "rgba(52,211,153,0.1)",
+                  border: "1px solid rgba(52,211,153,0.24)",
+                  borderRadius: 999,
+                  padding: "4px 8px",
+                  fontSize: 10,
+                  fontWeight: 850,
+                }}
+              >
+                Hexa 托管
+              </span>
+            )}
             <StatusBadge item={item} />
             {item.session.route?.remote_host && (
               <span style={{ color: "#38bdf8", fontSize: 10, fontWeight: 750, overflowWrap: "anywhere" }}>
@@ -1016,6 +1031,30 @@ function EmptyState() {
   );
 }
 
+function SessionSection({
+  title,
+  count,
+  detail,
+  children,
+}: {
+  title: string;
+  count: number;
+  detail: string;
+  children: ReactNode;
+}) {
+  return (
+    <div style={{ display: "grid", gap: 8 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
+        <div style={{ color: "rgba(255,255,255,0.58)", fontSize: 11, fontWeight: 900 }}>
+          {title} <span style={{ color: "rgba(255,255,255,0.28)" }}>({count})</span>
+        </div>
+        <div style={{ color: "rgba(255,255,255,0.24)", fontSize: 10 }}>{detail}</div>
+      </div>
+      {children}
+    </div>
+  );
+}
+
 export function HexaModule() {
   const {
     activeSupervisorSessions,
@@ -1068,7 +1107,10 @@ export function HexaModule() {
   const recentActivity = activeSupervisorSessions;
   const active = recentActivity.filter((item) => item.progress_status !== "idle");
   const recentCompleted = completedSupervisorSessions.slice(0, 6);
-  const visibleSessions = [...recentActivity, ...recentCompleted];
+  const watchedSessions = supervisorSessions.filter((item) => item.source === "watched" && item.session.status !== "completed");
+  const discoveredSessions = recentActivity.filter((item) => item.source !== "watched");
+  const historicalSessions = recentCompleted.filter((item) => item.source !== "watched");
+  const visibleSessions = [...watchedSessions, ...discoveredSessions, ...historicalSessions];
   const pendingCount = active.reduce((sum, item) => sum + item.pending_confirmations, 0);
   const workingCount = active.filter((item) => item.progress_status === "working").length;
   const attentionCount = active.filter((item) =>
@@ -1083,6 +1125,47 @@ export function HexaModule() {
       return next;
     });
   };
+  const renderSessionGrid = (items: HexaSupervisorSession[]) => (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
+      {items.map((item) => {
+        const provider = interventionProviderForClient(item.session.client_type);
+        const threadId = provider === "codex"
+          ? item.bridge?.provider_thread_id ?? item.session.session_id
+          : item.session.session_id;
+        const sendMessage = provider === "claude"
+          ? sendClaudeMessage
+          : provider === "opencode"
+            ? sendOpenCodeMessage
+            : sendCodexMessage;
+        const retryMessage = provider === "claude"
+          ? retryClaudeMessage
+          : provider === "opencode"
+            ? retryOpenCodeMessage
+            : retryCodexMessage;
+        return (
+          <SessionCard
+            key={item.session.session_id}
+            item={item}
+            reviewOpen={openReviews.has(item.session.session_id)}
+            onToggleReview={() => toggleReview(item.session.session_id)}
+            onSend={sendMessage}
+            onInterrupt={interruptCodexTurn}
+            onResume={resumeCodexThread}
+            onResolveApproval={resolveCodexApproval}
+            onFocus={focusAgentSession}
+            onLoadChanges={getSessionChangeSummary}
+            queuedInterventions={provider
+              ? queuedInterventions.filter((queued) => interventionMatches(queued, provider, threadId))
+              : []}
+            onRetryIntervention={retryMessage}
+            onDiscardIntervention={discardQueuedIntervention}
+            autoConfirmEnabled={autoConfirmSessions.has(item.session.session_id)}
+            onToggleAutoConfirm={toggleAutoConfirm}
+          />
+        );
+      })}
+    </div>
+  );
 
   return (
     <div className="hub-module">
@@ -1151,54 +1234,32 @@ export function HexaModule() {
               letterSpacing: 0.4,
             }}
           >
-            Recent activity ({recentActivity.length})
+            Hexa sessions ({visibleSessions.length})
           </div>
           <div style={{ color: "rgba(255,255,255,0.25)", fontSize: 10 }}>
-            最近活动优先；纯 transcript backfill 不进入主看板
+            托管优先；发现到的会话保留轻量推断；历史进入复盘
           </div>
         </div>
 
         {visibleSessions.length === 0 ? (
           <EmptyState />
         ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
-            {visibleSessions.map((item) => {
-              const provider = interventionProviderForClient(item.session.client_type);
-              const threadId = provider === "codex"
-                ? item.bridge?.provider_thread_id ?? item.session.session_id
-                : item.session.session_id;
-              const sendMessage = provider === "claude"
-                ? sendClaudeMessage
-                : provider === "opencode"
-                  ? sendOpenCodeMessage
-                  : sendCodexMessage;
-              const retryMessage = provider === "claude"
-                ? retryClaudeMessage
-                : provider === "opencode"
-                  ? retryOpenCodeMessage
-                  : retryCodexMessage;
-              return (
-                <SessionCard
-                  key={item.session.session_id}
-                  item={item}
-                  reviewOpen={openReviews.has(item.session.session_id)}
-                  onToggleReview={() => toggleReview(item.session.session_id)}
-                  onSend={sendMessage}
-                  onInterrupt={interruptCodexTurn}
-                  onResume={resumeCodexThread}
-                  onResolveApproval={resolveCodexApproval}
-                  onFocus={focusAgentSession}
-                  onLoadChanges={getSessionChangeSummary}
-                  queuedInterventions={provider
-                    ? queuedInterventions.filter((queued) => interventionMatches(queued, provider, threadId))
-                    : []}
-                  onRetryIntervention={retryMessage}
-                  onDiscardIntervention={discardQueuedIntervention}
-                  autoConfirmEnabled={autoConfirmSessions.has(item.session.session_id)}
-                  onToggleAutoConfirm={toggleAutoConfirm}
-                />
-              );
-            })}
+          <div style={{ display: "grid", gap: 14 }}>
+            {watchedSessions.length > 0 && (
+              <SessionSection title="正在托管" count={watchedSessions.length} detail="Agent 主动要求 Hexa 监控，状态可信度最高">
+                {renderSessionGrid(watchedSessions)}
+              </SessionSection>
+            )}
+            {discoveredSessions.length > 0 && (
+              <SessionSection title="发现到" count={discoveredSessions.length} detail="来自 hook、Codex bridge 或本地会话扫描">
+                {renderSessionGrid(discoveredSessions)}
+              </SessionSection>
+            )}
+            {historicalSessions.length > 0 && (
+              <SessionSection title="历史复盘" count={historicalSessions.length} detail="最近完成的会话样本，不参与活跃监控">
+                {renderSessionGrid(historicalSessions)}
+              </SessionSection>
+            )}
           </div>
         )}
       </section>
