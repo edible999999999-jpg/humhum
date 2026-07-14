@@ -222,6 +222,7 @@ pub fn run() {
             commands::get_codex_remote_control,
             commands::get_hexa_bridge_sessions,
             commands::get_hexa_watched_sessions,
+            commands::delete_hexa_watched_session,
             commands::get_session_change_summary,
             commands::hexa_enable_codex_remote_control,
             commands::hexa_disable_codex_remote_control,

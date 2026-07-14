@@ -34,6 +34,11 @@ pub struct HexaWatchUpdateRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HexaWatchDeleteRequest {
+    pub session_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HexaWatchedSession {
     pub session_id: String,
     pub agent: String,
@@ -124,6 +129,10 @@ impl HexaWatchStore {
         }
         session.updated_at = chrono::Utc::now().to_rfc3339();
         Some(session.clone())
+    }
+
+    pub fn delete(&mut self, session_id: &str) -> Option<HexaWatchedSession> {
+        self.sessions.remove(session_id)
     }
 
     pub fn sessions(&self) -> Vec<HexaWatchedSession> {

@@ -1,5 +1,7 @@
 use crate::event_bus::{self, HookEvent, PermissionDecision};
-use crate::hexa_watch_store::{HexaWatchRegisterRequest, HexaWatchStore, HexaWatchUpdateRequest};
+use crate::hexa_watch_store::{
+    HexaWatchDeleteRequest, HexaWatchRegisterRequest, HexaWatchStore, HexaWatchUpdateRequest,
+};
 use crate::local_api_auth::{LocalApiAuth, TOKEN_HEADER};
 use crate::mobile_bridge::MobileBridgeState;
 use crate::remote_bridge::RemoteBridgeState;
@@ -161,6 +163,7 @@ async fn handle_request(
         ("GET", "/knowledge") => handle_knowledge_query(req, app_handle).await,
         ("POST", "/hexa/register") => handle_hexa_register(req, app_handle).await,
         ("POST", "/hexa/update") => handle_hexa_update(req, app_handle).await,
+        ("POST", "/hexa/delete") => handle_hexa_delete(req, app_handle).await,
         ("GET", "/hush/inbox") => handle_hush_inbox_query(app_handle).await,
         ("POST", "/hush/inbox") => handle_hush_inbox_post(req, app_handle).await,
         ("GET", "/mobile/status") => handle_mobile_status(app_handle).await,
@@ -1029,6 +1032,59 @@ async fn handle_hexa_update(
     Ok(json_response(
         StatusCode::OK,
         &serde_json::to_value(session).unwrap_or_default(),
+    ))
+}
+
+async fn handle_hexa_delete(
+    req: Request<hyper::body::Incoming>,
+    app_handle: tauri::AppHandle,
+) -> Result<Response<Full<Bytes>>, Infallible> {
+    let body = match req.collect().await {
+        Ok(collected) => collected.to_bytes(),
+        Err(e) => {
+            return Ok(json_response(
+                StatusCode::BAD_REQUEST,
+                &serde_json::json!({"error": format!("failed to read body: {}", e)}),
+            ));
+        }
+    };
+    let request: HexaWatchDeleteRequest = match serde_json::from_slice(&body) {
+        Ok(value) => value,
+        Err(e) => {
+            return Ok(json_response(
+                StatusCode::BAD_REQUEST,
+                &serde_json::json!({"error": format!("invalid JSON: {}", e)}),
+            ));
+        }
+    };
+
+    let deleted = {
+        let store = app_handle.state::<Arc<std::sync::Mutex<HexaWatchStore>>>();
+        let mut store = match store.lock() {
+            Ok(store) => store,
+            Err(e) => {
+                return Ok(json_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &serde_json::json!({"error": format!("lock error: {}", e)}),
+                ));
+            }
+        };
+        store.delete(&request.session_id)
+    };
+
+    if deleted.is_none() {
+        return Ok(json_response(
+            StatusCode::NOT_FOUND,
+            &serde_json::json!({"error": "watched session not found"}),
+        ));
+    }
+
+    app_handle
+        .emit("humhum://hexa-session-changed", &request.session_id)
+        .unwrap_or_else(|e| log::error!("Failed to emit Hexa watch delete: {}", e));
+    Ok(json_response(
+        StatusCode::OK,
+        &serde_json::json!({"status": "deleted", "session_id": request.session_id}),
     ))
 }
 

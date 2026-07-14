@@ -318,6 +318,24 @@ pub async fn get_hexa_watched_sessions(
 }
 
 #[tauri::command]
+pub async fn delete_hexa_watched_session(
+    state: State<'_, Arc<std::sync::Mutex<HexaWatchStore>>>,
+    app: AppHandle,
+    session_id: String,
+) -> Result<Vec<HexaWatchedSession>, String> {
+    let sessions = {
+        let mut store = state
+            .lock()
+            .map_err(|error| format!("Lock error: {error}"))?;
+        store.delete(&session_id);
+        store.sessions()
+    };
+    app.emit("humhum://hexa-session-changed", &session_id)
+        .map_err(|error| format!("Emit error: {error}"))?;
+    Ok(sessions)
+}
+
+#[tauri::command]
 pub async fn get_codex_remote_control(
     state: State<'_, Arc<CodexBridgeState>>,
 ) -> Result<CodexRemoteControlState, String> {

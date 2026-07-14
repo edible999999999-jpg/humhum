@@ -877,6 +877,11 @@ export function useHexaData() {
     return mobileRelay;
   }, [mobileBridge.enabled]);
 
+  const deleteWatchedSession = useCallback(async (sessionId: string) => {
+    await invoke<HexaWatchedSession[]>("delete_hexa_watched_session", { sessionId });
+    await fetchSessions();
+  }, [fetchSessions]);
+
   return {
     sessions,
     activeSessions,
@@ -916,5 +921,6 @@ export function useHexaData() {
     revokeMobileDevices,
     revokeMobileDevice,
     configureMobileRelay,
+    deleteWatchedSession,
   };
 }

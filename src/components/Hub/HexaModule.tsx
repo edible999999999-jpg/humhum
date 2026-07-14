@@ -50,6 +50,18 @@ const STATUS_COLORS: Record<HexaSupervisorSession["progress_status"], string> = 
   completed: "rgba(255,255,255,0.42)",
 };
 
+const HEXA_REGISTER_COMMAND = `TOKEN=$(tr -d '\\n' < ~/.humhum/local-api-token)
+curl -sS -X POST http://127.0.0.1:31275/hexa/register \\
+  -H "content-type: application/json" \\
+  -H "x-humhum-token: $TOKEN" \\
+  -d '{"agent":"codex","name":"重点监控会话","workspace":"'"$PWD"'","goal":"请把这里改成这轮任务目标"}'`;
+
+const HEXA_DELETE_COMMAND = `TOKEN=$(tr -d '\\n' < ~/.humhum/local-api-token)
+curl -sS -X POST http://127.0.0.1:31275/hexa/delete \\
+  -H "content-type: application/json" \\
+  -H "x-humhum-token: $TOKEN" \\
+  -d '{"session_id":"填入要删除的托管 session_id"}'`;
+
 function getClientColor(client: string): string {
   return CLIENT_COLORS[client] || "#94eff4";
 }
@@ -186,6 +198,7 @@ function SessionCard({
   onResolveApproval,
   onFocus,
   onLoadChanges,
+  onDeleteWatched,
   queuedInterventions,
   onRetryIntervention,
   onDiscardIntervention,
@@ -201,6 +214,7 @@ function SessionCard({
   onResolveApproval: (approvalId: string, decision: "allow_once" | "deny") => Promise<void>;
   onFocus: (sessionId: string) => Promise<FocusResult>;
   onLoadChanges: (sessionId: string) => Promise<GitChangeSummary>;
+  onDeleteWatched: (sessionId: string) => Promise<void>;
   queuedInterventions: QueuedIntervention[];
   onRetryIntervention: (interventionId: string) => Promise<CodexSendReceipt>;
   onDiscardIntervention: (interventionId: string) => Promise<void>;
@@ -213,6 +227,7 @@ function SessionCard({
   const showReadout = !isCompleted || reviewOpen;
   const [focusState, setFocusState] = useState<"idle" | "busy" | "exact" | "fallback" | "failed">("idle");
   const [autoConfirmBusy, setAutoConfirmBusy] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
   const [changes, dispatchChanges] = useReducer(sessionChangesReducer, initialSessionChangesState);
   const interventionProvider = interventionProviderForClient(item.session.client_type);
 
@@ -331,6 +346,24 @@ function SessionCard({
             </div>
             <div style={{ color: "rgba(255,255,255,0.28)", fontSize: 10 }}>events</div>
           </div>
+          {item.source === "watched" && (
+            <button
+              type="button"
+              title="从 Hexa 托管中删除"
+              aria-label="从 Hexa 托管中删除"
+              disabled={deleteBusy}
+              onClick={() => {
+                setDeleteBusy(true);
+                void onDeleteWatched(item.session.session_id)
+                  .catch((cause) => console.error("Could not delete watched session", cause))
+                  .finally(() => setDeleteBusy(false));
+              }}
+              className="kawaii-toggle-btn"
+              style={{ width: 34, height: 34, padding: 0, display: "grid", placeItems: "center" }}
+            >
+              <Trash2 size={14} />
+            </button>
+          )}
           {!isCompleted && item.session.client_type === "claude-code" && (
             <button
               type="button"
@@ -1055,6 +1088,114 @@ function SessionSection({
   );
 }
 
+function WatchCommandPanel() {
+  const [copied, setCopied] = useState<"register" | "delete" | null>(null);
+  const copy = async (kind: "register" | "delete", command: string) => {
+    await navigator.clipboard.writeText(command);
+    setCopied(kind);
+    setTimeout(() => setCopied(null), 1600);
+  };
+
+  return (
+    <div
+      style={{
+        display: "grid",
+        gap: 10,
+        padding: 12,
+        marginBottom: 14,
+        borderRadius: 8,
+        background: "rgba(52,211,153,0.055)",
+        border: "1px solid rgba(52,211,153,0.18)",
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start" }}>
+        <div>
+          <div style={{ color: "rgba(255,255,255,0.78)", fontSize: 12, fontWeight: 900 }}>主动加入 Hexa 托管</div>
+          <div style={{ color: "rgba(255,255,255,0.34)", fontSize: 10, lineHeight: 1.45, marginTop: 4 }}>
+            自动扫描会按 Agent 折叠。真正重点监控哪一轮，由你在对应终端执行下面命令决定。
+          </div>
+        </div>
+        <button type="button" className="kawaii-toggle-btn connected" onClick={() => void copy("register", HEXA_REGISTER_COMMAND)}>
+          <Copy size={14} /> {copied === "register" ? "已复制" : "复制注册命令"}
+        </button>
+      </div>
+      <pre
+        style={{
+          margin: 0,
+          padding: 10,
+          borderRadius: 8,
+          background: "rgba(0,0,0,0.22)",
+          border: "1px solid rgba(255,255,255,0.08)",
+          color: "rgba(255,255,255,0.72)",
+          fontSize: 10,
+          lineHeight: 1.45,
+          overflowX: "auto",
+          whiteSpace: "pre-wrap",
+        }}
+      >
+        {HEXA_REGISTER_COMMAND}
+      </pre>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+        <div style={{ color: "rgba(255,255,255,0.28)", fontSize: 10 }}>
+          删除托管会话也可以走命令；界面里托管卡片右上角也有删除按钮。
+        </div>
+        <button type="button" className="kawaii-toggle-btn" onClick={() => void copy("delete", HEXA_DELETE_COMMAND)}>
+          <Trash2 size={14} /> {copied === "delete" ? "已复制" : "复制删除命令"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function AgentSessionGroup({
+  agent,
+  count,
+  collapsed,
+  onToggle,
+  children,
+}: {
+  agent: string;
+  count: number;
+  collapsed: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      style={{
+        display: "grid",
+        gap: collapsed ? 0 : 8,
+        padding: 8,
+        borderRadius: 8,
+        background: "rgba(255,255,255,0.018)",
+        border: "1px solid rgba(255,255,255,0.065)",
+      }}
+    >
+      <button
+        type="button"
+        onClick={onToggle}
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: 10,
+          width: "100%",
+          border: 0,
+          background: "transparent",
+          color: "rgba(255,255,255,0.64)",
+          padding: "4px 2px",
+          cursor: "pointer",
+          textAlign: "left",
+        }}
+      >
+        <span style={{ fontSize: 11, fontWeight: 900 }}>{collapsed ? "▸" : "▾"} {agent}</span>
+        <span style={{ color: "rgba(255,255,255,0.28)", fontSize: 10 }}>{count} scanned sessions</span>
+      </button>
+      {!collapsed && children}
+    </div>
+  );
+}
+
 export function HexaModule() {
   const {
     activeSupervisorSessions,
@@ -1089,9 +1230,11 @@ export function HexaModule() {
     revokeMobileDevices,
     revokeMobileDevice,
     configureMobileRelay,
+    deleteWatchedSession,
   } = useHexaData();
   const [openReviews, setOpenReviews] = useState<Set<string>>(new Set());
   const [autoConfirmSessions, setAutoConfirmSessions] = useState<Set<string>>(new Set());
+  const [collapsedAgentGroups, setCollapsedAgentGroups] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     void invoke<string[]>("get_auto_confirm_sessions")
@@ -1154,6 +1297,7 @@ export function HexaModule() {
             onResolveApproval={resolveCodexApproval}
             onFocus={focusAgentSession}
             onLoadChanges={getSessionChangeSummary}
+            onDeleteWatched={deleteWatchedSession}
             queuedInterventions={provider
               ? queuedInterventions.filter((queued) => interventionMatches(queued, provider, threadId))
               : []}
@@ -1166,6 +1310,21 @@ export function HexaModule() {
       })}
     </div>
   );
+  const discoveredGroups = Array.from(
+    discoveredSessions.reduce((groups, item) => {
+      const key = item.agent_label;
+      groups.set(key, [...(groups.get(key) ?? []), item]);
+      return groups;
+    }, new Map<string, HexaSupervisorSession[]>()),
+  );
+  const toggleAgentGroup = (agent: string) => {
+    setCollapsedAgentGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(agent)) next.delete(agent);
+      else next.add(agent);
+      return next;
+    });
+  };
 
   return (
     <div className="hub-module">
@@ -1216,6 +1375,8 @@ export function HexaModule() {
         onConfigureRelay={configureMobileRelay}
       />
 
+      <WatchCommandPanel />
+
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10, marginBottom: 14 }}>
         <MetricCard label="活跃会话" value={active.length} tone="#22c55e" detail={`${workingCount} 个正在推进`} />
         <MetricCard label="需要关注" value={attentionCount} tone="#f59e0b" detail={`${pendingCount} 个等待确认`} />
@@ -1252,7 +1413,19 @@ export function HexaModule() {
             )}
             {discoveredSessions.length > 0 && (
               <SessionSection title="发现到" count={discoveredSessions.length} detail="来自 hook、Codex bridge 或本地会话扫描">
-                {renderSessionGrid(discoveredSessions)}
+                <div style={{ display: "grid", gap: 8 }}>
+                  {discoveredGroups.map(([agent, items]) => (
+                    <AgentSessionGroup
+                      key={agent}
+                      agent={agent}
+                      count={items.length}
+                      collapsed={collapsedAgentGroups.has(agent)}
+                      onToggle={() => toggleAgentGroup(agent)}
+                    >
+                      {renderSessionGrid(items)}
+                    </AgentSessionGroup>
+                  ))}
+                </div>
               </SessionSection>
             )}
             {historicalSessions.length > 0 && (
