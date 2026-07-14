@@ -12,6 +12,8 @@
   ·
   <a href="https://github.com/edible999999999-jpg/humhum/releases/download/v0.3.4/HUMHUM-Android-0.3.4.apk"><strong>Download for Android</strong></a>
   ·
+  <a href="https://yuxilab.cn/intro"><strong>Visit the website</strong></a>
+  ·
   <a href="https://github.com/edible999999999-jpg/humhum/releases">Latest Release</a>
 </p>
 

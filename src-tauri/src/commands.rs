@@ -3293,13 +3293,34 @@ fn build_hexa_readout(session: &crate::session_store::Session) -> HexaReadout {
         .iter()
         .rev()
         .take(10)
-        .filter(|e| matches!(e.as_str(), "TaskCompleted" | "Stop" | "SessionEnd"))
+        .filter(|e| {
+            matches!(
+                e.as_str(),
+                "TaskCompleted"
+                    | "Stop"
+                    | "SessionEnd"
+                    | "TurnCompleted"
+                    | "AssistantTextCompleted"
+                    | "SessionStateChanged"
+            )
+        })
         .count();
     let tool_events = recent_events
         .iter()
         .rev()
         .take(10)
-        .filter(|e| matches!(e.as_str(), "PreToolUse" | "PostToolUse"))
+        .filter(|e| {
+            matches!(
+                e.as_str(),
+                "PreToolUse"
+                    | "PostToolUse"
+                    | "ToolStarted"
+                    | "ToolUpdated"
+                    | "ToolCompleted"
+                    | "FileChangeProposed"
+                    | "FileChangeApplied"
+            )
+        })
         .count();
     let repeated_tool = session.recent_tools.len() >= 6
         && session
@@ -3322,6 +3343,9 @@ fn build_hexa_readout(session: &crate::session_store::Session) -> HexaReadout {
         score -= 20;
     }
     if session.status == crate::session_store::SessionStatus::Completed {
+        score += 12;
+    }
+    if session.status == crate::session_store::SessionStatus::Idle {
         score += 12;
     }
     score = score.clamp(8, 96);

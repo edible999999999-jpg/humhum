@@ -200,6 +200,25 @@ const MEMORY_PATHS: Record<string, HexaMemoryLocation[]> = {
   ],
 };
 
+const COMPLETION_EVENT_NAMES = new Set([
+  "TaskCompleted",
+  "Stop",
+  "SessionEnd",
+  "TurnCompleted",
+  "AssistantTextCompleted",
+  "SessionStateChanged",
+]);
+
+const TOOL_EVENT_NAMES = new Set([
+  "PreToolUse",
+  "PostToolUse",
+  "ToolStarted",
+  "ToolUpdated",
+  "ToolCompleted",
+  "FileChangeProposed",
+  "FileChangeApplied",
+]);
+
 function detectAlerts(session: HexaSession): HexaAlert[] {
   const alerts: HexaAlert[] = [];
 
@@ -211,7 +230,7 @@ function detectAlerts(session: HexaSession): HexaAlert[] {
     });
   }
 
-  if (session.status !== "completed") {
+  if (session.status === "active") {
     const lastEventTime = new Date(session.last_event_at).getTime();
     if (Date.now() - lastEventTime > 5 * 60 * 1000) {
       alerts.push({
@@ -235,8 +254,9 @@ function detectAlerts(session: HexaSession): HexaAlert[] {
   }
 
   const lastEvents = session.event_names.slice(-10);
-  const toolEvents = lastEvents.filter((e) => e === "PreToolUse" || e === "PostToolUse");
-  if (lastEvents.length >= 10 && toolEvents.length <= 1 && session.status === "active") {
+  const toolEvents = lastEvents.filter((e) => TOOL_EVENT_NAMES.has(e));
+  const completionEvents = lastEvents.filter((e) => COMPLETION_EVENT_NAMES.has(e));
+  if (lastEvents.length >= 10 && toolEvents.length <= 1 && completionEvents.length === 0 && session.status === "active") {
     alerts.push({
       session_id: session.session_id,
       type: "low_signal",
@@ -351,8 +371,11 @@ function inferRecentNeedFit(
   alerts: HexaAlert[],
 ): Pick<HexaSupervisorSession, "recent_need_score" | "recent_need_label" | "recent_need_basis"> {
   const recent = session.event_names.slice(-10);
-  const completed = recent.filter((e) => e === "TaskCompleted" || e === "Stop" || e === "SessionEnd").length;
-  const toolEvents = recent.filter((e) => e === "PreToolUse" || e === "PostToolUse").length;
+  const completed = recent.filter((e) => COMPLETION_EVENT_NAMES.has(e)).length;
+  const toolEvents = recent.filter((e) => TOOL_EVENT_NAMES.has(e)).length;
+  const historySignal = Math.min(18, Math.floor(session.event_count / 12) * 3);
+  const idleBonus = session.status === "idle" ? 18 : 0;
+  const completedBonus = session.status === "completed" ? 18 : 0;
   const pendingPenalty = session.has_pending_permission ? 22 : 0;
   const stallPenalty = alerts.some((a) => a.type === "stalled") ? 24 : 0;
   const loopPenalty = alerts.some((a) => a.type === "looping") ? 28 : 0;
@@ -362,14 +385,16 @@ function inferRecentNeedFit(
     45 +
     Math.min(25, completed * 18) +
     Math.min(24, toolEvents * 4) +
-    (session.status === "completed" ? 12 : 0) -
+    historySignal +
+    idleBonus +
+    completedBonus -
     pendingPenalty -
     stallPenalty -
     loopPenalty -
     lowSignalPenalty;
   const score = Math.max(5, Math.min(98, raw));
 
-  const label = score >= 78 ? "高匹配" : score >= 58 ? "推进中" : score >= 38 ? "需关注" : "偏离/卡住";
+  const label = score >= 78 ? "高匹配" : score >= 58 ? "推进中" : score >= 34 ? "需关注" : "偏离/卡住";
   const basis = `近 10 事件: 完成 ${completed} · 工具 ${toolEvents} · 告警 ${alerts.length}`;
 
   return {
