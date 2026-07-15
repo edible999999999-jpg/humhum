@@ -400,11 +400,18 @@ mod tests {
         let sid = current_windows_user_sid().unwrap();
         let script = r#"
 $ErrorActionPreference = 'Stop'
-$acl = Get-Acl -LiteralPath $env:HUMHUM_ACL_TEST_PATH
-$rules = @($acl.Access)
+$acl = [System.IO.File]::GetAccessControl(
+    $env:HUMHUM_ACL_TEST_PATH,
+    [System.Security.AccessControl.AccessControlSections]::Access
+)
+$rules = @($acl.GetAccessRules(
+    $true,
+    $true,
+    [System.Security.Principal.SecurityIdentifier]
+))
 if (-not $acl.AreAccessRulesProtected) { exit 10 }
 if ($rules.Count -ne 1) { exit 11 }
-$ruleSid = $rules[0].IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value
+$ruleSid = $rules[0].IdentityReference.Value
 if ($ruleSid -ne $env:HUMHUM_ACL_TEST_SID) { exit 12 }
 if ($rules[0].AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow) { exit 13 }
 if ($rules[0].FileSystemRights -ne [System.Security.AccessControl.FileSystemRights]::FullControl) { exit 14 }

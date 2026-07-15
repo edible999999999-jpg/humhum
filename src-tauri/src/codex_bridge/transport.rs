@@ -653,6 +653,41 @@ async fn reject_all_pending(inner: &Arc<TransportInner>) {
     }
 }
 
+#[cfg(all(test, target_os = "windows"))]
+pub(super) async fn spawn_test_powershell(script: &str) -> JsonRpcTransport {
+    use base64::Engine;
+
+    let source = format!(
+        r#"$ErrorActionPreference = 'Stop'
+$utf8 = New-Object System.Text.UTF8Encoding($false)
+[Console]::InputEncoding = $utf8
+[Console]::OutputEncoding = $utf8
+{script}"#
+    );
+    let encoded = base64::engine::general_purpose::STANDARD.encode(
+        source
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect::<Vec<_>>(),
+    );
+    let arguments = [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-InputFormat",
+        "Text",
+        "-OutputFormat",
+        "Text",
+        "-EncodedCommand",
+        encoded.as_str(),
+    ];
+    JsonRpcTransport::spawn_command("powershell.exe", &arguments)
+        .await
+        .unwrap()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -816,19 +851,24 @@ esac"#
     async fn fake_transport(scenario: FakeScenario) -> JsonRpcTransport {
         let script = match scenario {
             FakeScenario::OutOfOrder => {
-                r#"set /p first= & set /p second= & echo {"jsonrpc":"2.0","id":2,"result":{"method":"two"}} & echo {"jsonrpc":"2.0","id":1,"result":{"method":"one"}}"#
+                r#"$first = [Console]::In.ReadLine()
+$second = [Console]::In.ReadLine()
+[Console]::Out.WriteLine('{"jsonrpc":"2.0","id":2,"result":{"method":"two"}}')
+[Console]::Out.WriteLine('{"jsonrpc":"2.0","id":1,"result":{"method":"one"}}')
+[Console]::Out.Flush()"#
             }
             FakeScenario::Approval => {
-                r#"echo {"jsonrpc":"2.0","id":61,"method":"item/commandExecution/requestApproval","params":{"itemId":"item-1"}}"#
+                r#"[Console]::Out.WriteLine('{"jsonrpc":"2.0","id":61,"method":"item/commandExecution/requestApproval","params":{"itemId":"item-1"}}')
+[Console]::Out.Flush()"#
             }
-            FakeScenario::ExitAfterRead => "set /p request= & exit /b 0",
+            FakeScenario::ExitAfterRead => "$request = [Console]::In.ReadLine(); exit 0",
             FakeScenario::Notification => {
-                r#"set /p notification= & echo {"method":"test/observed","params":{"ok":true}}"#
+                r#"$notification = [Console]::In.ReadLine()
+[Console]::Out.WriteLine('{"method":"test/observed","params":{"ok":true}}')
+[Console]::Out.Flush()"#
             }
         };
-        JsonRpcTransport::spawn_command("cmd.exe", &["/D", "/S", "/C", script])
-            .await
-            .unwrap()
+        spawn_test_powershell(script).await
     }
 
     #[tokio::test]

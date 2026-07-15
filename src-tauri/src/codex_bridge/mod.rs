@@ -988,17 +988,22 @@ mod tests {
     #[cfg(target_os = "windows")]
     async fn resume_test_transport() -> Arc<JsonRpcTransport> {
         Arc::new(
-            JsonRpcTransport::spawn_command(
-                "cmd.exe",
-                &[
-                    "/D",
-                    "/S",
-                    "/C",
-                    r#"set /p first= & echo {"jsonrpc":"2.0","id":1,"result":{"thread":{"id":"thread-1"}}} & set /p second= & echo {"jsonrpc":"2.0","id":2,"result":{"turn":{"id":"turn-1"}}}"#,
-                ],
+            transport::spawn_test_powershell(
+                r#"$first = [Console]::In.ReadLine()
+if (-not $first.Contains('"method":"thread/resume"')) {
+    [Console]::Out.WriteLine('{"jsonrpc":"2.0","id":1,"error":{"code":-32600,"message":"thread not found: thread-1"}}')
+    [Console]::Out.Flush()
+    exit 0
+}
+[Console]::Out.WriteLine('{"jsonrpc":"2.0","id":1,"result":{"thread":{"id":"thread-1"}}}')
+[Console]::Out.Flush()
+$second = [Console]::In.ReadLine()
+if ($second.Contains('"method":"turn/start"')) {
+    [Console]::Out.WriteLine('{"jsonrpc":"2.0","id":2,"result":{"turn":{"id":"turn-1"}}}')
+    [Console]::Out.Flush()
+}"#,
             )
-            .await
-            .unwrap(),
+            .await,
         )
     }
 
