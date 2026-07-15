@@ -40,7 +40,7 @@ Expected: FAIL because `load_or_create` and persistence do not exist.
 
 - [ ] **Step 3: Implement the durable data model**
 
-Add `HexaWatchedAgent`, a serializable store snapshot, stable Agent keys based on provider/workspace/name, and atomic save. Make all mutations persist before returning.
+Add `HexaWatchedAgent`, a serializable store snapshot, stable Agent keys based on provider/workspace, mutable display metadata, and atomic save. Make all mutations persist before returning.
 
 - [ ] **Step 4: Load the store during Tauri setup**
 
@@ -86,6 +86,8 @@ Expected: PASS.
 ### Task 3: Harness-inspired Agent overview and detail
 
 **Files:**
+- Create: `src/hooks/hexaAgentOverview.ts`
+- Create: `src/hooks/hexaAgentOverview.test.ts`
 - Modify: `src/components/Hub/HexaModule.tsx`
 - Modify: `src/hooks/useHexaData.ts`
 
