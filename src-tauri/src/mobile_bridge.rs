@@ -320,7 +320,7 @@ impl MobileBridgeState {
                 return Err("Mobile enable was cancelled".to_string());
             }
 
-            let local_ip = local_lan_ip()?;
+            let local_host = local_lan_host()?;
             let tailnet_ip = crate::tailnet::discover_tailnet_ipv4().await;
             if !self.enable_generation_is_current(generation) {
                 return Err("Mobile enable was cancelled".to_string());
@@ -338,7 +338,7 @@ impl MobileBridgeState {
             }
             Ok((
                 relay_base_url,
-                local_ip,
+                local_host,
                 tailnet_ip,
                 cert,
                 tls_config,
@@ -346,14 +346,14 @@ impl MobileBridgeState {
             ))
         }
         .await;
-        let (relay_base_url, local_ip, tailnet_ip, cert, tls_config, listener) = match setup {
+        let (relay_base_url, local_host, tailnet_ip, cert, tls_config, listener) = match setup {
             Ok(setup) => setup,
             Err(error) => {
                 self.abandon_enable(generation);
                 return Err(error);
             }
         };
-        let url = format!("https://{local_ip}:{DEFAULT_MOBILE_PORT}");
+        let url = format!("https://{local_host}:{DEFAULT_MOBILE_PORT}");
         let tailnet_url = tailnet_ip.map(|ip| format!("https://{ip}:{DEFAULT_MOBILE_PORT}"));
         let relay_enabled = relay_base_url.is_some();
         let (shutdown_tx, mut shutdown_rx) = oneshot::channel();
@@ -1073,8 +1073,8 @@ fn select_lan_candidate(
             (
                 !candidate.virtual_adapter,
                 physical_type,
-                candidate.address.is_private(),
                 routed == Some(candidate.address),
+                candidate.address.is_private(),
                 candidate.has_gateway,
                 std::cmp::Reverse(candidate.metric),
                 std::cmp::Reverse(u32::from_be_bytes(candidate.address.octets())),
@@ -1198,6 +1198,14 @@ unsafe fn windows_wide_string(pointer: windows_sys::core::PCWSTR) -> String {
         .find(|offset| unsafe { *pointer.add(*offset) == 0 })
         .unwrap_or(512);
     String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(pointer, length) })
+}
+
+fn local_lan_host() -> Result<String, String> {
+    Ok(mobile_lan_host(local_lan_ip()?))
+}
+
+fn mobile_lan_host(ip: Ipv4Addr) -> String {
+    ip.to_string()
 }
 
 async fn handle_mobile_request(
@@ -2807,6 +2815,13 @@ mod tests {
             has_gateway: true,
             virtual_adapter: true,
         };
+        let public_looking_wifi = LanAddressCandidate {
+            address: Ipv4Addr::new(30, 169, 112, 215),
+            interface_type: 71,
+            metric: 75,
+            has_gateway: true,
+            virtual_adapter: false,
+        };
 
         // Offline Wi-Fi remains usable without an internet route or gateway.
         assert_eq!(
@@ -2823,9 +2838,30 @@ mod tests {
             select_lan_candidate(&[ethernet, wifi], Some(wifi.address)),
             Some(wifi.address)
         );
+        // Some phone hotspots expose a public-looking on-link subnet. The
+        // routed physical adapter must win over an unrelated private adapter.
+        assert_eq!(
+            select_lan_candidate(
+                &[ethernet, public_looking_wifi],
+                Some(public_looking_wifi.address),
+            ),
+            Some(public_looking_wifi.address)
+        );
         assert_eq!(
             select_lan_candidate(&[tailscale], Some(tailscale.address)),
             None
+        );
+    }
+
+    #[test]
+    fn public_looking_wifi_keeps_numeric_host_for_android_on_link_validation() {
+        assert_eq!(
+            mobile_lan_host(Ipv4Addr::new(30, 169, 112, 215)),
+            "30.169.112.215"
+        );
+        assert_eq!(
+            mobile_lan_host(Ipv4Addr::new(192, 168, 1, 20)),
+            "192.168.1.20"
         );
     }
 

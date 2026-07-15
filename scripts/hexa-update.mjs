@@ -60,7 +60,7 @@ async function main() {
     throw new Error('Usage: npm run hexa:update -- "当前进展"');
   }
 
-  const updated = await post("/hexa/update", {
+  let updated = await post("/hexa/update", {
     session_id: readArg("session-id", state.session_id),
     status,
     current_step: currentStep || null,
@@ -69,6 +69,48 @@ async function main() {
     confidence: "agent-bound",
     goal: readArg("goal", state.goal ?? null),
   });
+  const sessionId = updated.session_id;
+  const evidenceLabel = readArg("evidence-label", null);
+  const evidence = evidenceLabel
+    ? [{
+        kind: "reference",
+        label: evidenceLabel,
+        location: readArg("evidence-location", null),
+      }]
+    : [];
+  const workItemId = readArg("work-item-id", null);
+  if (workItemId) {
+    const dependsOn = (readArg("depends-on", "") ?? "")
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+    updated = await post("/hexa/audit", {
+      session_id: sessionId,
+      action: "upsert_work_item",
+      work_item: {
+        id: workItemId,
+        title: readArg("work-item-title", currentStep || workItemId),
+        description: readArg("work-item-description", null),
+        acceptance_criteria: readArg("acceptance-criteria", null),
+        status: readArg("work-status", "in_progress"),
+        depends_on: dependsOn,
+        evidence,
+      },
+    });
+  }
+  const milestone = readArg("milestone", null);
+  if (milestone) {
+    updated = await post("/hexa/audit", {
+      session_id: sessionId,
+      action: "append_milestone",
+      milestone: {
+        summary: milestone,
+        work_item_id: workItemId,
+        alignment: readArg("alignment", "watch"),
+        evidence,
+      },
+    });
+  }
   await writeFile(STATE_FILE, `${JSON.stringify(updated, null, 2)}\n`, "utf8");
   console.log(`Hexa updated: ${updated.status} · ${updated.current_step ?? updated.blocked_reason ?? updated.name}`);
 }

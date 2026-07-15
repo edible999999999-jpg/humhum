@@ -132,6 +132,21 @@ pub fn run() {
                         .map_err(std::io::Error::other)?;
                 app.manage(Arc::new(mobile_bridge));
                 app.manage(Arc::new(remote_bridge::RemoteBridgeState::default()));
+
+                // Hexa watched sessions are agent-declared high-confidence supervision targets.
+                let hexa_watch_dir = home.join(".humhum");
+                let hexa_watch_store = match hexa_watch_store::HexaWatchStore::load_or_create(
+                    &hexa_watch_dir,
+                ) {
+                    Ok(store) => store,
+                    Err(error) => {
+                        log::warn!(
+                            "Could not load Hexa watch store; reads and mutations remain unavailable until retry succeeds: {error}"
+                        );
+                        hexa_watch_store::HexaWatchStore::unavailable_at(&hexa_watch_dir)
+                    }
+                };
+                app.manage(Arc::new(std::sync::Mutex::new(hexa_watch_store)));
             } else {
                 return Err(std::io::Error::other("Could not determine home directory").into());
             }
@@ -193,11 +208,6 @@ pub fn run() {
             let hush_store = hush_store::HushStore::new();
             app.manage(Arc::new(std::sync::Mutex::new(hush_store)));
 
-            // Hexa watched sessions are agent-declared high-confidence supervision targets.
-            app.manage(Arc::new(std::sync::Mutex::new(
-                hexa_watch_store::HexaWatchStore::default(),
-            )));
-
             #[cfg(target_os = "macos")]
             app.manage(Arc::new(std::sync::Mutex::new(
                 mac_notification_watcher::MacNotificationBridgeStatus::default(),
@@ -258,7 +268,9 @@ pub fn run() {
             commands::get_codex_bridge_health,
             commands::get_codex_remote_control,
             commands::get_hexa_bridge_sessions,
+            commands::get_hexa_watched_agents,
             commands::get_hexa_watched_sessions,
+            commands::mutate_hexa_session_audit,
             commands::delete_hexa_watched_session,
             commands::get_session_change_summary,
             commands::hexa_enable_codex_remote_control,

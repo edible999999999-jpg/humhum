@@ -8,7 +8,9 @@ use crate::config::AppConfig;
 use crate::event_bus::{self, HookEvent, PermissionDecision};
 use crate::git_changes::GitChangeSummary;
 use crate::hexa_protocol::HexaSessionProjection;
-use crate::hexa_watch_store::{HexaWatchStore, HexaWatchedSession};
+use crate::hexa_watch_store::{
+    HexaAuditMutationRequest, HexaWatchStore, HexaWatchedAgent, HexaWatchedSession,
+};
 use crate::hook_server::PendingMap;
 use crate::hush_store::{HushInboxSummary, HushStore};
 use crate::intervention_queue::{InterventionProvider, InterventionQueue, QueuedIntervention};
@@ -327,10 +329,39 @@ pub async fn get_hexa_bridge_sessions(
 pub async fn get_hexa_watched_sessions(
     state: State<'_, Arc<std::sync::Mutex<HexaWatchStore>>>,
 ) -> Result<Vec<HexaWatchedSession>, String> {
-    let store = state
+    let mut store = state
         .lock()
         .map_err(|error| format!("Lock error: {error}"))?;
+    store.reload_from_disk()?;
     Ok(store.sessions())
+}
+
+#[tauri::command]
+pub async fn get_hexa_watched_agents(
+    state: State<'_, Arc<std::sync::Mutex<HexaWatchStore>>>,
+) -> Result<Vec<HexaWatchedAgent>, String> {
+    let mut store = state
+        .lock()
+        .map_err(|error| format!("Lock error: {error}"))?;
+    store.reload_from_disk()?;
+    Ok(store.agents())
+}
+
+#[tauri::command]
+pub async fn mutate_hexa_session_audit(
+    state: State<'_, Arc<std::sync::Mutex<HexaWatchStore>>>,
+    app: AppHandle,
+    request: HexaAuditMutationRequest,
+) -> Result<HexaWatchedSession, String> {
+    let updated = {
+        let mut store = state
+            .lock()
+            .map_err(|error| format!("Lock error: {error}"))?;
+        store.mutate_audit(request)?
+    };
+    app.emit("humhum://hexa-session-changed", &updated)
+        .map_err(|error| format!("Emit error: {error}"))?;
+    Ok(updated)
 }
 
 #[tauri::command]
@@ -343,7 +374,9 @@ pub async fn delete_hexa_watched_session(
         let mut store = state
             .lock()
             .map_err(|error| format!("Lock error: {error}"))?;
-        store.delete(&session_id);
+        store
+            .delete(&session_id)
+            .map_err(|error| format!("Could not persist watched session deletion: {error}"))?;
         store.sessions()
     };
     app.emit("humhum://hexa-session-changed", &session_id)

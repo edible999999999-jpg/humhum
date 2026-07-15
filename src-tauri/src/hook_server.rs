@@ -1,13 +1,14 @@
 use crate::event_bus::{self, HookEvent, PermissionDecision};
 use crate::hexa_watch_store::{
-    HexaWatchDeleteRequest, HexaWatchRegisterRequest, HexaWatchStore, HexaWatchUpdateRequest,
+    HexaAuditMutation, HexaAuditMutationRequest, HexaWatchDeleteRequest, HexaWatchRegisterRequest,
+    HexaWatchStore, HexaWatchUpdateRequest,
 };
 use crate::local_api_auth::{LocalApiAuth, TOKEN_HEADER};
 use crate::mobile_bridge::MobileBridgeState;
 use crate::remote_bridge::RemoteBridgeState;
 use crate::session_store::SessionStore;
 use crate::stats_store::StatsStore;
-use http_body_util::{BodyExt, Full};
+use http_body_util::{BodyExt, Full, LengthLimitError, Limited};
 use hyper::body::Bytes;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
@@ -22,6 +23,8 @@ use tauri::{Emitter, Manager};
 use tokio::net::TcpListener;
 use tokio::sync::{oneshot, Mutex};
 use uuid::Uuid;
+
+const MAX_HEXA_AUDIT_BODY_BYTES: usize = 64 * 1024;
 
 /// Stores a pending permission request with its event info
 pub struct PendingRequest {
@@ -163,6 +166,7 @@ async fn handle_request(
         ("GET", "/knowledge") => handle_knowledge_query(req, app_handle).await,
         ("POST", "/hexa/register") => handle_hexa_register(req, app_handle).await,
         ("POST", "/hexa/update") => handle_hexa_update(req, app_handle).await,
+        ("POST", "/hexa/audit") => handle_hexa_audit(req, app_handle).await,
         ("POST", "/hexa/delete") => handle_hexa_delete(req, app_handle).await,
         ("GET", "/hush/inbox") => handle_hush_inbox_query(app_handle).await,
         ("POST", "/hush/inbox") => handle_hush_inbox_post(req, app_handle).await,
@@ -962,7 +966,15 @@ async fn handle_hexa_register(
                 ));
             }
         };
-        store.register(request)
+        match store.register(request) {
+            Ok(session) => session,
+            Err(error) => {
+                return Ok(json_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &serde_json::json!({"error": format!("could not persist watched session: {error}")}),
+                ));
+            }
+        }
     };
 
     app_handle
@@ -1008,7 +1020,15 @@ async fn handle_hexa_update(
                 ));
             }
         };
-        store.update(request)
+        match store.update(request) {
+            Ok(session) => session,
+            Err(error) => {
+                return Ok(json_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &serde_json::json!({"error": format!("could not persist watched session: {error}")}),
+                ));
+            }
+        }
     };
 
     let Some(session) = session else {
@@ -1025,6 +1045,100 @@ async fn handle_hexa_update(
         StatusCode::OK,
         &serde_json::to_value(session).unwrap_or_default(),
     ))
+}
+
+async fn handle_hexa_audit(
+    req: Request<hyper::body::Incoming>,
+    app_handle: tauri::AppHandle,
+) -> Result<Response<Full<Bytes>>, Infallible> {
+    let body = match Limited::new(req.into_body(), MAX_HEXA_AUDIT_BODY_BYTES)
+        .collect()
+        .await
+    {
+        Ok(collected) => collected.to_bytes(),
+        Err(error) => {
+            let (status, message) = if error.downcast_ref::<LengthLimitError>().is_some() {
+                (
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    "Hexa audit body is too large",
+                )
+            } else {
+                (StatusCode::BAD_REQUEST, "failed to read Hexa audit body")
+            };
+            return Ok(json_response(
+                status,
+                &serde_json::json!({"error": format!("{message}: {error}")}),
+            ));
+        }
+    };
+    let request: HexaAuditMutationRequest = match serde_json::from_slice(&body) {
+        Ok(value) => value,
+        Err(error) => {
+            return Ok(json_response(
+                StatusCode::BAD_REQUEST,
+                &serde_json::json!({"error": format!("invalid JSON: {error}")}),
+            ));
+        }
+    };
+    if !hexa_audit_mutation_allowed_over_agent_api(&request.mutation) {
+        return Ok(json_response(
+            StatusCode::FORBIDDEN,
+            &serde_json::json!({
+                "error": "user review can only be recorded from the desktop UI"
+            }),
+        ));
+    }
+
+    let session = {
+        let store = app_handle.state::<Arc<std::sync::Mutex<HexaWatchStore>>>();
+        let mut store = match store.lock() {
+            Ok(store) => store,
+            Err(error) => {
+                return Ok(json_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &serde_json::json!({"error": format!("lock error: {error}")}),
+                ));
+            }
+        };
+        match store.mutate_audit(request) {
+            Ok(session) => session,
+            Err(error) => {
+                return Ok(json_response(
+                    hexa_audit_error_status(&error),
+                    &serde_json::json!({"error": error}),
+                ));
+            }
+        }
+    };
+
+    app_handle
+        .emit("humhum://hexa-session-changed", &session)
+        .unwrap_or_else(|error| log::error!("Failed to emit Hexa audit update: {error}"));
+    Ok(json_response(
+        StatusCode::OK,
+        &serde_json::to_value(session).unwrap_or_default(),
+    ))
+}
+
+fn hexa_audit_mutation_allowed_over_agent_api(mutation: &HexaAuditMutation) -> bool {
+    !matches!(mutation, HexaAuditMutation::SetUserReview { .. })
+}
+
+fn hexa_audit_error_status(error: &str) -> StatusCode {
+    if error.contains("watched session not found") {
+        StatusCode::NOT_FOUND
+    } else if error.contains("workflow cycle")
+        || error.contains("unknown dependency")
+        || error.contains("unknown work item")
+        || error.contains("cannot remove work item")
+        || error.contains("work item not found")
+        || error.contains("cannot be empty")
+        || error.contains("requires evidence")
+    {
+        StatusCode::BAD_REQUEST
+    } else {
+        StatusCode::INTERNAL_SERVER_ERROR
+    }
 }
 
 async fn handle_hexa_delete(
@@ -1061,7 +1175,15 @@ async fn handle_hexa_delete(
                 ));
             }
         };
-        store.delete(&request.session_id)
+        match store.delete(&request.session_id) {
+            Ok(session) => session,
+            Err(error) => {
+                return Ok(json_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &serde_json::json!({"error": format!("could not persist watched session: {error}")}),
+                ));
+            }
+        }
     };
 
     if deleted.is_none() {
@@ -1225,5 +1347,55 @@ mod hook_protocol_tests {
             canonical_hook_event_name("claude-code", "AfterAgent"),
             "AfterAgent"
         );
+    }
+}
+
+#[cfg(test)]
+mod hexa_audit_endpoint_tests {
+    use super::*;
+
+    #[test]
+    fn audit_validation_errors_have_actionable_http_statuses() {
+        assert_eq!(
+            hexa_audit_error_status("workflow cycle detected at work item build"),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            hexa_audit_error_status("unknown dependency verify for work item ship"),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            hexa_audit_error_status("watched session not found: missing"),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            hexa_audit_error_status("Could not write Hexa watch store"),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+    }
+
+    #[test]
+    fn agent_api_cannot_impersonate_a_user_review() {
+        let user_review = HexaAuditMutation::SetUserReview {
+            review: crate::hexa_watch_store::HexaReviewInput {
+                rating: crate::hexa_watch_store::HexaReviewRating::Satisfied,
+                summary: "Looks good".into(),
+                evidence: vec![],
+            },
+        };
+        let hexa_review = HexaAuditMutation::SetHexaReview {
+            review: crate::hexa_watch_store::HexaReviewInput {
+                rating: crate::hexa_watch_store::HexaReviewRating::Satisfied,
+                summary: "Evidence-backed review".into(),
+                evidence: vec![crate::hexa_watch_store::HexaEvidenceInput {
+                    kind: "test".into(),
+                    label: "cargo test passed".into(),
+                    location: None,
+                }],
+            },
+        };
+
+        assert!(!hexa_audit_mutation_allowed_over_agent_api(&user_review));
+        assert!(hexa_audit_mutation_allowed_over_agent_api(&hexa_review));
     }
 }

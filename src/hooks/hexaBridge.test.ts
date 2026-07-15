@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { mergeHexaSessions, type HexaBridgeSession, type HexaHookSession } from "./hexaBridge";
+import {
+  excludePassiveHistorySessions,
+  mergeHexaSessions,
+  type HexaBridgeSession,
+  type HexaHookSession,
+} from "./hexaBridge";
 
 const hookCodex: HexaHookSession = {
   session_id: "codex-thread",
@@ -47,5 +52,21 @@ describe("mergeHexaSessions", () => {
     expect(codex?.bridge?.current_activity).toBe("Running tests");
     expect(codex?.session.event_count).toBe(4);
     expect(merged.some((item) => item.session.client_type === "claude-code")).toBe(true);
+  });
+
+  it("keeps a live bridge session when its matching hook is transcript-only history", () => {
+    const passiveHook: HexaHookSession = {
+      ...hookCodex,
+      event_names: ["TranscriptBackfill"],
+    };
+
+    const merged = mergeHexaSessions(excludePassiveHistorySessions([passiveHook]), [bridgeCodex]);
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0]).toMatchObject({
+      source: "codex_bridge",
+      bridge: { current_activity: "Running tests" },
+      session: { session_id: "codex-thread", event_names: [] },
+    });
   });
 });
