@@ -16,7 +16,11 @@ $utf8 = New-Object System.Text.UTF8Encoding($false)
 [Console]::InputEncoding = $utf8
 [Console]::OutputEncoding = $utf8
 $OutputEncoding = $utf8
-$debugLog = Join-Path ([System.IO.Path]::GetTempPath()) "humhum-hook-debug.log"
+$debugLog = if (-not [string]::IsNullOrWhiteSpace($env:HUMHUM_DEBUG_LOG)) {
+    $env:HUMHUM_DEBUG_LOG
+} else {
+    Join-Path ([System.IO.Path]::GetTempPath()) "humhum-hook-debug.log"
+}
 $tokenFile = if ($env:HUMHUM_TOKEN_FILE) {
     $env:HUMHUM_TOKEN_FILE
 } else {

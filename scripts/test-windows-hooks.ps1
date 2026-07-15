@@ -61,6 +61,7 @@ function Test-HookDelivery {
     $deliveryRoot = Join-Path ([System.IO.Path]::GetTempPath()) "humhum-hook-delivery-$([Guid]::NewGuid().ToString('N'))"
     $readyPath = Join-Path $deliveryRoot "ready.txt"
     $capturePath = Join-Path $deliveryRoot "capture.json"
+    $debugPath = Join-Path $deliveryRoot "hook-debug.log"
     $tokenPath = Join-Path $deliveryRoot "local-api-token"
     New-Item -ItemType Directory -Force -Path $deliveryRoot | Out-Null
     [System.IO.File]::WriteAllText($tokenPath, "e2e-token`n", $utf8)
@@ -179,6 +180,7 @@ function Test-HookDelivery {
     }
 
     $previousTokenFile = $env:HUMHUM_TOKEN_FILE
+    $previousDebugLog = $env:HUMHUM_DEBUG_LOG
     $previousHttpProxy = $env:HTTP_PROXY
     $previousHttpsProxy = $env:HTTPS_PROXY
     $previousNoProxy = $env:NO_PROXY
@@ -191,6 +193,7 @@ function Test-HookDelivery {
         }
         $port = [int]([System.IO.File]::ReadAllText($readyPath))
         $env:HUMHUM_TOKEN_FILE = $tokenPath
+        $env:HUMHUM_DEBUG_LOG = $debugPath
         $env:HTTP_PROXY = "http://127.0.0.1:9"
         $env:HTTPS_PROXY = "http://127.0.0.1:9"
         $env:NO_PROXY = ""
@@ -211,7 +214,7 @@ function Test-HookDelivery {
             "-Port",
             [string]$port
         )
-        $output = @($payload | & $powerShellExecutable @hookArguments)
+        $output = @($payload | & $powerShellExecutable @hookArguments 2>&1)
         if ($LASTEXITCODE -ne 0) {
             throw "Windows hook delivery exited with $LASTEXITCODE"
         }
@@ -220,10 +223,20 @@ function Test-HookDelivery {
             throw "Hook delivery test server did not receive a request"
         }
         Receive-Job -Job $server -ErrorAction Stop | Out-Null
-        if ((@($output) -join "`n").Trim() -ne '{"decision":{"behavior":"allow"}}') {
+        $capture = [System.IO.File]::ReadAllText($capturePath) | ConvertFrom-Json
+        $actualOutput = ((@($output) | ForEach-Object { [string]$_ }) -join "`n").Trim()
+        if ($actualOutput -ne '{"decision":{"behavior":"allow"}}') {
+            $hookDebug = if (Test-Path -LiteralPath $debugPath) {
+                [System.IO.File]::ReadAllText($debugPath).Trim()
+            } else {
+                "<no hook debug log>"
+            }
+            Write-Host "Hook child output: $actualOutput"
+            Write-Host "Hook request Expect: $($capture.expect_continue)"
+            Write-Host "Hook request Transfer-Encoding: $($capture.transfer_encoding)"
+            Write-Host "Hook debug: $hookDebug"
             throw "Windows hook did not return the blocking permission response"
         }
-        $capture = [System.IO.File]::ReadAllText($capturePath) | ConvertFrom-Json
         if ($capture.request_line -ne "POST /event?client=claude%20code HTTP/1.1") {
             throw "Windows hook sent an unexpected request target: $($capture.request_line)"
         }
@@ -246,6 +259,7 @@ function Test-HookDelivery {
         }
     } finally {
         $env:HUMHUM_TOKEN_FILE = $previousTokenFile
+        $env:HUMHUM_DEBUG_LOG = $previousDebugLog
         $env:HTTP_PROXY = $previousHttpProxy
         $env:HTTPS_PROXY = $previousHttpsProxy
         $env:NO_PROXY = $previousNoProxy
