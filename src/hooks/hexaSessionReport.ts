@@ -117,6 +117,23 @@ export function orderWorkflow(items: HexaWorkItem[]): HexaWorkItem[] {
   return ordered;
 }
 
+export function createWorkItemId(title: string, existingIds: string[]): string {
+  const base = title
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "work-item";
+  if (!existingIds.includes(base)) return base;
+  let suffix = 2;
+  while (existingIds.includes(`${base}-${suffix}`)) suffix += 1;
+  return `${base}-${suffix}`;
+}
+
+export function workItemRemovalBlocker(items: HexaWorkItem[], workItemId: string): string | null {
+  const dependant = items.find((item) => item.depends_on.includes(workItemId));
+  return dependant ? `“${dependant.title}”仍依赖这个检查点` : null;
+}
+
 export function reviewLabel(rating: HexaReviewRating): string {
   switch (rating) {
     case "satisfied":

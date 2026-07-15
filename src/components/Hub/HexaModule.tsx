@@ -1623,6 +1623,7 @@ export function HexaModule() {
           onRetry={retryHexaData}
           onFocus={focusAgentSession}
           onDelete={deleteWatchedSession}
+          onMutate={mutateHexaSessionAudit}
           renderOperations={renderWatchedOperations}
           entryPanel={(
             <div style={{ display: "grid", gap: 10 }}>

@@ -14,9 +14,12 @@ import { buildHexaSessionReport } from "../../../hooks/hexaSessionReport";
 import type {
   FocusResult,
   HexaAlignment,
+  HexaAuditMutationRequest,
   HexaSupervisorSession,
   HexaWatchedSession,
 } from "../../../hooks/useHexaData";
+import { HexaUserReview } from "./HexaUserReview";
+import { HexaWorkflowEditor } from "./HexaWorkflowEditor";
 
 const ALIGNMENT: Record<HexaAlignment, { label: string; color: string }> = {
   on_track: { label: "方向一致", color: "#22c55e" },
@@ -60,12 +63,14 @@ export function HexaSessionReportView({
   operations,
   onFocus,
   onDelete,
+  onMutate,
 }: {
   session: HexaWatchedSession;
   supervisor: HexaSupervisorSession | null;
   operations?: ReactNode;
   onFocus: (sessionId: string) => Promise<FocusResult>;
   onDelete: (sessionId: string) => Promise<void>;
+  onMutate: (request: HexaAuditMutationRequest) => Promise<unknown>;
 }) {
   const [focusState, setFocusState] = useState<"idle" | "busy" | "done" | "error">("idle");
   const [deleting, setDeleting] = useState(false);
@@ -191,6 +196,8 @@ export function HexaSessionReportView({
         ) : <p className="hexa-report-empty">等待 Agent 上报第一个关键节点</p>}
       </section>
 
+      <HexaWorkflowEditor session={session} onMutate={onMutate} />
+
       <section className="hexa-report-verdicts">
         <div>
           <span>Hexa 审核</span>
@@ -203,6 +210,8 @@ export function HexaSessionReportView({
           <p>{report.userVerdict?.summary ?? "本轮结束后可记录满意、一般或不满意。"}</p>
         </div>
       </section>
+
+      <HexaUserReview session={session} onMutate={onMutate} />
 
       {operations}
 

@@ -2092,6 +2092,176 @@ option {
 .hexa-report-evidence code { color: #64748b; font-size: 9px; overflow-wrap: anywhere; }
 .hexa-report-error { color: #ef4444; font-size: 10px; }
 
+.hexa-workflow-list {
+  display: grid;
+  gap: 0;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.hexa-workflow-list > li {
+  position: relative;
+}
+
+.hexa-workflow-list > li:not(:last-child)::after {
+  position: absolute;
+  top: 35px;
+  bottom: -4px;
+  left: 13px;
+  width: 1px;
+  background: #cbd5e1;
+  content: "";
+}
+
+.hexa-workflow-node {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto 24px;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 6px 0;
+}
+
+.hexa-workflow-index {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  color: #64748b;
+  font-size: 9px;
+  font-weight: 850;
+  border: 2px solid #cbd5e1;
+  border-radius: 50%;
+  background: #fff;
+}
+
+.hexa-workflow-main,
+.hexa-icon-button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.hexa-workflow-main {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.hexa-workflow-main strong {
+  color: #475569;
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
+.hexa-workflow-main span {
+  color: #94a3b8;
+  font-size: 9px;
+  overflow-wrap: anywhere;
+}
+
+.hexa-workflow-status {
+  font-size: 9px;
+  font-weight: 750;
+}
+
+.hexa-icon-button {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  color: #94a3b8;
+}
+
+.hexa-workflow-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 120px;
+  gap: 8px;
+  margin: 4px 0 10px 36px;
+  padding: 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: rgba(248, 250, 252, 0.9);
+}
+
+.hexa-workflow-form > label {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.hexa-workflow-form > label > span,
+.hexa-workflow-form legend {
+  color: #7b8ba0;
+  font-size: 9px;
+  font-weight: 750;
+}
+
+.hexa-workflow-form fieldset {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+}
+
+.hexa-dependency-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-top: 4px;
+}
+
+.hexa-dependency-options label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #64748b;
+  font-size: 9px;
+}
+
+.hexa-workflow-form-actions {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  gap: 6px;
+}
+
+.hexa-user-review {
+  display: grid;
+  gap: 10px;
+}
+
+.hexa-review-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.hexa-review-options button {
+  min-height: 34px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #fff;
+  color: #64748b;
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.hexa-review-note {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 7px;
+}
+
 @media (max-width: 1100px) {
   .hexa-session-details {
     grid-template-columns: minmax(0, 1fr);
@@ -2133,6 +2303,10 @@ option {
   .hexa-report-verdicts > div + div { border-left: 0; border-top: 1px solid rgba(116, 143, 165, 0.13); }
   .hexa-report-next { grid-template-columns: auto minmax(0, 1fr); }
   .hexa-report-next small { grid-column: 2; }
+  .hexa-workflow-form { grid-template-columns: minmax(0, 1fr); margin-left: 0; }
+  .hexa-workflow-form fieldset,
+  .hexa-workflow-form-actions { grid-column: 1; }
+  .hexa-review-note { grid-template-columns: minmax(0, 1fr); }
 }
 
 .hub-module-heading {

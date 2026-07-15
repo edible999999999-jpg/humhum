@@ -3,6 +3,7 @@ import { Activity, ChevronDown, ChevronRight, Plus, RefreshCw } from "lucide-rea
 import { groupWatchedSessions, resolveSelectedSession } from "../../../hooks/hexaSessionReport";
 import type {
   FocusResult,
+  HexaAuditMutationRequest,
   HexaSupervisorSession,
   HexaWatchedSession,
 } from "../../../hooks/useHexaData";
@@ -24,6 +25,7 @@ export function HexaActiveMonitor({
   onRetry,
   onFocus,
   onDelete,
+  onMutate,
   renderOperations,
 }: {
   sessions: HexaWatchedSession[];
@@ -33,6 +35,7 @@ export function HexaActiveMonitor({
   onRetry: () => Promise<void>;
   onFocus: (sessionId: string) => Promise<FocusResult>;
   onDelete: (sessionId: string) => Promise<void>;
+  onMutate: (request: HexaAuditMutationRequest) => Promise<unknown>;
   renderOperations?: (session: HexaWatchedSession) => ReactNode;
 }) {
   const groups = useMemo(() => groupWatchedSessions(sessions), [sessions]);
@@ -127,6 +130,7 @@ export function HexaActiveMonitor({
                 operations={renderOperations?.(selected)}
                 onFocus={onFocus}
                 onDelete={onDelete}
+                onMutate={onMutate}
               />
             )}
           </div>

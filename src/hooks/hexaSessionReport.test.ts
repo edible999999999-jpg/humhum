@@ -6,12 +6,14 @@ import type {
 } from "./useHexaData";
 import {
   buildHexaSessionReport,
+  createWorkItemId,
   groupWatchedSessions,
   orderWorkflow,
   resolveSelectedSession,
   reviewLabel,
   selectVisibleMilestones,
   tabCounts,
+  workItemRemovalBlocker,
 } from "./hexaSessionReport";
 
 function emptyAudit(): HexaSessionAudit {
@@ -167,6 +169,21 @@ describe("Hexa session report", () => {
     ]);
 
     expect(ordered.map((workItem) => workItem.id)).toEqual(["build", "verify", "ship"]);
+  });
+
+  it("creates readable unique checkpoint ids", () => {
+    expect(createWorkItemId("验证构建", [])).toBe("work-item");
+    expect(createWorkItemId("Ship release", ["ship-release"])).toBe("ship-release-2");
+  });
+
+  it("explains why a depended-on checkpoint cannot be removed", () => {
+    const items = [
+      item("build", "completed"),
+      item("verify", "pending", ["build"]),
+    ];
+
+    expect(workItemRemovalBlocker(items, "build")).toBe("“Work verify”仍依赖这个检查点");
+    expect(workItemRemovalBlocker(items, "verify")).toBeNull();
   });
 
   it("selects the latest live session and exposes separate tab counts", () => {
