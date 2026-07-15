@@ -873,65 +873,11 @@ fn local_lan_ip() -> Result<Ipv4Addr, String> {
 }
 
 fn local_lan_host() -> Result<String, String> {
-    let ip = local_lan_ip()?;
-    if android_compatible_ip(ip) {
-        return Ok(ip.to_string());
-    }
-    mobile_lan_host(ip, local_mdns_name().as_deref())
+    Ok(mobile_lan_host(local_lan_ip()?))
 }
 
-fn mobile_lan_host(ip: Ipv4Addr, local_hostname: Option<&str>) -> Result<String, String> {
-    if android_compatible_ip(ip) {
-        return Ok(ip.to_string());
-    }
-    let hostname = local_hostname
-        .map(str::trim)
-        .filter(|hostname| valid_mdns_label(hostname))
-        .ok_or_else(|| {
-            "This Wi-Fi address needs a valid Mac LocalHostName for Android pairing".to_string()
-        })?;
-    Ok(format!("{hostname}.local"))
-}
-
-fn android_compatible_ip(ip: Ipv4Addr) -> bool {
-    let [first, second, third, fourth] = ip.octets();
-    first == 10
-        || (first == 172 && (16..=31).contains(&second))
-        || (first == 192 && second == 168)
-        || (first == 169 && second == 254)
-        || (first == 100
-            && (64..=127).contains(&second)
-            && !((second == 64 && third == 0 && fourth == 0)
-                || (second == 127 && third == 255 && fourth == 255)
-                || (second == 100 && (third == 0 || third == 100))))
-}
-
-fn valid_mdns_label(hostname: &str) -> bool {
-    !hostname.is_empty()
-        && hostname.len() <= 63
-        && !hostname.starts_with('-')
-        && !hostname.ends_with('-')
-        && hostname
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-}
-
-#[cfg(target_os = "macos")]
-fn local_mdns_name() -> Option<String> {
-    let output = std::process::Command::new("/usr/sbin/scutil")
-        .args(["--get", "LocalHostName"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let hostname = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    valid_mdns_label(&hostname).then_some(hostname)
-}
-
-#[cfg(not(target_os = "macos"))]
-fn local_mdns_name() -> Option<String> {
-    None
+fn mobile_lan_host(ip: Ipv4Addr) -> String {
+    ip.to_string()
 }
 
 async fn handle_mobile_request(
@@ -2473,16 +2419,15 @@ mod tests {
     }
 
     #[test]
-    fn public_looking_wifi_uses_an_android_compatible_mdns_host() {
+    fn public_looking_wifi_keeps_numeric_host_for_android_on_link_validation() {
         assert_eq!(
-            mobile_lan_host(Ipv4Addr::new(30, 169, 112, 215), Some("yxdebijibendiannao"),).unwrap(),
-            "yxdebijibendiannao.local"
+            mobile_lan_host(Ipv4Addr::new(30, 169, 112, 215)),
+            "30.169.112.215"
         );
         assert_eq!(
-            mobile_lan_host(Ipv4Addr::new(192, 168, 1, 20), Some("ignored")).unwrap(),
+            mobile_lan_host(Ipv4Addr::new(192, 168, 1, 20)),
             "192.168.1.20"
         );
-        assert!(mobile_lan_host(Ipv4Addr::new(30, 169, 112, 215), None).is_err());
     }
 
     #[test]

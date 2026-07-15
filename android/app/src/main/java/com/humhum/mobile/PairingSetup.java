@@ -17,6 +17,10 @@ public final class PairingSetup {
     }
 
     public static PairingSetup parse(String source) {
+        return parse(source, host -> false);
+    }
+
+    public static PairingSetup parse(String source, BridgeConfig.HostPolicy hostPolicy) {
         try {
             JSONObject value = new JSONObject(source == null ? "" : source.trim());
             if (value.optInt("version", -1) != 1) {
@@ -26,7 +30,8 @@ public final class PairingSetup {
                     value.optString("url"),
                     value.optString("code"),
                     value.optString("fingerprint"),
-                    "Xiaomi Android");
+                    "Xiaomi Android",
+                    hostPolicy);
             return new PairingSetup(
                     config.baseUrl(),
                     config.pairingCode(),
