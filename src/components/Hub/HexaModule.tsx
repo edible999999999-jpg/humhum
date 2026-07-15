@@ -932,7 +932,7 @@ function HumHumMobilePanel({
             <div style={{ minWidth: 150, flex: "1 1 160px" }}>
               <div style={{ color: "rgba(255,255,255,0.78)", fontSize: 11, fontWeight: 850 }}>手机扫码连接</div>
               <div style={{ marginTop: 5, color: "rgba(255,255,255,0.58)", fontSize: 11, lineHeight: 1.6 }}>
-                Android 打开 HUMHUM，点击“扫描 Mac 配对二维码”。
+                Android 打开 HUMHUM，点击“扫描电脑配对二维码”。
               </div>
               <div style={{ marginTop: 5, color: "#86efac", fontSize: 10, fontWeight: 750 }}>
                 {`${pairing.network === "tailnet" ? "Tailnet" : "同一网络"} · ${pairing.scope === "control" ? "可控制" : "只读"} · ${pairingSeconds} 秒`}

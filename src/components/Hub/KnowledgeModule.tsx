@@ -39,8 +39,11 @@ const DEFAULT_ASSET_ROOTS = [
   "~/.claude",
   "~/.agents/skills",
   "~/.qoder",
-  "/Users/yuxi/Desktop/my_station/devpod-ai-companion",
-  "/Users/yuxi/Documents/数据工作台",
+  "~/.qoderwork",
+  "~/.gemini",
+  "~/.qwen",
+  "~/.kimi",
+  "~/.pi",
 ].join("\n");
 
 type Tab = "assets" | "preferences" | "rules" | "obsidian";
@@ -762,7 +765,7 @@ export function KnowledgeModule() {
               fontFamily: "monospace",
             }}
           >
-            curl http://localhost:31275/knowledge?q=style
+            Local API: X-HumHum-Token required (see docs/getting-started.md)
           </div>
         </div>
       )}
@@ -1089,7 +1092,7 @@ function AgentAssetCard({ asset }: { asset: AgentAsset }) {
       <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
         <span style={{ color, fontSize: 11, fontWeight: 800 }}>{asset.asset_type}</span>
         <span style={{ fontSize: 10, color: "rgba(255,255,255,0.35)" }}>{asset.agent_id}</span>
-        <span style={{ fontSize: 10, color: "rgba(255,255,255,0.22)" }}>{asset.source.replace("/Users/yuxi/", "~/")}</span>
+        <span style={{ fontSize: 10, color: "rgba(255,255,255,0.22)" }}>{compactHomePath(asset.source)}</span>
         <div style={{ flex: 1 }} />
         {asset.modified_at && (
           <span style={{ fontSize: 10, color: "rgba(255,255,255,0.22)" }}>
@@ -1158,6 +1161,10 @@ function AgentAssetCard({ asset }: { asset: AgentAsset }) {
       )}
     </div>
   );
+}
+
+function compactHomePath(path: string): string {
+  return path.replace(/^(?:[A-Za-z]:\\Users\\[^\\]+|\/Users\/[^/]+|\/home\/[^/]+)/, "~");
 }
 
 function ObsidianNoteCard({ note }: { note: ObsidianNote }) {

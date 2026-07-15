@@ -54,7 +54,7 @@ export const FPS: FpsTarget = {
 
 export const DEFAULT_CONFIG: EngineConfig = {
   size: 140,
-  devicePixelRatio: window.devicePixelRatio ?? 1,
+  devicePixelRatio: typeof window === "undefined" ? 1 : (window.devicePixelRatio ?? 1),
   powerPreference: "low-power",
 };
 

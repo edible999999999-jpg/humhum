@@ -1,8 +1,10 @@
 // HUMHUM_OPENCODE_PLUGIN - managed by HUMHUM.
 import { readFile } from "node:fs/promises"
+import { homedir } from "node:os"
+import { join } from "node:path"
 
 const endpoint = "http://127.0.0.1:__HUMHUM_PORT__/event?client=opencode"
-const tokenPath = `${process.env.HOME}/.humhum/local-api-token`
+const tokenPath = join(homedir(), ".humhum", "local-api-token")
 
 function firstString(...values) {
   return values.find((value) => typeof value === "string" && value.length > 0) || ""

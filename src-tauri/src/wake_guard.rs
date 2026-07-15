@@ -30,14 +30,14 @@ impl Default for WakeGuardState {
                 child: None,
                 started_at: None,
             }),
-            program: "/usr/bin/caffeinate".to_string(),
+            program: default_wake_program().to_string(),
             fixed_args: None,
         }
     }
 }
 
 impl WakeGuardState {
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     fn with_program(program: &str, args: Vec<String>) -> Self {
         Self {
             inner: Mutex::new(WakeGuardInner {
@@ -105,25 +105,36 @@ impl WakeGuardState {
         Ok(status_from_inner(&inner, self.is_available()))
     }
 
+    #[cfg(any(target_os = "macos", test))]
     pub async fn pulse_user_activity(&self) -> Result<bool, String> {
         if !self.status().await.enabled {
             return Ok(false);
         }
-        let status = Command::new("/usr/bin/caffeinate")
-            .args(build_user_activity_args())
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .await
-            .map_err(|error| format!("Could not pulse user activity: {error}"))?;
-        if status.success() {
-            Ok(true)
-        } else {
-            Err(format!("User activity pulse exited with {status}"))
+
+        #[cfg(target_os = "macos")]
+        {
+            let status = Command::new(&self.program)
+                .args(build_user_activity_args())
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .await
+                .map_err(|error| format!("Could not pulse user activity: {error}"))?;
+            if status.success() {
+                Ok(true)
+            } else {
+                Err(format!("User activity pulse exited with {status}"))
+            }
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            Err("Awake Mode user-activity pulses are available on macOS only".to_string())
         }
     }
 
+    #[cfg(any(target_os = "macos", all(test, unix)))]
     pub async fn reconcile_desired_state(
         &self,
         desired_enabled: bool,
@@ -132,8 +143,28 @@ impl WakeGuardState {
     }
 
     fn is_available(&self) -> bool {
-        self.fixed_args.is_some() || std::path::Path::new(&self.program).is_file()
+        if self.fixed_args.is_some() {
+            return true;
+        }
+        #[cfg(target_os = "macos")]
+        {
+            std::path::Path::new(&self.program).is_file()
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            false
+        }
     }
+}
+
+#[cfg(target_os = "macos")]
+fn default_wake_program() -> &'static str {
+    "/usr/bin/caffeinate"
+}
+
+#[cfg(not(target_os = "macos"))]
+fn default_wake_program() -> &'static str {
+    ""
 }
 
 fn status_from_inner(inner: &WakeGuardInner, available: bool) -> WakeGuardStatus {
@@ -162,6 +193,7 @@ fn build_caffeinate_args(pid: u32) -> Vec<String> {
     ]
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn build_user_activity_args() -> Vec<String> {
     vec!["-u".to_string(), "-t".to_string(), "5".to_string()]
 }
@@ -176,6 +208,7 @@ mod tests {
         assert_eq!(build_user_activity_args(), vec!["-u", "-t", "5"]);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn wake_guard_enable_is_idempotent_and_disable_releases_child() {
         let guard = WakeGuardState::with_program("/bin/sleep", vec!["30".to_string()]);
@@ -191,6 +224,7 @@ mod tests {
         assert!(!guard.status().await.enabled);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn enabled_guard_restarts_after_its_child_exits() {
         let guard = WakeGuardState::with_program("/bin/sleep", vec!["0.05".to_string()]);
@@ -206,6 +240,18 @@ mod tests {
 
         assert_ne!(first, second);
         guard.set_enabled(false).await.unwrap();
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[tokio::test]
+    async fn default_guard_reports_macos_only_on_other_platforms() {
+        let guard = WakeGuardState::default();
+
+        let status = guard.status().await;
+        assert!(!status.available);
+        assert!(!status.enabled);
+        assert!(guard.set_enabled(true).await.is_err());
+        assert!(!guard.pulse_user_activity().await.unwrap());
     }
 
     #[cfg(target_os = "macos")]

@@ -17,7 +17,7 @@ HUMHUM_PORT="${HUMHUM_PORT:-31275}"
 HUMHUM_CLIENT="${HUMHUM_CLIENT:-}"
 HUMHUM_EVENT="${HUMHUM_EVENT:-}"
 HUMHUM_REMOTE_HOST="${HUMHUM_REMOTE_HOST:-}"
-DEBUG_LOG="${HUMHUM_DEBUG_LOG:-/tmp/humhum-hook-debug.log}"
+DEBUG_LOG="${HUMHUM_DEBUG_LOG:-${TMPDIR:-/tmp}/humhum-hook-debug.log}"
 TOKEN_FILE="${HUMHUM_TOKEN_FILE:-${HOME}/.humhum/local-api-token}"
 touch "$DEBUG_LOG" 2>/dev/null || true
 chmod 600 "$DEBUG_LOG" 2>/dev/null || true
@@ -40,6 +40,14 @@ while [ "$#" -gt 0 ]; do
       HUMHUM_EVENT="${1#--event=}"
       shift
       ;;
+    --port)
+      HUMHUM_PORT="${2:-31275}"
+      shift 2
+      ;;
+    --port=*)
+      HUMHUM_PORT="${1#--port=}"
+      shift
+      ;;
     *)
       shift
       ;;
@@ -47,9 +55,9 @@ while [ "$#" -gt 0 ]; do
 done
 
 if [ -n "$HUMHUM_CLIENT" ]; then
-  HUMHUM_URL="http://localhost:${HUMHUM_PORT}/event?client=${HUMHUM_CLIENT}"
+  HUMHUM_URL="http://127.0.0.1:${HUMHUM_PORT}/event?client=${HUMHUM_CLIENT}"
 else
-  HUMHUM_URL="http://localhost:${HUMHUM_PORT}/event"
+  HUMHUM_URL="http://127.0.0.1:${HUMHUM_PORT}/event"
 fi
 
 log_debug() {
@@ -62,6 +70,17 @@ PAYLOAD=$(cat)
 if [ -z "$PAYLOAD" ]; then
   echo "Error: No payload received on stdin" >&2
   exit 1
+fi
+
+if [ ! -r "$TOKEN_FILE" ]; then
+  log_debug "Local API token is missing: $TOKEN_FILE"
+  echo "Warning: Start HumHum once before using its hooks" >&2
+  exit 0
+fi
+HUMHUM_TOKEN=$(tr -d '\r\n' < "$TOKEN_FILE")
+if [ -z "$HUMHUM_TOKEN" ]; then
+  log_debug "Local API token file is empty"
+  exit 0
 fi
 
 # Capture the route back to the exact terminal session. Hook stdin is a pipe, so
@@ -126,14 +145,14 @@ log_debug "Client: ${HUMHUM_CLIENT:-default}"
 log_debug "Session: ${SESSION_ID:-unknown}"
 
 # Forward to HumHum server
-HUMHUM_TOKEN=$(cat "$TOKEN_FILE" 2>/dev/null | tr -d '\r\n' || true)
 RESPONSE=$(curl -s -w "\n%{http_code}" \
+  --noproxy "*" \
   -X POST \
   -H "Content-Type: application/json" \
   -H "X-HumHum-Token: ${HUMHUM_TOKEN}" \
   -d "$PAYLOAD" \
   "$HUMHUM_URL" \
-  --max-time 120 \
+  --max-time 125 \
   2>/dev/null) || {
   log_debug "curl FAILED (HumHum not running?)"
   if [ "$HOOK_EVENT" = "PermissionRequest" ]; then

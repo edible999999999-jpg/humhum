@@ -69,14 +69,22 @@ export async function initBootstrap(): Promise<void> {
   registerSTTProvider(webSpeech);
 
   if (config.api_keys.openai) {
-    const whisper = new WhisperProvider(config.api_keys.openai);
+    const whisper = new WhisperProvider(config.api_keys.openai, config.summarizer.api_base);
     registerSTTProvider(whisper);
   }
 
-  try {
-    setActiveSTTProvider(config.stt.provider);
-  } catch {
-    setActiveSTTProvider("web-speech");
+  let activeStt: string | null = null;
+  for (const candidate of [config.stt.provider, "whisper", "web-speech"]) {
+    if (activeStt) break;
+    try {
+      setActiveSTTProvider(candidate);
+      activeStt = candidate;
+    } catch {
+      // Try the next runtime-capable provider.
+    }
+  }
+  if (!activeStt) {
+    console.warn("[Bootstrap] No speech recognition provider is available");
   }
 
   // --- Summarizer ---
@@ -100,7 +108,7 @@ export async function initBootstrap(): Promise<void> {
 
   console.log("[Bootstrap] Initialized", {
     tts: config.tts.provider,
-    stt: config.stt.provider,
+    stt: activeStt ?? "unavailable",
     hasSummarizer: !!summarizer,
     hasPipeline: !!pipeline,
     apiKey: config.api_keys.openai ? "SET" : "MISSING",

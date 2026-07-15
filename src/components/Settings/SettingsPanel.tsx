@@ -325,6 +325,15 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
     { id: "pi", name: "Pi Agent" },
     { id: "wukong", name: "Wukong" },
   ].filter((client, index, all) => all.findIndex((candidate) => candidate.id === client.id) === index);
+  const webSpeechAvailable = Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
+  const runtimeMediaDevices = (navigator as unknown as {
+    mediaDevices?: { getUserMedia?: unknown };
+  }).mediaDevices;
+  const whisperAvailable = Boolean(
+    config.api_keys.openai &&
+      typeof runtimeMediaDevices?.getUserMedia === "function" &&
+      typeof MediaRecorder !== "undefined",
+  );
 
   return (
     <div className="w-full h-full flex flex-col settings-panel">
@@ -561,7 +570,11 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
         <KawaiiCard icon="☾" title={t("settings.awakeTitle")} subtitle={t("settings.awakeSubtitle")}>
           <div className="flex items-center justify-between gap-3">
             <span className="text-xs text-white/60">
-              {wakeStatus?.enabled ? t("settings.awakeActive") : t("settings.awakeDesc")}
+              {wakeStatus?.available === false
+                ? t("settings.awakeUnavailable")
+                : wakeStatus?.enabled
+                  ? t("settings.awakeActive")
+                  : t("settings.awakeDesc")}
             </span>
             <button
               type="button"
@@ -571,9 +584,11 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
             >
               {wakeLoading
                 ? t("settings.awakeChanging")
-                : wakeStatus?.enabled
-                  ? t("settings.awakeOn")
-                  : t("settings.awakeOff")}
+                : wakeStatus?.available === false
+                  ? t("settings.awakeUnavailableButton")
+                  : wakeStatus?.enabled
+                    ? t("settings.awakeOn")
+                    : t("settings.awakeOff")}
             </button>
           </div>
         </KawaiiCard>
@@ -934,9 +949,18 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
                     }
                     className="kawaii-input kawaii-select"
                   >
-                    <option value="web-speech">{t("settings.webSpeechFree")}</option>
-                    <option value="whisper">Whisper</option>
+                    <option value="web-speech" disabled={!webSpeechAvailable}>
+                      {t("settings.webSpeechFree")}{webSpeechAvailable ? "" : ` (${t("settings.unavailable")})`}
+                    </option>
+                    <option value="whisper" disabled={!whisperAvailable}>
+                      Whisper{whisperAvailable ? "" : ` (${t("settings.unavailable")})`}
+                    </option>
                   </select>
+                  {!webSpeechAvailable && !whisperAvailable && (
+                    <div className="text-[10px] mt-1 text-amber-600/70">
+                      {t("settings.sttUnavailableHint")}
+                    </div>
+                  )}
                 </div>
               </div>
               <div>

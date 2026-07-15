@@ -132,7 +132,11 @@ const DEFAULT_KERNEL_ROOTS = [
   "~/.claude",
   "~/.agents/skills",
   "~/.qoder",
-  "~/Desktop/my_station/devpod-ai-companion",
+  "~/.qoderwork",
+  "~/.gemini",
+  "~/.qwen",
+  "~/.kimi",
+  "~/.pi",
 ].join("\n");
 
 const HUMI_CHAT_STORAGE_KEY = "humhum:humi:chatMessages";
@@ -181,7 +185,7 @@ export function HumiModule() {
   const [kernelSession, setKernelSession] = useState<PiSessionStatus | null>(null);
   const [kernelLoading, setKernelLoading] = useState(false);
   const [kernelMessage, setKernelMessage] = useState<string | null>(null);
-  const [kernelCwd, setKernelCwd] = useState("/Users/yuxi/Desktop/my_station/devpod-ai-companion");
+  const [kernelCwd, setKernelCwd] = useState("");
   const [kernelRoots, setKernelRoots] = useState(DEFAULT_KERNEL_ROOTS);
   const [localKernelResult, setLocalKernelResult] = useState<LocalAgentKernelResult | null>(null);
   const [appConfig, setAppConfig] = useState<AppConfig | null>(null);

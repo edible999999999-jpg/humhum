@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "packageManager": "npm@10.9.3",
   "description": "Desktop jellyfish companion that monitors AI coding assistants and narrates events as voice broadcasts",
   "license": "MIT",
   "repository": {
@@ -11,6 +12,9 @@
   },
   "homepage": "https://github.com/edible999999999-jpg/humhum",
   "bugs": "https://github.com/edible999999999-jpg/humhum/issues",
+  "engines": {
+    "node": ">=22.19.0"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
@@ -27,11 +31,8 @@
     "@earendil-works/pi-agent-core": "^0.80.6",
     "@earendil-works/pi-ai": "^0.80.6",
     "@tauri-apps/api": "^2.5.0",
-    "@tauri-apps/plugin-fs": "^2.3.0",
     "@tauri-apps/plugin-dialog": "^2.0.0",
     "@tauri-apps/plugin-notification": "^2.2.0",
-    "@tauri-apps/plugin-shell": "^2.2.0",
-    "@tauri-apps/plugin-store": "^2.2.0",
     "lucide-react": "^0.468.0",
     "pixi.js": "^8.19.0",
     "qrcode.react": "^4.2.0",

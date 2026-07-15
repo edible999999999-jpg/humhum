@@ -25,19 +25,42 @@ fn parse_tailnet_ipv4(output: &[u8]) -> Option<Ipv4Addr> {
 }
 
 fn tailscale_cli_candidates() -> Vec<PathBuf> {
-    let mut candidates = Vec::new();
+    let mut candidates = vec![PathBuf::from("tailscale")];
+
+    #[cfg(target_os = "windows")]
+    {
+        push_unique(&mut candidates, PathBuf::from("tailscale.exe"));
+        for root in ["ProgramFiles", "ProgramW6432", "LOCALAPPDATA"] {
+            if let Some(root) = std::env::var_os(root).map(PathBuf::from) {
+                push_unique(
+                    &mut candidates,
+                    root.join("Tailscale").join("tailscale.exe"),
+                );
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
     for path in [
-        "tailscale",
         "/usr/local/bin/tailscale",
         "/opt/homebrew/bin/tailscale",
         "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
     ] {
-        let candidate = PathBuf::from(path);
-        if !candidates.contains(&candidate) {
-            candidates.push(candidate);
-        }
+        push_unique(&mut candidates, PathBuf::from(path));
     }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    for path in ["/usr/bin/tailscale", "/usr/local/bin/tailscale"] {
+        push_unique(&mut candidates, PathBuf::from(path));
+    }
+
     candidates
+}
+
+fn push_unique(candidates: &mut Vec<PathBuf>, candidate: PathBuf) {
+    if !candidates.contains(&candidate) {
+        candidates.push(candidate);
+    }
 }
 
 async fn discover_from_candidates(paths: &[PathBuf], limit: Duration) -> Option<Ipv4Addr> {
@@ -65,8 +88,11 @@ async fn discover_from_candidates(paths: &[PathBuf], limit: Duration) -> Option<
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::fs;
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
+    #[cfg(unix)]
     use std::time::Duration;
 
     #[test]
@@ -90,15 +116,23 @@ mod tests {
     }
 
     #[test]
-    fn candidates_include_official_macos_and_common_cli_paths() {
+    fn candidates_include_platform_and_path_entries() {
         let candidates = tailscale_cli_candidates();
 
         assert!(candidates.contains(&"tailscale".into()));
-        assert!(candidates.contains(&"/usr/local/bin/tailscale".into()));
-        assert!(candidates.contains(&"/opt/homebrew/bin/tailscale".into()));
-        assert!(candidates.contains(&"/Applications/Tailscale.app/Contents/MacOS/Tailscale".into()));
+        #[cfg(target_os = "windows")]
+        assert!(candidates.contains(&"tailscale.exe".into()));
+        #[cfg(target_os = "macos")]
+        {
+            assert!(candidates.contains(&"/usr/local/bin/tailscale".into()));
+            assert!(candidates.contains(&"/opt/homebrew/bin/tailscale".into()));
+            assert!(
+                candidates.contains(&"/Applications/Tailscale.app/Contents/MacOS/Tailscale".into())
+            );
+        }
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn executable_fixture_succeeds_and_nonzero_or_timeout_falls_back() {
         let temp = tempfile::tempdir().unwrap();
@@ -127,6 +161,7 @@ mod tests {
         assert!(started.elapsed() < Duration::from_secs(1));
     }
 
+    #[cfg(unix)]
     fn fixture(root: &std::path::Path, name: &str, body: &str, exit: i32) -> std::path::PathBuf {
         let path = root.join(name);
         fs::write(&path, format!("#!/bin/sh\n{body}\nexit {exit}\n")).unwrap();

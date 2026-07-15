@@ -30,9 +30,13 @@ fn read_registry(home: &Path) -> Result<Vec<serde_json::Value>, String> {
 
 fn write_registry(home: &Path, entries: &[serde_json::Value]) -> Result<(), String> {
     let path = registry_path(home);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("Could not create Cursor extension registry: {error}"))?;
+    }
     let content = serde_json::to_vec_pretty(entries)
         .map_err(|error| format!("Could not serialize Cursor extension registry: {error}"))?;
-    std::fs::write(path, content)
+    crate::knowledge_store::write_file_atomically(&path, &content)
         .map_err(|error| format!("Could not write Cursor extension registry: {error}"))
 }
 
@@ -255,13 +259,36 @@ mod tests {
         let nonce = "019f2dc3-34d4-7051-81fe-d1d5ab043849";
 
         let url = focus_request_url(&workspace, &route, nonce).unwrap();
+        let encoded_workspace = percent_encode(
+            &workspace
+                .canonicalize()
+                .unwrap()
+                .to_string_lossy()
+                .to_string(),
+        );
 
         assert!(url.starts_with("cursor://humhum.session-focus/focus?"));
-        assert!(url.contains("cwd=%2F"));
+        assert!(url.contains(&format!("cwd={encoded_workspace}")));
         assert!(url.contains("tty=ttys007"));
         assert!(url.contains("pid=1234"));
         assert!(url.contains(&format!("receipt={nonce}")));
         assert!(focus_request_url(&workspace, &route, "../../escape").is_err());
+    }
+
+    #[test]
+    fn percent_encoding_keeps_windows_paths_out_of_uri_syntax() {
+        assert_eq!(
+            percent_encode(r"C:\Users\Ruby\project & notes"),
+            "C%3A%5CUsers%5CRuby%5Cproject%20%26%20notes"
+        );
+    }
+
+    #[test]
+    fn bundled_extension_has_windows_safe_process_discovery() {
+        assert!(EXTENSION_JS.contains("process.platform === 'win32'"));
+        assert!(EXTENSION_JS.contains("Get-CimInstance Win32_Process"));
+        assert!(EXTENSION_JS.contains("windowsHide: true"));
+        assert!(EXTENSION_JS.contains("terminal.shellIntegration"));
     }
 
     #[test]

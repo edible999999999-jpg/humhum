@@ -23,6 +23,12 @@ export interface ActiveAgent {
   color: string;
 }
 
+export type RenderCanvas = OffscreenCanvas | HTMLCanvasElement;
+
+export type RenderContext2D =
+  | OffscreenCanvasRenderingContext2D
+  | CanvasRenderingContext2D;
+
 export interface EngineConfig {
   size: number;
   devicePixelRatio: number;

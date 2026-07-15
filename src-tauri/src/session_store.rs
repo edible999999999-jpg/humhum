@@ -132,7 +132,7 @@ impl SessionStore {
         let project_name = event
             .cwd
             .as_ref()
-            .and_then(|cwd| cwd.rsplit('/').next().map(String::from))
+            .and_then(|cwd| project_name_from_cwd(cwd))
             .or_else(|| match event.client_type.as_str() {
                 "qoderwork" => Some("QoderWork".to_string()),
                 _ => None,
@@ -261,6 +261,18 @@ impl SessionStore {
         if let Some(session) = self.sessions.get_mut(session_id) {
             session.has_pending_permission = false;
         }
+    }
+}
+
+pub(crate) fn project_name_from_cwd(cwd: &str) -> Option<String> {
+    let name = cwd
+        .trim_end_matches(['/', '\\'])
+        .rsplit(['/', '\\'])
+        .next()?;
+    if name.is_empty() || name.ends_with(':') {
+        None
+    } else {
+        Some(name.to_string())
     }
 }
 
@@ -409,5 +421,23 @@ mod tests {
             store.get_session("active-1").unwrap().status,
             SessionStatus::Active
         );
+    }
+
+    #[test]
+    fn extracts_project_name_from_windows_and_unix_paths() {
+        assert_eq!(
+            project_name_from_cwd(r"C:\Users\Ruby\humhum\"),
+            Some("humhum".to_string())
+        );
+        assert_eq!(
+            project_name_from_cwd(r"\\server\share\project"),
+            Some("project".to_string())
+        );
+        assert_eq!(
+            project_name_from_cwd("/Users/ruby/humhum/"),
+            Some("humhum".to_string())
+        );
+        assert_eq!(project_name_from_cwd(r"C:\"), None);
+        assert_eq!(project_name_from_cwd("/"), None);
     }
 }

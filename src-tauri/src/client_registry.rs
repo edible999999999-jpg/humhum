@@ -7,13 +7,16 @@ pub struct ClientProfile {
     pub config_format: ConfigFormat,
     pub config_path: &'static str,
     pub hook_events: &'static [&'static str],
+    /// Timeout value written to this client's configuration. Some clients use
+    /// seconds while Qwen/Gemini use milliseconds.
+    pub permission_timeout: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConfigFormat {
     Json,
-    Toml,
+    KimiToml,
     FlatJson,
     CopilotJson,
     OpenCodePlugin,
@@ -42,13 +45,15 @@ pub const CLIENTS: &[ClientProfile] = &[
             "SessionEnd",
             "PreCompact",
         ],
+        permission_timeout: 130,
     },
     ClientProfile {
         id: "codex",
         name: "Codex CLI",
         config_format: ConfigFormat::Json,
         config_path: ".codex/hooks.json",
-        hook_events: &["PermissionRequest", "Stop", "TaskCompleted"],
+        hook_events: &["PermissionRequest", "Stop"],
+        permission_timeout: 130,
     },
     ClientProfile {
         id: "qwen-code",
@@ -70,20 +75,23 @@ pub const CLIENTS: &[ClientProfile] = &[
             "SessionEnd",
             "PreCompact",
         ],
+        permission_timeout: 130_000,
     },
     ClientProfile {
         id: "gemini-cli",
         name: "Gemini CLI",
         config_format: ConfigFormat::Json,
         config_path: ".gemini/settings.json",
-        hook_events: &["PermissionRequest", "Stop", "TaskCompleted"],
+        hook_events: &["AfterAgent", "Notification"],
+        permission_timeout: 130_000,
     },
     ClientProfile {
         id: "kimi-k1",
-        name: "Kimi K1",
-        config_format: ConfigFormat::Toml,
+        name: "Kimi Code CLI",
+        config_format: ConfigFormat::KimiToml,
         config_path: ".kimi/config.toml",
-        hook_events: &["PermissionRequest", "Stop", "TaskCompleted"],
+        hook_events: &["Stop", "Notification"],
+        permission_timeout: 130,
     },
     ClientProfile {
         id: "qoderwork",
@@ -100,6 +108,7 @@ pub const CLIENTS: &[ClientProfile] = &[
             "SessionStart",
             "SessionEnd",
         ],
+        permission_timeout: 130,
     },
     ClientProfile {
         id: "qoder",
@@ -117,6 +126,7 @@ pub const CLIENTS: &[ClientProfile] = &[
             "SessionStart",
             "SessionEnd",
         ],
+        permission_timeout: 130,
     },
     ClientProfile {
         id: "codebuddy",
@@ -136,6 +146,7 @@ pub const CLIENTS: &[ClientProfile] = &[
             "SessionEnd",
             "PreCompact",
         ],
+        permission_timeout: 130,
     },
     ClientProfile {
         id: "workbuddy",
@@ -155,6 +166,7 @@ pub const CLIENTS: &[ClientProfile] = &[
             "SessionEnd",
             "PreCompact",
         ],
+        permission_timeout: 130,
     },
     ClientProfile {
         id: "cursor",
@@ -172,6 +184,7 @@ pub const CLIENTS: &[ClientProfile] = &[
             "subagentStop",
             "preCompact",
         ],
+        permission_timeout: 130,
     },
     ClientProfile {
         id: "github-copilot",
@@ -188,6 +201,7 @@ pub const CLIENTS: &[ClientProfile] = &[
             "subagentStop",
             "errorOccurred",
         ],
+        permission_timeout: 130,
     },
     ClientProfile {
         id: "opencode",
@@ -202,6 +216,7 @@ pub const CLIENTS: &[ClientProfile] = &[
             "tool.execute.before",
             "tool.execute.after",
         ],
+        permission_timeout: 130,
     },
     ClientProfile {
         id: "hermes",
@@ -218,6 +233,7 @@ pub const CLIENTS: &[ClientProfile] = &[
             "on_session_finalize",
             "on_session_reset",
         ],
+        permission_timeout: 130,
     },
     ClientProfile {
         id: "openclaw",
@@ -225,6 +241,7 @@ pub const CLIENTS: &[ClientProfile] = &[
         config_format: ConfigFormat::OpenClawHook,
         config_path: ".openclaw/hooks/humhum-openclaw",
         hook_events: &["command", "message", "session"],
+        permission_timeout: 130,
     },
 ];
 

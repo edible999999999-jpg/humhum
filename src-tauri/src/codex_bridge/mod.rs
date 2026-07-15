@@ -8,7 +8,6 @@ use std::fmt;
 use std::path::Path;
 use std::sync::{Arc, Mutex, RwLock};
 use tauri::Emitter;
-use tokio::process::Command;
 use tokio::sync::{Mutex as AsyncMutex, RwLock as AsyncRwLock};
 
 use transport::{IncomingMessage, JsonRpcTransport};
@@ -757,11 +756,13 @@ fn pending_key_for_event(event: &HexaEvent) -> Option<String> {
 }
 
 async fn detect_codex_version() -> Result<String, String> {
-    let output = Command::new("codex")
+    let binary = transport::codex_binary();
+    let mut command = transport::command_for_cli(&binary);
+    let output = command
         .arg("--version")
         .output()
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| format!("Could not start Codex at {}: {error}", binary.display()))?;
     if !output.status.success() {
         return Err("codex --version failed".to_string());
     }
@@ -953,6 +954,54 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    #[cfg(unix)]
+    async fn resume_test_transport() -> Arc<JsonRpcTransport> {
+        Arc::new(
+            JsonRpcTransport::spawn_command(
+                "/bin/sh",
+                &[
+                    "-c",
+                    r#"
+                    read first
+                    case "$first" in
+                      *'"method":"thread/resume"'*)
+                        printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"thread":{"id":"thread-1"}}}'
+                        read second
+                        case "$second" in
+                          *'"method":"turn/start"'*)
+                            printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"turn":{"id":"turn-1"}}}'
+                            ;;
+                        esac
+                        ;;
+                      *)
+                        printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32600,"message":"thread not found: thread-1"}}'
+                        ;;
+                    esac
+                    "#,
+                ],
+            )
+            .await
+            .unwrap(),
+        )
+    }
+
+    #[cfg(target_os = "windows")]
+    async fn resume_test_transport() -> Arc<JsonRpcTransport> {
+        Arc::new(
+            JsonRpcTransport::spawn_command(
+                "cmd.exe",
+                &[
+                    "/D",
+                    "/S",
+                    "/C",
+                    r#"set /p first= & echo {"jsonrpc":"2.0","id":1,"result":{"thread":{"id":"thread-1"}}} & set /p second= & echo {"jsonrpc":"2.0","id":2,"result":{"turn":{"id":"turn-1"}}}"#,
+                ],
+            )
+            .await
+            .unwrap(),
+        )
+    }
+
     #[test]
     fn maps_command_approval_to_the_same_scoped_item() {
         let started = normalize_codex_message(
@@ -1075,34 +1124,7 @@ mod tests {
 
     #[tokio::test]
     async fn sending_to_a_listed_thread_resumes_it_before_starting_a_turn() {
-        let transport = Arc::new(
-            JsonRpcTransport::spawn_command(
-                "/bin/sh",
-                &[
-                    "-c",
-                    r#"
-                    read first
-                    case "$first" in
-                      *'"method":"thread/resume"'*)
-                        printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"thread":{"id":"thread-1"}}}'
-                        read second
-                        case "$second" in
-                          *'"method":"turn/start"'*)
-                            printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"turn":{"id":"turn-1"}}}'
-                            ;;
-                        esac
-                        ;;
-                      *)
-                        printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32600,"message":"thread not found: thread-1"}}'
-                        ;;
-                    esac
-                    sleep 1
-                    "#,
-                ],
-            )
-            .await
-            .unwrap(),
-        );
+        let transport = resume_test_transport().await;
         let state = CodexBridgeState::default();
         let listed = thread_list_events(&json!({
             "data": [{
