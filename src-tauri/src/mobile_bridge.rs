@@ -2358,8 +2358,14 @@ mod tests {
         ));
         assert!(bridge.status().pairing_active);
 
-        bridge.runtime.lock().unwrap().pairing.as_mut().unwrap().failed_attempts =
-            MAX_PAIRING_ATTEMPTS;
+        bridge
+            .runtime
+            .lock()
+            .unwrap()
+            .pairing
+            .as_mut()
+            .unwrap()
+            .failed_attempts = MAX_PAIRING_ATTEMPTS;
         assert!(!bridge.status().pairing_active);
 
         bridge.runtime.lock().unwrap().pairing = None;
