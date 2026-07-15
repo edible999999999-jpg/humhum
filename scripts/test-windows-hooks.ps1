@@ -199,6 +199,9 @@ try {
     if ($windowsHookSource -notmatch '\$handler\.UseProxy\s*=\s*\$false') {
         throw "Windows hook does not explicitly disable HTTP proxies"
     }
+    if ($windowsHookSource -notmatch '\.DefaultRequestHeaders\.ExpectContinue\s*=\s*\$false') {
+        throw "Windows hook does not disable HTTP 100-Continue waiting"
+    }
     $unixHookSource = [System.IO.File]::ReadAllText($unixHookScript)
     if (-not $unixHookSource.Contains('--noproxy "*"')) {
         throw "Unix hook does not explicitly disable HTTP proxies"

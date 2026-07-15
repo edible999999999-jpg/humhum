@@ -148,6 +148,9 @@ try {
     # payload to a user-configured HTTP proxy.
     $handler.UseProxy = $false
     $http = New-Object System.Net.Http.HttpClient -ArgumentList (,$handler)
+    # Windows PowerShell 5.1 / .NET Framework may otherwise wait for an
+    # HTTP/1.1 100-Continue response before sending this small loopback body.
+    $http.DefaultRequestHeaders.ExpectContinue = $false
     # The server waits up to 120 seconds. Leave five seconds for its timeout
     # response while staying below the 130-second client hook deadline.
     $http.Timeout = [TimeSpan]::FromSeconds(125)
