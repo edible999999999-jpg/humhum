@@ -42,7 +42,7 @@
     "typebox": "^1.1.38"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.5.0",
+    "@tauri-apps/cli": "2.11.3",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@types/three": "^0.185.1",
@@ -55,6 +55,7 @@
     "vitest": "^4.1.9"
   },
   "optionalDependencies": {
-    "@rollup/rollup-win32-x64-msvc": "4.62.2"
+    "@rollup/rollup-win32-x64-msvc": "4.62.2",
+    "@tauri-apps/cli-win32-x64-msvc": "2.11.3"
   }
 }
