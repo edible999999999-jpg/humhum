@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { resolveWatchRefresh, type WatchRefresh } from "./hexaWatchState";
+import {
+  resolveOrderedWatchRefresh,
+  resolveWatchRefresh,
+  type WatchRefresh,
+} from "./hexaWatchState";
 
 describe("resolveWatchRefresh", () => {
   it("replaces the previous watched-session snapshot after a fulfilled refresh", () => {
@@ -53,5 +57,35 @@ describe("resolveWatchRefresh", () => {
 
     expect(firstFailure).toMatchObject({ data: null, state: "error" });
     expect(emptySuccess).toEqual({ data: [], state: "ready", error: null });
+  });
+
+  it("does not apply a stale rejection over a newer successful refresh", () => {
+    const newerSuccess = resolveWatchRefresh<string[]>(null, {
+      status: "fulfilled",
+      value: ["newer-session"],
+    });
+
+    const resolved = resolveOrderedWatchRefresh(
+      newerSuccess,
+      { status: "rejected", reason: new Error("stale watch failure") },
+      1,
+      2,
+    );
+
+    expect(resolved).toEqual({ applied: false, refresh: newerSuccess });
+  });
+
+  it("applies the newest refresh generation", () => {
+    const resolved = resolveOrderedWatchRefresh<string[]>(
+      null,
+      { status: "fulfilled", value: ["current-session"] },
+      2,
+      2,
+    );
+
+    expect(resolved).toEqual({
+      applied: true,
+      refresh: { data: ["current-session"], state: "ready", error: null },
+    });
   });
 });

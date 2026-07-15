@@ -53,6 +53,15 @@ export interface MergedHexaSession {
   bridge: HexaBridgeSession | null;
 }
 
+const PASSIVE_EVENT_NAMES = new Set(["TranscriptBackfill"]);
+
+export function excludePassiveHistorySessions(sessions: HexaHookSession[]): HexaHookSession[] {
+  return sessions.filter(
+    (session) =>
+      session.event_names.length === 0 || !session.event_names.every((name) => PASSIVE_EVENT_NAMES.has(name)),
+  );
+}
+
 function bridgeStatus(status: HexaBridgeSession["status"]): HexaHookSession["status"] {
   if (status === "completed") return "completed";
   if (status === "idle") return "idle";

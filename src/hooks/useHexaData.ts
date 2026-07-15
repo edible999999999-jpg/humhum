@@ -6,11 +6,12 @@ import type { GitChangeSummary } from "./sessionChangesState";
 import { sortHexaSessions } from "./hexaPriority";
 import { normalizeMobileRelayConfig, type MobileRelayConfigValue } from "./mobileRelayConfig";
 import {
-  resolveWatchRefresh,
+  resolveOrderedWatchRefresh,
   type WatchDataState,
   type WatchRefresh,
 } from "./hexaWatchState";
 import {
+  excludePassiveHistorySessions,
   mergeHexaSessions,
   type HexaBridgeApproval,
   type HexaBridgeSession,
@@ -175,7 +176,6 @@ export interface HexaSupervisorSession {
 }
 
 const PRIMARY_CLIENTS = new Set(["claude-code", "codex"]);
-const PASSIVE_EVENT_NAMES = new Set(["TranscriptBackfill"]);
 
 const CLIENT_LABELS: Record<string, string> = {
   "claude-code": "Claude Code",
@@ -288,10 +288,6 @@ function detectAlerts(session: HexaSession): HexaAlert[] {
   }
 
   return alerts;
-}
-
-function isPassiveHistorySession(session: HexaSession): boolean {
-  return session.event_names.length > 0 && session.event_names.every((name) => PASSIVE_EVENT_NAMES.has(name));
 }
 
 export function agentLabel(clientType: string): string {
@@ -641,6 +637,7 @@ export function useHexaData() {
   const readoutDataRef = useRef<HexaReadout[]>([]);
   const bridgeDataRef = useRef<HexaBridgeSession[]>([]);
   const queueDataRef = useRef<QueuedIntervention[]>([]);
+  const refreshGenerationRef = useRef(0);
   const watchRefreshRef = useRef<WatchRefresh<HexaWatchedSession[]>>({
     data: null,
     state: "loading",
@@ -649,6 +646,8 @@ export function useHexaData() {
   const [watchDataState, setWatchDataState] = useState<WatchDataState>("loading");
 
   const fetchSessions = useCallback(async () => {
+    const requestGeneration = ++refreshGenerationRef.current;
+
     try {
       const [sessionResult, statsResult, readoutResult, bridgeResult, watchedResult, healthResult, queueResult] = await Promise.allSettled([
         invoke<HexaSession[]>("get_all_sessions_history"),
@@ -659,13 +658,21 @@ export function useHexaData() {
         invoke<CodexBridgeHealth>("get_codex_bridge_health"),
         invoke<QueuedIntervention[]>("get_intervention_queue"),
       ]);
+      const orderedWatchRefresh = resolveOrderedWatchRefresh(
+        watchRefreshRef.current,
+        watchedResult,
+        requestGeneration,
+        refreshGenerationRef.current,
+      );
+      if (!orderedWatchRefresh.applied || !orderedWatchRefresh.refresh) return;
+
       if (sessionResult.status === "fulfilled") sessionDataRef.current = sessionResult.value;
       if (statsResult.status === "fulfilled") statsDataRef.current = statsResult.value;
       if (readoutResult.status === "fulfilled") readoutDataRef.current = readoutResult.value;
       if (bridgeResult.status === "fulfilled") bridgeDataRef.current = bridgeResult.value;
       if (queueResult.status === "fulfilled") queueDataRef.current = queueResult.value;
 
-      const watchRefresh = resolveWatchRefresh(watchRefreshRef.current, watchedResult);
+      const watchRefresh = orderedWatchRefresh.refresh;
       watchRefreshRef.current = watchRefresh;
       setWatchDataState(watchRefresh.state);
 
@@ -679,11 +686,11 @@ export function useHexaData() {
       const remoteData = await invoke<CodexRemoteControlState>("get_codex_remote_control").catch(() => null);
       const mobileData = await invoke<MobileBridgeStatus>("get_mobile_bridge_status").catch(() => null);
       const configData = await invoke<AppConfig>("get_config").catch(() => null);
+      if (requestGeneration !== refreshGenerationRef.current) return;
       const statsByClient = new Map(statsData.map((stat) => [stat.client_type, stat]));
       const readoutBySession = new Map(readoutData.map((readout) => [readout.session_id, readout]));
       const watchedBySession = new Map(watchedData.map((watched) => [watched.session_id, watched]));
-      const merged = mergeHexaSessions(sessionData, bridgeData)
-        .filter((item) => !isPassiveHistorySession(item.session));
+      const merged = mergeHexaSessions(excludePassiveHistorySessions(sessionData), bridgeData);
       const mergedIds = new Set(merged.map((item) => item.session.session_id));
       const watchedOnly = watchedData
         .filter((watched) => !mergedIds.has(watched.session_id))

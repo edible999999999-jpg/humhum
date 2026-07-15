@@ -6,6 +6,11 @@ export interface WatchRefresh<T> {
   error: unknown | null;
 }
 
+export interface OrderedWatchRefresh<T> {
+  applied: boolean;
+  refresh: WatchRefresh<T> | null;
+}
+
 export function resolveWatchRefresh<T>(
   previous: WatchRefresh<T> | null,
   result: PromiseSettledResult<T>,
@@ -18,5 +23,21 @@ export function resolveWatchRefresh<T>(
     data: previous?.data ?? null,
     state: "error",
     error: result.reason,
+  };
+}
+
+export function resolveOrderedWatchRefresh<T>(
+  previous: WatchRefresh<T> | null,
+  result: PromiseSettledResult<T>,
+  requestGeneration: number,
+  currentGeneration: number,
+): OrderedWatchRefresh<T> {
+  if (requestGeneration !== currentGeneration) {
+    return { applied: false, refresh: previous };
+  }
+
+  return {
+    applied: true,
+    refresh: resolveWatchRefresh(previous, result),
   };
 }
