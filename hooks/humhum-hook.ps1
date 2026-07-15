@@ -141,8 +141,19 @@ $http = $null
 $handler = $null
 $content = $null
 $response = $null
+$restoreExpect100Continue = $false
+$previousExpect100Continue = $false
 try {
     Add-Type -AssemblyName System.Net.Http
+    if ($PSVersionTable.PSEdition -eq "Desktop") {
+        # Windows PowerShell 5.1 uses .NET Framework's service-point default in
+        # addition to HttpClient's request headers. Disable both layers so the
+        # small loopback payload is sent immediately, then restore the process
+        # default in the finally block.
+        $previousExpect100Continue = [System.Net.ServicePointManager]::Expect100Continue
+        [System.Net.ServicePointManager]::Expect100Continue = $false
+        $restoreExpect100Continue = $true
+    }
     $handler = New-Object System.Net.Http.HttpClientHandler
     # This endpoint is always loopback. Never expose the bearer token or hook
     # payload to a user-configured HTTP proxy.
@@ -188,6 +199,9 @@ try {
         $http.Dispose()
     } elseif ($null -ne $handler) {
         $handler.Dispose()
+    }
+    if ($restoreExpect100Continue) {
+        [System.Net.ServicePointManager]::Expect100Continue = $previousExpect100Continue
     }
 }
 

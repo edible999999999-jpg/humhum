@@ -75,6 +75,7 @@ function Test-HookDelivery {
         $client = $null
         try {
             $client = $listener.AcceptTcpClient()
+            $client.ReceiveTimeout = 15000
             $stream = $client.GetStream()
             $reader = [System.IO.StreamReader]::new(
                 $stream,
@@ -93,6 +94,17 @@ function Test-HookDelivery {
                     $headers[$line.Substring(0, $separator).Trim()] = $line.Substring($separator + 1).Trim()
                 }
             }
+            $expectContinue = [string]$headers["Expect"]
+            if ($expectContinue -match '(^|,)\s*100-continue\s*($|,)') {
+                # A valid HTTP/1.1 server must let the client continue. Doing so
+                # also turns a regression into a prompt, explicit wire-level
+                # assertion below instead of a 125-second client timeout.
+                $continueResponse = [System.Text.Encoding]::ASCII.GetBytes(
+                    "HTTP/1.1 100 Continue`r`n`r`n"
+                )
+                $stream.Write($continueResponse, 0, $continueResponse.Length)
+                $stream.Flush()
+            }
             $contentLength = [int]$headers["Content-Length"]
             $buffer = New-Object char[] $contentLength
             $offset = 0
@@ -107,6 +119,7 @@ function Test-HookDelivery {
                 ([ordered]@{
                     request_line = $requestLine
                     token = $headers["X-HumHum-Token"]
+                    expect_continue = $expectContinue
                     body = $body
                 } | ConvertTo-Json -Compress),
                 (New-Object System.Text.UTF8Encoding($false))
@@ -177,6 +190,9 @@ function Test-HookDelivery {
         if ($capture.token -ne "e2e-token") {
             throw "Windows hook sent an unexpected authentication token"
         }
+        if (-not [string]::IsNullOrWhiteSpace([string]$capture.expect_continue)) {
+            throw "Windows hook unexpectedly sent Expect: $($capture.expect_continue)"
+        }
         $delivered = $capture.body | ConvertFrom-Json
         if ($delivered.hook_event_name -ne "PermissionRequest" -or
             $delivered.session_id -ne "e2e-session" -or
@@ -201,6 +217,9 @@ try {
     }
     if ($windowsHookSource -notmatch '\.DefaultRequestHeaders\.ExpectContinue\s*=\s*\$false') {
         throw "Windows hook does not disable HTTP 100-Continue waiting"
+    }
+    if ($windowsHookSource -notmatch '\[System\.Net\.ServicePointManager\]::Expect100Continue\s*=\s*\$false') {
+        throw "Windows PowerShell hook does not disable the .NET Framework 100-Continue default"
     }
     $unixHookSource = [System.IO.File]::ReadAllText($unixHookScript)
     if (-not $unixHookSource.Contains('--noproxy "*"')) {
