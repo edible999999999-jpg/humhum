@@ -1,7 +1,7 @@
 import { useEffect, useReducer, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { QRCodeSVG } from "qrcode.react";
-import { Copy, Crosshair, FileDiff, Flame, Link, Power, RefreshCw, RotateCcw, Save, Send, ShieldCheck, Smartphone, Square, Trash2 } from "lucide-react";
+import { Activity, ChevronDown, ChevronRight, Clock3, Copy, Crosshair, FileDiff, Flame, Link, Power, RefreshCw, RotateCcw, Save, Send, ShieldCheck, Smartphone, Square, Trash2, WifiOff } from "lucide-react";
 import {
   useHexaData,
   type CodexRemoteControlState,
@@ -14,6 +14,7 @@ import {
   type MobileRelayConfig,
   type QueuedIntervention,
 } from "../../hooks/useHexaData";
+import { buildHexaAgentOverview, type HexaAgentOverview } from "../../hooks/hexaAgentOverview";
 import { initialInterventionState, interventionReducer } from "../../hooks/interventionState";
 import { mobilePresenceLabel } from "../../hooks/mobilePresence";
 import {
@@ -112,6 +113,133 @@ function MetricCard({
       <div style={{ color: "rgba(255,255,255,0.28)", fontSize: 10, marginTop: 3, lineHeight: 1.35 }}>
         {detail}
       </div>
+    </div>
+  );
+}
+
+function formatHeartbeat(updatedAt: string | null): string {
+  if (!updatedAt) return "No heartbeat";
+  const elapsed = Date.now() - new Date(updatedAt).getTime();
+  return Number.isFinite(elapsed) ? `${formatTimeAgo(elapsed)} ago` : "Unknown heartbeat";
+}
+
+function WatchedAgentOverview({
+  agents,
+  selectedAgentId,
+  onSelect,
+}: {
+  agents: HexaAgentOverview[];
+  selectedAgentId: string | null;
+  onSelect: (agentId: string) => void;
+}) {
+  return (
+    <div style={{ display: "grid", gap: 0, borderTop: "1px solid rgba(255,255,255,0.07)" }}>
+      {agents.map((agent) => {
+        const selected = agent.id === selectedAgentId;
+        const statusColor = agent.online ? "#22c55e" : agent.currentStatus === "blocked" ? "#f87171" : "rgba(255,255,255,0.42)";
+        const goal = agent.currentRun?.goal ?? "No current goal reported";
+        const step = agent.currentRun?.current_step ?? agent.currentRun?.blocked_reason ?? "No current step reported";
+
+        return (
+          <button
+            key={agent.id}
+            type="button"
+            aria-expanded={selected}
+            onClick={() => onSelect(agent.id)}
+            style={{
+              display: "grid",
+              gridTemplateColumns: "minmax(0, 1fr) auto",
+              gap: 14,
+              width: "100%",
+              padding: "13px 2px",
+              border: 0,
+              borderBottom: "1px solid rgba(255,255,255,0.07)",
+              background: "transparent",
+              color: "inherit",
+              cursor: "pointer",
+              textAlign: "left",
+            }}
+          >
+            <div style={{ minWidth: 0, display: "grid", gap: 6 }}>
+              <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 7 }}>
+                <span style={{ color: "rgba(255,255,255,0.9)", fontSize: 13, fontWeight: 900, overflowWrap: "anywhere" }}>
+                  {agent.name}
+                </span>
+                <span style={{ color: "rgba(255,255,255,0.36)", fontSize: 10, fontWeight: 750 }}>
+                  {agent.provider}
+                </span>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: statusColor, fontSize: 10, fontWeight: 850 }}>
+                  {agent.online ? <Activity size={12} /> : <WifiOff size={12} />}
+                  {agent.online ? "Online" : "Offline"} · {agent.currentStatus}
+                </span>
+              </div>
+              <div style={{ color: "rgba(255,255,255,0.38)", fontSize: 10, overflowWrap: "anywhere" }}>
+                {agent.workspace ?? "No workspace declared"}
+              </div>
+              <div style={{ color: "rgba(255,255,255,0.62)", fontSize: 11, lineHeight: 1.4, overflowWrap: "anywhere" }}>
+                {goal}
+              </div>
+              <div style={{ color: "rgba(255,255,255,0.36)", fontSize: 10, lineHeight: 1.4, overflowWrap: "anywhere" }}>
+                {step}
+              </div>
+              <div style={{ display: "inline-flex", alignItems: "center", gap: 5, color: "rgba(255,255,255,0.3)", fontSize: 10 }}>
+                <Clock3 size={12} /> Last heartbeat {formatHeartbeat(agent.lastHeartbeat)}
+              </div>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(42px, 1fr))", gap: 6, alignSelf: "start", minWidth: 112 }}>
+              <MiniStat label="total" value={agent.metrics.total} />
+              <MiniStat label="done" value={agent.metrics.completed} />
+              <MiniStat label="blocked" value={agent.metrics.blocked} />
+              <MiniStat label="success" value={`${agent.metrics.successRate}%`} />
+              <span style={{ gridColumn: "1 / -1", justifySelf: "end", display: "inline-flex", alignItems: "center", gap: 3, color: "rgba(255,255,255,0.4)", fontSize: 10, fontWeight: 800 }}>
+                {selected ? <ChevronDown size={14} /> : <ChevronRight size={14} />} Details
+              </span>
+            </div>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function WatchedAgentDataState({
+  state,
+  hasAgents,
+  onRetry,
+}: {
+  state: "loading" | "ready" | "error";
+  hasAgents: boolean;
+  onRetry: () => Promise<void>;
+}) {
+  const [retrying, setRetrying] = useState(false);
+
+  if (state === "loading") {
+    return <div role="status" style={{ color: "rgba(255,255,255,0.42)", fontSize: 11, padding: "14px 0" }}>Loading watched Agents...</div>;
+  }
+
+  if (state === "ready" && !hasAgents) {
+    return <div style={{ color: "rgba(255,255,255,0.42)", fontSize: 11, padding: "14px 0" }}>No watched Agents yet. Register a run below to start durable supervision.</div>;
+  }
+
+  if (state !== "error") return null;
+
+  return (
+    <div role="alert" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, padding: "9px 10px", borderRadius: 8, background: "rgba(248,113,113,0.08)", border: "1px solid rgba(248,113,113,0.25)", color: "#fca5a5", fontSize: 10 }}>
+      <span>{hasAgents ? "Watch store is unavailable. Showing cached Agent data." : "Watch store is unavailable. No cached Agent data is available."}</span>
+      <button
+        type="button"
+        title="Retry watched Agent data"
+        aria-label="Retry watched Agent data"
+        disabled={retrying}
+        onClick={() => {
+          setRetrying(true);
+          void onRetry().finally(() => setRetrying(false));
+        }}
+        className="kawaii-toggle-btn"
+        style={{ display: "inline-flex", alignItems: "center", gap: 5 }}
+      >
+        <RefreshCw size={13} /> Retry
+      </button>
     </div>
   );
 }
@@ -1268,6 +1396,8 @@ export function HexaModule() {
     completedSupervisorSessions,
     supervisorSessions,
     alerts,
+    watchDataState,
+    retryHexaData,
     bridgeHealth,
     remoteControl,
     remotePairing,
@@ -1301,6 +1431,7 @@ export function HexaModule() {
   const [openReviews, setOpenReviews] = useState<Set<string>>(new Set());
   const [autoConfirmSessions, setAutoConfirmSessions] = useState<Set<string>>(new Set());
   const [collapsedAgentGroups, setCollapsedAgentGroups] = useState<Set<string>>(new Set());
+  const [selectedWatchedAgentId, setSelectedWatchedAgentId] = useState<string | null>(null);
 
   useEffect(() => {
     void invoke<string[]>("get_auto_confirm_sessions")
@@ -1316,10 +1447,20 @@ export function HexaModule() {
   const recentActivity = activeSupervisorSessions;
   const active = recentActivity.filter((item) => item.progress_status !== "idle");
   const recentCompleted = completedSupervisorSessions.slice(0, 6);
-  const watchedSessions = supervisorSessions.filter((item) => item.source === "watched" && item.session.status !== "completed");
+  const watchedSupervisorSessions = supervisorSessions.filter((item) => item.source === "watched" && item.watched);
+  const watchedAgentOverview = buildHexaAgentOverview(
+    watchedSupervisorSessions.flatMap((item) => item.watched ? [item.watched] : []),
+  );
+  const selectedWatchedAgent = watchedAgentOverview.find((agent) => agent.id === selectedWatchedAgentId) ?? null;
+  const watchedSupervisorBySessionId = new Map(
+    watchedSupervisorSessions.map((item) => [item.session.session_id, item]),
+  );
+  const selectedWatchedSessions = selectedWatchedAgent?.recentRuns
+    .map((run) => watchedSupervisorBySessionId.get(run.session_id))
+    .filter((item): item is HexaSupervisorSession => Boolean(item)) ?? [];
   const discoveredSessions = recentActivity.filter((item) => item.source !== "watched");
   const historicalSessions = recentCompleted.filter((item) => item.source !== "watched");
-  const visibleSessions = [...watchedSessions, ...discoveredSessions, ...historicalSessions];
+  const visibleSessions = [...watchedSupervisorSessions, ...discoveredSessions, ...historicalSessions];
   const secondarySessions = [...discoveredSessions, ...historicalSessions];
   const pendingCount = active.reduce((sum, item) => sum + item.pending_confirmations, 0);
   const workingCount = active.filter((item) => item.progress_status === "working").length;
@@ -1336,7 +1477,7 @@ export function HexaModule() {
     });
   };
   const renderSessionGrid = (items: HexaSupervisorSession[]) => (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
+    <div className="hexa-session-details" style={{ display: "grid", gap: 10 }}>
       {items.map((item) => {
         const provider = interventionProviderForClient(item.session.client_type);
         const threadId = provider === "codex"
@@ -1422,6 +1563,34 @@ export function HexaModule() {
         </div>
       </div>
 
+      <section style={{ display: "grid", gap: 10, marginBottom: 14 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
+          <div style={{ color: "rgba(255,255,255,0.72)", fontSize: 12, fontWeight: 900 }}>Watched Agents</div>
+          <div style={{ color: "rgba(255,255,255,0.3)", fontSize: 10 }}>{watchedAgentOverview.length} durable identities</div>
+        </div>
+        <WatchedAgentDataState
+          state={watchDataState}
+          hasAgents={watchedAgentOverview.length > 0}
+          onRetry={retryHexaData}
+        />
+        {watchedAgentOverview.length > 0 && (
+          <WatchedAgentOverview
+            agents={watchedAgentOverview}
+            selectedAgentId={selectedWatchedAgentId}
+            onSelect={(agentId) => setSelectedWatchedAgentId((current) => current === agentId ? null : agentId)}
+          />
+        )}
+        {selectedWatchedAgent && (
+          <div style={{ display: "grid", gap: 8, paddingTop: 2 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
+              <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 11, fontWeight: 850 }}>Recent work history</div>
+              <div style={{ color: "rgba(255,255,255,0.28)", fontSize: 10 }}>{selectedWatchedSessions.length} runs</div>
+            </div>
+            {renderSessionGrid(selectedWatchedSessions)}
+          </div>
+        )}
+      </section>
+
       <RemoteAccessPanel
         state={remoteControl}
         pairing={remotePairing}
@@ -1441,14 +1610,6 @@ export function HexaModule() {
         onRevokeDevice={revokeMobileDevice}
         onConfigureRelay={configureMobileRelay}
       />
-
-      {watchedSessions.length > 0 && (
-        <section style={{ display: "grid", gap: 10, marginBottom: 14 }}>
-          <SessionSection title="正在托管" count={watchedSessions.length} detail="Agent 主动要求 Hexa 监控，状态可信度最高">
-            {renderSessionGrid(watchedSessions)}
-          </SessionSection>
-        </section>
-      )}
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10, marginBottom: 14 }}>
         <MetricCard label="活跃会话" value={active.length} tone="#22c55e" detail={`${workingCount} 个正在推进`} />
