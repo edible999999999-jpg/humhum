@@ -115,10 +115,15 @@ jobs:
       - name: Verify generated Tauri schemas
         shell: pwsh
         run: |
+          # Tauri rewrites desktop-schema.json as an alias for the most recently
+          # built desktop target. Keep validating the Windows-specific schema and
+          # all generated ACL data, but do not treat that cross-platform alias as drift.
+          git restore --source=HEAD --worktree -- src-tauri/gen/schemas/desktop-schema.json
           $schemaChanges = @(
             git status --porcelain --untracked-files=all -- src-tauri/gen/schemas
           )
           if ($schemaChanges.Count -gt 0) {
+            git diff -- src-tauri/gen/schemas
             $schemaChanges | ForEach-Object { Write-Error $_ }
             throw "Tauri schema generation changed tracked or untracked files"
           }
