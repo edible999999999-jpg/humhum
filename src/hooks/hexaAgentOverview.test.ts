@@ -7,7 +7,7 @@ import type {
 import { buildHexaAgentOverview, selectNeedFitSessions } from "./hexaAgentOverview";
 
 function watchedRun(overrides: Partial<HexaWatchedSession>): HexaWatchedSession {
-  return {
+  const base: HexaWatchedSession = {
     session_id: "run-1",
     agent: "codex",
     name: "Run display name",
@@ -21,8 +21,18 @@ function watchedRun(overrides: Partial<HexaWatchedSession>): HexaWatchedSession 
     confidence: "agent-bound",
     started_at: "2026-07-14T08:00:00.000Z",
     updated_at: "2026-07-14T08:05:00.000Z",
-    ...overrides,
+    audit: {
+      goal_revisions: [],
+      success_criteria: [],
+      work_items: [],
+      milestones: [],
+      important_outputs: [],
+      interventions: [],
+      hexa_review: null,
+      user_review: null,
+    },
   };
+  return { ...base, ...overrides, audit: overrides.audit ?? base.audit };
 }
 
 function watchedAgent(overrides: Partial<HexaWatchedAgent> = {}): HexaWatchedAgent {

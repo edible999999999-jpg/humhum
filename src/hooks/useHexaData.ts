@@ -129,6 +129,114 @@ export interface HexaReadout {
   evidence: string[];
 }
 
+export interface HexaEvidenceRef {
+  id: string;
+  kind: string;
+  label: string;
+  location: string | null;
+  observed_at: string;
+}
+
+export interface HexaEvidenceInput {
+  kind: string;
+  label: string;
+  location: string | null;
+}
+
+export type HexaWorkItemStatus = "pending" | "in_progress" | "completed" | "failed";
+
+export interface HexaWorkItem {
+  id: string;
+  title: string;
+  description: string | null;
+  acceptance_criteria: string | null;
+  status: HexaWorkItemStatus;
+  depends_on: string[];
+  evidence: HexaEvidenceRef[];
+  started_at: string | null;
+  updated_at: string;
+  completed_at: string | null;
+}
+
+export interface HexaWorkItemInput {
+  id: string;
+  title: string;
+  description: string | null;
+  acceptance_criteria: string | null;
+  status: HexaWorkItemStatus;
+  depends_on: string[];
+  evidence: HexaEvidenceInput[];
+}
+
+export type HexaAlignment = "on_track" | "watch" | "off_track";
+
+export interface HexaGoalRevision {
+  id: string;
+  goal: string;
+  success_criteria: string[];
+  created_at: string;
+}
+
+export interface HexaMilestone {
+  id: string;
+  summary: string;
+  work_item_id: string | null;
+  alignment: HexaAlignment;
+  evidence: HexaEvidenceRef[];
+  created_at: string;
+}
+
+export interface HexaMilestoneInput {
+  summary: string;
+  work_item_id: string | null;
+  alignment: HexaAlignment;
+  evidence: HexaEvidenceInput[];
+}
+
+export interface HexaIntervention {
+  id: string;
+  kind: string;
+  summary: string;
+  evidence: HexaEvidenceRef[];
+  created_at: string;
+}
+
+export type HexaReviewRating = "satisfied" | "average" | "unsatisfied";
+
+export interface HexaReview {
+  rating: HexaReviewRating;
+  summary: string;
+  evidence: HexaEvidenceRef[];
+  created_at: string;
+}
+
+export interface HexaReviewInput {
+  rating: HexaReviewRating;
+  summary: string;
+  evidence: HexaEvidenceInput[];
+}
+
+export interface HexaSessionAudit {
+  goal_revisions: HexaGoalRevision[];
+  success_criteria: string[];
+  work_items: HexaWorkItem[];
+  milestones: HexaMilestone[];
+  important_outputs: HexaEvidenceRef[];
+  interventions: HexaIntervention[];
+  hexa_review: HexaReview | null;
+  user_review: HexaReview | null;
+}
+
+export type HexaAuditMutationRequest =
+  | { session_id: string; action: "revise_goal"; goal: string; success_criteria: string[] }
+  | { session_id: string; action: "upsert_work_item"; work_item: HexaWorkItemInput }
+  | { session_id: string; action: "remove_work_item"; work_item_id: string }
+  | { session_id: string; action: "append_milestone"; milestone: HexaMilestoneInput }
+  | { session_id: string; action: "append_output"; output: HexaEvidenceInput }
+  | { session_id: string; action: "record_intervention"; intervention: Omit<HexaIntervention, "id" | "created_at" | "evidence"> & { evidence: HexaEvidenceInput[] } }
+  | { session_id: string; action: "set_hexa_review"; review: HexaReviewInput }
+  | { session_id: string; action: "set_user_review"; review: HexaReviewInput };
+
 export interface HexaWatchedSession {
   session_id: string;
   agent: string;
@@ -143,6 +251,7 @@ export interface HexaWatchedSession {
   confidence: string | null;
   started_at: string;
   updated_at: string;
+  audit: HexaSessionAudit;
 }
 
 export interface HexaWatchedAgent {
@@ -967,6 +1076,14 @@ export function useHexaData() {
     await fetchSessions();
   }, [fetchSessions]);
 
+  const mutateHexaSessionAudit = useCallback(async (request: HexaAuditMutationRequest) => {
+    try {
+      return await invoke<HexaWatchedSession>("mutate_hexa_session_audit", { request });
+    } finally {
+      await fetchSessions();
+    }
+  }, [fetchSessions]);
+
   return {
     sessions,
     activeSessions,
@@ -1010,5 +1127,6 @@ export function useHexaData() {
     revokeMobileDevice,
     configureMobileRelay,
     deleteWatchedSession,
+    mutateHexaSessionAudit,
   };
 }
