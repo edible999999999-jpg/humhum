@@ -77,24 +77,56 @@ function Test-HookDelivery {
             $client = $listener.AcceptTcpClient()
             $client.ReceiveTimeout = 15000
             $stream = $client.GetStream()
-            $reader = [System.IO.StreamReader]::new(
-                $stream,
-                [System.Text.Encoding]::UTF8,
-                $false,
-                1024,
-                $true
-            )
-            $requestLine = $reader.ReadLine()
-            $headers = @{}
+            # Parse framing as bytes. HTTP Content-Length counts octets, not
+            # decoded characters, and StreamReader may also buffer body bytes
+            # while it reads the header block.
+            $headerBuffer = New-Object byte[] 65536
+            $headerLength = 0
             while ($true) {
-                $line = $reader.ReadLine()
-                if ([string]::IsNullOrEmpty($line)) { break }
+                if ($headerLength -ge $headerBuffer.Length) {
+                    throw "Hook request headers exceeded 65536 bytes"
+                }
+                $read = $stream.Read($headerBuffer, $headerLength, 1)
+                if ($read -le 0) {
+                    throw "Hook request ended before its headers completed"
+                }
+                $headerLength += $read
+                if ($headerLength -ge 4 -and
+                    $headerBuffer[$headerLength - 4] -eq 13 -and
+                    $headerBuffer[$headerLength - 3] -eq 10 -and
+                    $headerBuffer[$headerLength - 2] -eq 13 -and
+                    $headerBuffer[$headerLength - 1] -eq 10) {
+                    break
+                }
+            }
+
+            $headerText = [System.Text.Encoding]::ASCII.GetString(
+                $headerBuffer,
+                0,
+                $headerLength - 4
+            )
+            $headerLines = @($headerText -split "`r`n")
+            $requestLine = $headerLines[0]
+            $headers = @{}
+            for ($headerIndex = 1; $headerIndex -lt $headerLines.Count; $headerIndex++) {
+                $line = $headerLines[$headerIndex]
                 $separator = $line.IndexOf(":")
                 if ($separator -gt 0) {
                     $headers[$line.Substring(0, $separator).Trim()] = $line.Substring($separator + 1).Trim()
                 }
             }
             $expectContinue = [string]$headers["Expect"]
+            $transferEncoding = [string]$headers["Transfer-Encoding"]
+            $contentLengthText = [string]$headers["Content-Length"]
+            $contentLength = 0
+            if ([string]::IsNullOrWhiteSpace($contentLengthText) -or
+                -not [int]::TryParse($contentLengthText, [ref]$contentLength) -or
+                $contentLength -lt 0) {
+                throw "Hook request has invalid Content-Length '$contentLengthText'"
+            }
+            if (-not [string]::IsNullOrWhiteSpace($transferEncoding)) {
+                throw "Hook request unexpectedly used Transfer-Encoding: $transferEncoding"
+            }
             if ($expectContinue -match '(^|,)\s*100-continue\s*($|,)') {
                 # A valid HTTP/1.1 server must let the client continue. Doing so
                 # also turns a regression into a prompt, explicit wire-level
@@ -105,21 +137,28 @@ function Test-HookDelivery {
                 $stream.Write($continueResponse, 0, $continueResponse.Length)
                 $stream.Flush()
             }
-            $contentLength = [int]$headers["Content-Length"]
-            $buffer = New-Object char[] $contentLength
+            $buffer = New-Object byte[] $contentLength
             $offset = 0
             while ($offset -lt $contentLength) {
-                $read = $reader.Read($buffer, $offset, $contentLength - $offset)
-                if ($read -le 0) { throw "Hook request body ended early" }
+                try {
+                    $read = $stream.Read($buffer, $offset, $contentLength - $offset)
+                } catch {
+                    throw "Hook request body read failed after $offset/$contentLength bytes (Expect='$expectContinue', Transfer-Encoding='$transferEncoding'): $($_.Exception.Message)"
+                }
+                if ($read -le 0) {
+                    throw "Hook request body ended after $offset/$contentLength bytes (Expect='$expectContinue', Transfer-Encoding='$transferEncoding')"
+                }
                 $offset += $read
             }
-            $body = -join $buffer
+            $body = [System.Text.Encoding]::UTF8.GetString($buffer)
             [System.IO.File]::WriteAllText(
                 $CapturePath,
                 ([ordered]@{
                     request_line = $requestLine
                     token = $headers["X-HumHum-Token"]
                     expect_continue = $expectContinue
+                    transfer_encoding = $transferEncoding
+                    body_byte_length = $contentLength
                     body = $body
                 } | ConvertTo-Json -Compress),
                 (New-Object System.Text.UTF8Encoding($false))
@@ -133,7 +172,6 @@ function Test-HookDelivery {
             $stream.Write($responseHead, 0, $responseHead.Length)
             $stream.Write($responseBytes, 0, $responseBytes.Length)
             $stream.Flush()
-            $reader.Dispose()
         } finally {
             if ($null -ne $client) { $client.Dispose() }
             $listener.Stop()
@@ -156,7 +194,9 @@ function Test-HookDelivery {
         $env:HTTP_PROXY = "http://127.0.0.1:9"
         $env:HTTPS_PROXY = "http://127.0.0.1:9"
         $env:NO_PROXY = ""
-        $payload = '{"hook_event_name":"PermissionRequest","session_id":"e2e-session","tool_name":"Read"}'
+        # Keep the script source ASCII for Windows PowerShell 5.1, but make the
+        # hook decode and re-serialize a real non-ASCII value on the wire.
+        $payload = '{"hook_event_name":"PermissionRequest","session_id":"e2e-session","tool_name":"Read","unicode_probe":"\u6d4b\u8bd5"}'
         $powerShellExecutable = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
         $hookArguments = @(
             "-NoLogo",
@@ -193,10 +233,15 @@ function Test-HookDelivery {
         if (-not [string]::IsNullOrWhiteSpace([string]$capture.expect_continue)) {
             throw "Windows hook unexpectedly sent Expect: $($capture.expect_continue)"
         }
+        if ([int]$capture.body_byte_length -le ([string]$capture.body).Length) {
+            throw "Windows hook delivery did not exercise UTF-8 byte framing"
+        }
         $delivered = $capture.body | ConvertFrom-Json
+        $expectedUnicodeProbe = -join @([char]0x6d4b, [char]0x8bd5)
         if ($delivered.hook_event_name -ne "PermissionRequest" -or
             $delivered.session_id -ne "e2e-session" -or
-            $delivered.tool_name -ne "Read") {
+            $delivered.tool_name -ne "Read" -or
+            $delivered.unicode_probe -ne $expectedUnicodeProbe) {
             throw "Windows hook changed required event fields during delivery"
         }
     } finally {
