@@ -47,6 +47,10 @@ mod platform {
                 "-NonInteractive",
                 "-ExecutionPolicy",
                 "Bypass",
+                "-InputFormat",
+                "Text",
+                "-OutputFormat",
+                "Text",
                 "-File",
             ])
             .arg(&script_path)
