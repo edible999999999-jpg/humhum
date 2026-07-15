@@ -1,7 +1,7 @@
 import { useEffect, useReducer, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { QRCodeSVG } from "qrcode.react";
-import { Activity, ChevronDown, ChevronRight, Clock3, Copy, Crosshair, FileDiff, Flame, Link, Power, RefreshCw, RotateCcw, Save, Send, ShieldCheck, Smartphone, Square, Trash2, WifiOff } from "lucide-react";
+import { Activity, ChevronDown, ChevronRight, Clock3, Copy, Crosshair, FileDiff, Flame, Link, Power, QrCode, RefreshCw, RotateCcw, Save, Send, ShieldCheck, Smartphone, Square, Trash2, WifiOff } from "lucide-react";
 import {
   useHexaData,
   type CodexRemoteControlState,
@@ -16,7 +16,6 @@ import {
 } from "../../hooks/useHexaData";
 import {
   buildHexaAgentOverview,
-  selectNeedFitSessions,
   type HexaAgentOverview,
 } from "../../hooks/hexaAgentOverview";
 import { initialWatchDeleteState, watchDeleteReducer } from "../../hooks/hexaWatchState";
@@ -83,11 +82,6 @@ function scoreColor(score: number): string {
   if (score >= 58) return "#38bdf8";
   if (score >= 38) return "#f59e0b";
   return "#f87171";
-}
-
-function averageScore(items: HexaSupervisorSession[]): number {
-  if (items.length === 0) return 0;
-  return Math.round(items.reduce((sum, item) => sum + item.recent_need_score, 0) / items.length);
 }
 
 function MetricCard({
@@ -246,6 +240,122 @@ function WatchedAgentDataState({
         <RefreshCw size={13} /> Retry
       </button>
     </div>
+  );
+}
+
+export async function startOrRefreshMobilePairing(
+  state: MobileBridgeStatus,
+  pairing: MobilePairingInfo | null,
+  onEnable: () => Promise<MobileBridgeStatus>,
+  onPair: (scope?: "read" | "control", network?: "lan" | "tailnet") => Promise<MobilePairingInfo>,
+): Promise<MobilePairingInfo> {
+  if (!state.enabled) await onEnable();
+  return onPair(pairing?.scope ?? "read", pairing?.network ?? "lan");
+}
+
+export function HexaMobilePairingCard({
+  state,
+  pairing,
+  onEnable,
+  onPair,
+}: {
+  state: MobileBridgeStatus;
+  pairing: MobilePairingInfo | null;
+  onEnable: () => Promise<MobileBridgeStatus>;
+  onPair: (scope?: "read" | "control", network?: "lan" | "tailnet") => Promise<MobilePairingInfo>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [nowMs, setNowMs] = useState(Date.now());
+
+  useEffect(() => {
+    if (!pairing) return;
+    setNowMs(Date.now());
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [pairing]);
+
+  const secondsRemaining = pairing
+    ? mobilePairingSecondsRemaining(pairing.expires_at, nowMs)
+    : 0;
+  const qrVisible = pairing
+    ? shouldShowMobilePairingQr(state.pairing_active, pairing.expires_at, nowMs)
+    : false;
+  const actionLabel = qrVisible ? "刷新配对二维码" : "生成配对二维码";
+
+  const refreshPairing = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await startOrRefreshMobilePairing(state, pairing, onEnable, onPair);
+    } catch (cause) {
+      setError(String(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <aside className="hexa-mobile-quick-card" aria-label="Hexa 手机连接">
+      {qrVisible && pairing?.android_setup ? (
+        <div className="hexa-mobile-quick-layout">
+          <div className="hexa-mobile-quick-qr" aria-label="Hexa 手机配对二维码">
+            <QRCodeSVG
+              value={pairing.android_setup}
+              size={120}
+              bgColor="#ffffff"
+              fgColor="#111827"
+              level="M"
+              marginSize={4}
+              title="HUMHUM Android 安全配对"
+            />
+          </div>
+          <div className="hexa-mobile-quick-copy">
+            <div className="hexa-mobile-quick-title">在手机查看 Hexa</div>
+            <div className="hexa-mobile-quick-detail">Android HUMHUM 扫码连接</div>
+            <div className="hexa-mobile-quick-status">
+              {pairing.network === "tailnet" ? "Tailnet" : "同一 Wi-Fi"} · {pairing.scope === "control" ? "可控制" : "只读"} · 剩余 {Math.max(1, Math.ceil(secondsRemaining / 60))} 分钟
+            </div>
+            <button
+              type="button"
+              className="hexa-mobile-quick-action"
+              aria-label={actionLabel}
+              title={actionLabel}
+              disabled={busy}
+              onClick={() => void refreshPairing()}
+            >
+              <RefreshCw size={14} className={busy ? "hexa-mobile-refreshing" : undefined} />
+              {busy ? "正在刷新" : "刷新二维码"}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="hexa-mobile-quick-empty">
+          <div className="hexa-mobile-quick-icon"><Smartphone size={21} /></div>
+          <div className="hexa-mobile-quick-copy">
+            <div className="hexa-mobile-quick-title">在手机查看 Hexa</div>
+            <div className="hexa-mobile-quick-detail">
+              {error ?? (state.paired_devices > 0
+                ? `已连接 ${state.paired_devices} 台设备，也可以重新配对`
+                : "生成二维码后，用 Android HUMHUM 扫描")}
+            </div>
+            <div className="hexa-mobile-quick-status">默认只读 · 同一 Wi-Fi · 5 分钟有效</div>
+          </div>
+          <button
+            type="button"
+            className="hexa-mobile-quick-action"
+            aria-label={actionLabel}
+            title={actionLabel}
+            disabled={busy}
+            onClick={() => void refreshPairing()}
+          >
+            <QrCode size={15} />
+            {busy ? "正在生成" : "生成二维码"}
+          </button>
+        </div>
+      )}
+      {error && qrVisible && <div className="hexa-mobile-quick-error">{error}</div>}
+    </aside>
   );
 }
 
@@ -1479,7 +1589,6 @@ export function HexaModule() {
   const attentionCount = active.filter((item) =>
     ["waiting", "looping", "stalled"].includes(item.progress_status),
   ).length;
-  const score = averageScore(selectNeedFitSessions(watchedAgentOverview, supervisorSessions));
   const toggleReview = (sessionId: string) => {
     setOpenReviews((prev) => {
       const next = new Set(prev);
@@ -1548,7 +1657,7 @@ export function HexaModule() {
 
   return (
     <div className="hub-module">
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", marginBottom: 16 }}>
+      <div className="hexa-heading-row">
         <div>
           <h2 className="hub-module-title" style={{ marginBottom: 4 }}>Hexa Agent 看板</h2>
           <p className="hub-module-desc">
@@ -1559,20 +1668,12 @@ export function HexaModule() {
             {bridgeHealth.message}
           </div>
         </div>
-        <div
-          style={{
-            color: scoreColor(score),
-            background: `${scoreColor(score)}14`,
-            border: `1px solid ${scoreColor(score)}34`,
-            borderRadius: 8,
-            padding: "9px 11px",
-            textAlign: "right",
-            minWidth: 96,
-          }}
-        >
-          <div style={{ fontSize: 22, lineHeight: 1, fontWeight: 900 }}>{score || "-"}</div>
-          <div style={{ color: "rgba(255,255,255,0.38)", fontSize: 10, marginTop: 4 }}>avg need fit</div>
-        </div>
+        <HexaMobilePairingCard
+          state={mobileBridge}
+          pairing={mobilePairing}
+          onEnable={enableMobileBridge}
+          onPair={startMobilePairing}
+        />
       </div>
 
       <section style={{ display: "grid", gap: 10, marginBottom: 14 }}>
