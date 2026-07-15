@@ -6,6 +6,11 @@ import type { GitChangeSummary } from "./sessionChangesState";
 import { sortHexaSessions } from "./hexaPriority";
 import { normalizeMobileRelayConfig, type MobileRelayConfigValue } from "./mobileRelayConfig";
 import {
+  resolveWatchRefresh,
+  type WatchDataState,
+  type WatchRefresh,
+} from "./hexaWatchState";
+import {
   mergeHexaSessions,
   type HexaBridgeApproval,
   type HexaBridgeSession,
@@ -631,6 +636,17 @@ export function useHexaData() {
   const [mobilePairing, setMobilePairing] = useState<MobilePairingInfo | null>(null);
   const [queuedInterventions, setQueuedInterventions] = useState<QueuedIntervention[]>([]);
   const intervalRef = useRef<ReturnType<typeof setInterval>>();
+  const sessionDataRef = useRef<HexaSession[]>([]);
+  const statsDataRef = useRef<AgentStats[]>([]);
+  const readoutDataRef = useRef<HexaReadout[]>([]);
+  const bridgeDataRef = useRef<HexaBridgeSession[]>([]);
+  const queueDataRef = useRef<QueuedIntervention[]>([]);
+  const watchRefreshRef = useRef<WatchRefresh<HexaWatchedSession[]>>({
+    data: null,
+    state: "loading",
+    error: null,
+  });
+  const [watchDataState, setWatchDataState] = useState<WatchDataState>("loading");
 
   const fetchSessions = useCallback(async () => {
     try {
@@ -643,13 +659,23 @@ export function useHexaData() {
         invoke<CodexBridgeHealth>("get_codex_bridge_health"),
         invoke<QueuedIntervention[]>("get_intervention_queue"),
       ]);
-      const sessionData = sessionResult.status === "fulfilled" ? sessionResult.value : [];
-      const statsData = statsResult.status === "fulfilled" ? statsResult.value : [];
-      const readoutData = readoutResult.status === "fulfilled" ? readoutResult.value : [];
-      const bridgeData = bridgeResult.status === "fulfilled" ? bridgeResult.value : [];
-      const watchedData = watchedResult.status === "fulfilled" ? watchedResult.value : [];
+      if (sessionResult.status === "fulfilled") sessionDataRef.current = sessionResult.value;
+      if (statsResult.status === "fulfilled") statsDataRef.current = statsResult.value;
+      if (readoutResult.status === "fulfilled") readoutDataRef.current = readoutResult.value;
+      if (bridgeResult.status === "fulfilled") bridgeDataRef.current = bridgeResult.value;
+      if (queueResult.status === "fulfilled") queueDataRef.current = queueResult.value;
+
+      const watchRefresh = resolveWatchRefresh(watchRefreshRef.current, watchedResult);
+      watchRefreshRef.current = watchRefresh;
+      setWatchDataState(watchRefresh.state);
+
+      const sessionData = sessionDataRef.current;
+      const statsData = statsDataRef.current;
+      const readoutData = readoutDataRef.current;
+      const bridgeData = bridgeDataRef.current;
+      const watchedData = watchRefresh.data ?? [];
       const healthData = healthResult.status === "fulfilled" ? healthResult.value : null;
-      const queueData = queueResult.status === "fulfilled" ? queueResult.value : [];
+      const queueData = queueDataRef.current;
       const remoteData = await invoke<CodexRemoteControlState>("get_codex_remote_control").catch(() => null);
       const mobileData = await invoke<MobileBridgeStatus>("get_mobile_bridge_status").catch(() => null);
       const configData = await invoke<AppConfig>("get_config").catch(() => null);
@@ -751,6 +777,9 @@ export function useHexaData() {
   const completedSupervisorSessions = supervisorSessions.filter((s) => s.session.status === "completed");
   const primarySupervisorSessions = supervisorSessions.filter((s) => s.priority === "primary");
   const compatibleSupervisorSessions = supervisorSessions.filter((s) => s.priority === "compatible");
+  const retryHexaData = useCallback(async () => {
+    await fetchSessions();
+  }, [fetchSessions]);
 
   const sendCodexMessage = useCallback(async (threadId: string, message: string) => {
     try {
@@ -917,6 +946,8 @@ export function useHexaData() {
     primarySupervisorSessions,
     compatibleSupervisorSessions,
     alerts,
+    watchDataState,
+    retryHexaData,
     bridgeHealth,
     remoteControl,
     remotePairing,
