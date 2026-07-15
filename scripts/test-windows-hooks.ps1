@@ -214,9 +214,6 @@ function Test-HookDelivery {
         $startInfo.RedirectStandardInput = $true
         $startInfo.RedirectStandardOutput = $true
         $startInfo.RedirectStandardError = $true
-        $startInfo.StandardInputEncoding = $utf8
-        $startInfo.StandardOutputEncoding = $utf8
-        $startInfo.StandardErrorEncoding = $utf8
         $hookProcess = New-Object System.Diagnostics.Process
         $hookProcess.StartInfo = $startInfo
         $hookStarted = $false
