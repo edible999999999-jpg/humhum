@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -41,6 +41,196 @@ pub struct HexaWatchDeleteRequest {
     pub session_id: String,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct HexaSessionAudit {
+    #[serde(default)]
+    pub goal_revisions: Vec<HexaGoalRevision>,
+    #[serde(default)]
+    pub success_criteria: Vec<String>,
+    #[serde(default)]
+    pub work_items: Vec<HexaWorkItem>,
+    #[serde(default)]
+    pub milestones: Vec<HexaMilestone>,
+    #[serde(default)]
+    pub important_outputs: Vec<HexaEvidenceRef>,
+    #[serde(default)]
+    pub interventions: Vec<HexaIntervention>,
+    pub hexa_review: Option<HexaReview>,
+    pub user_review: Option<HexaReview>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HexaGoalRevision {
+    pub id: String,
+    pub goal: String,
+    #[serde(default)]
+    pub success_criteria: Vec<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HexaEvidenceRef {
+    pub id: String,
+    pub kind: String,
+    pub label: String,
+    pub location: Option<String>,
+    pub observed_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HexaEvidenceInput {
+    pub kind: String,
+    pub label: String,
+    pub location: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum HexaWorkItemStatus {
+    Pending,
+    InProgress,
+    Completed,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HexaWorkItem {
+    pub id: String,
+    pub title: String,
+    pub description: Option<String>,
+    pub acceptance_criteria: Option<String>,
+    pub status: HexaWorkItemStatus,
+    #[serde(default)]
+    pub depends_on: Vec<String>,
+    #[serde(default)]
+    pub evidence: Vec<HexaEvidenceRef>,
+    pub started_at: Option<String>,
+    pub updated_at: String,
+    pub completed_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HexaWorkItemInput {
+    pub id: String,
+    pub title: String,
+    pub description: Option<String>,
+    pub acceptance_criteria: Option<String>,
+    pub status: HexaWorkItemStatus,
+    #[serde(default)]
+    pub depends_on: Vec<String>,
+    #[serde(default)]
+    pub evidence: Vec<HexaEvidenceInput>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum HexaAlignment {
+    OnTrack,
+    Watch,
+    OffTrack,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HexaMilestone {
+    pub id: String,
+    pub summary: String,
+    pub work_item_id: Option<String>,
+    pub alignment: HexaAlignment,
+    #[serde(default)]
+    pub evidence: Vec<HexaEvidenceRef>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HexaMilestoneInput {
+    pub summary: String,
+    pub work_item_id: Option<String>,
+    pub alignment: HexaAlignment,
+    #[serde(default)]
+    pub evidence: Vec<HexaEvidenceInput>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HexaIntervention {
+    pub id: String,
+    pub kind: String,
+    pub summary: String,
+    #[serde(default)]
+    pub evidence: Vec<HexaEvidenceRef>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HexaInterventionInput {
+    pub kind: String,
+    pub summary: String,
+    #[serde(default)]
+    pub evidence: Vec<HexaEvidenceInput>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum HexaReviewRating {
+    Satisfied,
+    Average,
+    Unsatisfied,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HexaReview {
+    pub rating: HexaReviewRating,
+    pub summary: String,
+    #[serde(default)]
+    pub evidence: Vec<HexaEvidenceRef>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HexaReviewInput {
+    pub rating: HexaReviewRating,
+    pub summary: String,
+    #[serde(default)]
+    pub evidence: Vec<HexaEvidenceInput>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HexaAuditMutationRequest {
+    pub session_id: String,
+    #[serde(flatten)]
+    pub mutation: HexaAuditMutation,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum HexaAuditMutation {
+    ReviseGoal {
+        goal: String,
+        #[serde(default)]
+        success_criteria: Vec<String>,
+    },
+    UpsertWorkItem {
+        work_item: HexaWorkItemInput,
+    },
+    RemoveWorkItem {
+        work_item_id: String,
+    },
+    AppendMilestone {
+        milestone: HexaMilestoneInput,
+    },
+    AppendOutput {
+        output: HexaEvidenceInput,
+    },
+    RecordIntervention {
+        intervention: HexaInterventionInput,
+    },
+    SetHexaReview {
+        review: HexaReviewInput,
+    },
+    SetUserReview {
+        review: HexaReviewInput,
+    },
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HexaWatchedSession {
     pub session_id: String,
@@ -56,6 +246,8 @@ pub struct HexaWatchedSession {
     pub confidence: Option<String>,
     pub started_at: String,
     pub updated_at: String,
+    #[serde(default)]
+    pub audit: HexaSessionAudit,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -197,6 +389,7 @@ impl HexaWatchStore {
                     confidence: None,
                     started_at: now.clone(),
                     updated_at: now.clone(),
+                    audit: HexaSessionAudit::default(),
                 };
                 let target_agent_key = agent_key(&provider, requested_workspace.as_deref());
                 (session, target_agent_key)
@@ -263,6 +456,39 @@ impl HexaWatchStore {
             self.persist_agents(&agents)?;
             self.agents = agents;
         }
+        Ok(updated)
+    }
+
+    pub fn mutate_audit(
+        &mut self,
+        request: HexaAuditMutationRequest,
+    ) -> Result<HexaWatchedSession, String> {
+        self.reload_from_disk()?;
+        let mut agents = self.agents.clone();
+        let now = chrono::Utc::now().to_rfc3339();
+        let session_id = clean_text(request.session_id)
+            .ok_or_else(|| "Hexa audit session_id cannot be empty".to_string())?;
+        let mut updated = None;
+
+        for watched_agent in agents.values_mut() {
+            let Some(session) = watched_agent
+                .runs
+                .iter_mut()
+                .find(|session| session.session_id == session_id)
+            else {
+                continue;
+            };
+
+            apply_audit_mutation(session, request.mutation, &now)?;
+            session.updated_at = now.clone();
+            watched_agent.updated_at = now.clone();
+            updated = Some(session.clone());
+            break;
+        }
+
+        let updated = updated.ok_or_else(|| format!("watched session not found: {session_id}"))?;
+        self.persist_agents(&agents)?;
+        self.agents = agents;
         Ok(updated)
     }
 
@@ -374,6 +600,247 @@ impl HexaWatchStore {
         }
         write_result
     }
+}
+
+fn apply_audit_mutation(
+    session: &mut HexaWatchedSession,
+    mutation: HexaAuditMutation,
+    now: &str,
+) -> Result<(), String> {
+    match mutation {
+        HexaAuditMutation::ReviseGoal {
+            goal,
+            success_criteria,
+        } => {
+            let goal = required_text(goal, "goal")?;
+            let success_criteria = clean_text_list(success_criteria);
+            session.goal = Some(goal.clone());
+            session.audit.success_criteria = success_criteria.clone();
+            session.audit.goal_revisions.push(HexaGoalRevision {
+                id: uuid::Uuid::new_v4().to_string(),
+                goal,
+                success_criteria,
+                created_at: now.to_string(),
+            });
+        }
+        HexaAuditMutation::UpsertWorkItem { work_item } => {
+            let id = required_text(work_item.id, "work item id")?;
+            let title = required_text(work_item.title, "work item title")?;
+            let depends_on = clean_text_list(work_item.depends_on);
+            if depends_on.iter().any(|dependency| dependency == &id) {
+                return Err(format!("workflow cycle: work item {id} depends on itself"));
+            }
+            let existing = session
+                .audit
+                .work_items
+                .iter()
+                .find(|item| item.id == id)
+                .cloned();
+            let started_at = if work_item.status == HexaWorkItemStatus::Pending {
+                existing.as_ref().and_then(|item| item.started_at.clone())
+            } else {
+                existing
+                    .as_ref()
+                    .and_then(|item| item.started_at.clone())
+                    .or_else(|| Some(now.to_string()))
+            };
+            let completed_at = if work_item.status == HexaWorkItemStatus::Completed {
+                existing
+                    .as_ref()
+                    .and_then(|item| item.completed_at.clone())
+                    .or_else(|| Some(now.to_string()))
+            } else {
+                None
+            };
+            let item = HexaWorkItem {
+                id: id.clone(),
+                title,
+                description: work_item.description.and_then(clean_text),
+                acceptance_criteria: work_item.acceptance_criteria.and_then(clean_text),
+                status: work_item.status,
+                depends_on,
+                evidence: evidence_refs(work_item.evidence, now)?,
+                started_at,
+                updated_at: now.to_string(),
+                completed_at,
+            };
+            if let Some(index) = session
+                .audit
+                .work_items
+                .iter()
+                .position(|existing| existing.id == id)
+            {
+                session.audit.work_items[index] = item;
+            } else {
+                session.audit.work_items.push(item);
+            }
+            validate_workflow(&session.audit.work_items)?;
+        }
+        HexaAuditMutation::RemoveWorkItem { work_item_id } => {
+            let work_item_id = required_text(work_item_id, "work item id")?;
+            if session.audit.work_items.iter().any(|item| {
+                item.depends_on
+                    .iter()
+                    .any(|dependency| dependency == &work_item_id)
+            }) {
+                return Err(format!(
+                    "cannot remove work item {work_item_id}: another item depends on it"
+                ));
+            }
+            let previous_len = session.audit.work_items.len();
+            session
+                .audit
+                .work_items
+                .retain(|item| item.id != work_item_id);
+            if session.audit.work_items.len() == previous_len {
+                return Err(format!("work item not found: {work_item_id}"));
+            }
+        }
+        HexaAuditMutation::AppendMilestone { milestone } => {
+            let summary = required_text(milestone.summary, "milestone summary")?;
+            let work_item_id = milestone.work_item_id.and_then(clean_text);
+            if let Some(work_item_id) = &work_item_id {
+                if !session
+                    .audit
+                    .work_items
+                    .iter()
+                    .any(|item| &item.id == work_item_id)
+                {
+                    return Err(format!("unknown work item: {work_item_id}"));
+                }
+            }
+            let evidence = evidence_refs(milestone.evidence, now)?;
+            if milestone.alignment == HexaAlignment::OffTrack && evidence.is_empty() {
+                return Err("off_track milestone requires evidence".to_string());
+            }
+            session.audit.milestones.push(HexaMilestone {
+                id: uuid::Uuid::new_v4().to_string(),
+                summary,
+                work_item_id,
+                alignment: milestone.alignment,
+                evidence,
+                created_at: now.to_string(),
+            });
+        }
+        HexaAuditMutation::AppendOutput { output } => {
+            session
+                .audit
+                .important_outputs
+                .push(evidence_ref(output, now)?);
+        }
+        HexaAuditMutation::RecordIntervention { intervention } => {
+            session.audit.interventions.push(HexaIntervention {
+                id: uuid::Uuid::new_v4().to_string(),
+                kind: required_text(intervention.kind, "intervention kind")?,
+                summary: required_text(intervention.summary, "intervention summary")?,
+                evidence: evidence_refs(intervention.evidence, now)?,
+                created_at: now.to_string(),
+            });
+        }
+        HexaAuditMutation::SetHexaReview { review } => {
+            let evidence = evidence_refs(review.evidence, now)?;
+            if evidence.is_empty() {
+                return Err("Hexa review requires evidence".to_string());
+            }
+            session.audit.hexa_review = Some(HexaReview {
+                rating: review.rating,
+                summary: required_text(review.summary, "Hexa review summary")?,
+                evidence,
+                created_at: now.to_string(),
+            });
+        }
+        HexaAuditMutation::SetUserReview { review } => {
+            session.audit.user_review = Some(HexaReview {
+                rating: review.rating,
+                summary: required_text(review.summary, "user review summary")?,
+                evidence: evidence_refs(review.evidence, now)?,
+                created_at: now.to_string(),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn evidence_refs(
+    inputs: Vec<HexaEvidenceInput>,
+    now: &str,
+) -> Result<Vec<HexaEvidenceRef>, String> {
+    inputs
+        .into_iter()
+        .map(|input| evidence_ref(input, now))
+        .collect()
+}
+
+fn evidence_ref(input: HexaEvidenceInput, now: &str) -> Result<HexaEvidenceRef, String> {
+    Ok(HexaEvidenceRef {
+        id: uuid::Uuid::new_v4().to_string(),
+        kind: required_text(input.kind, "evidence kind")?,
+        label: required_text(input.label, "evidence label")?,
+        location: input.location.and_then(clean_text),
+        observed_at: now.to_string(),
+    })
+}
+
+fn required_text(value: String, field: &str) -> Result<String, String> {
+    clean_text(value).ok_or_else(|| format!("{field} cannot be empty"))
+}
+
+fn clean_text_list(values: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    values
+        .into_iter()
+        .filter_map(clean_text)
+        .filter(|value| seen.insert(value.clone()))
+        .collect()
+}
+
+fn validate_workflow(items: &[HexaWorkItem]) -> Result<(), String> {
+    let mut by_id = HashMap::new();
+    for item in items {
+        if by_id.insert(item.id.as_str(), item).is_some() {
+            return Err(format!("duplicate work item id: {}", item.id));
+        }
+    }
+    for item in items {
+        for dependency in &item.depends_on {
+            if !by_id.contains_key(dependency.as_str()) {
+                return Err(format!(
+                    "unknown dependency {dependency} for work item {}",
+                    item.id
+                ));
+            }
+        }
+    }
+
+    let mut visiting = HashSet::new();
+    let mut visited = HashSet::new();
+    for item in items {
+        visit_work_item(item.id.as_str(), &by_id, &mut visiting, &mut visited)?;
+    }
+    Ok(())
+}
+
+fn visit_work_item<'a>(
+    id: &'a str,
+    items: &HashMap<&'a str, &'a HexaWorkItem>,
+    visiting: &mut HashSet<&'a str>,
+    visited: &mut HashSet<&'a str>,
+) -> Result<(), String> {
+    if visited.contains(id) {
+        return Ok(());
+    }
+    if !visiting.insert(id) {
+        return Err(format!("workflow cycle detected at work item {id}"));
+    }
+    let item = items
+        .get(id)
+        .ok_or_else(|| format!("unknown work item: {id}"))?;
+    for dependency in &item.depends_on {
+        visit_work_item(dependency.as_str(), items, visiting, visited)?;
+    }
+    visiting.remove(id);
+    visited.insert(id);
+    Ok(())
 }
 
 fn read_agents(storage_path: &Path) -> Result<HashMap<String, HexaWatchedAgent>, String> {
@@ -596,5 +1063,158 @@ mod tests {
 
         let restored = HexaWatchStore::load_or_create(directory.path()).unwrap();
         assert_eq!(restored.sessions().len(), 1);
+    }
+
+    fn work_item(id: &str, depends_on: Vec<&str>) -> HexaWorkItemInput {
+        HexaWorkItemInput {
+            id: id.to_string(),
+            title: format!("Work item {id}"),
+            description: None,
+            acceptance_criteria: Some("Has durable evidence".to_string()),
+            status: HexaWorkItemStatus::InProgress,
+            depends_on: depends_on.into_iter().map(str::to_string).collect(),
+            evidence: vec![],
+        }
+    }
+
+    #[test]
+    fn loads_legacy_run_with_empty_audit() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(
+            directory.path().join("hexa-watch.json"),
+            r#"{
+              "agents": {
+                "legacy": {
+                  "key": "legacy",
+                  "provider": "openai",
+                  "name": "Legacy Codex",
+                  "workspace": "/workspace/legacy",
+                  "created_at": "2026-07-15T00:00:00Z",
+                  "updated_at": "2026-07-15T00:00:00Z",
+                  "runs": [{
+                    "session_id": "legacy-run",
+                    "agent": "codex",
+                    "name": "Legacy session",
+                    "provider": "openai",
+                    "workspace": "/workspace/legacy",
+                    "goal": "Keep old data",
+                    "status": "working",
+                    "current_step": "Existing work",
+                    "blocked_reason": null,
+                    "need_user": false,
+                    "confidence": "agent-bound",
+                    "started_at": "2026-07-15T00:00:00Z",
+                    "updated_at": "2026-07-15T00:00:00Z"
+                  }]
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+
+        let restored = HexaWatchStore::load_or_create(directory.path()).unwrap();
+        let session = restored.sessions().pop().unwrap();
+
+        assert_eq!(session.session_id, "legacy-run");
+        assert!(session.audit.work_items.is_empty());
+        assert!(session.audit.hexa_review.is_none());
+    }
+
+    #[test]
+    fn persists_session_audit_across_restarts() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut store = HexaWatchStore::load_or_create(directory.path()).unwrap();
+        store.register(register_request()).unwrap();
+        store
+            .mutate_audit(HexaAuditMutationRequest {
+                session_id: "run-1".to_string(),
+                mutation: HexaAuditMutation::UpsertWorkItem {
+                    work_item: work_item("verify", vec![]),
+                },
+            })
+            .unwrap();
+        store
+            .mutate_audit(HexaAuditMutationRequest {
+                session_id: "run-1".to_string(),
+                mutation: HexaAuditMutation::RecordIntervention {
+                    intervention: HexaInterventionInput {
+                        kind: "manual_correction".to_string(),
+                        summary: "User redirected the session".to_string(),
+                        evidence: vec![],
+                    },
+                },
+            })
+            .unwrap();
+        store
+            .mutate_audit(HexaAuditMutationRequest {
+                session_id: "run-1".to_string(),
+                mutation: HexaAuditMutation::SetHexaReview {
+                    review: HexaReviewInput {
+                        rating: HexaReviewRating::Satisfied,
+                        summary: "Goal met with evidence".to_string(),
+                        evidence: vec![HexaEvidenceInput {
+                            kind: "command".to_string(),
+                            label: "cargo test passed".to_string(),
+                            location: Some("cargo test hexa_watch_store".to_string()),
+                        }],
+                    },
+                },
+            })
+            .unwrap();
+        drop(store);
+
+        let restored = HexaWatchStore::load_or_create(directory.path()).unwrap();
+        let session = restored.sessions().pop().unwrap();
+
+        assert_eq!(session.audit.work_items[0].id, "verify");
+        assert_eq!(session.audit.interventions.len(), 1);
+        assert_eq!(
+            session.audit.hexa_review.unwrap().rating,
+            HexaReviewRating::Satisfied
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_dependencies_and_cycles_without_persisting_them() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut store = HexaWatchStore::load_or_create(directory.path()).unwrap();
+        store.register(register_request()).unwrap();
+
+        let missing = store.mutate_audit(HexaAuditMutationRequest {
+            session_id: "run-1".to_string(),
+            mutation: HexaAuditMutation::UpsertWorkItem {
+                work_item: work_item("verify", vec!["missing"]),
+            },
+        });
+        assert!(missing.unwrap_err().contains("unknown dependency"));
+
+        for item in [
+            work_item("build", vec![]),
+            work_item("verify", vec!["build"]),
+        ] {
+            store
+                .mutate_audit(HexaAuditMutationRequest {
+                    session_id: "run-1".to_string(),
+                    mutation: HexaAuditMutation::UpsertWorkItem { work_item: item },
+                })
+                .unwrap();
+        }
+        let cycle = store.mutate_audit(HexaAuditMutationRequest {
+            session_id: "run-1".to_string(),
+            mutation: HexaAuditMutation::UpsertWorkItem {
+                work_item: work_item("build", vec!["verify"]),
+            },
+        });
+        assert!(cycle.unwrap_err().contains("cycle"));
+
+        let restored = HexaWatchStore::load_or_create(directory.path()).unwrap();
+        let session = restored.sessions().pop().unwrap();
+        let build = session
+            .audit
+            .work_items
+            .iter()
+            .find(|item| item.id == "build")
+            .unwrap();
+        assert!(build.depends_on.is_empty());
     }
 }
