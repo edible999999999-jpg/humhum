@@ -8,7 +8,9 @@ use crate::config::AppConfig;
 use crate::event_bus::{self, HookEvent, PermissionDecision};
 use crate::git_changes::GitChangeSummary;
 use crate::hexa_protocol::HexaSessionProjection;
-use crate::hexa_watch_store::{HexaWatchStore, HexaWatchedAgent, HexaWatchedSession};
+use crate::hexa_watch_store::{
+    HexaAuditMutationRequest, HexaWatchStore, HexaWatchedAgent, HexaWatchedSession,
+};
 use crate::hook_server::PendingMap;
 use crate::hush_store::{HushInboxSummary, HushStore};
 use crate::intervention_queue::{InterventionProvider, InterventionQueue, QueuedIntervention};
@@ -327,6 +329,23 @@ pub async fn get_hexa_watched_agents(
         .map_err(|error| format!("Lock error: {error}"))?;
     store.reload_from_disk()?;
     Ok(store.agents())
+}
+
+#[tauri::command]
+pub async fn mutate_hexa_session_audit(
+    state: State<'_, Arc<std::sync::Mutex<HexaWatchStore>>>,
+    app: AppHandle,
+    request: HexaAuditMutationRequest,
+) -> Result<HexaWatchedSession, String> {
+    let updated = {
+        let mut store = state
+            .lock()
+            .map_err(|error| format!("Lock error: {error}"))?;
+        store.mutate_audit(request)?
+    };
+    app.emit("humhum://hexa-session-changed", &updated)
+        .map_err(|error| format!("Emit error: {error}"))?;
+    Ok(updated)
 }
 
 #[tauri::command]

@@ -1,6 +1,7 @@
 use crate::event_bus::{self, HookEvent, PermissionDecision};
 use crate::hexa_watch_store::{
-    HexaWatchDeleteRequest, HexaWatchRegisterRequest, HexaWatchStore, HexaWatchUpdateRequest,
+    HexaAuditMutationRequest, HexaWatchDeleteRequest, HexaWatchRegisterRequest, HexaWatchStore,
+    HexaWatchUpdateRequest,
 };
 use crate::local_api_auth::{LocalApiAuth, TOKEN_HEADER};
 use crate::mobile_bridge::MobileBridgeState;
@@ -163,6 +164,7 @@ async fn handle_request(
         ("GET", "/knowledge") => handle_knowledge_query(req, app_handle).await,
         ("POST", "/hexa/register") => handle_hexa_register(req, app_handle).await,
         ("POST", "/hexa/update") => handle_hexa_update(req, app_handle).await,
+        ("POST", "/hexa/audit") => handle_hexa_audit(req, app_handle).await,
         ("POST", "/hexa/delete") => handle_hexa_delete(req, app_handle).await,
         ("GET", "/hush/inbox") => handle_hush_inbox_query(app_handle).await,
         ("POST", "/hush/inbox") => handle_hush_inbox_post(req, app_handle).await,
@@ -1051,6 +1053,77 @@ async fn handle_hexa_update(
     ))
 }
 
+async fn handle_hexa_audit(
+    req: Request<hyper::body::Incoming>,
+    app_handle: tauri::AppHandle,
+) -> Result<Response<Full<Bytes>>, Infallible> {
+    let body = match req.collect().await {
+        Ok(collected) => collected.to_bytes(),
+        Err(error) => {
+            return Ok(json_response(
+                StatusCode::BAD_REQUEST,
+                &serde_json::json!({"error": format!("failed to read body: {error}")}),
+            ));
+        }
+    };
+    let request: HexaAuditMutationRequest = match serde_json::from_slice(&body) {
+        Ok(value) => value,
+        Err(error) => {
+            return Ok(json_response(
+                StatusCode::BAD_REQUEST,
+                &serde_json::json!({"error": format!("invalid JSON: {error}")}),
+            ));
+        }
+    };
+
+    let session = {
+        let store = app_handle.state::<Arc<std::sync::Mutex<HexaWatchStore>>>();
+        let mut store = match store.lock() {
+            Ok(store) => store,
+            Err(error) => {
+                return Ok(json_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &serde_json::json!({"error": format!("lock error: {error}")}),
+                ));
+            }
+        };
+        match store.mutate_audit(request) {
+            Ok(session) => session,
+            Err(error) => {
+                return Ok(json_response(
+                    hexa_audit_error_status(&error),
+                    &serde_json::json!({"error": error}),
+                ));
+            }
+        }
+    };
+
+    app_handle
+        .emit("humhum://hexa-session-changed", &session)
+        .unwrap_or_else(|error| log::error!("Failed to emit Hexa audit update: {error}"));
+    Ok(json_response(
+        StatusCode::OK,
+        &serde_json::to_value(session).unwrap_or_default(),
+    ))
+}
+
+fn hexa_audit_error_status(error: &str) -> StatusCode {
+    if error.contains("watched session not found") {
+        StatusCode::NOT_FOUND
+    } else if error.contains("workflow cycle")
+        || error.contains("unknown dependency")
+        || error.contains("unknown work item")
+        || error.contains("cannot remove work item")
+        || error.contains("work item not found")
+        || error.contains("cannot be empty")
+        || error.contains("requires evidence")
+    {
+        StatusCode::BAD_REQUEST
+    } else {
+        StatusCode::INTERNAL_SERVER_ERROR
+    }
+}
+
 async fn handle_hexa_delete(
     req: Request<hyper::body::Incoming>,
     app_handle: tauri::AppHandle,
@@ -1212,5 +1285,30 @@ mod session_auto_confirm_tests {
         config.ui.auto_confirm = true;
 
         assert!(session_auto_confirm_enabled(&config, "any-session"));
+    }
+}
+
+#[cfg(test)]
+mod hexa_audit_endpoint_tests {
+    use super::*;
+
+    #[test]
+    fn audit_validation_errors_have_actionable_http_statuses() {
+        assert_eq!(
+            hexa_audit_error_status("workflow cycle detected at work item build"),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            hexa_audit_error_status("unknown dependency verify for work item ship"),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            hexa_audit_error_status("watched session not found: missing"),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            hexa_audit_error_status("Could not write Hexa watch store"),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
     }
 }
