@@ -8,9 +8,9 @@
 [中文文档](./README.zh-CN.md)
 
 <p align="center">
-  <a href="https://github.com/edible999999999-jpg/humhum/releases/latest/download/HUMHUM-macOS-0.1.0-arm64.dmg"><strong>Download for macOS</strong></a>
+  <a href="https://github.com/edible999999999-jpg/humhum/releases/latest/download/HUMHUM-macOS-0.3.10-arm64.dmg"><strong>Download for macOS</strong></a>
   ·
-  <a href="https://github.com/edible999999999-jpg/humhum/releases/latest/download/HUMHUM-Android-0.3.7.apk"><strong>Download for Android</strong></a>
+  <a href="https://github.com/edible999999999-jpg/humhum/releases/latest/download/HUMHUM-Android-0.3.8-Xiaomi.zip"><strong>Download for Android / Xiaomi</strong></a>
   ·
   <a href="https://yuxilab.cn/intro"><strong>Visit the website</strong></a>
   ·

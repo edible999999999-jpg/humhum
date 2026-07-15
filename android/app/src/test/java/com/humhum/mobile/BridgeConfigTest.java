@@ -36,6 +36,24 @@ public class BridgeConfigTest {
     }
 
     @Test
+    public void acceptsPublicLookingIpv4OnlyWhenCurrentWifiConfirmsItIsOnLink() {
+        BridgeConfig config = BridgeConfig.parse(
+                "https://30.169.112.215:31276",
+                "A1B2C3D4",
+                FINGERPRINT,
+                "Phone",
+                host -> host.equals("30.169.112.215"));
+
+        assertEquals("https://30.169.112.215:31276", config.baseUrl());
+        assertThrows(IllegalArgumentException.class, () -> BridgeConfig.parse(
+                "https://30.169.112.215:31276",
+                "A1B2C3D4",
+                FINGERPRINT,
+                "Phone",
+                host -> false));
+    }
+
+    @Test
     public void identifiesBoundedTailnetRoutes() {
         BridgeConfig first = BridgeConfig.parse(
                 "https://100.64.0.1:31276", "A1B2C3D4", FINGERPRINT, "Phone");

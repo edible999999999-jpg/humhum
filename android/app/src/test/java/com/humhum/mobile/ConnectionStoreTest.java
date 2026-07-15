@@ -38,6 +38,20 @@ public class ConnectionStoreTest {
     }
 
     @Test
+    public void restoresAPreviouslyValidatedPublicLookingWifiAddress() {
+        MemoryStore memory = new MemoryStore();
+        memory.put("base_url", "https://30.169.112.215:31276");
+        memory.put("fingerprint", "AA".repeat(32));
+        memory.put("device_name", "Xiaomi 14");
+        memory.put("token", "ab".repeat(32));
+        memory.put("scope", "read");
+
+        ConnectionStore.Connection restored = new ConnectionStore(memory).load();
+
+        assertEquals("https://30.169.112.215:31276", restored.config().baseUrl());
+    }
+
+    @Test
     public void disconnectClearsEveryPersistedField() {
         MemoryStore memory = new MemoryStore();
         ConnectionStore store = new ConnectionStore(memory);

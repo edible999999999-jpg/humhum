@@ -527,7 +527,8 @@ public final class MainActivity extends Activity {
                     urlInput.getText().toString(),
                     codeInput.getText().toString(),
                     fingerprintInput.getText().toString(),
-                    deviceNameInput.getText().toString());
+                    deviceNameInput.getText().toString(),
+                    host -> WifiOnLinkPolicy.isHostOnCurrentWifi(this, host));
         } catch (IllegalArgumentException error) {
             connectError.setText(error.getMessage());
             return;
@@ -584,7 +585,8 @@ public final class MainActivity extends Activity {
 
     private void applyPairingSetup(String source, boolean connectImmediately) {
         try {
-            PairingSetup setup = PairingSetup.parse(source);
+            PairingSetup setup = PairingSetup.parse(
+                    source, host -> WifiOnLinkPolicy.isHostOnCurrentWifi(this, host));
             urlInput.setText(setup.url());
             codeInput.setText(setup.code());
             fingerprintInput.setText(setup.fingerprint());

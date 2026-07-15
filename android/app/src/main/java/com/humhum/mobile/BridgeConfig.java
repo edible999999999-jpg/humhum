@@ -16,6 +16,11 @@ public final class BridgeConfig {
     private final String fingerprint;
     private final String deviceName;
 
+    @FunctionalInterface
+    public interface HostPolicy {
+        boolean allows(String host);
+    }
+
     private BridgeConfig(
             String baseUrl, String host, String pairingCode, String fingerprint, String deviceName) {
         this.baseUrl = baseUrl;
@@ -27,7 +32,16 @@ public final class BridgeConfig {
 
     public static BridgeConfig parse(
             String rawUrl, String rawCode, String rawFingerprint, String rawDeviceName) {
-        URI uri = parseUri(rawUrl);
+        return parse(rawUrl, rawCode, rawFingerprint, rawDeviceName, host -> false);
+    }
+
+    public static BridgeConfig parse(
+            String rawUrl,
+            String rawCode,
+            String rawFingerprint,
+            String rawDeviceName,
+            HostPolicy additionalHostPolicy) {
+        URI uri = parseUri(rawUrl, additionalHostPolicy);
         String code = value(rawCode).toUpperCase(Locale.ROOT);
         if (!CODE.matcher(code).matches()) {
             throw new IllegalArgumentException("Pairing code must contain eight letters or digits");
@@ -46,7 +60,7 @@ public final class BridgeConfig {
     }
 
     public static BridgeConfig restore(String rawUrl, String rawFingerprint, String rawDeviceName) {
-        URI uri = parseUri(rawUrl);
+        URI uri = parseUri(rawUrl, host -> true);
         String host = uri.getHost().toLowerCase(Locale.ROOT);
         return new BridgeConfig(
                 "https://" + host + ":" + BRIDGE_PORT,
@@ -79,7 +93,7 @@ public final class BridgeConfig {
         return deviceName;
     }
 
-    private static URI parseUri(String rawUrl) {
+    private static URI parseUri(String rawUrl, HostPolicy additionalHostPolicy) {
         try {
             URI uri = new URI(value(rawUrl));
             String host = uri.getHost();
@@ -91,7 +105,10 @@ public final class BridgeConfig {
                     || uri.getQuery() != null
                     || uri.getFragment() != null
                     || !(path == null || path.isEmpty() || "/".equals(path))
-                    || !isPrivateHost(host)) {
+                    || !(isPrivateHost(host)
+                            || (isUsableIpv4(host)
+                                    && additionalHostPolicy != null
+                                    && additionalHostPolicy.allows(host)))) {
                 throw new IllegalArgumentException("Use the private HTTPS bridge URL shown by HUMHUM");
             }
             return uri;
@@ -114,6 +131,14 @@ public final class BridgeConfig {
                 || (octets[0] == 192 && octets[1] == 168)
                 || (octets[0] == 169 && octets[1] == 254)
                 || isTailnetAddress(octets);
+    }
+
+    private static boolean isUsableIpv4(String host) {
+        int[] octets = parseIpv4(host.toLowerCase(Locale.ROOT));
+        return octets != null
+                && octets[0] > 0
+                && octets[0] < 224
+                && octets[0] != 127;
     }
 
     private static int[] parseIpv4(String normalized) {
