@@ -40,7 +40,8 @@ export function HexaActiveMonitor({
 }) {
   const groups = useMemo(() => groupWatchedSessions(sessions), [sessions]);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
-  const [entryOpen, setEntryOpen] = useState(sessions.length === 0);
+  const [entryOpen, setEntryOpen] = useState(false);
+  const [entryTouched, setEntryTouched] = useState(false);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const selected = resolveSelectedSession(groups, selectedSessionId);
 
@@ -49,6 +50,12 @@ export function HexaActiveMonitor({
       setSelectedSessionId(selected?.session_id ?? null);
     }
   }, [selected?.session_id, selectedSessionId]);
+
+  useEffect(() => {
+    if (!entryTouched && dataState !== "loading") {
+      setEntryOpen(sessions.length === 0);
+    }
+  }, [dataState, entryTouched, sessions.length]);
 
   const toggleGroup = (key: string) => {
     setCollapsedGroups((current) => {
@@ -66,7 +73,14 @@ export function HexaActiveMonitor({
           <strong>主动监控会话</strong>
           <span>只收录明确绑定到 Hexa 的会话，结论基于 Agent 上报与证据。</span>
         </div>
-        <button type="button" className={`kawaii-toggle-btn ${entryOpen ? "connected" : ""}`} onClick={() => setEntryOpen((value) => !value)}>
+        <button
+          type="button"
+          className={`kawaii-toggle-btn ${entryOpen ? "connected" : ""}`}
+          onClick={() => {
+            setEntryTouched(true);
+            setEntryOpen((value) => !value);
+          }}
+        >
           <Plus size={15} /> {entryOpen ? "收起绑定入口" : "绑定新会话"}
         </button>
       </div>
