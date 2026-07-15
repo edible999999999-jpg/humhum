@@ -14,7 +14,12 @@ import {
   type MobileRelayConfig,
   type QueuedIntervention,
 } from "../../hooks/useHexaData";
-import { buildHexaAgentOverview, type HexaAgentOverview } from "../../hooks/hexaAgentOverview";
+import {
+  buildHexaAgentOverview,
+  selectNeedFitSessions,
+  type HexaAgentOverview,
+} from "../../hooks/hexaAgentOverview";
+import { initialWatchDeleteState, watchDeleteReducer } from "../../hooks/hexaWatchState";
 import { initialInterventionState, interventionReducer } from "../../hooks/interventionState";
 import { mobilePresenceLabel } from "../../hooks/mobilePresence";
 import {
@@ -352,7 +357,7 @@ function SessionCard({
   const showReadout = !isCompleted || reviewOpen;
   const [focusState, setFocusState] = useState<"idle" | "busy" | "exact" | "fallback" | "failed">("idle");
   const [autoConfirmBusy, setAutoConfirmBusy] = useState(false);
-  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteState, dispatchDelete] = useReducer(watchDeleteReducer, initialWatchDeleteState);
   const [changes, dispatchChanges] = useReducer(sessionChangesReducer, initialSessionChangesState);
   const interventionProvider = interventionProviderForClient(item.session.client_type);
 
@@ -474,14 +479,17 @@ function SessionCard({
           {item.source === "watched" && (
             <button
               type="button"
-              title="从 Hexa 托管中删除"
+              title={deleteState.error ? "删除失败，点击重试" : "从 Hexa 托管中删除"}
               aria-label="从 Hexa 托管中删除"
-              disabled={deleteBusy}
+              disabled={deleteState.pending}
               onClick={() => {
-                setDeleteBusy(true);
+                dispatchDelete({ type: "start" });
                 void onDeleteWatched(item.session.session_id)
-                  .catch((cause) => console.error("Could not delete watched session", cause))
-                  .finally(() => setDeleteBusy(false));
+                  .then(() => dispatchDelete({ type: "success" }))
+                  .catch((cause) => dispatchDelete({
+                    type: "failure",
+                    error: cause instanceof Error ? cause.message : String(cause),
+                  }));
               }}
               className="kawaii-toggle-btn"
               style={{ width: 34, height: 34, padding: 0, display: "grid", placeItems: "center" }}
@@ -520,6 +528,12 @@ function SessionCard({
           </button>
         </div>
       </div>
+
+      {deleteState.error && (
+        <div role="alert" style={{ color: "#fca5a5", fontSize: 10, lineHeight: 1.45 }}>
+          删除失败：{deleteState.error}。点击删除按钮重试。
+        </div>
+      )}
 
       {focusState !== "idle" && focusState !== "busy" && (
         <div
@@ -1394,6 +1408,7 @@ export function HexaModule() {
   const {
     activeSupervisorSessions,
     completedSupervisorSessions,
+    watchedAgents,
     supervisorSessions,
     alerts,
     watchDataState,
@@ -1448,9 +1463,7 @@ export function HexaModule() {
   const active = recentActivity.filter((item) => item.progress_status !== "idle");
   const recentCompleted = completedSupervisorSessions.slice(0, 6);
   const watchedSupervisorSessions = supervisorSessions.filter((item) => item.source === "watched" && item.watched);
-  const watchedAgentOverview = buildHexaAgentOverview(
-    watchedSupervisorSessions.flatMap((item) => item.watched ? [item.watched] : []),
-  );
+  const watchedAgentOverview = buildHexaAgentOverview(watchedAgents);
   const selectedWatchedAgent = watchedAgentOverview.find((agent) => agent.id === selectedWatchedAgentId) ?? null;
   const watchedSupervisorBySessionId = new Map(
     watchedSupervisorSessions.map((item) => [item.session.session_id, item]),
@@ -1460,14 +1473,13 @@ export function HexaModule() {
     .filter((item): item is HexaSupervisorSession => Boolean(item)) ?? [];
   const discoveredSessions = recentActivity.filter((item) => item.source !== "watched");
   const historicalSessions = recentCompleted.filter((item) => item.source !== "watched");
-  const visibleSessions = [...watchedSupervisorSessions, ...discoveredSessions, ...historicalSessions];
   const secondarySessions = [...discoveredSessions, ...historicalSessions];
   const pendingCount = active.reduce((sum, item) => sum + item.pending_confirmations, 0);
   const workingCount = active.filter((item) => item.progress_status === "working").length;
   const attentionCount = active.filter((item) =>
     ["waiting", "looping", "stalled"].includes(item.progress_status),
   ).length;
-  const score = averageScore(visibleSessions);
+  const score = averageScore(selectNeedFitSessions(watchedAgentOverview, supervisorSessions));
   const toggleReview = (sessionId: string) => {
     setOpenReviews((prev) => {
       const next = new Set(prev);

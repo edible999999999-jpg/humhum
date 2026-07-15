@@ -1,4 +1,8 @@
-import type { HexaWatchedSession } from "./useHexaData";
+import type {
+  HexaSupervisorSession,
+  HexaWatchedAgent,
+  HexaWatchedSession,
+} from "./useHexaData";
 
 export interface HexaAgentMetrics {
   total: number;
@@ -27,51 +31,41 @@ export interface HexaAgentOverviewOptions {
 const ONLINE_HEARTBEAT_WINDOW_MS = 10 * 60 * 1000;
 const RECENT_RUN_LIMIT = 6;
 
-function agentIdentity(run: HexaWatchedSession): string {
-  return `${run.provider}\u0000${run.workspace ?? ""}`;
-}
-
-function updatedAtTime(run: HexaWatchedSession): number {
-  const timestamp = new Date(run.updated_at).getTime();
-  return Number.isNaN(timestamp) ? 0 : timestamp;
+function timestamp(value: string): number {
+  const parsed = new Date(value).getTime();
+  return Number.isNaN(parsed) ? 0 : parsed;
 }
 
 function isHeartbeatFresh(updatedAt: string | null, now: number): boolean {
   if (!updatedAt) return false;
-  const heartbeatTime = new Date(updatedAt).getTime();
-  const age = now - heartbeatTime;
+  const age = now - timestamp(updatedAt);
   return Number.isFinite(age) && age >= 0 && age <= ONLINE_HEARTBEAT_WINDOW_MS;
 }
 
 export function buildHexaAgentOverview(
-  runs: HexaWatchedSession[],
+  agents: HexaWatchedAgent[],
   { now = Date.now() }: HexaAgentOverviewOptions = {},
 ): HexaAgentOverview[] {
-  const runsByAgent = new Map<string, HexaWatchedSession[]>();
-
-  for (const run of runs) {
-    const identity = agentIdentity(run);
-    runsByAgent.set(identity, [...(runsByAgent.get(identity) ?? []), run]);
-  }
-
-  return [...runsByAgent.entries()]
-    .map(([id, groupedRuns]): HexaAgentOverview => {
-      const orderedRuns = [...groupedRuns].sort((left, right) => updatedAtTime(right) - updatedAtTime(left));
-      const currentRun = orderedRuns.find((run) => run.status !== "completed") ?? orderedRuns[0] ?? null;
-      const newestRun = orderedRuns[0] ?? null;
+  return [...agents]
+    .sort((left, right) => timestamp(right.updated_at) - timestamp(left.updated_at))
+    .map((agent): HexaAgentOverview => {
+      const orderedRuns = [...agent.runs].sort(
+        (left, right) => timestamp(right.updated_at) - timestamp(left.updated_at),
+      );
+      const currentRun = orderedRuns.find((run) => run.status !== "completed") ?? null;
       const completed = orderedRuns.filter((run) => run.status === "completed").length;
       const blocked = orderedRuns.filter((run) => run.status === "blocked").length;
-      const currentStatus: HexaAgentOverview["currentStatus"] = currentRun?.status ?? "offline";
+      const lastHeartbeat = currentRun?.updated_at ?? null;
 
       return {
-        id,
-        name: currentRun?.name ?? newestRun?.name ?? "Watched Agent",
-        provider: newestRun?.provider ?? "unknown",
-        workspace: newestRun?.workspace ?? null,
-        online: isHeartbeatFresh(newestRun?.updated_at ?? null, now),
-        currentStatus,
+        id: agent.key,
+        name: agent.name,
+        provider: agent.provider,
+        workspace: agent.workspace,
+        online: isHeartbeatFresh(lastHeartbeat, now),
+        currentStatus: currentRun?.status ?? "offline",
         currentRun,
-        lastHeartbeat: newestRun?.updated_at ?? null,
+        lastHeartbeat,
         metrics: {
           total: orderedRuns.length,
           completed,
@@ -80,10 +74,18 @@ export function buildHexaAgentOverview(
         },
         recentRuns: orderedRuns.slice(0, RECENT_RUN_LIMIT),
       };
-    })
-    .sort((left, right) => {
-      const leftTime = left.lastHeartbeat ? new Date(left.lastHeartbeat).getTime() : 0;
-      const rightTime = right.lastHeartbeat ? new Date(right.lastHeartbeat).getTime() : 0;
-      return rightTime - leftTime;
     });
+}
+
+export function selectNeedFitSessions(
+  agents: HexaAgentOverview[],
+  sessions: HexaSupervisorSession[],
+): HexaSupervisorSession[] {
+  const currentWatchedRunIds = new Set(
+    agents.flatMap((agent) => agent.currentRun ? [agent.currentRun.session_id] : []),
+  );
+
+  return sessions.filter((item) => item.source === "watched"
+    ? currentWatchedRunIds.has(item.session.session_id)
+    : item.session.status !== "completed");
 }

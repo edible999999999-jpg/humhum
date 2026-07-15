@@ -6,7 +6,10 @@ import type { GitChangeSummary } from "./sessionChangesState";
 import { sortHexaSessions } from "./hexaPriority";
 import { normalizeMobileRelayConfig, type MobileRelayConfigValue } from "./mobileRelayConfig";
 import {
+  applyWatchedLifecycle,
+  partitionSupervisorSessions,
   resolveOrderedWatchRefresh,
+  resolveWatchedLifecycleAlerts,
   type WatchDataState,
   type WatchRefresh,
 } from "./hexaWatchState";
@@ -140,6 +143,16 @@ export interface HexaWatchedSession {
   confidence: string | null;
   started_at: string;
   updated_at: string;
+}
+
+export interface HexaWatchedAgent {
+  key: string;
+  provider: string;
+  name: string;
+  workspace: string | null;
+  created_at: string;
+  updated_at: string;
+  runs: HexaWatchedSession[];
 }
 
 export interface HexaSupervisorSession {
@@ -445,7 +458,7 @@ function watchedOnlySession(watched: HexaWatchedSession): HexaSession {
     last_tool_name: null,
     recent_tools: [],
     event_names: ["HexaWatch"],
-    has_pending_permission: watched.need_user || watched.status === "waiting",
+    has_pending_permission: false,
     route: null,
   };
 }
@@ -519,16 +532,20 @@ function buildSupervisorSession(
   bridge: HexaBridgeSession | null = null,
   watched: HexaWatchedSession | null = null,
 ): HexaSupervisorSession {
-  const stats = statsByClient.get(session.client_type) ?? null;
-  const readout = readoutBySession.get(session.session_id) ?? null;
-  const alerts = detectAlerts(session);
-  const progress_status = inferProgressStatus(session, alerts);
-  const progress = progressCopy(session, progress_status);
-  const recentNeed = inferRecentNeedFit(session, alerts);
+  const effectiveSession = watched ? applyWatchedLifecycle(session, watched.status) : session;
+  const stats = statsByClient.get(effectiveSession.client_type) ?? null;
+  const readout = readoutBySession.get(effectiveSession.session_id) ?? null;
+  const detectedAlerts = detectAlerts(effectiveSession);
+  const alerts = watched
+    ? resolveWatchedLifecycleAlerts(detectedAlerts, watched)
+    : detectedAlerts;
+  const progress_status = inferProgressStatus(effectiveSession, alerts);
+  const progress = progressCopy(effectiveSession, progress_status);
+  const recentNeed = inferRecentNeedFit(effectiveSession, alerts);
   const fallbackEvidence = [
-    `hook events: ${session.event_count}`,
-    session.last_tool_name ? `last tool: ${session.last_tool_name}` : "last tool: unknown",
-    `status: ${session.status}`,
+    `hook events: ${effectiveSession.event_count}`,
+    effectiveSession.last_tool_name ? `last tool: ${effectiveSession.last_tool_name}` : "last tool: unknown",
+    `status: ${effectiveSession.status}`,
   ];
   const bridgeStatus = bridge?.status;
   const liveProgressStatus: HexaSupervisorSession["progress_status"] = bridge?.pending_approvals.length
@@ -542,16 +559,20 @@ function buildSupervisorSession(
           : bridgeStatus === "idle"
             ? "idle"
             : progress_status;
-  const liveProgress = progressCopy(session, liveProgressStatus);
+  const liveProgress = progressCopy(effectiveSession, liveProgressStatus);
   const watchedProgressStatus = watched ? watchProgressStatus(watched.status, watched.need_user) : null;
-  const watchedProgress = watchedProgressStatus ? progressCopy(session, watchedProgressStatus) : null;
+  const watchedProgress = watchedProgressStatus ? progressCopy(effectiveSession, watchedProgressStatus) : null;
   const watchScore = watched ? trustedWatchScore(watched) : null;
+  const pendingConfirmations = Math.max(
+    effectiveSession.has_pending_permission ? 1 : 0,
+    bridge?.pending_approvals.length ?? 0,
+  );
 
   return {
-    session,
-    display_name: watched?.name || session.project_name || `${agentLabel(session.client_type)} ${session.session_id.slice(0, 8)}`,
-    agent_label: watched ? agentLabel(watched.agent) : agentLabel(session.client_type),
-    priority: PRIMARY_CLIENTS.has(session.client_type) ? "primary" : "compatible",
+    session: effectiveSession,
+    display_name: watched?.name || effectiveSession.project_name || `${agentLabel(effectiveSession.client_type)} ${effectiveSession.session_id.slice(0, 8)}`,
+    agent_label: watched ? agentLabel(watched.agent) : agentLabel(effectiveSession.client_type),
+    priority: PRIMARY_CLIENTS.has(effectiveSession.client_type) ? "primary" : "compatible",
     progress_status: watchedProgressStatus ?? liveProgressStatus,
     progress_label: watchedProgress?.label ?? liveProgress.label,
     progress_detail: watched?.blocked_reason
@@ -559,15 +580,15 @@ function buildSupervisorSession(
       ?? bridge?.current_activity
       ?? (bridgeStatus === "disconnected" ? "Codex 连接暂时中断，hook 记录仍然保留。" : liveProgress.detail),
     loop_status: loopStatus(alerts),
-    pending_confirmations: watched?.need_user ? 1 : bridge?.pending_approvals.length ?? (session.has_pending_permission ? 1 : 0),
-    memory_locations: fallbackMemoryLocations(session),
+    pending_confirmations: pendingConfirmations,
+    memory_locations: fallbackMemoryLocations(effectiveSession),
     strong_outputs: watched
-      ? [{ tone: "good", text: "Agent 已主动加入 Hexa 托管，状态可信度高于被动扫描。" }, ...buildStrongOutputs(session, stats)]
-      : buildStrongOutputs(session, stats),
+      ? [{ tone: "good", text: "Agent 已主动加入 Hexa 托管，状态可信度高于被动扫描。" }, ...buildStrongOutputs(effectiveSession, stats)]
+      : buildStrongOutputs(effectiveSession, stats),
     watchouts: watched?.blocked_reason
-      ? [{ tone: "watch", text: watched.blocked_reason }, ...buildWatchouts(session, alerts, stats)]
-      : buildWatchouts(session, alerts, stats),
-    current_work: watched?.current_step ?? bridge?.current_activity ?? readout?.agent_current_work ?? inferCurrentWork(session, liveProgressStatus),
+      ? [{ tone: "watch", text: watched.blocked_reason }, ...buildWatchouts(effectiveSession, alerts, stats)]
+      : buildWatchouts(effectiveSession, alerts, stats),
+    current_work: watched?.current_step ?? bridge?.current_activity ?? readout?.agent_current_work ?? inferCurrentWork(effectiveSession, liveProgressStatus),
     recent_need_score: watchScore ?? readout?.fit_score ?? recentNeed.recent_need_score,
     recent_need_label: watchScore ? fitLabel(watchScore) : readout ? fitLabel(readout.fit_score) : recentNeed.recent_need_label,
     recent_need_basis: watched
@@ -575,7 +596,7 @@ function buildSupervisorSession(
       : readout
         ? `transcript + hook: ${readout.evidence.slice(0, 2).join(" · ")}`
         : recentNeed.recent_need_basis,
-    project_intent: watched?.goal ?? readout?.project_intent ?? (session.project_name ? `${session.project_name} 项目会话` : "项目意图待识别"),
+    project_intent: watched?.goal ?? readout?.project_intent ?? (effectiveSession.project_name ? `${effectiveSession.project_name} 项目会话` : "项目意图待识别"),
     recent_user_intent: readout?.recent_user_intent ?? "暂未读到最近用户消息，当前仅基于 hook 事件判断。",
     performance_read: readout?.performance_read ?? progress.detail,
     suggested_nudge: watched?.need_user
@@ -597,6 +618,7 @@ function buildSupervisorSession(
 export function useHexaData() {
   const [sessions, setSessions] = useState<HexaSession[]>([]);
   const [agentStats, setAgentStats] = useState<AgentStats[]>([]);
+  const [watchedAgents, setWatchedAgents] = useState<HexaWatchedAgent[]>([]);
   const [supervisorSessions, setSupervisorSessions] = useState<HexaSupervisorSession[]>([]);
   const [alerts, setAlerts] = useState<HexaAlert[]>([]);
   const [bridgeHealth, setBridgeHealth] = useState<CodexBridgeHealth>({
@@ -638,7 +660,7 @@ export function useHexaData() {
   const bridgeDataRef = useRef<HexaBridgeSession[]>([]);
   const queueDataRef = useRef<QueuedIntervention[]>([]);
   const refreshGenerationRef = useRef(0);
-  const watchRefreshRef = useRef<WatchRefresh<HexaWatchedSession[]>>({
+  const watchRefreshRef = useRef<WatchRefresh<HexaWatchedAgent[]>>({
     data: null,
     state: "loading",
     error: null,
@@ -654,7 +676,7 @@ export function useHexaData() {
         invoke<AgentStats[]>("get_agent_stats"),
         invoke<HexaReadout[]>("get_hexa_readouts"),
         invoke<HexaBridgeSession[]>("get_hexa_bridge_sessions"),
-        invoke<HexaWatchedSession[]>("get_hexa_watched_sessions"),
+        invoke<HexaWatchedAgent[]>("get_hexa_watched_agents"),
         invoke<CodexBridgeHealth>("get_codex_bridge_health"),
         invoke<QueuedIntervention[]>("get_intervention_queue"),
       ]);
@@ -680,7 +702,8 @@ export function useHexaData() {
       const statsData = statsDataRef.current;
       const readoutData = readoutDataRef.current;
       const bridgeData = bridgeDataRef.current;
-      const watchedData = watchRefresh.data ?? [];
+      const watchedAgentData = watchRefresh.data ?? [];
+      const watchedData = watchedAgentData.flatMap((agent) => agent.runs);
       const healthData = healthResult.status === "fulfilled" ? healthResult.value : null;
       const queueData = queueDataRef.current;
       const remoteData = await invoke<CodexRemoteControlState>("get_codex_remote_control").catch(() => null);
@@ -703,7 +726,6 @@ export function useHexaData() {
         (left, right) =>
           new Date(right.session.last_event_at).getTime() - new Date(left.session.last_event_at).getTime(),
       );
-      const mergedSessions = mergedWithWatched.map((item) => item.session);
       const snapshots = mergedWithWatched.map((item) =>
         buildSupervisorSession(
           item.session,
@@ -715,11 +737,13 @@ export function useHexaData() {
         ),
       );
       const allAlerts = snapshots
-        .filter((s) => s.session.status !== "completed")
-        .flatMap((s) => s.alerts);
+        .flatMap((snapshot) => snapshot.alerts.filter(
+          (alert) => snapshot.session.status !== "completed" || alert.type === "permission",
+        ));
 
-      setSessions(mergedSessions);
+      setSessions(snapshots.map((snapshot) => snapshot.session));
       setAgentStats(statsData);
+      setWatchedAgents(watchedAgentData);
       setSupervisorSessions(sortHexaSessions(snapshots));
       setAlerts(allAlerts);
       if (healthData) setBridgeHealth(healthData);
@@ -780,8 +804,9 @@ export function useHexaData() {
 
   const activeSessions = sessions.filter((s) => s.status !== "completed");
   const completedSessions = sessions.filter((s) => s.status === "completed");
-  const activeSupervisorSessions = supervisorSessions.filter((s) => s.session.status !== "completed");
-  const completedSupervisorSessions = supervisorSessions.filter((s) => s.session.status === "completed");
+  const supervisorBuckets = partitionSupervisorSessions(supervisorSessions);
+  const activeSupervisorSessions = supervisorBuckets.active;
+  const completedSupervisorSessions = supervisorBuckets.completed;
   const primarySupervisorSessions = supervisorSessions.filter((s) => s.priority === "primary");
   const compatibleSupervisorSessions = supervisorSessions.filter((s) => s.priority === "compatible");
   const retryHexaData = useCallback(async () => {
@@ -947,6 +972,7 @@ export function useHexaData() {
     activeSessions,
     completedSessions,
     agentStats,
+    watchedAgents,
     supervisorSessions,
     activeSupervisorSessions,
     completedSupervisorSessions,

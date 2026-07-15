@@ -8,7 +8,7 @@ use crate::config::AppConfig;
 use crate::event_bus::{self, HookEvent, PermissionDecision};
 use crate::git_changes::GitChangeSummary;
 use crate::hexa_protocol::HexaSessionProjection;
-use crate::hexa_watch_store::{HexaWatchStore, HexaWatchedSession};
+use crate::hexa_watch_store::{HexaWatchStore, HexaWatchedAgent, HexaWatchedSession};
 use crate::hook_server::PendingMap;
 use crate::hush_store::{HushInboxSummary, HushStore};
 use crate::intervention_queue::{InterventionProvider, InterventionQueue, QueuedIntervention};
@@ -311,10 +311,22 @@ pub async fn get_hexa_bridge_sessions(
 pub async fn get_hexa_watched_sessions(
     state: State<'_, Arc<std::sync::Mutex<HexaWatchStore>>>,
 ) -> Result<Vec<HexaWatchedSession>, String> {
-    let store = state
+    let mut store = state
         .lock()
         .map_err(|error| format!("Lock error: {error}"))?;
+    store.reload_from_disk()?;
     Ok(store.sessions())
+}
+
+#[tauri::command]
+pub async fn get_hexa_watched_agents(
+    state: State<'_, Arc<std::sync::Mutex<HexaWatchStore>>>,
+) -> Result<Vec<HexaWatchedAgent>, String> {
+    let mut store = state
+        .lock()
+        .map_err(|error| format!("Lock error: {error}"))?;
+    store.reload_from_disk()?;
+    Ok(store.agents())
 }
 
 #[tauri::command]

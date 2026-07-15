@@ -91,7 +91,7 @@ impl Default for HexaWatchStore {
 }
 
 impl HexaWatchStore {
-    pub(crate) fn empty_at(humhum_dir: &Path) -> Self {
+    pub(crate) fn unavailable_at(humhum_dir: &Path) -> Self {
         Self {
             agents: HashMap::new(),
             storage_path: Some(humhum_dir.join("hexa-watch.json")),
@@ -100,26 +100,7 @@ impl HexaWatchStore {
 
     pub fn load_or_create(humhum_dir: &Path) -> Result<Self, String> {
         let storage_path = humhum_dir.join("hexa-watch.json");
-        let agents = match fs::read_to_string(&storage_path) {
-            Ok(contents) => match serde_json::from_str::<HexaWatchStoreSnapshot>(&contents) {
-                Ok(snapshot) => snapshot.agents,
-                Err(error) => {
-                    log::warn!(
-                        "Could not parse Hexa watch store {}; starting with an empty durable store: {error}",
-                        storage_path.display()
-                    );
-                    HashMap::new()
-                }
-            },
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => HashMap::new(),
-            Err(error) => {
-                log::warn!(
-                    "Could not read Hexa watch store {}; starting with an empty durable store: {error}",
-                    storage_path.display()
-                );
-                HashMap::new()
-            }
-        };
+        let agents = read_agents(&storage_path)?;
 
         Ok(Self {
             agents,
@@ -127,10 +108,19 @@ impl HexaWatchStore {
         })
     }
 
+    pub(crate) fn reload_from_disk(&mut self) -> Result<(), String> {
+        let Some(storage_path) = &self.storage_path else {
+            return Ok(());
+        };
+        self.agents = read_agents(storage_path)?;
+        Ok(())
+    }
+
     pub fn register(
         &mut self,
         request: HexaWatchRegisterRequest,
     ) -> Result<HexaWatchedSession, String> {
+        self.reload_from_disk()?;
         let now = chrono::Utc::now().to_rfc3339();
         let session_id = request
             .session_id
@@ -239,6 +229,7 @@ impl HexaWatchStore {
         &mut self,
         request: HexaWatchUpdateRequest,
     ) -> Result<Option<HexaWatchedSession>, String> {
+        self.reload_from_disk()?;
         let mut agents = self.agents.clone();
         let now = chrono::Utc::now().to_rfc3339();
         let mut updated = None;
@@ -276,6 +267,7 @@ impl HexaWatchStore {
     }
 
     pub fn delete(&mut self, session_id: &str) -> Result<Option<HexaWatchedSession>, String> {
+        self.reload_from_disk()?;
         let mut agents = self.agents.clone();
         let run_location = agents.iter().find_map(|(key, watched_agent)| {
             watched_agent
@@ -381,6 +373,26 @@ impl HexaWatchStore {
             let _ = fs::remove_file(&temporary_path);
         }
         write_result
+    }
+}
+
+fn read_agents(storage_path: &Path) -> Result<HashMap<String, HexaWatchedAgent>, String> {
+    match fs::read_to_string(storage_path) {
+        Ok(contents) => match serde_json::from_str::<HexaWatchStoreSnapshot>(&contents) {
+            Ok(snapshot) => Ok(snapshot.agents),
+            Err(error) => {
+                log::warn!(
+                    "Could not parse Hexa watch store {}; starting with an empty durable store: {error}",
+                    storage_path.display()
+                );
+                Ok(HashMap::new())
+            }
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(HashMap::new()),
+        Err(error) => Err(format!(
+            "Could not read Hexa watch store {}: {error}",
+            storage_path.display()
+        )),
     }
 }
 
@@ -547,6 +559,42 @@ mod tests {
 
         let restored = HexaWatchStore::load_or_create(directory.path()).unwrap();
 
+        assert_eq!(restored.sessions().len(), 1);
+    }
+
+    #[test]
+    fn rejects_non_not_found_read_failures() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::create_dir(directory.path().join("hexa-watch.json")).unwrap();
+
+        let result = HexaWatchStore::load_or_create(directory.path());
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("Could not read Hexa watch store"));
+    }
+
+    #[test]
+    fn unhealthy_store_blocks_mutation_and_recovers_on_retry() {
+        let directory = tempfile::tempdir().unwrap();
+        let storage_path = directory.path().join("hexa-watch.json");
+        fs::create_dir(&storage_path).unwrap();
+        fs::write(storage_path.join("sentinel"), "keep me").unwrap();
+        let mut store = HexaWatchStore::unavailable_at(directory.path());
+
+        assert!(store.reload_from_disk().is_err());
+        assert!(store.register(register_request()).is_err());
+        assert_eq!(
+            fs::read_to_string(storage_path.join("sentinel")).unwrap(),
+            "keep me"
+        );
+
+        fs::remove_dir_all(&storage_path).unwrap();
+        store.reload_from_disk().unwrap();
+        store.register(register_request()).unwrap();
+
+        let restored = HexaWatchStore::load_or_create(directory.path()).unwrap();
         assert_eq!(restored.sessions().len(), 1);
     }
 }

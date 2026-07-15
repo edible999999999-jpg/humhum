@@ -109,9 +109,9 @@ pub fn run() {
                     Ok(store) => store,
                     Err(error) => {
                         log::warn!(
-                            "Could not load Hexa watch store; using an empty durable recovery store: {error}"
+                            "Could not load Hexa watch store; reads and mutations remain unavailable until retry succeeds: {error}"
                         );
-                        hexa_watch_store::HexaWatchStore::empty_at(&hexa_watch_dir)
+                        hexa_watch_store::HexaWatchStore::unavailable_at(&hexa_watch_dir)
                     }
                 };
                 app.manage(Arc::new(std::sync::Mutex::new(hexa_watch_store)));
@@ -231,6 +231,7 @@ pub fn run() {
             commands::get_codex_bridge_health,
             commands::get_codex_remote_control,
             commands::get_hexa_bridge_sessions,
+            commands::get_hexa_watched_agents,
             commands::get_hexa_watched_sessions,
             commands::delete_hexa_watched_session,
             commands::get_session_change_summary,
