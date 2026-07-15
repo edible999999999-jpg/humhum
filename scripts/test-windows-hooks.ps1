@@ -201,22 +201,49 @@ function Test-HookDelivery {
         # hook decode and re-serialize a real non-ASCII value on the wire.
         $payload = '{"hook_event_name":"PermissionRequest","session_id":"e2e-session","tool_name":"Read","unicode_probe":"\u6d4b\u8bd5"}'
         $powerShellExecutable = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
-        $hookArguments = @(
-            "-NoLogo",
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            $windowsHookScript,
-            "-Client",
-            "claude code",
-            "-Port",
-            [string]$port
+        $escapedHookScript = $windowsHookScript.Replace("'", "''")
+        $hookCommand = "& '$escapedHookScript' -Client 'claude code' -Port $port"
+        $encodedHookCommand = [Convert]::ToBase64String(
+            [System.Text.Encoding]::Unicode.GetBytes($hookCommand)
         )
-        $output = @($payload | & $powerShellExecutable @hookArguments 2>&1)
-        if ($LASTEXITCODE -ne 0) {
-            throw "Windows hook delivery exited with $LASTEXITCODE"
+        $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+        $startInfo.FileName = $powerShellExecutable
+        $startInfo.Arguments = "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $encodedHookCommand"
+        $startInfo.UseShellExecute = $false
+        $startInfo.CreateNoWindow = $true
+        $startInfo.RedirectStandardInput = $true
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.RedirectStandardError = $true
+        $startInfo.StandardInputEncoding = $utf8
+        $startInfo.StandardOutputEncoding = $utf8
+        $startInfo.StandardErrorEncoding = $utf8
+        $hookProcess = New-Object System.Diagnostics.Process
+        $hookProcess.StartInfo = $startInfo
+        $hookStarted = $false
+        try {
+            $hookStarted = $hookProcess.Start()
+            if (-not $hookStarted) {
+                throw "Windows hook delivery process did not start"
+            }
+            $stdoutTask = $hookProcess.StandardOutput.ReadToEndAsync()
+            $stderrTask = $hookProcess.StandardError.ReadToEndAsync()
+            $hookProcess.StandardInput.Write($payload)
+            $hookProcess.StandardInput.Close()
+            if (-not $hookProcess.WaitForExit(30000)) {
+                $hookProcess.Kill()
+                throw "Windows hook delivery process timed out"
+            }
+            $actualOutput = $stdoutTask.GetAwaiter().GetResult().Trim()
+            $actualError = $stderrTask.GetAwaiter().GetResult().Trim()
+            $hookExitCode = $hookProcess.ExitCode
+        } finally {
+            if ($hookStarted -and -not $hookProcess.HasExited) {
+                $hookProcess.Kill()
+            }
+            $hookProcess.Dispose()
+        }
+        if ($hookExitCode -ne 0) {
+            throw "Windows hook delivery exited with $hookExitCode (stderr: $actualError)"
         }
         $completed = Wait-Job -Job $server -Timeout 10
         if ($null -eq $completed) {
@@ -224,7 +251,6 @@ function Test-HookDelivery {
         }
         Receive-Job -Job $server -ErrorAction Stop | Out-Null
         $capture = [System.IO.File]::ReadAllText($capturePath) | ConvertFrom-Json
-        $actualOutput = ((@($output) | ForEach-Object { [string]$_ }) -join "`n").Trim()
         if ($actualOutput -ne '{"decision":{"behavior":"allow"}}') {
             $hookDebug = if (Test-Path -LiteralPath $debugPath) {
                 [System.IO.File]::ReadAllText($debugPath).Trim()
@@ -232,6 +258,7 @@ function Test-HookDelivery {
                 "<no hook debug log>"
             }
             Write-Host "Hook child output: $actualOutput"
+            Write-Host "Hook child error: $actualError"
             Write-Host "Hook request Expect: $($capture.expect_continue)"
             Write-Host "Hook request Transfer-Encoding: $($capture.transfer_encoding)"
             Write-Host "Hook debug: $hookDebug"
