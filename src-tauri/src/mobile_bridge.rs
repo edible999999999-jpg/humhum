@@ -320,7 +320,7 @@ impl MobileBridgeState {
                 return Err("Mobile enable was cancelled".to_string());
             }
 
-            let local_ip = local_lan_ip()?;
+            let local_host = local_lan_host()?;
             let tailnet_ip = crate::tailnet::discover_tailnet_ipv4().await;
             if !self.enable_generation_is_current(generation) {
                 return Err("Mobile enable was cancelled".to_string());
@@ -338,7 +338,7 @@ impl MobileBridgeState {
             }
             Ok((
                 relay_base_url,
-                local_ip,
+                local_host,
                 tailnet_ip,
                 cert,
                 tls_config,
@@ -346,14 +346,14 @@ impl MobileBridgeState {
             ))
         }
         .await;
-        let (relay_base_url, local_ip, tailnet_ip, cert, tls_config, listener) = match setup {
+        let (relay_base_url, local_host, tailnet_ip, cert, tls_config, listener) = match setup {
             Ok(setup) => setup,
             Err(error) => {
                 self.abandon_enable(generation);
                 return Err(error);
             }
         };
-        let url = format!("https://{local_ip}:{DEFAULT_MOBILE_PORT}");
+        let url = format!("https://{local_host}:{DEFAULT_MOBILE_PORT}");
         let tailnet_url = tailnet_ip.map(|ip| format!("https://{ip}:{DEFAULT_MOBILE_PORT}"));
         let relay_enabled = relay_base_url.is_some();
         let (shutdown_tx, mut shutdown_rx) = oneshot::channel();
@@ -870,6 +870,68 @@ fn local_lan_ip() -> Result<Ipv4Addr, String> {
         IpAddr::V4(ip) if !ip.is_loopback() => Ok(ip),
         _ => Err("No usable IPv4 LAN address was found".into()),
     }
+}
+
+fn local_lan_host() -> Result<String, String> {
+    let ip = local_lan_ip()?;
+    if android_compatible_ip(ip) {
+        return Ok(ip.to_string());
+    }
+    mobile_lan_host(ip, local_mdns_name().as_deref())
+}
+
+fn mobile_lan_host(ip: Ipv4Addr, local_hostname: Option<&str>) -> Result<String, String> {
+    if android_compatible_ip(ip) {
+        return Ok(ip.to_string());
+    }
+    let hostname = local_hostname
+        .map(str::trim)
+        .filter(|hostname| valid_mdns_label(hostname))
+        .ok_or_else(|| {
+            "This Wi-Fi address needs a valid Mac LocalHostName for Android pairing".to_string()
+        })?;
+    Ok(format!("{hostname}.local"))
+}
+
+fn android_compatible_ip(ip: Ipv4Addr) -> bool {
+    let [first, second, third, fourth] = ip.octets();
+    first == 10
+        || (first == 172 && (16..=31).contains(&second))
+        || (first == 192 && second == 168)
+        || (first == 169 && second == 254)
+        || (first == 100
+            && (64..=127).contains(&second)
+            && !((second == 64 && third == 0 && fourth == 0)
+                || (second == 127 && third == 255 && fourth == 255)
+                || (second == 100 && (third == 0 || third == 100))))
+}
+
+fn valid_mdns_label(hostname: &str) -> bool {
+    !hostname.is_empty()
+        && hostname.len() <= 63
+        && !hostname.starts_with('-')
+        && !hostname.ends_with('-')
+        && hostname
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+}
+
+#[cfg(target_os = "macos")]
+fn local_mdns_name() -> Option<String> {
+    let output = std::process::Command::new("/usr/sbin/scutil")
+        .args(["--get", "LocalHostName"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let hostname = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    valid_mdns_label(&hostname).then_some(hostname)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn local_mdns_name() -> Option<String> {
+    None
 }
 
 async fn handle_mobile_request(
@@ -2408,6 +2470,19 @@ mod tests {
             "Tailnet access is unavailable"
         );
         assert_eq!(MobileNetwork::default(), MobileNetwork::Lan);
+    }
+
+    #[test]
+    fn public_looking_wifi_uses_an_android_compatible_mdns_host() {
+        assert_eq!(
+            mobile_lan_host(Ipv4Addr::new(30, 169, 112, 215), Some("yxdebijibendiannao"),).unwrap(),
+            "yxdebijibendiannao.local"
+        );
+        assert_eq!(
+            mobile_lan_host(Ipv4Addr::new(192, 168, 1, 20), Some("ignored")).unwrap(),
+            "192.168.1.20"
+        );
+        assert!(mobile_lan_host(Ipv4Addr::new(30, 169, 112, 215), None).is_err());
     }
 
     #[test]
