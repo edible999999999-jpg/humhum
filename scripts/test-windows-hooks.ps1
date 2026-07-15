@@ -201,14 +201,12 @@ function Test-HookDelivery {
         # hook decode and re-serialize a real non-ASCII value on the wire.
         $payload = '{"hook_event_name":"PermissionRequest","session_id":"e2e-session","tool_name":"Read","unicode_probe":"\u6d4b\u8bd5"}'
         $powerShellExecutable = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
-        $escapedHookScript = $windowsHookScript.Replace("'", "''")
-        $hookCommand = "& '$escapedHookScript' -Client 'claude code' -Port $port"
-        $encodedHookCommand = [Convert]::ToBase64String(
-            [System.Text.Encoding]::Unicode.GetBytes($hookCommand)
-        )
+        if ($windowsHookScript.Contains('"')) {
+            throw "Windows hook test path contains an unsupported quote"
+        }
         $startInfo = New-Object System.Diagnostics.ProcessStartInfo
         $startInfo.FileName = $powerShellExecutable
-        $startInfo.Arguments = "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $encodedHookCommand"
+        $startInfo.Arguments = "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -InputFormat Text -OutputFormat Text -File `"$windowsHookScript`" -Client `"claude code`" -Port $port"
         $startInfo.UseShellExecute = $false
         $startInfo.CreateNoWindow = $true
         $startInfo.RedirectStandardInput = $true
@@ -217,7 +215,15 @@ function Test-HookDelivery {
         $hookProcess = New-Object System.Diagnostics.Process
         $hookProcess.StartInfo = $startInfo
         $hookStarted = $false
+        $previousConsoleInputEncoding = [Console]::InputEncoding
+        $consoleInputEncodingChanged = $false
         try {
+            # .NET Framework builds Process.StandardInput with the parent's
+            # Console.InputEncoding. Use BOM-less UTF-8 before Process.Start so
+            # the child receives JSON at byte zero rather than an encoding
+            # preamble that Windows PowerShell 5.1 exposes to Console.In.
+            [Console]::InputEncoding = $utf8
+            $consoleInputEncodingChanged = $true
             $hookStarted = $hookProcess.Start()
             if (-not $hookStarted) {
                 throw "Windows hook delivery process did not start"
@@ -234,6 +240,9 @@ function Test-HookDelivery {
             $actualError = $stderrTask.GetAwaiter().GetResult().Trim()
             $hookExitCode = $hookProcess.ExitCode
         } finally {
+            if ($consoleInputEncodingChanged) {
+                [Console]::InputEncoding = $previousConsoleInputEncoding
+            }
             if ($hookStarted -and -not $hookProcess.HasExited) {
                 $hookProcess.Kill()
             }

@@ -36,7 +36,7 @@ function Write-HumHumDebug {
     }
 }
 
-$payload = [Console]::In.ReadToEnd()
+$payload = [Console]::In.ReadToEnd().TrimStart([char]0xFEFF)
 if ([string]::IsNullOrWhiteSpace($payload)) {
     [Console]::Error.WriteLine("Error: No payload received on stdin")
     exit 1
