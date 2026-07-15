@@ -9,16 +9,12 @@ import {
   type CodexSendReceipt,
   type FocusResult,
   type HexaSupervisorSession,
+  type HexaWatchedSession,
   type MobileBridgeStatus,
   type MobilePairingInfo,
   type MobileRelayConfig,
   type QueuedIntervention,
 } from "../../hooks/useHexaData";
-import {
-  buildHexaAgentOverview,
-  selectNeedFitSessions,
-  type HexaAgentOverview,
-} from "../../hooks/hexaAgentOverview";
 import { initialWatchDeleteState, watchDeleteReducer } from "../../hooks/hexaWatchState";
 import { initialInterventionState, interventionReducer } from "../../hooks/interventionState";
 import { mobilePresenceLabel } from "../../hooks/mobilePresence";
@@ -31,11 +27,13 @@ import {
   interventionProviderForClient,
   type InterventionProvider,
 } from "../../hooks/interventionProvider";
+import type { HexaAgentOverview } from "../../hooks/hexaAgentOverview";
 import {
   initialSessionChangesState,
   sessionChangesReducer,
   type GitChangeSummary,
 } from "../../hooks/sessionChangesState";
+import { HexaActiveMonitor } from "./hexa/HexaActiveMonitor";
 
 const CLIENT_COLORS: Record<string, string> = {
   "claude-code": "#f59e0b",
@@ -1442,11 +1440,12 @@ export function HexaModule() {
     revokeMobileDevice,
     configureMobileRelay,
     deleteWatchedSession,
+    mutateHexaSessionAudit,
   } = useHexaData();
   const [openReviews, setOpenReviews] = useState<Set<string>>(new Set());
   const [autoConfirmSessions, setAutoConfirmSessions] = useState<Set<string>>(new Set());
   const [collapsedAgentGroups, setCollapsedAgentGroups] = useState<Set<string>>(new Set());
-  const [selectedWatchedAgentId, setSelectedWatchedAgentId] = useState<string | null>(null);
+  const [activeSection, setActiveSection] = useState<"watched" | "scanned">("watched");
 
   useEffect(() => {
     void invoke<string[]>("get_auto_confirm_sessions")
@@ -1463,14 +1462,10 @@ export function HexaModule() {
   const active = recentActivity.filter((item) => item.progress_status !== "idle");
   const recentCompleted = completedSupervisorSessions.slice(0, 6);
   const watchedSupervisorSessions = supervisorSessions.filter((item) => item.source === "watched" && item.watched);
-  const watchedAgentOverview = buildHexaAgentOverview(watchedAgents);
-  const selectedWatchedAgent = watchedAgentOverview.find((agent) => agent.id === selectedWatchedAgentId) ?? null;
+  const watchedSessions = watchedAgents.flatMap((agent) => agent.runs);
   const watchedSupervisorBySessionId = new Map(
     watchedSupervisorSessions.map((item) => [item.session.session_id, item]),
   );
-  const selectedWatchedSessions = selectedWatchedAgent?.recentRuns
-    .map((run) => watchedSupervisorBySessionId.get(run.session_id))
-    .filter((item): item is HexaSupervisorSession => Boolean(item)) ?? [];
   const discoveredSessions = recentActivity.filter((item) => item.source !== "watched");
   const historicalSessions = recentCompleted.filter((item) => item.source !== "watched");
   const secondarySessions = [...discoveredSessions, ...historicalSessions];
@@ -1479,7 +1474,6 @@ export function HexaModule() {
   const attentionCount = active.filter((item) =>
     ["waiting", "looping", "stalled"].includes(item.progress_status),
   ).length;
-  const score = averageScore(selectNeedFitSessions(watchedAgentOverview, supervisorSessions));
   const toggleReview = (sessionId: string) => {
     setOpenReviews((prev) => {
       const next = new Set(prev);
@@ -1545,94 +1539,123 @@ export function HexaModule() {
       return next;
     });
   };
+  const renderWatchedOperations = (session: HexaWatchedSession) => {
+    const item = watchedSupervisorBySessionId.get(session.session_id);
+    if (!item) return null;
+    const provider = interventionProviderForClient(item.session.client_type);
+    const threadId = provider === "codex"
+      ? item.bridge?.provider_thread_id ?? item.session.session_id
+      : item.session.session_id;
+    const sendMessage = provider === "claude"
+      ? sendClaudeMessage
+      : provider === "opencode"
+        ? sendOpenCodeMessage
+        : sendCodexMessage;
+    const retryMessage = provider === "claude"
+      ? retryClaudeMessage
+      : provider === "opencode"
+        ? retryOpenCodeMessage
+        : retryCodexMessage;
+
+    return (
+      <section className="hexa-report-section" aria-label="会话操作">
+        <div className="hexa-report-section-title">
+          <span><Activity size={15} /> 人工介入</span>
+          {item.session.client_type === "claude-code" && (
+            <button
+              type="button"
+              className={`kawaii-toggle-btn ${autoConfirmSessions.has(session.session_id) ? "connected" : ""}`}
+              title={autoConfirmSessions.has(session.session_id) ? "关闭本会话自动批准" : "开启本会话自动批准"}
+              onClick={() => void toggleAutoConfirm(session.session_id, !autoConfirmSessions.has(session.session_id))}
+            >
+              <Flame size={14} /> {autoConfirmSessions.has(session.session_id) ? "狂暴模式已开" : "狂暴模式"}
+            </button>
+          )}
+        </div>
+        {provider && (
+          <CodexIntervention
+            item={item}
+            provider={provider}
+            onSend={sendMessage}
+            onInterrupt={interruptCodexTurn}
+            onResume={resumeCodexThread}
+            onResolveApproval={resolveCodexApproval}
+            queuedInterventions={queuedInterventions.filter((queued) => interventionMatches(queued, provider, threadId))}
+            onRetryIntervention={retryMessage}
+            onDiscardIntervention={discardQueuedIntervention}
+          />
+        )}
+      </section>
+    );
+  };
 
   return (
     <div className="hub-module">
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", marginBottom: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", marginBottom: 14 }}>
         <div>
-          <h2 className="hub-module-title" style={{ marginBottom: 4 }}>Hexa Agent 看板</h2>
+          <h2 className="hub-module-title" style={{ marginBottom: 4 }}>Hexa 会话监督</h2>
           <p className="hub-module-desc">
-            最近活跃的并行 Agent 排在最前：看谁在推进、谁卡住、谁只是历史复盘样本。
+            主动监控每一轮目标、进度和结果；自动扫描只负责发现，不混入可信结论。
           </p>
-          <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 7, color: "rgba(255,255,255,0.34)", fontSize: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 7, color: "#7b8ba0", fontSize: 10 }}>
             <span style={{ width: 6, height: 6, borderRadius: "50%", background: bridgeHealth.status === "connected" ? "#22c55e" : bridgeHealth.status === "starting" ? "#facc15" : "#f87171" }} />
             {bridgeHealth.message}
           </div>
         </div>
-        <div
-          style={{
-            color: scoreColor(score),
-            background: `${scoreColor(score)}14`,
-            border: `1px solid ${scoreColor(score)}34`,
-            borderRadius: 8,
-            padding: "9px 11px",
-            textAlign: "right",
-            minWidth: 96,
-          }}
-        >
-          <div style={{ fontSize: 22, lineHeight: 1, fontWeight: 900 }}>{score || "-"}</div>
-          <div style={{ color: "rgba(255,255,255,0.38)", fontSize: 10, marginTop: 4 }}>avg need fit</div>
-        </div>
       </div>
 
-      <section style={{ display: "grid", gap: 10, marginBottom: 14 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
-          <div style={{ color: "rgba(255,255,255,0.72)", fontSize: 12, fontWeight: 900 }}>Watched Agents</div>
-          <div style={{ color: "rgba(255,255,255,0.3)", fontSize: 10 }}>{watchedAgentOverview.length} durable identities</div>
-        </div>
-        <WatchedAgentDataState
-          state={watchDataState}
-          hasAgents={watchedAgentOverview.length > 0}
+      <div className="hexa-top-tabs" role="tablist" aria-label="Hexa 会话区域">
+        <button type="button" role="tab" aria-selected={activeSection === "watched"} className={`hexa-top-tab ${activeSection === "watched" ? "active" : ""}`} onClick={() => setActiveSection("watched")}>
+          <strong>主动监控 · {watchedSessions.length}</strong>
+          <span>可信报告与人工介入</span>
+        </button>
+        <button type="button" role="tab" aria-selected={activeSection === "scanned"} className={`hexa-top-tab ${activeSection === "scanned" ? "active" : ""}`} onClick={() => setActiveSection("scanned")}>
+          <strong>自动扫描 · {secondarySessions.length}</strong>
+          <span>发现会话与历史样本</span>
+        </button>
+      </div>
+
+      {activeSection === "watched" ? (
+        <HexaActiveMonitor
+          sessions={watchedSessions}
+          supervisorBySessionId={watchedSupervisorBySessionId}
+          dataState={watchDataState}
           onRetry={retryHexaData}
-        />
-        {watchedAgentOverview.length > 0 && (
-          <WatchedAgentOverview
-            agents={watchedAgentOverview}
-            selectedAgentId={selectedWatchedAgentId}
-            onSelect={(agentId) => setSelectedWatchedAgentId((current) => current === agentId ? null : agentId)}
-          />
-        )}
-        {selectedWatchedAgent && (
-          <div style={{ display: "grid", gap: 8, paddingTop: 2 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
-              <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 11, fontWeight: 850 }}>Recent work history</div>
-              <div style={{ color: "rgba(255,255,255,0.28)", fontSize: 10 }}>{selectedWatchedSessions.length} runs</div>
+          onFocus={focusAgentSession}
+          onDelete={deleteWatchedSession}
+          renderOperations={renderWatchedOperations}
+          entryPanel={(
+            <div style={{ display: "grid", gap: 10 }}>
+              <WatchCommandPanel />
+              <RemoteAccessPanel
+                state={remoteControl}
+                pairing={remotePairing}
+                onEnable={enableCodexRemoteControl}
+                onDisable={disableCodexRemoteControl}
+                onPair={startCodexRemotePairing}
+              />
+              <HumHumMobilePanel
+                state={mobileBridge}
+                pairing={mobilePairing}
+                relayConfig={mobileRelayConfig}
+                onEnable={enableMobileBridge}
+                onDisable={disableMobileBridge}
+                onPair={startMobilePairing}
+                onRevoke={revokeMobileDevices}
+                onRevokeDevice={revokeMobileDevice}
+                onConfigureRelay={configureMobileRelay}
+              />
             </div>
-            {renderSessionGrid(selectedWatchedSessions)}
+          )}
+        />
+      ) : (
+        <section style={{ display: "grid", gap: 14 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10 }}>
+            <MetricCard label="活跃会话" value={active.length} tone="#22c55e" detail={`${workingCount} 个正在推进`} />
+            <MetricCard label="需要关注" value={attentionCount} tone="#f59e0b" detail={`${pendingCount} 个等待确认`} />
+            <MetricCard label="最近完成" value={recentCompleted.length} tone="#38bdf8" detail="保留最近 6 个复盘样本" />
+            <MetricCard label="告警信号" value={alerts.length} tone="#f87171" detail="停滞、循环、低进展" />
           </div>
-        )}
-      </section>
-
-      <RemoteAccessPanel
-        state={remoteControl}
-        pairing={remotePairing}
-        onEnable={enableCodexRemoteControl}
-        onDisable={disableCodexRemoteControl}
-        onPair={startCodexRemotePairing}
-      />
-
-      <HumHumMobilePanel
-        state={mobileBridge}
-        pairing={mobilePairing}
-        relayConfig={mobileRelayConfig}
-        onEnable={enableMobileBridge}
-        onDisable={disableMobileBridge}
-        onPair={startMobilePairing}
-        onRevoke={revokeMobileDevices}
-        onRevokeDevice={revokeMobileDevice}
-        onConfigureRelay={configureMobileRelay}
-      />
-
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10, marginBottom: 14 }}>
-        <MetricCard label="活跃会话" value={active.length} tone="#22c55e" detail={`${workingCount} 个正在推进`} />
-        <MetricCard label="需要关注" value={attentionCount} tone="#f59e0b" detail={`${pendingCount} 个等待确认`} />
-        <MetricCard label="最近完成" value={recentCompleted.length} tone="#38bdf8" detail="保留最近 6 个复盘样本" />
-        <MetricCard label="告警信号" value={alerts.length} tone="#f87171" detail="停滞、循环、低进展" />
-      </div>
-
-      <WatchCommandPanel />
-
-      <section style={{ display: "grid", gap: 10 }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
           <div
             style={{
@@ -1643,10 +1666,10 @@ export function HexaModule() {
               letterSpacing: 0.4,
             }}
           >
-            Scanned sessions ({secondarySessions.length})
+            自动扫描会话 ({secondarySessions.length})
           </div>
           <div style={{ color: "rgba(255,255,255,0.25)", fontSize: 10 }}>
-            托管优先；发现到的会话保留轻量推断；历史进入复盘
+            这里只展示发现结果，不把启发式判断冒充主动监控结论
           </div>
         </div>
 
@@ -1678,7 +1701,8 @@ export function HexaModule() {
             )}
           </div>
         )}
-      </section>
+        </section>
+      )}
     </div>
   );
 }
