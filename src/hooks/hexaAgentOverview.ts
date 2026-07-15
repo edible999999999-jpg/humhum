@@ -20,12 +20,12 @@ export interface HexaAgentOverview {
   recentRuns: HexaWatchedSession[];
 }
 
-const ACTIVE_STATUSES = new Set<HexaWatchedSession["status"]>([
-  "starting",
-  "working",
-  "waiting",
-  "idle",
-]);
+export interface HexaAgentOverviewOptions {
+  now?: number;
+}
+
+const ONLINE_HEARTBEAT_WINDOW_MS = 10 * 60 * 1000;
+const RECENT_RUN_LIMIT = 6;
 
 function agentIdentity(run: HexaWatchedSession): string {
   return `${run.provider}\u0000${run.workspace ?? ""}`;
@@ -36,7 +36,17 @@ function updatedAtTime(run: HexaWatchedSession): number {
   return Number.isNaN(timestamp) ? 0 : timestamp;
 }
 
-export function buildHexaAgentOverview(runs: HexaWatchedSession[]): HexaAgentOverview[] {
+function isHeartbeatFresh(updatedAt: string | null, now: number): boolean {
+  if (!updatedAt) return false;
+  const heartbeatTime = new Date(updatedAt).getTime();
+  const age = now - heartbeatTime;
+  return Number.isFinite(age) && age >= 0 && age <= ONLINE_HEARTBEAT_WINDOW_MS;
+}
+
+export function buildHexaAgentOverview(
+  runs: HexaWatchedSession[],
+  { now = Date.now() }: HexaAgentOverviewOptions = {},
+): HexaAgentOverview[] {
   const runsByAgent = new Map<string, HexaWatchedSession[]>();
 
   for (const run of runs) {
@@ -46,11 +56,11 @@ export function buildHexaAgentOverview(runs: HexaWatchedSession[]): HexaAgentOve
 
   return [...runsByAgent.entries()]
     .map(([id, groupedRuns]): HexaAgentOverview => {
-      const recentRuns = [...groupedRuns].sort((left, right) => updatedAtTime(right) - updatedAtTime(left));
-      const currentRun = recentRuns.find((run) => run.status !== "completed") ?? recentRuns[0] ?? null;
-      const newestRun = recentRuns[0] ?? null;
-      const completed = recentRuns.filter((run) => run.status === "completed").length;
-      const blocked = recentRuns.filter((run) => run.status === "blocked").length;
+      const orderedRuns = [...groupedRuns].sort((left, right) => updatedAtTime(right) - updatedAtTime(left));
+      const currentRun = orderedRuns.find((run) => run.status !== "completed") ?? orderedRuns[0] ?? null;
+      const newestRun = orderedRuns[0] ?? null;
+      const completed = orderedRuns.filter((run) => run.status === "completed").length;
+      const blocked = orderedRuns.filter((run) => run.status === "blocked").length;
       const currentStatus: HexaAgentOverview["currentStatus"] = currentRun?.status ?? "offline";
 
       return {
@@ -58,17 +68,17 @@ export function buildHexaAgentOverview(runs: HexaWatchedSession[]): HexaAgentOve
         name: currentRun?.name ?? newestRun?.name ?? "Watched Agent",
         provider: newestRun?.provider ?? "unknown",
         workspace: newestRun?.workspace ?? null,
-        online: currentRun ? ACTIVE_STATUSES.has(currentRun.status) : false,
+        online: isHeartbeatFresh(newestRun?.updated_at ?? null, now),
         currentStatus,
         currentRun,
         lastHeartbeat: newestRun?.updated_at ?? null,
         metrics: {
-          total: recentRuns.length,
+          total: orderedRuns.length,
           completed,
           blocked,
-          successRate: recentRuns.length === 0 ? 0 : Math.round((completed / recentRuns.length) * 100),
+          successRate: orderedRuns.length === 0 ? 0 : Math.round((completed / orderedRuns.length) * 100),
         },
-        recentRuns,
+        recentRuns: orderedRuns.slice(0, RECENT_RUN_LIMIT),
       };
     })
     .sort((left, right) => {

@@ -38,3 +38,31 @@
 
 - No live Tauri window/manual visual pass was run; verification is focused unit tests plus the TypeScript/Vite production build.
 - "Online" is inferred from an active watched-run status (`starting`, `working`, `waiting`, or `idle`); it is not a separate provider connectivity signal.
+
+## Fix Review
+
+### RED
+
+- `npm test -- --run src/hooks/hexaAgentOverview.test.ts`
+  - Failed: 6 tests ran, 3 failed.
+  - A fresh blocked run reported `online: false` because presence was status-derived.
+  - A stale working run reported `online: true` for the same reason.
+  - Eight durable runs rendered all eight history entries instead of the required six.
+
+### GREEN
+
+- Added the injectable `now` option to `buildHexaAgentOverview` and a fixed inclusive 10-minute heartbeat freshness window.
+- Presence now derives from the newest heartbeat; `currentStatus` continues to expose the semantic watched-run status independently.
+- Metrics use all durable runs while `recentRuns` returns only the newest six.
+- `npm test -- --run src/hooks/hexaAgentOverview.test.ts src/hooks/hexaWatchState.test.ts`
+  - Passed: 2 files, 11 tests.
+
+### Build
+
+- `npm run build`
+  - Passed: TypeScript and Vite production build completed successfully.
+
+### Concerns
+
+- No live visual QA was performed for this fix, as requested; parent Task 4 will own that review.
+- Vite's pre-existing warning for chunks above 500 kB remains unchanged.

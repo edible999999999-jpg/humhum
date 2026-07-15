@@ -49,26 +49,44 @@ describe("buildHexaAgentOverview", () => {
   });
 
   it("selects the most recently updated active run as current before newer completed history", () => {
+    const now = Date.parse("2026-07-14T10:05:00.000Z");
     const agent = buildHexaAgentOverview([
       watchedRun({ session_id: "finished-now", status: "completed", updated_at: "2026-07-14T10:00:00.000Z" }),
       watchedRun({ session_id: "working-earlier", status: "working", updated_at: "2026-07-14T09:00:00.000Z" }),
       watchedRun({ session_id: "blocked-old", status: "blocked", updated_at: "2026-07-14T08:00:00.000Z" }),
-    ])[0]!;
+    ], { now })[0]!;
 
     expect(agent.currentRun?.session_id).toBe("working-earlier");
     expect(agent.online).toBe(true);
     expect(agent.currentStatus).toBe("working");
   });
 
-  it("keeps the newest blocked run current so an intervention is not hidden by older work", () => {
+  it("keeps the newest blocked run current and online when its heartbeat is fresh", () => {
+    const now = Date.parse("2030-01-01T10:00:00.000Z");
     const agent = buildHexaAgentOverview([
-      watchedRun({ session_id: "working-old", status: "working", updated_at: "2026-07-14T08:00:00.000Z" }),
-      watchedRun({ session_id: "blocked-now", status: "blocked", updated_at: "2026-07-14T09:00:00.000Z" }),
-    ])[0]!;
+      watchedRun({ session_id: "working-old", status: "working", updated_at: "2030-01-01T09:40:00.000Z" }),
+      watchedRun({ session_id: "blocked-now", status: "blocked", updated_at: "2030-01-01T09:55:00.000Z" }),
+    ], { now })[0]!;
 
     expect(agent.currentRun?.session_id).toBe("blocked-now");
-    expect(agent.online).toBe(false);
+    expect(agent.online).toBe(true);
     expect(agent.currentStatus).toBe("blocked");
+  });
+
+  it("uses the inclusive 10-minute heartbeat boundary instead of task status for online presence", () => {
+    const now = Date.parse("2030-01-01T10:00:00.000Z");
+    const agents = buildHexaAgentOverview([
+      watchedRun({ session_id: "waiting-fresh", status: "waiting", updated_at: "2030-01-01T09:50:00.000Z" }),
+      watchedRun({
+        session_id: "working-stale",
+        workspace: "/workspace/stale",
+        status: "working",
+        updated_at: "2030-01-01T09:49:59.999Z",
+      }),
+    ], { now });
+
+    expect(agents[0]).toMatchObject({ online: true, currentStatus: "waiting" });
+    expect(agents[1]).toMatchObject({ online: false, currentStatus: "working" });
   });
 
   it("orders Agents and recent run history by updated-at heartbeat", () => {
@@ -85,5 +103,26 @@ describe("buildHexaAgentOverview", () => {
 
     expect(agents.map((agent) => agent.workspace)).toEqual(["/workspace/api", "/workspace/checkout"]);
     expect(agents[1]!.recentRuns.map((run) => run.session_id)).toEqual(["newer-history", "older-history"]);
+  });
+
+  it("keeps aggregate metrics for every durable run while limiting rendered history to the newest six", () => {
+    const runs = Array.from({ length: 8 }, (_, index) => watchedRun({
+      session_id: `run-${index + 1}`,
+      status: "completed",
+      updated_at: `2030-01-01T00:0${index}:00.000Z`,
+    }));
+
+    const agent = buildHexaAgentOverview(runs, { now: Date.parse("2030-01-01T01:00:00.000Z") })[0]!;
+
+    expect(agent.metrics).toEqual({ total: 8, completed: 8, blocked: 0, successRate: 100 });
+    expect(agent.recentRuns).toHaveLength(6);
+    expect(agent.recentRuns.map((run) => run.session_id)).toEqual([
+      "run-8",
+      "run-7",
+      "run-6",
+      "run-5",
+      "run-4",
+      "run-3",
+    ]);
   });
 });
