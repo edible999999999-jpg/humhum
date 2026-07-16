@@ -522,58 +522,72 @@ impl MobileBridgeState {
     }
 
     pub fn revoke_devices(&self) -> Result<MobileBridgeStatus, String> {
+        let relay_secrets = {
+            let mut relay_secrets = self
+                .relay_secrets
+                .lock()
+                .map_err(|error| error.to_string())?;
+            let mut devices = self.devices.lock().map_err(|error| error.to_string())?;
+            revoke_all_device_records(&mut devices, &mut relay_secrets)?
+        };
         let publisher = self
             .runtime
             .lock()
             .map_err(|error| error.to_string())?
             .publisher
             .clone();
-        if let Some(publisher) = publisher {
-            let _ = publisher.clear();
-        }
-        self.devices
-            .lock()
-            .map_err(|error| error.to_string())?
-            .revoke_all()?;
-        let relay_secrets = self
-            .relay_secrets
-            .lock()
-            .map_err(|error| error.to_string())?
-            .take_all()?;
+        let publisher_error = publisher.and_then(|publisher| {
+            publisher.clear().err().map(|error| {
+                publisher.stop();
+                error
+            })
+        });
         self.relay_changes.notify_one();
         schedule_relay_deletions(relay_secrets);
         self.presence
             .lock()
             .map_err(|error| error.to_string())?
             .clear();
+        if let Some(error) = publisher_error {
+            return Err(format!(
+                "Devices were revoked, but the wake publisher could not clear safely: {error}"
+            ));
+        }
         Ok(self.status())
     }
 
     pub fn revoke_device(&self, device_id: &str) -> Result<MobileBridgeStatus, String> {
+        let relay_secret = {
+            let mut relay_secrets = self
+                .relay_secrets
+                .lock()
+                .map_err(|error| error.to_string())?;
+            let mut devices = self.devices.lock().map_err(|error| error.to_string())?;
+            revoke_device_records(&mut devices, &mut relay_secrets, device_id)?
+        };
         let publisher = self
             .runtime
             .lock()
             .map_err(|error| error.to_string())?
             .publisher
             .clone();
-        if let Some(publisher) = publisher {
-            let _ = publisher.revoke(device_id);
-        }
-        self.devices
-            .lock()
-            .map_err(|error| error.to_string())?
-            .revoke_device(device_id)?;
-        let relay_secret = self
-            .relay_secrets
-            .lock()
-            .map_err(|error| error.to_string())?
-            .take(device_id)?;
+        let publisher_error = publisher.and_then(|publisher| {
+            publisher.revoke(device_id).err().map(|error| {
+                publisher.stop();
+                error
+            })
+        });
         self.relay_changes.notify_one();
         schedule_relay_deletions(relay_secret.into_iter().collect());
         self.presence
             .lock()
             .map_err(|error| error.to_string())?
             .remove(device_id);
+        if let Some(error) = publisher_error {
+            return Err(format!(
+                "The device was revoked, but the wake publisher could not stop safely: {error}"
+            ));
+        }
         Ok(self.status())
     }
 }
@@ -706,23 +720,141 @@ fn pair_success_value(
     value
 }
 
-fn rollback_paired_device(bridge: &MobileBridgeState, device_id: &str) {
-    let _ = bridge
-        .devices
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .revoke_device(device_id);
-    let _ = bridge
+#[derive(Debug, PartialEq, Eq)]
+enum PairingCommitError {
+    Cancelled,
+    Store(String),
+}
+
+fn commit_pairing_response(
+    bridge: &MobileBridgeState,
+    device_id: &str,
+    raw_token: &str,
+    scope: MobileDeviceScope,
+    relay_secret: Option<&crate::mobile_relay::RelayDeviceSecret>,
+    wake_relay: Option<crate::mobile_relay::WakeRelayBundle>,
+) -> Result<Response<HttpBody>, PairingCommitError> {
+    // Pairing performs the remote registration without local locks. Finalize
+    // only after re-entering the same relay -> devices boundary used by every
+    // revocation path, so a revoke completed during that await cannot be
+    // undone by a late relay-secret write.
+    let mut relay_secrets = bridge
         .relay_secrets
         .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .remove(device_id);
+        .map_err(|error| PairingCommitError::Store(error.to_string()))?;
+    let devices = bridge
+        .devices
+        .lock()
+        .map_err(|error| PairingCommitError::Store(error.to_string()))?;
+    let still_paired = devices
+        .authorize_device(raw_token)
+        .is_some_and(|device| device.id == device_id);
+    if !still_paired {
+        return Err(PairingCommitError::Cancelled);
+    }
+    if let Some(secret) = relay_secret {
+        if secret.device_id != device_id {
+            return Err(PairingCommitError::Store(
+                "Wake relay pairing belongs to another device".into(),
+            ));
+        }
+        relay_secrets
+            .put(secret.clone())
+            .map_err(PairingCommitError::Store)?;
+    }
+
+    // Build the final response while revocation is still excluded from the
+    // commit boundary. A revoke that starts afterwards is ordered after this
+    // successful pairing instead of racing between validation and response.
+    Ok(json_response(
+        StatusCode::OK,
+        &pair_success_value(raw_token, scope, wake_relay),
+    ))
+}
+
+fn revoke_device_records(
+    devices: &mut MobileDeviceStore,
+    relay_secrets: &mut crate::mobile_relay::MobileRelaySecretStore,
+    device_id: &str,
+) -> Result<Option<crate::mobile_relay::RelayDeviceSecret>, String> {
+    let relay_secret = relay_secrets.take(device_id)?;
+    if let Err(error) = devices.revoke_device(device_id) {
+        if let Some(secret) = relay_secret.as_ref() {
+            if let Err(rollback_error) = relay_secrets.put(secret.clone()) {
+                return Err(format!(
+                    "{error}; restoring the relay secret also failed: {rollback_error}"
+                ));
+            }
+        }
+        return Err(error);
+    }
+    Ok(relay_secret)
+}
+
+fn revoke_token_records(
+    devices: &mut MobileDeviceStore,
+    relay_secrets: &mut crate::mobile_relay::MobileRelaySecretStore,
+    token: &str,
+) -> Result<(String, Option<crate::mobile_relay::RelayDeviceSecret>), String> {
+    let device_id = devices
+        .authorize_device(token)
+        .map(|device| device.id)
+        .ok_or_else(|| "Paired mobile device not found".to_string())?;
+    let relay_secret = revoke_device_records(devices, relay_secrets, &device_id)?;
+    Ok((device_id, relay_secret))
+}
+
+fn revoke_all_device_records(
+    devices: &mut MobileDeviceStore,
+    relay_secrets: &mut crate::mobile_relay::MobileRelaySecretStore,
+) -> Result<Vec<crate::mobile_relay::RelayDeviceSecret>, String> {
+    let removed = relay_secrets.take_all()?;
+    if let Err(error) = devices.revoke_all() {
+        if let Err(rollback_error) = relay_secrets.restore_all(&removed) {
+            return Err(format!(
+                "{error}; restoring relay secrets also failed: {rollback_error}"
+            ));
+        }
+        return Err(error);
+    }
+    Ok(removed)
+}
+
+fn rollback_paired_device(bridge: &MobileBridgeState, device_id: &str) -> Result<(), String> {
+    let mut relay_secrets = bridge
+        .relay_secrets
+        .lock()
+        .map_err(|error| error.to_string())?;
+    let mut devices = bridge.devices.lock().map_err(|error| error.to_string())?;
+    let relay_secret = revoke_device_records(&mut devices, &mut relay_secrets, device_id)?;
+    drop(devices);
+    drop(relay_secrets);
+    schedule_relay_deletions(relay_secret.into_iter().collect());
     bridge
         .presence
         .lock()
-        .unwrap_or_else(|error| error.into_inner())
+        .map_err(|error| error.to_string())?
         .remove(device_id);
     bridge.relay_changes.notify_one();
+    Ok(())
+}
+
+fn rollback_pairing_response(
+    bridge: &MobileBridgeState,
+    device_id: &str,
+    status: StatusCode,
+    message: &str,
+) -> Response<HttpBody> {
+    match rollback_paired_device(bridge, device_id) {
+        Ok(()) => json_error(status, message),
+        Err(error) => {
+            log::error!("Could not roll back failed mobile pairing: {error}");
+            json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Could not roll back failed mobile pairing",
+            )
+        }
+    }
 }
 
 fn schedule_relay_deletions(secrets: Vec<crate::mobile_relay::RelayDeviceSecret>) {
@@ -763,6 +895,7 @@ fn android_setup_payload(
     .to_string()
 }
 
+#[derive(Debug)]
 struct MobileCertificate {
     cert_path: PathBuf,
     key_path: PathBuf,
@@ -772,6 +905,11 @@ struct MobileCertificate {
 fn ensure_certificate(humhum_dir: &Path) -> Result<MobileCertificate, String> {
     let cert_path = humhum_dir.join("mobile-cert.pem");
     let key_path = humhum_dir.join("mobile-key.pem");
+    if [&cert_path, &key_path].iter().any(|path| {
+        std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink())
+    }) {
+        return Err("Mobile TLS identity cannot use symbolic links".into());
+    }
     match (cert_path.exists(), key_path.exists()) {
         (true, false) | (false, true) => {
             return Err("Mobile TLS identity is incomplete; restore both certificate files".into())
@@ -779,50 +917,57 @@ fn ensure_certificate(humhum_dir: &Path) -> Result<MobileCertificate, String> {
         _ => {}
     }
     if !cert_path.exists() {
-        let output = std::process::Command::new("/usr/bin/openssl")
-            .args([
-                "req", "-x509", "-newkey", "rsa:2048", "-sha256", "-days", "3650", "-nodes",
-                "-keyout",
-            ])
-            .arg(&key_path)
-            .arg("-out")
-            .arg(&cert_path)
-            .args([
-                "-subj",
-                "/CN=HumHum Mobile",
-                "-addext",
-                "subjectAltName=DNS:humhum.local",
-            ])
-            .output()
-            .map_err(|error| format!("Could not start OpenSSL: {error}"))?;
-        if !output.status.success() {
-            return Err(format!(
-                "Could not generate mobile TLS certificate: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            ));
+        let (certificate_pem, key_pem) = generate_certificate_pem()?;
+        crate::local_api_auth::write_private_file_atomically(&key_path, key_pem.as_bytes())
+            .map_err(|error| format!("Could not write mobile private key: {error}"))?;
+        if let Err(error) = crate::local_api_auth::write_private_file_atomically(
+            &cert_path,
+            certificate_pem.as_bytes(),
+        ) {
+            let _ = std::fs::remove_file(&key_path);
+            return Err(format!("Could not write mobile certificate: {error}"));
         }
     }
     set_owner_only(&key_path)?;
     set_owner_only(&cert_path)?;
-    let fingerprint_output = std::process::Command::new("/usr/bin/openssl")
-        .args(["x509", "-in"])
-        .arg(&cert_path)
-        .args(["-noout", "-fingerprint", "-sha256"])
-        .output()
-        .map_err(|error| format!("Could not inspect mobile certificate: {error}"))?;
-    if !fingerprint_output.status.success() {
-        return Err("Could not calculate mobile certificate fingerprint".into());
-    }
-    let fingerprint = String::from_utf8_lossy(&fingerprint_output.stdout)
-        .trim()
-        .split_once('=')
-        .map(|(_, value)| value.to_string())
-        .ok_or("OpenSSL returned an invalid certificate fingerprint")?;
+    let fingerprint = certificate_fingerprint(&cert_path)?;
     Ok(MobileCertificate {
         cert_path,
         key_path,
         fingerprint,
     })
+}
+
+fn generate_certificate_pem() -> Result<(String, String), String> {
+    let mut params = rcgen::CertificateParams::new(vec!["humhum.local".to_string()])
+        .map_err(|error| format!("Could not configure mobile TLS certificate: {error}"))?;
+    params.distinguished_name = rcgen::DistinguishedName::new();
+    params
+        .distinguished_name
+        .push(rcgen::DnType::CommonName, "HumHum Mobile");
+    let key_pair = rcgen::KeyPair::generate()
+        .map_err(|error| format!("Could not generate mobile TLS private key: {error}"))?;
+    let certificate = params
+        .self_signed(&key_pair)
+        .map_err(|error| format!("Could not generate mobile TLS certificate: {error}"))?;
+    Ok((certificate.pem(), key_pair.serialize_pem()))
+}
+
+fn certificate_fingerprint(cert_path: &Path) -> Result<String, String> {
+    let cert_file = std::fs::File::open(cert_path)
+        .map_err(|error| format!("Could not open mobile certificate: {error}"))?;
+    let certificate = rustls_pemfile::certs(&mut BufReader::new(cert_file))
+        .next()
+        .transpose()
+        .map_err(|error| format!("Could not parse mobile certificate: {error}"))?
+        .ok_or_else(|| "Mobile certificate does not contain a PEM certificate".to_string())?;
+    let fingerprint_hex = hex::encode_upper(Sha256::digest(certificate.as_ref()));
+    Ok(fingerprint_hex
+        .as_bytes()
+        .chunks(2)
+        .map(|pair| std::str::from_utf8(pair).expect("hex output is ASCII"))
+        .collect::<Vec<_>>()
+        .join(":"))
 }
 
 fn load_tls_config(cert_path: &Path, key_path: &Path) -> Result<rustls::ServerConfig, String> {
@@ -854,22 +999,205 @@ fn local_lan_ip() -> Result<Ipv4Addr, String> {
                     .trim()
                     .parse::<Ipv4Addr>()
                 {
-                    if !ip.is_loopback() {
+                    if is_usable_lan_ipv4(ip) {
                         return Ok(ip);
                     }
                 }
             }
         }
     }
+
+    let routed = routed_lan_ip().ok();
+    #[cfg(target_os = "windows")]
+    match windows_lan_candidates() {
+        Ok(candidates) => {
+            if let Some(address) = select_lan_candidate(&candidates, routed) {
+                return Ok(address);
+            }
+        }
+        Err(error) => {
+            log::warn!("[MobileBridge] could not enumerate Windows LAN adapters: {error}")
+        }
+    }
+
+    routed
+        .filter(|address| is_usable_lan_ipv4(*address))
+        .ok_or_else(|| "No usable IPv4 LAN address was found".into())
+}
+
+fn routed_lan_ip() -> Result<Ipv4Addr, String> {
     let socket = std::net::UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))
         .map_err(|error| format!("Could not inspect LAN address: {error}"))?;
     socket
         .connect((Ipv4Addr::new(8, 8, 8, 8), 80))
         .map_err(|error| format!("Could not resolve LAN address: {error}"))?;
     match socket.local_addr().map_err(|error| error.to_string())?.ip() {
-        IpAddr::V4(ip) if !ip.is_loopback() => Ok(ip),
+        IpAddr::V4(ip) if is_usable_lan_ipv4(ip) => Ok(ip),
         _ => Err("No usable IPv4 LAN address was found".into()),
     }
+}
+
+fn is_usable_lan_ipv4(address: Ipv4Addr) -> bool {
+    let octets = address.octets();
+    !address.is_unspecified()
+        && !address.is_loopback()
+        && !address.is_link_local()
+        && !address.is_multicast()
+        && octets != [255, 255, 255, 255]
+        && octets[0] != 0
+        // 100.64.0.0/10 is commonly a Tailscale or carrier-grade-NAT adapter,
+        // not the physical LAN the paired phone can reach directly.
+        && !(octets[0] == 100 && (64..=127).contains(&octets[1]))
+}
+
+#[cfg(any(target_os = "windows", test))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LanAddressCandidate {
+    address: Ipv4Addr,
+    interface_type: u32,
+    metric: u32,
+    has_gateway: bool,
+    virtual_adapter: bool,
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn select_lan_candidate(
+    candidates: &[LanAddressCandidate],
+    routed: Option<Ipv4Addr>,
+) -> Option<Ipv4Addr> {
+    candidates
+        .iter()
+        .filter(|candidate| is_usable_lan_ipv4(candidate.address))
+        .max_by_key(|candidate| {
+            let physical_type = matches!(candidate.interface_type, 6 | 71);
+            (
+                !candidate.virtual_adapter,
+                physical_type,
+                routed == Some(candidate.address),
+                candidate.address.is_private(),
+                candidate.has_gateway,
+                std::cmp::Reverse(candidate.metric),
+                std::cmp::Reverse(u32::from_be_bytes(candidate.address.octets())),
+            )
+        })
+        .map(|candidate| candidate.address)
+}
+
+#[cfg(target_os = "windows")]
+fn windows_lan_candidates() -> Result<Vec<LanAddressCandidate>, String> {
+    use windows_sys::Win32::Foundation::{ERROR_BUFFER_OVERFLOW, ERROR_SUCCESS};
+    use windows_sys::Win32::NetworkManagement::IpHelper::{
+        GetAdaptersAddresses, GAA_FLAG_INCLUDE_GATEWAYS, GAA_FLAG_SKIP_ANYCAST,
+        GAA_FLAG_SKIP_DNS_SERVER, GAA_FLAG_SKIP_MULTICAST, IF_TYPE_SOFTWARE_LOOPBACK,
+        IP_ADAPTER_ADDRESSES_LH,
+    };
+    use windows_sys::Win32::NetworkManagement::Ndis::IfOperStatusUp;
+    use windows_sys::Win32::Networking::WinSock::{IpDadStatePreferred, AF_INET, SOCKADDR_IN};
+
+    const INITIAL_BUFFER_BYTES: u32 = 15 * 1024;
+    const MAX_BUFFER_RETRIES: usize = 3;
+    const VIRTUAL_ADAPTER_HINTS: &[&str] = &[
+        "tailscale",
+        "wireguard",
+        "vpn",
+        "virtual",
+        "hyper-v",
+        "vmware",
+        "virtualbox",
+        "vbox",
+        "docker",
+        "wsl",
+    ];
+
+    let mut required_bytes = INITIAL_BUFFER_BYTES;
+    for _ in 0..MAX_BUFFER_RETRIES {
+        let word_size = std::mem::size_of::<usize>();
+        let word_count = (required_bytes as usize).div_ceil(word_size);
+        // usize gives the buffer sufficient alignment for IP_ADAPTER_ADDRESSES.
+        let mut buffer = vec![0_usize; word_count];
+        let status = unsafe {
+            GetAdaptersAddresses(
+                AF_INET as u32,
+                GAA_FLAG_INCLUDE_GATEWAYS
+                    | GAA_FLAG_SKIP_ANYCAST
+                    | GAA_FLAG_SKIP_DNS_SERVER
+                    | GAA_FLAG_SKIP_MULTICAST,
+                std::ptr::null(),
+                buffer.as_mut_ptr().cast::<IP_ADAPTER_ADDRESSES_LH>(),
+                &mut required_bytes,
+            )
+        };
+        if status == ERROR_BUFFER_OVERFLOW {
+            continue;
+        }
+        if status != ERROR_SUCCESS {
+            return Err(format!(
+                "GetAdaptersAddresses failed with Windows error {status}"
+            ));
+        }
+
+        let mut candidates = Vec::new();
+        let mut adapter = buffer.as_mut_ptr().cast::<IP_ADAPTER_ADDRESSES_LH>();
+        unsafe {
+            while !adapter.is_null() {
+                let current = &*adapter;
+                if current.OperStatus == IfOperStatusUp
+                    && current.IfType != IF_TYPE_SOFTWARE_LOOPBACK
+                {
+                    let adapter_name = format!(
+                        "{} {}",
+                        windows_wide_string(current.FriendlyName),
+                        windows_wide_string(current.Description)
+                    )
+                    .to_ascii_lowercase();
+                    let virtual_adapter = matches!(current.IfType, 23 | 131)
+                        || VIRTUAL_ADAPTER_HINTS
+                            .iter()
+                            .any(|hint| adapter_name.contains(hint));
+                    let mut unicast = current.FirstUnicastAddress;
+                    while !unicast.is_null() {
+                        let address = &*unicast;
+                        let socket_address = address.Address;
+                        if address.DadState == IpDadStatePreferred
+                            && !socket_address.lpSockaddr.is_null()
+                            && socket_address.iSockaddrLength
+                                >= std::mem::size_of::<SOCKADDR_IN>() as i32
+                        {
+                            let socket = &*(socket_address.lpSockaddr.cast::<SOCKADDR_IN>());
+                            if socket.sin_family == AF_INET {
+                                let bytes = socket.sin_addr.S_un.S_un_b;
+                                candidates.push(LanAddressCandidate {
+                                    address: Ipv4Addr::new(
+                                        bytes.s_b1, bytes.s_b2, bytes.s_b3, bytes.s_b4,
+                                    ),
+                                    interface_type: current.IfType,
+                                    metric: current.Ipv4Metric,
+                                    has_gateway: !current.FirstGatewayAddress.is_null(),
+                                    virtual_adapter,
+                                });
+                            }
+                        }
+                        unicast = address.Next;
+                    }
+                }
+                adapter = current.Next;
+            }
+        }
+        return Ok(candidates);
+    }
+
+    Err("GetAdaptersAddresses buffer size changed repeatedly".into())
+}
+
+#[cfg(target_os = "windows")]
+unsafe fn windows_wide_string(pointer: windows_sys::core::PCWSTR) -> String {
+    if pointer.is_null() {
+        return String::new();
+    }
+    let length = (0..512)
+        .find(|offset| unsafe { *pointer.add(*offset) == 0 })
+        .unwrap_or(512);
+    String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(pointer, length) })
 }
 
 fn local_lan_host() -> Result<String, String> {
@@ -1091,47 +1419,49 @@ fn revoke_mobile_device(
     let Some(token) = request_token(request) else {
         return json_error(StatusCode::UNAUTHORIZED, "Pair this device first");
     };
-    let device_id = bridge
-        .devices
+    let revoked = bridge
+        .relay_secrets
         .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .authorize_device(token)
-        .map(|device| device.id);
-    if let Some(device_id) = device_id.as_deref() {
-        let publisher = bridge
-            .runtime
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .publisher
-            .clone();
-        if let Some(publisher) = publisher {
-            let _ = publisher.revoke(device_id);
-        }
-    }
-    match bridge
-        .devices
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .revoke_token(token)
-    {
-        Ok(()) => {
-            if let Some(device_id) = device_id {
-                let relay_secret = bridge
-                    .relay_secrets
-                    .lock()
-                    .unwrap_or_else(|error| error.into_inner())
-                    .take(&device_id)
-                    .ok()
-                    .flatten();
-                bridge.relay_changes.notify_one();
-                schedule_relay_deletions(relay_secret.into_iter().collect());
-                bridge
-                    .presence
-                    .lock()
-                    .unwrap_or_else(|error| error.into_inner())
-                    .remove(&device_id);
+        .map_err(|error| error.to_string())
+        .and_then(|mut relay_secrets| {
+            bridge
+                .devices
+                .lock()
+                .map_err(|error| error.to_string())
+                .and_then(|mut devices| {
+                    revoke_token_records(&mut devices, &mut relay_secrets, token)
+                })
+        });
+    match revoked {
+        Ok((device_id, relay_secret)) => {
+            let publisher = bridge
+                .runtime
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .publisher
+                .clone();
+            let publisher_error = publisher.and_then(|publisher| {
+                publisher.revoke(&device_id).err().map(|error| {
+                    publisher.stop();
+                    error
+                })
+            });
+            bridge.relay_changes.notify_one();
+            schedule_relay_deletions(relay_secret.into_iter().collect());
+            bridge
+                .presence
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .remove(&device_id);
+            if let Some(error) = publisher_error {
+                log::error!("Device was revoked after wake publisher failure: {error}");
+                json_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Device was revoked, but wake shutdown failed",
+                )
+            } else {
+                json_response(StatusCode::OK, &serde_json::json!({ "status": "revoked" }))
             }
-            json_response(StatusCode::OK, &serde_json::json!({ "status": "revoked" }))
         }
         Err(error) if error == "Paired mobile device not found" => {
             json_error(StatusCode::UNAUTHORIZED, "Pair this device first")
@@ -1225,7 +1555,10 @@ async fn pair_device(
             Err(_) => return json_error(StatusCode::INTERNAL_SERVER_ERROR, "Pairing unavailable"),
         };
         let Some(challenge) = runtime.pairing.as_mut() else {
-            return json_error(StatusCode::UNAUTHORIZED, "Start pairing on the Mac first");
+            return json_error(
+                StatusCode::UNAUTHORIZED,
+                "Start pairing on the desktop app first",
+            );
         };
         if let Err(error) = challenge.verify(&input.code, chrono::Utc::now().timestamp()) {
             return json_error(StatusCode::UNAUTHORIZED, &error);
@@ -1260,44 +1593,79 @@ async fn pair_device(
         .unwrap_or_else(|error| error.into_inner())
         .relay_base_url
         .clone();
-    let wake_relay = if let Some(base_url) = relay_base_url {
+    let relay_provision = if let Some(base_url) = relay_base_url {
         let client = match crate::mobile_relay::RelayClient::new(base_url) {
             Ok(client) => client,
             Err(_) => {
-                rollback_paired_device(bridge, &device.id);
-                return json_error(StatusCode::BAD_GATEWAY, "Wake relay pairing failed");
+                return rollback_pairing_response(
+                    bridge,
+                    &device.id,
+                    StatusCode::BAD_GATEWAY,
+                    "Wake relay pairing failed",
+                );
             }
         };
         let provision = match client.register(&device.id).await {
             Ok(provision) => provision,
             Err(_) => {
-                rollback_paired_device(bridge, &device.id);
-                return json_error(StatusCode::BAD_GATEWAY, "Wake relay pairing failed");
+                return rollback_pairing_response(
+                    bridge,
+                    &device.id,
+                    StatusCode::BAD_GATEWAY,
+                    "Wake relay pairing failed",
+                );
             }
         };
-        if bridge
-            .relay_secrets
-            .lock()
-            .map_err(|error| error.to_string())
-            .and_then(|mut secrets| secrets.put(provision.desktop.clone()))
-            .is_err()
-        {
-            let _ = client.delete(&provision.desktop).await;
-            rollback_paired_device(bridge, &device.id);
-            return json_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Wake relay pairing failed",
-            );
-        }
-        bridge.relay_changes.notify_one();
-        Some(provision.android)
+        Some((client, provision))
     } else {
         None
     };
-    json_response(
-        StatusCode::OK,
-        &pair_success_value(&token, challenge_scope, wake_relay),
-    )
+
+    let committed = commit_pairing_response(
+        bridge,
+        &device.id,
+        &token,
+        challenge_scope,
+        relay_provision
+            .as_ref()
+            .map(|(_, provision)| &provision.desktop),
+        relay_provision
+            .as_ref()
+            .map(|(_, provision)| provision.android.clone()),
+    );
+    match committed {
+        Ok(response) => {
+            if relay_provision.is_some() {
+                bridge.relay_changes.notify_one();
+            }
+            response
+        }
+        Err(PairingCommitError::Cancelled) => {
+            if let Some((client, provision)) = relay_provision {
+                if client.delete(&provision.desktop).await.is_err() {
+                    log::warn!("Could not delete a cancelled wake relay pairing");
+                }
+            }
+            json_error(StatusCode::CONFLICT, "Pairing was cancelled")
+        }
+        Err(PairingCommitError::Store(error)) => {
+            log::error!("Could not commit mobile pairing: {error}");
+            // Roll back the local device before awaiting remote cleanup. This
+            // leaves no window in which a failed commit is still authorized.
+            let response = rollback_pairing_response(
+                bridge,
+                &device.id,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Wake relay pairing failed",
+            );
+            if let Some((client, provision)) = relay_provision {
+                if client.delete(&provision.desktop).await.is_err() {
+                    log::warn!("Could not delete a failed wake relay pairing");
+                }
+            }
+            response
+        }
+    }
 }
 
 fn request_scope(
@@ -1863,6 +2231,12 @@ impl MobileDeviceStore {
             .map_err(|error| format!("Could not create HUMHUM directory: {error}"))?;
         let path = humhum_dir.join("mobile-devices.json");
         let devices = if path.exists() {
+            if std::fs::symlink_metadata(&path)
+                .is_ok_and(|metadata| metadata.file_type().is_symlink())
+            {
+                return Err("Mobile device store cannot be a symbolic link".into());
+            }
+            set_owner_only(&path)?;
             let content = std::fs::read_to_string(&path)
                 .map_err(|error| format!("Could not read mobile devices: {error}"))?;
             if content.trim().is_empty() {
@@ -1891,7 +2265,10 @@ impl MobileDeviceStore {
             scope,
         };
         self.devices.push(device.clone());
-        self.persist()?;
+        if let Err(error) = self.persist() {
+            self.devices.pop();
+            return Err(error);
+        }
         Ok(device)
     }
 
@@ -1950,41 +2327,33 @@ impl MobileDeviceStore {
     }
 
     fn revoke_device(&mut self, device_id: &str) -> Result<(), String> {
+        let previous = self.devices.clone();
         let before = self.devices.len();
         self.devices.retain(|device| device.id != device_id);
         if self.devices.len() == before {
             return Err("Paired mobile device not found".into());
         }
-        self.persist()
-    }
-
-    fn revoke_token(&mut self, raw_token: &str) -> Result<(), String> {
-        let candidate = digest_token(raw_token);
-        let before = self.devices.len();
-        self.devices.retain(|device| {
-            !constant_time_eq(device.token_digest.as_bytes(), candidate.as_bytes())
-        });
-        if self.devices.len() == before {
-            return Err("Paired mobile device not found".into());
+        if let Err(error) = self.persist() {
+            self.devices = previous;
+            return Err(error);
         }
-        self.persist()
+        Ok(())
     }
 
     fn revoke_all(&mut self) -> Result<(), String> {
-        self.devices.clear();
-        self.persist()
+        let previous = std::mem::take(&mut self.devices);
+        if let Err(error) = self.persist() {
+            self.devices = previous;
+            return Err(error);
+        }
+        Ok(())
     }
 
     fn persist(&self) -> Result<(), String> {
         let content = serde_json::to_vec_pretty(&self.devices)
             .map_err(|error| format!("Could not serialize mobile devices: {error}"))?;
-        let temp_path = self.path.with_extension("json.tmp");
-        std::fs::write(&temp_path, content)
-            .map_err(|error| format!("Could not write mobile devices: {error}"))?;
-        set_owner_only(&temp_path)?;
-        std::fs::rename(&temp_path, &self.path)
-            .map_err(|error| format!("Could not replace mobile devices: {error}"))?;
-        set_owner_only(&self.path)
+        crate::local_api_auth::write_private_file_atomically(&self.path, &content)
+            .map_err(|error| format!("Could not write mobile devices: {error}"))
     }
 }
 
@@ -2128,18 +2497,9 @@ fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
         == 0
 }
 
-fn set_owner_only(path: &Path) -> Result<(), String> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut permissions = std::fs::metadata(path)
-            .map_err(|error| format!("Could not inspect mobile device store: {error}"))?
-            .permissions();
-        permissions.set_mode(0o600);
-        std::fs::set_permissions(path, permissions)
-            .map_err(|error| format!("Could not protect mobile device store: {error}"))?;
-    }
-    Ok(())
+fn set_owner_only(_path: &Path) -> Result<(), String> {
+    crate::local_api_auth::protect_owner_only(_path)
+        .map_err(|error| format!("Could not protect mobile private file: {error}"))
 }
 
 #[cfg(test)]
@@ -2419,6 +2779,81 @@ mod tests {
     }
 
     #[test]
+    fn windows_lan_selection_prefers_reachable_physical_adapters() {
+        let wifi = LanAddressCandidate {
+            address: Ipv4Addr::new(192, 168, 50, 20),
+            interface_type: 71,
+            metric: 50,
+            has_gateway: false,
+            virtual_adapter: false,
+        };
+        let ethernet = LanAddressCandidate {
+            address: Ipv4Addr::new(192, 168, 1, 20),
+            interface_type: 6,
+            metric: 25,
+            has_gateway: true,
+            virtual_adapter: false,
+        };
+        let vpn = LanAddressCandidate {
+            address: Ipv4Addr::new(10, 8, 0, 2),
+            interface_type: 131,
+            metric: 1,
+            has_gateway: true,
+            virtual_adapter: true,
+        };
+        let hyper_v = LanAddressCandidate {
+            address: Ipv4Addr::new(172, 20, 0, 1),
+            interface_type: 6,
+            metric: 1,
+            has_gateway: true,
+            virtual_adapter: true,
+        };
+        let tailscale = LanAddressCandidate {
+            address: Ipv4Addr::new(100, 101, 2, 3),
+            interface_type: 6,
+            metric: 1,
+            has_gateway: true,
+            virtual_adapter: true,
+        };
+        let public_looking_wifi = LanAddressCandidate {
+            address: Ipv4Addr::new(30, 169, 112, 215),
+            interface_type: 71,
+            metric: 75,
+            has_gateway: true,
+            virtual_adapter: false,
+        };
+
+        // Offline Wi-Fi remains usable without an internet route or gateway.
+        assert_eq!(
+            select_lan_candidate(&[hyper_v, wifi], None),
+            Some(wifi.address)
+        );
+        // A VPN-owned default route must not hide the physical LAN.
+        assert_eq!(
+            select_lan_candidate(&[vpn, wifi], Some(vpn.address)),
+            Some(wifi.address)
+        );
+        // Between physical adapters, the routed interface is the best default.
+        assert_eq!(
+            select_lan_candidate(&[ethernet, wifi], Some(wifi.address)),
+            Some(wifi.address)
+        );
+        // Some phone hotspots expose a public-looking on-link subnet. The
+        // routed physical adapter must win over an unrelated private adapter.
+        assert_eq!(
+            select_lan_candidate(
+                &[ethernet, public_looking_wifi],
+                Some(public_looking_wifi.address),
+            ),
+            Some(public_looking_wifi.address)
+        );
+        assert_eq!(
+            select_lan_candidate(&[tailscale], Some(tailscale.address)),
+            None
+        );
+    }
+
+    #[test]
     fn public_looking_wifi_keeps_numeric_host_for_android_on_link_validation() {
         assert_eq!(
             mobile_lan_host(Ipv4Addr::new(30, 169, 112, 215)),
@@ -2475,7 +2910,7 @@ mod tests {
             })
             .unwrap();
 
-        rollback_paired_device(&bridge, &device.id);
+        rollback_paired_device(&bridge, &device.id).unwrap();
 
         assert!(bridge
             .devices
@@ -2489,6 +2924,176 @@ mod tests {
             .unwrap()
             .get(&device.id)
             .is_none());
+    }
+
+    #[test]
+    fn relay_pairing_commit_cannot_follow_a_concurrent_revoke() {
+        let temp = tempfile::tempdir().unwrap();
+        let bridge = Arc::new(MobileBridgeState::load_or_create(temp.path()).unwrap());
+        let token = "phone-token".to_string();
+        let device = bridge
+            .devices
+            .lock()
+            .unwrap()
+            .add_device("Phone", &token, MobileDeviceScope::Control)
+            .unwrap();
+        let secret = crate::mobile_relay::RelayDeviceSecret {
+            device_id: device.id.clone(),
+            base_url: "https://relay.example.com".into(),
+            channel_id: "11".repeat(32),
+            wake_key: "22".repeat(32),
+            publisher_token: "33".repeat(32),
+            next_sequence: 1,
+        };
+        let bundle = crate::mobile_relay::WakeRelayBundle {
+            version: 1,
+            base_url: secret.base_url.clone(),
+            channel_id: secret.channel_id.clone(),
+            subscriber_token: "44".repeat(32),
+            wake_key: secret.wake_key.clone(),
+        };
+        let (registered_tx, registered_rx) = std::sync::mpsc::sync_channel(0);
+        let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel(0);
+        let pairing_bridge = Arc::clone(&bridge);
+        let pairing_device_id = device.id.clone();
+        let pairing = std::thread::spawn(move || {
+            // Model the exact interleaving around RelayClient::register().await:
+            // remote registration has finished, but local commit has not run.
+            registered_tx.send(()).unwrap();
+            resume_rx.recv().unwrap();
+            commit_pairing_response(
+                &pairing_bridge,
+                &pairing_device_id,
+                &token,
+                MobileDeviceScope::Control,
+                Some(&secret),
+                Some(bundle),
+            )
+        });
+
+        registered_rx.recv().unwrap();
+        bridge.revoke_device(&device.id).unwrap();
+        resume_tx.send(()).unwrap();
+        let committed = pairing.join().unwrap();
+
+        assert!(matches!(committed, Err(PairingCommitError::Cancelled)));
+        assert!(bridge
+            .devices
+            .lock()
+            .unwrap()
+            .authorize("phone-token")
+            .is_none());
+        assert!(bridge
+            .relay_secrets
+            .lock()
+            .unwrap()
+            .get(&device.id)
+            .is_none());
+        assert!(
+            crate::mobile_relay::MobileRelaySecretStore::load_or_create(temp.path())
+                .unwrap()
+                .get(&device.id)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn cross_store_revoke_restores_relay_when_device_commit_fails() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut devices = MobileDeviceStore::load_or_create(temp.path()).unwrap();
+        let mut relay_secrets =
+            crate::mobile_relay::MobileRelaySecretStore::load_or_create(temp.path()).unwrap();
+        let device = devices
+            .add_device("Phone", "phone-token", MobileDeviceScope::Control)
+            .unwrap();
+        let secret = crate::mobile_relay::RelayDeviceSecret {
+            device_id: device.id.clone(),
+            base_url: "https://relay.example.com".into(),
+            channel_id: "11".repeat(32),
+            wake_key: "22".repeat(32),
+            publisher_token: "33".repeat(32),
+            next_sequence: 1,
+        };
+        relay_secrets.put(secret.clone()).unwrap();
+        let blocker = temp.path().join("not-a-directory");
+        std::fs::write(&blocker, b"block device persistence").unwrap();
+        devices.path = blocker.join("mobile-devices.json");
+
+        assert!(revoke_device_records(&mut devices, &mut relay_secrets, &device.id).is_err());
+
+        assert_eq!(
+            devices.authorize("phone-token"),
+            Some(MobileDeviceScope::Control)
+        );
+        assert_eq!(relay_secrets.get(&device.id), Some(&secret));
+        assert_eq!(
+            crate::mobile_relay::MobileRelaySecretStore::load_or_create(temp.path())
+                .unwrap()
+                .get(&device.id),
+            Some(&secret)
+        );
+    }
+
+    #[test]
+    fn cross_store_revoke_leaves_device_when_relay_commit_fails() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut devices = MobileDeviceStore::load_or_create(temp.path()).unwrap();
+        let mut relay_secrets =
+            crate::mobile_relay::MobileRelaySecretStore::load_or_create(temp.path()).unwrap();
+        let device = devices
+            .add_device("Phone", "phone-token", MobileDeviceScope::Read)
+            .unwrap();
+        let secret = crate::mobile_relay::RelayDeviceSecret {
+            device_id: device.id.clone(),
+            base_url: "https://relay.example.com".into(),
+            channel_id: "11".repeat(32),
+            wake_key: "22".repeat(32),
+            publisher_token: "33".repeat(32),
+            next_sequence: 1,
+        };
+        relay_secrets.put(secret.clone()).unwrap();
+        let blocker = temp.path().join("not-a-directory");
+        std::fs::write(&blocker, b"block relay persistence").unwrap();
+        relay_secrets.set_path_for_test(blocker.join("mobile-relay-secrets.json"));
+
+        assert!(revoke_device_records(&mut devices, &mut relay_secrets, &device.id).is_err());
+
+        assert_eq!(
+            devices.authorize("phone-token"),
+            Some(MobileDeviceScope::Read)
+        );
+        assert_eq!(relay_secrets.get(&device.id), Some(&secret));
+    }
+
+    #[test]
+    fn cross_store_revoke_all_restores_relays_when_device_commit_fails() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut devices = MobileDeviceStore::load_or_create(temp.path()).unwrap();
+        let mut relay_secrets =
+            crate::mobile_relay::MobileRelaySecretStore::load_or_create(temp.path()).unwrap();
+        let device = devices
+            .add_device("Phone", "phone-token", MobileDeviceScope::Read)
+            .unwrap();
+        let secret = crate::mobile_relay::RelayDeviceSecret {
+            device_id: device.id.clone(),
+            base_url: "https://relay.example.com".into(),
+            channel_id: "11".repeat(32),
+            wake_key: "22".repeat(32),
+            publisher_token: "33".repeat(32),
+            next_sequence: 1,
+        };
+        relay_secrets.put(secret.clone()).unwrap();
+        let blocker = temp.path().join("not-a-directory");
+        std::fs::write(&blocker, b"block device persistence").unwrap();
+        devices.path = blocker.join("mobile-devices.json");
+
+        assert!(revoke_all_device_records(&mut devices, &mut relay_secrets).is_err());
+
+        assert_eq!(
+            devices.authorize("phone-token"),
+            Some(MobileDeviceScope::Read)
+        );
+        assert_eq!(relay_secrets.get(&device.id), Some(&secret));
     }
 
     #[test]
@@ -2686,6 +3291,28 @@ mod tests {
         assert!(!content.contains(raw_token));
         assert_eq!(store.authorize(raw_token), Some(MobileDeviceScope::Read));
         assert_eq!(store.authorize("wrong-token"), None);
+    }
+
+    #[test]
+    fn failed_device_persistence_rolls_back_memory() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut store = MobileDeviceStore::load_or_create(temp.path()).unwrap();
+        let paired = store
+            .add_device("My phone", "phone-token", MobileDeviceScope::Read)
+            .unwrap();
+        let blocker = temp.path().join("not-a-directory");
+        std::fs::write(&blocker, b"block child creation").unwrap();
+        store.path = blocker.join("mobile-devices.json");
+
+        assert!(store
+            .add_device("Tablet", "tablet-token", MobileDeviceScope::Control)
+            .is_err());
+        assert_eq!(store.authorize("tablet-token"), None);
+        assert!(store.revoke_device(&paired.id).is_err());
+        assert_eq!(
+            store.authorize("phone-token"),
+            Some(MobileDeviceScope::Read)
+        );
     }
 
     #[test]
@@ -2925,15 +3552,20 @@ mod tests {
     fn device_can_revoke_itself_with_its_raw_token() {
         let temp = tempfile::tempdir().unwrap();
         let mut store = MobileDeviceStore::load_or_create(temp.path()).unwrap();
-        store
+        let phone = store
             .add_device("Phone", "phone-token", MobileDeviceScope::Control)
             .unwrap();
         store
             .add_device("Tablet", "tablet-token", MobileDeviceScope::Read)
             .unwrap();
+        let mut relay_secrets =
+            crate::mobile_relay::MobileRelaySecretStore::load_or_create(temp.path()).unwrap();
 
-        store.revoke_token("phone-token").unwrap();
+        let (revoked_id, relay_secret) =
+            revoke_token_records(&mut store, &mut relay_secrets, "phone-token").unwrap();
 
+        assert_eq!(revoked_id, phone.id);
+        assert!(relay_secret.is_none());
         assert_eq!(store.authorize("phone-token"), None);
         assert_eq!(
             store.authorize("tablet-token"),
@@ -2964,11 +3596,33 @@ mod tests {
         let first = ensure_certificate(temp.path()).unwrap();
         let cert_before = std::fs::read(&first.cert_path).unwrap();
         let key_before = std::fs::read(&first.key_path).unwrap();
+        load_tls_config(&first.cert_path, &first.key_path).unwrap();
         let second = ensure_certificate(temp.path()).unwrap();
 
         assert_eq!(first.fingerprint, second.fingerprint);
+        assert_eq!(first.fingerprint.len(), 95);
+        assert_eq!(first.fingerprint.matches(':').count(), 31);
+        assert!(first.fingerprint.chars().all(|character| character == ':'
+            || character.is_ascii_digit()
+            || ('A'..='F').contains(&character)));
         assert_eq!(cert_before, std::fs::read(&second.cert_path).unwrap());
         assert_eq!(key_before, std::fs::read(&second.key_path).unwrap());
+    }
+
+    #[test]
+    fn incomplete_certificate_identity_is_reported_without_regeneration() {
+        let temp = tempfile::tempdir().unwrap();
+        let cert_path = temp.path().join("mobile-cert.pem");
+        std::fs::write(&cert_path, "existing certificate").unwrap();
+
+        let error = ensure_certificate(temp.path()).unwrap_err();
+
+        assert!(error.contains("incomplete"));
+        assert_eq!(
+            std::fs::read_to_string(cert_path).unwrap(),
+            "existing certificate"
+        );
+        assert!(!temp.path().join("mobile-key.pem").exists());
     }
 
     #[test]

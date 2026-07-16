@@ -1,0 +1,138 @@
+<style>
+  .direction-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 22px;
+    margin-top: 24px;
+  }
+  .direction {
+    border: 1px solid #dce5ef;
+    border-radius: 18px;
+    background: #fff;
+    padding: 14px;
+    cursor: pointer;
+    transition: 160ms ease;
+  }
+  .direction:hover { transform: translateY(-2px); border-color: #a89ce6; }
+  .direction.selected { border: 2px solid #8477d4; box-shadow: 0 16px 40px rgba(108, 99, 180, .16); }
+  .phone {
+    position: relative;
+    width: min(100%, 278px);
+    aspect-ratio: 9 / 18.8;
+    margin: 0 auto;
+    overflow: hidden;
+    border: 7px solid #263241;
+    border-radius: 34px;
+    background:
+      radial-gradient(circle at 12% 4%, rgba(218,241,255,.95), transparent 34%),
+      radial-gradient(circle at 92% 12%, rgba(241,229,255,.9), transparent 38%),
+      linear-gradient(165deg, #fffaf7, #f4fbff 54%, #f6f1ff);
+    color: #263241;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  .notch { width: 72px; height: 18px; margin: 0 auto 4px; border-radius: 0 0 14px 14px; background: #263241; }
+  .screen { padding: 9px 14px 66px; }
+  .mobile-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:16px; }
+  .brand { font-size: 15px; font-weight: 850; }
+  .online { display:flex; align-items:center; gap:5px; font-size:9px; color:#5e7086; }
+  .online::before { content:""; width:6px; height:6px; border-radius:50%; background:#42c98b; }
+  .eyebrow { margin:0 0 5px; font-size:9px; font-weight:800; color:#8d7ddf; }
+  .mobile-title { margin:0; font-size:20px; line-height:1.18; font-weight:780; letter-spacing:0; }
+  .lead { margin:7px 0 15px; color:#65768d; font-size:10px; line-height:1.5; }
+  .notice { padding:12px; border-left:3px solid #f0a466; background:rgba(255,255,255,.72); border-radius:8px; margin-bottom:10px; }
+  .notice strong { display:block; font-size:11px; margin-bottom:3px; }
+  .notice span { display:block; color:#6b7b91; font-size:9px; line-height:1.45; }
+  .section-head { display:flex; align-items:center; justify-content:space-between; margin:16px 0 7px; font-size:10px; font-weight:800; }
+  .section-head span { color:#8d7ddf; font-weight:700; }
+  .session { padding:11px; border:1px solid rgba(116,143,165,.14); border-radius:8px; background:rgba(255,255,255,.72); margin-bottom:8px; }
+  .session-row { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  .session strong { font-size:10px; }
+  .session small { color:#7b8ba0; font-size:8px; }
+  .pill { padding:3px 7px; border-radius:999px; color:#2b8295; background:#eaf7ff; font-size:8px; font-weight:800; }
+  .session p { margin:5px 0 0; color:#67788e; font-size:9px; line-height:1.4; }
+  .soft-button { width:100%; border:1px solid rgba(141,125,223,.22); border-radius:8px; padding:9px; background:linear-gradient(135deg,#f0ecff,#eaf7ff); color:#625bb3; font-size:9px; font-weight:800; }
+  .bottom-nav { position:absolute; left:0; right:0; bottom:0; height:55px; display:flex; align-items:center; justify-content:space-around; border-top:1px solid rgba(116,143,165,.14); background:rgba(255,255,255,.88); }
+  .nav-item { display:grid; place-items:center; gap:2px; color:#93a0b2; font-size:8px; }
+  .nav-icon { width:23px; height:23px; display:grid; place-items:center; border-radius:8px; background:#f6f8fb; font-weight:850; }
+  .nav-item.active { color:#6d6ade; font-weight:800; }
+  .nav-item.active .nav-icon { background:linear-gradient(135deg,#f0ecff,#eaf7ff); }
+  .metric-row { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; margin:12px 0; }
+  .metric { padding:9px 6px; border:1px solid rgba(116,143,165,.14); border-radius:8px; background:rgba(255,255,255,.65); }
+  .metric b { display:block; font-size:14px; color:#4d6077; }
+  .metric span { font-size:7px; color:#8a98aa; }
+  .direction-copy { padding:14px 4px 4px; }
+  .direction-copy h3 { margin:0 0 5px; font-size:16px; }
+  .direction-copy p { margin:0; min-height:42px; color:#64748b; font-size:12px; line-height:1.5; }
+  .recommended { display:inline-block; margin-bottom:8px; padding:3px 8px; border-radius:999px; color:#5e57ad; background:#f0ecff; font-size:10px; font-weight:800; }
+  @media (max-width: 980px) { .direction-grid { grid-template-columns:1fr; } .phone { width:280px; } }
+</style>
+
+<h2>Android 应该怎样像 HUMHUM？</h2>
+<p class="subtitle">三种方向都保留安全配对、会话查看、权限确认和后续指令，只改变手机上的产品表达。</p>
+
+<div class="direction-grid">
+  <div class="direction" data-choice="desktop-mirror" onclick="toggleSelect(this)">
+    <div class="phone">
+      <div class="notch"></div>
+      <div class="screen">
+        <div class="mobile-head"><div class="brand">HUMHUM</div><div class="online">Mac 已连接</div></div>
+        <p class="eyebrow">HEXA SUPERVISOR</p>
+        <h3 class="mobile-title">Agent 监工台</h3>
+        <p class="lead">观察每轮进度、确认点、memory 和复盘信号。</p>
+        <div class="metric-row">
+          <div class="metric"><b>3</b><span>正在工作</span></div>
+          <div class="metric"><b>1</b><span>等待确认</span></div>
+          <div class="metric"><b>2</b><span>需要留意</span></div>
+        </div>
+        <div class="section-head">最近会话 <span>查看全部</span></div>
+        <div class="session"><div class="session-row"><strong>HUMHUM Android</strong><span class="pill">working</span></div><p>正在统一移动端界面与桌面端视觉。</p></div>
+        <div class="session"><div class="session-row"><strong>Release v0.3.4</strong><small>12 分钟前</small></div><p>macOS 与 Android 安装包已发布。</p></div>
+      </div>
+      <div class="bottom-nav">
+        <div class="nav-item"><div class="nav-icon">H</div>Humi</div><div class="nav-item"><div class="nav-icon">Y</div>Hype</div><div class="nav-item"><div class="nav-icon">S</div>Hush</div><div class="nav-item active"><div class="nav-icon">X</div>Hexa</div>
+      </div>
+    </div>
+    <div class="direction-copy"><h3>A. 桌面镜像</h3><p>四模块结构与桌面完全一致，品牌统一最强，但手机上会显得功能入口偏多。</p></div>
+  </div>
+
+  <div class="direction" data-choice="mobile-companion" onclick="toggleSelect(this)">
+    <div class="phone">
+      <div class="notch"></div>
+      <div class="screen">
+        <div class="mobile-head"><div class="brand">HUMHUM</div><div class="online">小米手机 · 在线</div></div>
+        <p class="eyebrow">早上好</p>
+        <h3 class="mobile-title">电脑离开后，<br>我替你看着。</h3>
+        <p class="lead">三个 Agent 还在继续，其中一件事需要你决定。</p>
+        <div class="notice"><strong>Codex 等待一次确认</strong><span>HUMHUM Android 想执行发布前检查。</span></div>
+        <button class="soft-button">查看并决定</button>
+        <div class="section-head">最近在做什么 <span>3 个会话</span></div>
+        <div class="session"><div class="session-row"><strong>统一 Android 界面</strong><span class="pill">进行中</span></div><p>正在把移动端变成柔和、清晰的 HUMHUM 伴侣。</p></div>
+        <div class="session"><div class="session-row"><strong>发布最新安装包</strong><small>已完成</small></div><p>macOS 与 Android 已并列发布。</p></div>
+      </div>
+      <div class="bottom-nav">
+        <div class="nav-item active"><div class="nav-icon">⌂</div>今天</div><div class="nav-item"><div class="nav-icon">◎</div>会话</div><div class="nav-item"><div class="nav-icon">H</div>我的</div>
+      </div>
+    </div>
+    <div class="direction-copy"><span class="recommended">推荐</span><h3>B. 移动伴侣</h3><p>延续桌面视觉，但围绕“离开电脑后我替你看着”重组内容，最符合手机场景。</p></div>
+  </div>
+
+  <div class="direction" data-choice="hexa-focus" onclick="toggleSelect(this)">
+    <div class="phone">
+      <div class="notch"></div>
+      <div class="screen">
+        <div class="mobile-head"><div class="brand">HUMHUM</div><div class="online">Bridge 正常</div></div>
+        <p class="eyebrow">HEXA MOBILE</p>
+        <h3 class="mobile-title">远程监控</h3>
+        <p class="lead">只保留 Agent 会话、确认和后续指令。</p>
+        <div class="section-head">需要处理 <span>1</span></div>
+        <div class="notice"><strong>发布权限确认</strong><span>Codex · HUMHUM Android</span></div>
+        <div class="section-head">活跃会话 <span>3</span></div>
+        <div class="session"><div class="session-row"><strong>Android UI</strong><span class="pill">working</span></div><p>最近活动 1 分钟前</p></div>
+        <div class="session"><div class="session-row"><strong>macOS Release</strong><small>idle</small></div><p>最近活动 18 分钟前</p></div>
+        <div class="session"><div class="session-row"><strong>Mobile Bridge</strong><small>watch</small></div><p>连接稳定 · 后台监控开启</p></div>
+      </div>
+      <div class="bottom-nav"><div class="nav-item active"><div class="nav-icon">◎</div>会话</div><div class="nav-item"><div class="nav-icon">!</div>确认</div><div class="nav-item"><div class="nav-icon">⚙</div>设置</div></div>
+    </div>
+    <div class="direction-copy"><h3>C. Hexa 专注版</h3><p>最接近当前功能范围，改动和认知成本最低，但 HUMHUM 的个人伴侣感较弱。</p></div>
+  </div>
+</div>

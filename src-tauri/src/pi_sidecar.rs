@@ -12,6 +12,10 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 
 const PI_CLIENT_TYPE: &str = "pi";
+#[cfg(target_os = "windows")]
+const PI_EXECUTABLE: &str = "pi.cmd";
+#[cfg(not(target_os = "windows"))]
+const PI_EXECUTABLE: &str = "pi";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PiInstallStatus {
@@ -122,7 +126,7 @@ impl PiSidecarState {
 
         {
             let mut child = handle.child.lock().await;
-            let _ = child.kill().await;
+            terminate_process_tree(&mut child).await;
         }
 
         let mut status = handle.status.lock().await;
@@ -173,11 +177,10 @@ impl PiSidecarState {
 }
 
 pub async fn check_installed() -> PiInstallStatus {
-    let result = tokio::time::timeout(
-        std::time::Duration::from_secs(3),
-        Command::new("pi").arg("--version").output(),
-    )
-    .await;
+    let mut command = Command::new(PI_EXECUTABLE);
+    command.arg("--version").kill_on_drop(true);
+    configure_background_process(&mut command);
+    let result = tokio::time::timeout(std::time::Duration::from_secs(3), command.output()).await;
 
     match result {
         Ok(Ok(output)) if output.status.success() => {
@@ -221,7 +224,8 @@ pub async fn start_session(
     std::fs::create_dir_all(&session_dir)
         .map_err(|e| format!("Failed to create Pi session dir: {}", e))?;
 
-    let mut command = Command::new("pi");
+    let mut command = Command::new(PI_EXECUTABLE);
+    configure_background_process(&mut command);
     command
         .arg("--mode")
         .arg("rpc")
@@ -231,6 +235,7 @@ pub async fn start_session(
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
+    command.kill_on_drop(true);
 
     if let Some(cwd) = &options.cwd {
         command.current_dir(cwd);
@@ -308,6 +313,37 @@ pub async fn start_session(
 
     let snapshot = status.lock().await.clone();
     Ok(snapshot)
+}
+
+fn configure_background_process(_command: &mut Command) {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        _command.as_std_mut().creation_flags(CREATE_NO_WINDOW);
+    }
+}
+
+async fn terminate_process_tree(child: &mut Child) {
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(process_id) = child.id() {
+            let mut taskkill = Command::new("taskkill.exe");
+            taskkill.args(["/PID", &process_id.to_string(), "/T", "/F"]);
+            configure_background_process(&mut taskkill);
+            if taskkill
+                .status()
+                .await
+                .map(|status| status.success())
+                .unwrap_or(false)
+            {
+                let _ = child.wait().await;
+                return;
+            }
+        }
+    }
+
+    let _ = child.kill().await;
 }
 
 fn spawn_stdout_reader(

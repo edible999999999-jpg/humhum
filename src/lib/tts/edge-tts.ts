@@ -40,42 +40,26 @@ export class EdgeTTSProvider implements TTSProvider {
       return buf;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      console.warn("[EdgeTTS] Bridge failed:", msg, "— falling back to Web Speech");
-      return this.synthesizeWebSpeech(text, options);
+      console.warn("[EdgeTTS] Bridge failed:", msg, "— falling back to system speech");
+      return this.synthesizeSystemSpeech(text, options);
     }
   }
 
-  private synthesizeWebSpeech(
+  private async synthesizeSystemSpeech(
     text: string,
     options?: TTSOptions
   ): Promise<ArrayBuffer> {
-    return new Promise((resolve, reject) => {
-      const synth = window.speechSynthesis;
-      if (!synth) {
-        reject(new Error("Speech synthesis not available"));
-        return;
-      }
-
-      const utterance = new SpeechSynthesisUtterance(text);
-      const voiceId = options?.voice ?? "zh-CN-XiaoxiaoNeural";
-      const lang = voiceId.startsWith("zh")
-        ? "zh-CN"
-        : voiceId.startsWith("ja")
-          ? "ja-JP"
-          : "en-US";
-
-      const voices = synth.getVoices();
-      const matched = voices.find((v) => v.lang === lang);
-      if (matched) utterance.voice = matched;
-      utterance.lang = lang;
-      utterance.rate = options?.speed ?? 1.0;
-
-      utterance.onend = () => resolve(createSilentWav());
-      utterance.onerror = (e) =>
-        reject(new Error(`Speech synthesis error: ${e.error}`));
-
-      synth.speak(utterance);
-    });
+    const base64 = (await invoke("synthesize_system_speech", {
+      text,
+      voice: options?.voice ?? "zh-CN-XiaoxiaoNeural",
+      speed: options?.speed ?? 1.0,
+    })) as string;
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index++) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    return bytes.buffer;
   }
 
   async getVoices(): Promise<Voice[]> {
@@ -90,30 +74,5 @@ export class EdgeTTSProvider implements TTSProvider {
 
   isAvailable(): boolean {
     return true;
-  }
-}
-
-function createSilentWav(): ArrayBuffer {
-  const buffer = new ArrayBuffer(44);
-  const view = new DataView(buffer);
-  writeString(view, 0, "RIFF");
-  view.setUint32(4, 36, true);
-  writeString(view, 8, "WAVE");
-  writeString(view, 12, "fmt ");
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, 1, true);
-  view.setUint32(24, 22050, true);
-  view.setUint32(28, 44100, true);
-  view.setUint16(32, 2, true);
-  view.setUint16(34, 16, true);
-  writeString(view, 36, "data");
-  view.setUint32(40, 0, true);
-  return buffer;
-}
-
-function writeString(view: DataView, offset: number, str: string): void {
-  for (let i = 0; i < str.length; i++) {
-    view.setUint8(offset + i, str.charCodeAt(i));
   }
 }

@@ -4,6 +4,8 @@ use std::io::BufRead;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
+use crate::local_api_auth::{protect_owner_only, write_private_file_atomically};
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SessionStats {
     pub session_id: String,
@@ -165,6 +167,13 @@ impl StatsStore {
         if !path.exists() {
             return StatsData::default();
         }
+        if std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+            log::warn!("Refusing to read a symbolic-link stats store");
+            return StatsData::default();
+        }
+        if let Err(error) = protect_owner_only(path) {
+            log::warn!("Failed to protect stats store before reading it: {error}");
+        }
         match std::fs::read_to_string(path) {
             Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
             Err(_) => StatsData::default(),
@@ -176,19 +185,17 @@ impl StatsStore {
             std::fs::create_dir_all(parent)
                 .map_err(|e| format!("Failed to create stats dir: {}", e))?;
         }
-        let tmp = self.file_path.with_extension("json.tmp");
         let content = serde_json::to_string_pretty(&self.data)
             .map_err(|e| format!("Failed to serialize stats: {}", e))?;
-        std::fs::write(&tmp, content).map_err(|e| format!("Failed to write stats: {}", e))?;
-        std::fs::rename(&tmp, &self.file_path)
-            .map_err(|e| format!("Failed to rename stats file: {}", e))?;
-        Ok(())
+        write_private_file_atomically(&self.file_path, content.as_bytes())
+            .map_err(|e| format!("Failed to atomically write private stats file: {}", e))
     }
 
     fn backfill_recent_transcripts(&mut self) -> Result<(), String> {
         let Some(home) = dirs::home_dir() else {
             return Ok(());
         };
+        let previous = self.data.clone();
 
         let roots = [
             (home.join(".codex").join("sessions"), "codex"),
@@ -234,7 +241,10 @@ impl StatsStore {
         if changed {
             self.rebuild_daily_buckets();
             self.prune_old_data();
-            self.save()?;
+            if let Err(error) = self.save() {
+                self.data = previous;
+                return Err(error);
+            }
         }
 
         Ok(())
@@ -247,6 +257,7 @@ impl StatsStore {
         client_type: &str,
     ) -> Result<(), String> {
         if let Some(stats) = parse_transcript(transcript_path, session_id, client_type) {
+            let previous = self.data.clone();
             self.data.sessions.retain(|s| {
                 !(s.transcript_path == transcript_path
                     || (s.session_id == session_id && s.client_type == client_type))
@@ -257,7 +268,10 @@ impl StatsStore {
                 .insert(transcript_path.to_string());
             self.rebuild_daily_buckets();
             self.prune_old_data();
-            self.save()?;
+            if let Err(error) = self.save() {
+                self.data = previous;
+                return Err(error);
+            }
         }
         Ok(())
     }

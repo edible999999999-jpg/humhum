@@ -40,8 +40,15 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::process::Command;
 
-const HUMHUM_HOOK_SCRIPT: &str = include_str!("../../hooks/humhum-hook.sh");
+#[cfg(not(target_os = "windows"))]
+const HUMHUM_HOOK_SCRIPT_UNIX: &str = include_str!("../../hooks/humhum-hook.sh");
+#[cfg(target_os = "windows")]
+const HUMHUM_HOOK_SCRIPT_WINDOWS: &str = include_str!("../../hooks/humhum-hook.ps1");
 const HUMHUM_OPENCODE_PLUGIN: &str = include_str!("../../hooks/humhum-opencode-plugin.ts");
+#[cfg(target_os = "windows")]
+const QODER_EXECUTABLE: &str = "qoder.cmd";
+#[cfg(not(target_os = "windows"))]
+const QODER_EXECUTABLE: &str = "qoder";
 
 #[tauri::command]
 pub async fn get_remote_bridge_status(
@@ -176,7 +183,16 @@ mod client_hook_install_tests {
         let temp = tempfile::tempdir().unwrap();
         let plugin_dir = temp.path().join(".hermes/plugins/humhum");
 
-        install_client_format(&ConfigFormat::HermesPlugin, &plugin_dir, None, &[], 31_275).unwrap();
+        install_client_format(
+            &ConfigFormat::HermesPlugin,
+            &plugin_dir,
+            None,
+            &[],
+            31_275,
+            130,
+            "hermes",
+        )
+        .unwrap();
 
         assert!(client_format_is_installed(
             &ConfigFormat::HermesPlugin,
@@ -815,7 +831,6 @@ pub async fn hexa_answer_codex_question(
         .await
         .map_err(|error| error.to_string())
 }
-
 /// Get the current configuration
 #[tauri::command]
 pub async fn get_config(
@@ -1016,11 +1031,14 @@ pub struct DingTalkImportReport {
 /// Detect the local Qoder CLI and whether it exposes an ACP-style command.
 #[tauri::command]
 pub async fn check_qoder_acp_support() -> Result<QoderAcpStatus, String> {
-    let output = tokio::time::timeout(
-        std::time::Duration::from_secs(3),
-        Command::new("qoder").arg("--help").output(),
-    )
-    .await;
+    let mut command = Command::new(QODER_EXECUTABLE);
+    command.arg("--help").kill_on_drop(true);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        command.as_std_mut().creation_flags(0x0800_0000);
+    }
+    let output = tokio::time::timeout(std::time::Duration::from_secs(3), command.output()).await;
 
     match output {
         Ok(Ok(output)) if output.status.success() => {
@@ -1099,30 +1117,20 @@ pub async fn get_agent_kernel_status(
 /// Return local social/work message connectors that Hush can prepare.
 #[tauri::command]
 pub async fn get_hush_connectors() -> Result<Vec<HushConnectorStatus>, String> {
+    let dingtalk_candidates = hush_application_candidates("dingtalk");
+    let wechat_candidates = hush_application_candidates("wechat");
     Ok(vec![
         build_hush_connector(
             "dingtalk",
             "DingTalk",
-            &[
-                "/Applications/DingTalk.app",
-                "/Applications/钉钉.app",
-                "/System/Applications/DingTalk.app",
-                "/Users/yuxi/Applications/DingTalk.app",
-                "/Users/yuxi/Applications/钉钉.app",
-            ],
+            &dingtalk_candidates,
             &["DingTalk", "钉钉"],
             "Next: choose a real bridge: DingTalk bot webhook for groups, notification capture, or manual export import.",
         ),
         build_hush_connector(
             "wechat",
             "WeChat",
-            &[
-                "/Applications/WeChat.app",
-                "/Applications/微信.app",
-                "/System/Applications/WeChat.app",
-                "/Users/yuxi/Applications/WeChat.app",
-                "/Users/yuxi/Applications/微信.app",
-            ],
+            &wechat_candidates,
             &["WeChat", "微信"],
             "Next: configure a local export or notification bridge. We do not read private chat databases directly.",
         ),
@@ -1134,52 +1142,30 @@ pub async fn get_hush_connectors() -> Result<Vec<HushConnectorStatus>, String> {
 #[tauri::command]
 pub async fn open_hush_connector(connector_id: String) -> Result<(), String> {
     let connector = match connector_id.as_str() {
-        "dingtalk" => build_hush_connector(
-            "dingtalk",
-            "DingTalk",
-            &[
-                "/Applications/DingTalk.app",
-                "/Applications/钉钉.app",
-                "/System/Applications/DingTalk.app",
-                "/Users/yuxi/Applications/DingTalk.app",
-                "/Users/yuxi/Applications/钉钉.app",
-            ],
-            &["DingTalk", "钉钉"],
-            "Next: choose a real bridge: DingTalk bot webhook for groups, notification capture, or manual export import.",
-        ),
-        "wechat" => build_hush_connector(
-            "wechat",
-            "WeChat",
-            &[
-                "/Applications/WeChat.app",
-                "/Applications/微信.app",
-                "/System/Applications/WeChat.app",
-                "/Users/yuxi/Applications/WeChat.app",
-                "/Users/yuxi/Applications/微信.app",
-            ],
-            &["WeChat", "微信"],
-            "Next: configure a local export or notification bridge. We do not read private chat databases directly.",
-        ),
+        "dingtalk" => {
+            let candidates = hush_application_candidates("dingtalk");
+            build_hush_connector(
+                "dingtalk",
+                "DingTalk",
+                &candidates,
+                &["DingTalk", "钉钉"],
+                "Next: choose a real bridge: DingTalk bot webhook for groups, notification capture, or manual export import.",
+            )
+        }
+        "wechat" => {
+            let candidates = hush_application_candidates("wechat");
+            build_hush_connector(
+                "wechat",
+                "WeChat",
+                &candidates,
+                &["WeChat", "微信"],
+                "Next: configure a local export or notification bridge. We do not read private chat databases directly.",
+            )
+        }
         other => return Err(format!("Unknown Hush connector: {}", other)),
     };
 
-    let mut command = Command::new("open");
-    if let Some(path) = connector.app_path.as_deref() {
-        command.arg(path);
-    } else {
-        command.arg("-a").arg(&connector.name);
-    }
-
-    let output = command
-        .output()
-        .await
-        .map_err(|e| format!("Failed to open {}: {}", connector.name, e))?;
-
-    if output.status.success() {
-        Ok(())
-    } else {
-        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
-    }
+    open_native_application(&connector.name, connector.app_path.as_deref()).await
 }
 
 #[tauri::command]
@@ -1331,43 +1317,17 @@ pub async fn import_dingtalk_local_source(
 #[tauri::command]
 pub async fn diagnose_dingtalk_local_sources() -> Result<DingTalkLocalSourceReport, String> {
     let home = dirs::home_dir().ok_or_else(|| "Cannot determine home directory".to_string())?;
+    let app_candidates = hush_application_candidates("dingtalk");
     let connector = build_hush_connector(
         "dingtalk",
         "DingTalk",
-        &[
-            "/Applications/DingTalk.app",
-            "/Applications/钉钉.app",
-            "/System/Applications/DingTalk.app",
-            "/Users/yuxi/Applications/DingTalk.app",
-            "/Users/yuxi/Applications/钉钉.app",
-        ],
+        &app_candidates,
         &["DingTalk", "钉钉"],
         "Next: inspect local storage shape, then add an explicit user-approved import bridge.",
     );
 
-    let mut candidates = vec![
-        home.join("Library/Application Support/DingTalk"),
-        home.join("Library/Application Support/钉钉"),
-        home.join("Library/Containers/com.alibaba.DingTalkMac"),
-        home.join("Library/Containers/com.alibaba.DingTalk"),
-        home.join("Library/Group Containers"),
-        home.join("Library/Caches/com.alibaba.DingTalkMac"),
-        home.join("Library/Logs/DingTalk"),
-    ];
-
-    if let Ok(output) = StdCommand::new("mdfind")
-        .arg("kMDItemFSName == '*DingTalk*' || kMDItemFSName == '*钉钉*'")
-        .output()
-    {
-        if output.status.success() {
-            for line in String::from_utf8_lossy(&output.stdout).lines().take(12) {
-                let path = PathBuf::from(line.trim());
-                if !candidates.iter().any(|item| item == &path) {
-                    candidates.push(path);
-                }
-            }
-        }
-    }
+    let mut candidates = dingtalk_local_source_candidates(&home);
+    extend_dingtalk_discovered_sources(&mut candidates);
 
     let mut reports = Vec::new();
     for path in candidates {
@@ -1385,7 +1345,10 @@ pub async fn diagnose_dingtalk_local_sources() -> Result<DingTalkLocalSourceRepo
     let source_count = reports.iter().filter(|item| item.exists).count();
     let readable_count = reports.iter().filter(|item| item.readable).count();
     let summary = if source_count == 0 {
-        "Hush did not find a local Ali Ding storage folder yet. DingTalk may be installed in a sandboxed path, not logged in, or named differently on this Mac.".to_string()
+        format!(
+            "Hush did not find a local Ali Ding storage folder yet. DingTalk may be installed in a sandboxed path, not logged in, or named differently on {}.",
+            std::env::consts::OS
+        )
     } else {
         format!(
             "Hush found {} possible Ali Ding local storage locations, {} readable. This is the real starting point for a local message understanding bridge.",
@@ -1407,14 +1370,14 @@ pub async fn diagnose_dingtalk_local_sources() -> Result<DingTalkLocalSourceRepo
 fn build_hush_connector(
     id: &str,
     name: &str,
-    candidate_paths: &[&str],
+    candidate_paths: &[PathBuf],
     search_names: &[&str],
     next_step: &str,
 ) -> HushConnectorStatus {
     let app_path = candidate_paths
         .iter()
-        .find(|path| std::path::Path::new(path).exists())
-        .map(|path| path.to_string())
+        .find(|path| path.exists())
+        .map(|path| path.to_string_lossy().to_string())
         .or_else(|| find_application_path(search_names));
     let installed = app_path.is_some();
 
@@ -1428,13 +1391,82 @@ fn build_hush_connector(
             "Native app detected. HUMHUM can launch it, but message ingestion is not connected yet."
                 .to_string()
         } else {
-            "Native app was not detected in standard app locations or Spotlight.".to_string()
+            "Native app was not detected in standard application locations or the OS application index."
+                .to_string()
         },
         next_step: next_step.to_string(),
         bridge_mode: "launch-only".to_string(),
     }
 }
 
+fn hush_application_candidates(connector_id: &str) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+
+    #[cfg(target_os = "macos")]
+    {
+        let names: &[&str] = match connector_id {
+            "dingtalk" => &["DingTalk.app", "钉钉.app"],
+            "wechat" => &["WeChat.app", "微信.app"],
+            _ => &[],
+        };
+        for root in [
+            PathBuf::from("/Applications"),
+            PathBuf::from("/System/Applications"),
+        ] {
+            for name in names {
+                candidates.push(root.join(name));
+            }
+        }
+        if let Some(home) = dirs::home_dir() {
+            for name in names {
+                candidates.push(home.join("Applications").join(name));
+            }
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let relative_paths: &[&str] = match connector_id {
+            "dingtalk" => &[
+                "DingDing\\main\\current\\DingTalk.exe",
+                "DingTalk\\main\\current\\DingTalk.exe",
+                "Programs\\DingTalk\\DingTalk.exe",
+            ],
+            "wechat" => &[
+                "Tencent\\WeChat\\WeChat.exe",
+                "Tencent\\Weixin\\Weixin.exe",
+                "Programs\\Tencent\\WeChat\\WeChat.exe",
+            ],
+            _ => &[],
+        };
+        for variable in ["ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"] {
+            if let Some(root) = std::env::var_os(variable).map(PathBuf::from) {
+                for relative in relative_paths {
+                    let candidate = root.join(relative);
+                    if !candidates.iter().any(|existing| existing == &candidate) {
+                        candidates.push(candidate);
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let executable_names: &[&str] = match connector_id {
+            "dingtalk" => &["dingtalk"],
+            "wechat" => &["wechat", "weixin"],
+            _ => &[],
+        };
+        for executable in executable_names {
+            candidates.push(PathBuf::from(executable));
+        }
+    }
+
+    candidates
+}
+
+#[cfg(target_os = "macos")]
 fn find_application_path(search_names: &[&str]) -> Option<String> {
     for name in search_names {
         let query = format!(
@@ -1454,6 +1486,316 @@ fn find_application_path(search_names: &[&str]) -> Option<String> {
     }
     None
 }
+
+#[cfg(target_os = "windows")]
+fn find_application_path(search_names: &[&str]) -> Option<String> {
+    let (connector_id, executable_names): (&str, &[&str]) = if search_names
+        .iter()
+        .any(|name| name.eq_ignore_ascii_case("DingTalk") || *name == "钉钉")
+    {
+        ("dingtalk", &["DingTalk.exe", "DingDing.exe"])
+    } else if search_names
+        .iter()
+        .any(|name| name.eq_ignore_ascii_case("WeChat") || *name == "微信")
+    {
+        ("wechat", &["WeChat.exe", "Weixin.exe"])
+    } else {
+        return None;
+    };
+
+    for executable in executable_names {
+        let Ok(output) = hidden_windows_command("where.exe").arg(executable).output() else {
+            continue;
+        };
+        if output.status.success() {
+            if let Some(path) = String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .map(str::trim)
+                .find(|line| line.to_ascii_lowercase().ends_with(".exe"))
+            {
+                return Some(path.to_string());
+            }
+        }
+    }
+
+    find_registered_windows_application(connector_id)
+}
+
+#[cfg(target_os = "windows")]
+fn hidden_windows_command(program: &str) -> StdCommand {
+    use std::os::windows::process::CommandExt;
+
+    let mut command = StdCommand::new(program);
+    command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    command
+}
+
+#[cfg(target_os = "windows")]
+fn find_registered_windows_application(connector_id: &str) -> Option<String> {
+    let (display_pattern, executable_names, install_relatives) = match connector_id {
+        "dingtalk" => (
+            "DingTalk|DingDing|钉钉",
+            "'DingTalk.exe','DingDing.exe'",
+            "'DingTalk.exe','DingDing.exe','main\\current\\DingTalk.exe'",
+        ),
+        "wechat" => (
+            "WeChat|Weixin|微信",
+            "'WeChat.exe','Weixin.exe'",
+            "'WeChat.exe','Weixin.exe','Tencent\\WeChat\\WeChat.exe','Tencent\\Weixin\\Weixin.exe'",
+        ),
+        _ => return None,
+    };
+
+    // App Paths covers registered Win32 installs, Uninstall entries cover
+    // custom install directories, and Get-StartApps covers Start-menu/MSIX
+    // packages. Values interpolated here are fixed internal constants, never
+    // user input.
+    let script = format!(
+        r#"
+$ErrorActionPreference = 'SilentlyContinue'
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+$executables = @({executable_names})
+$appPathRoots = @(
+  'HKCU:\Software\Microsoft\Windows\CurrentVersion\App Paths',
+  'HKLM:\Software\Microsoft\Windows\CurrentVersion\App Paths',
+  'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\App Paths'
+)
+foreach ($root in $appPathRoots) {{
+  foreach ($executable in $executables) {{
+    $key = Get-Item -LiteralPath (Join-Path $root $executable)
+    if ($null -ne $key) {{
+      $candidate = [Environment]::ExpandEnvironmentVariables([string]$key.GetValue('')).Trim('"')
+      if ($candidate -and (Test-Path -LiteralPath $candidate -PathType Leaf)) {{
+        [Console]::Out.WriteLine((Resolve-Path -LiteralPath $candidate).Path)
+        exit 0
+      }}
+    }}
+  }}
+}}
+$uninstallRoots = @(
+  'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
+  'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
+  'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
+)
+$relativeCandidates = @({install_relatives})
+foreach ($application in @(Get-ItemProperty -Path $uninstallRoots)) {{
+  if ([string]$application.DisplayName -notmatch '{display_pattern}') {{ continue }}
+  $icon = ([string]$application.DisplayIcon).Trim('"') -replace ',\s*-?\d+$', ''
+  if ($icon -and (Test-Path -LiteralPath $icon -PathType Leaf)) {{
+    [Console]::Out.WriteLine((Resolve-Path -LiteralPath $icon).Path)
+    exit 0
+  }}
+  $installLocation = [Environment]::ExpandEnvironmentVariables([string]$application.InstallLocation).Trim('"')
+  if ($installLocation) {{
+    foreach ($relative in $relativeCandidates) {{
+      $candidate = Join-Path $installLocation $relative
+      if (Test-Path -LiteralPath $candidate -PathType Leaf) {{
+        [Console]::Out.WriteLine((Resolve-Path -LiteralPath $candidate).Path)
+        exit 0
+      }}
+    }}
+  }}
+}}
+$startEntry = Get-StartApps | Where-Object {{ [string]$_.Name -match '{display_pattern}' }} | Select-Object -First 1
+if ($null -ne $startEntry -and $startEntry.AppID) {{
+  [Console]::Out.WriteLine('shell:AppsFolder\' + [string]$startEntry.AppID)
+}}
+"#,
+    );
+
+    let output = hidden_windows_command("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            &script,
+        ])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .find(|line| {
+            line.starts_with("shell:AppsFolder\\")
+                || (line.to_ascii_lowercase().ends_with(".exe") && Path::new(line).is_file())
+        })
+        .map(str::to_string)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn find_application_path(search_names: &[&str]) -> Option<String> {
+    for name in search_names {
+        let Ok(output) = StdCommand::new("which").arg(name.to_lowercase()).output() else {
+            continue;
+        };
+        if output.status.success() {
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !path.is_empty() {
+                return Some(path);
+            }
+        }
+    }
+    None
+}
+
+async fn open_native_application(name: &str, app_path: Option<&str>) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let mut command = Command::new("open");
+        if let Some(path) = app_path {
+            command.arg(path);
+        } else {
+            command.arg("-a").arg(name);
+        }
+        let output = command
+            .output()
+            .await
+            .map_err(|error| format!("Failed to open {}: {}", name, error))?;
+        return if output.status.success() {
+            Ok(())
+        } else {
+            Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+        };
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let path = app_path.ok_or_else(|| {
+            format!(
+                "{} was not found in standard Windows application locations",
+                name
+            )
+        })?;
+        if path.starts_with("shell:AppsFolder\\") {
+            Command::new("explorer.exe")
+                .arg(path)
+                .spawn()
+                .map_err(|error| format!("Failed to open {}: {}", name, error))?;
+        } else {
+            Command::new(path)
+                .spawn()
+                .map_err(|error| format!("Failed to open {}: {}", name, error))?;
+        }
+        return Ok(());
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let target = app_path.unwrap_or(name);
+        Command::new("xdg-open")
+            .arg(target)
+            .spawn()
+            .map_err(|error| format!("Failed to open {}: {}", name, error))?;
+        Ok(())
+    }
+}
+
+fn dingtalk_local_source_candidates(home: &Path) -> Vec<PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        return vec![
+            home.join("Library/Application Support/DingTalk"),
+            home.join("Library/Application Support/钉钉"),
+            home.join("Library/Containers/com.alibaba.DingTalkMac"),
+            home.join("Library/Containers/com.alibaba.DingTalk"),
+            home.join("Library/Group Containers"),
+            home.join("Library/Caches/com.alibaba.DingTalkMac"),
+            home.join("Library/Logs/DingTalk"),
+        ];
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let documents = dirs::document_dir().unwrap_or_else(|| home.join("Documents"));
+        let mut paths = vec![documents.join("DingTalk"), documents.join("钉钉")];
+        for variable in ["OneDrive", "OneDriveConsumer", "OneDriveCommercial"] {
+            if let Some(root) = std::env::var_os(variable).map(PathBuf::from) {
+                for name in ["DingTalk", "钉钉"] {
+                    let candidate = root.join("Documents").join(name);
+                    if !paths.iter().any(|existing| existing == &candidate) {
+                        paths.push(candidate);
+                    }
+                }
+            }
+        }
+        for variable in ["APPDATA", "LOCALAPPDATA"] {
+            if let Some(root) = std::env::var_os(variable).map(PathBuf::from) {
+                for name in ["DingTalk", "DingDing", "钉钉"] {
+                    let candidate = root.join(name);
+                    if !paths.iter().any(|existing| existing == &candidate) {
+                        paths.push(candidate);
+                    }
+                }
+            }
+        }
+        return paths;
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        vec![
+            home.join(".config").join("DingTalk"),
+            home.join(".local").join("share").join("DingTalk"),
+        ]
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn extend_dingtalk_discovered_sources(candidates: &mut Vec<PathBuf>) {
+    if let Ok(output) = StdCommand::new("mdfind")
+        .arg("kMDItemFSName == '*DingTalk*' || kMDItemFSName == '*钉钉*'")
+        .output()
+    {
+        if output.status.success() {
+            for line in String::from_utf8_lossy(&output.stdout).lines().take(12) {
+                let path = PathBuf::from(line.trim());
+                if !candidates.iter().any(|item| item == &path) {
+                    candidates.push(path);
+                }
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn extend_dingtalk_discovered_sources(candidates: &mut Vec<PathBuf>) {
+    for variable in ["APPDATA", "LOCALAPPDATA"] {
+        let Some(root) = std::env::var_os(variable).map(PathBuf::from) else {
+            continue;
+        };
+        let roots = [root.clone(), root.join("Packages")];
+        for search_root in roots {
+            let Ok(entries) = std::fs::read_dir(search_root) else {
+                continue;
+            };
+            for entry in entries.flatten().take(400) {
+                let path = entry.path();
+                let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
+                if path.is_dir()
+                    && (name.contains("dingtalk") || name.contains("dingding"))
+                    && !candidates.iter().any(|existing| existing == &path)
+                {
+                    candidates.push(path.clone());
+                    let local_state = path.join("LocalState");
+                    if local_state.is_dir()
+                        && !candidates.iter().any(|existing| existing == &local_state)
+                    {
+                        candidates.push(local_state);
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn extend_dingtalk_discovered_sources(_candidates: &mut Vec<PathBuf>) {}
 
 fn inspect_local_source_candidate(path: &Path) -> LocalSourceCandidate {
     let exists = path.exists();
@@ -1569,7 +1911,7 @@ fn expand_home_path(raw: &str) -> PathBuf {
     if raw == "~" {
         return dirs::home_dir().unwrap_or_else(|| PathBuf::from(raw));
     }
-    if let Some(rest) = raw.strip_prefix("~/") {
+    if let Some(rest) = raw.strip_prefix("~/").or_else(|| raw.strip_prefix("~\\")) {
         if let Some(home) = dirs::home_dir() {
             return home.join(rest);
         }
@@ -1804,7 +2146,7 @@ fn infer_chat_from_filename(name: &str) -> Option<String> {
 pub async fn install_hooks(
     config: State<'_, Arc<std::sync::Mutex<AppConfig>>>,
 ) -> Result<String, String> {
-    let _port = {
+    let port = {
         let config = config.lock().map_err(|e| format!("Lock error: {}", e))?;
         config.hook_port
     };
@@ -1821,14 +2163,20 @@ pub async fn install_hooks(
     let mut settings: Value = if settings_path.exists() {
         let content = std::fs::read_to_string(&settings_path)
             .map_err(|e| format!("Failed to read settings: {}", e))?;
-        serde_json::from_str(&content).unwrap_or(serde_json::json!({}))
+        serde_json::from_str(&content).map_err(|error| {
+            format!(
+                "Refusing to modify invalid JSON config {}: {}",
+                settings_path.display(),
+                error
+            )
+        })?
     } else {
         serde_json::json!({})
     };
 
     // Determine hook script path
     let hook_script = ensure_hook_script_installed(&home)?;
-    let hook_cmd = hook_script.to_string_lossy().to_string();
+    let hook_cmd = build_hook_command(&hook_script, port, Some("claude-code"));
 
     // Build hooks configuration
     let humhum_hooks = serde_json::json!({
@@ -1836,16 +2184,10 @@ pub async fn install_hooks(
             "hooks": [{
                 "type": "command",
                 "command": hook_cmd,
-                "timeout": 120000
+                "timeout": 130
             }]
         }],
         "Stop": [{
-            "hooks": [{
-                "type": "command",
-                "command": hook_cmd
-            }]
-        }],
-        "TaskCompleted": [{
             "hooks": [{
                 "type": "command",
                 "command": hook_cmd
@@ -1859,34 +2201,37 @@ pub async fn install_hooks(
         }]
     });
 
+    let settings_object = settings.as_object_mut().ok_or_else(|| {
+        format!(
+            "Refusing to modify JSON config whose root is not an object: {}",
+            settings_path.display()
+        )
+    })?;
+    if let Some(hooks_value) = settings_object.get_mut("hooks") {
+        let hooks = hooks_value.as_object_mut().ok_or_else(|| {
+            format!(
+                "Refusing to modify JSON config whose hooks value is not an object: {}",
+                settings_path.display()
+            )
+        })?;
+        remove_humhum_handlers_from_hooks_object(hooks);
+    }
+
     // Merge hooks into settings — APPEND to existing hook arrays, don't replace
     if let Some(existing_hooks) = settings.get("hooks").and_then(|h| h.as_object()) {
         let mut merged = existing_hooks.clone();
         if let Some(new_hooks) = humhum_hooks.as_object() {
             for (key, value) in new_hooks {
                 if let Some(existing_arr) = merged.get(key).and_then(|v| v.as_array()) {
-                    // Check if humhum hook already exists in this event
-                    let already_installed = existing_arr.iter().any(|group| {
-                        group
-                            .get("hooks")
-                            .and_then(|h| h.as_array())
-                            .map(|hooks| {
-                                hooks.iter().any(|h| {
-                                    h.get("command")
-                                        .and_then(|c| c.as_str())
-                                        .map(|c| c.contains("humhum-hook"))
-                                        .unwrap_or(false)
-                                })
-                            })
-                            .unwrap_or(false)
-                    });
-                    if !already_installed {
-                        let mut combined = existing_arr.clone();
-                        if let Some(new_arr) = value.as_array() {
-                            combined.extend(new_arr.iter().cloned());
-                        }
-                        merged.insert(key.clone(), Value::Array(combined));
+                    let mut combined = existing_arr
+                        .iter()
+                        .cloned()
+                        .filter_map(remove_humhum_handlers_from_group)
+                        .collect::<Vec<_>>();
+                    if let Some(new_arr) = value.as_array() {
+                        combined.extend(new_arr.iter().cloned());
                     }
+                    merged.insert(key.clone(), Value::Array(combined));
                 } else {
                     merged.insert(key.clone(), value.clone());
                 }
@@ -1900,8 +2245,8 @@ pub async fn install_hooks(
     // Write back
     let content = serde_json::to_string_pretty(&settings)
         .map_err(|e| format!("Failed to serialize settings: {}", e))?;
-    std::fs::write(&settings_path, content)
-        .map_err(|e| format!("Failed to write settings: {}", e))?;
+    crate::knowledge_store::write_file_atomically(&settings_path, content.as_bytes())
+        .map_err(|e| format!("Failed to atomically write settings: {}", e))?;
 
     Ok(format!(
         "Hooks installed in {:?}. Hook script: {:?}",
@@ -1921,28 +2266,39 @@ pub async fn uninstall_hooks() -> Result<String, String> {
 
     let content = std::fs::read_to_string(&settings_path)
         .map_err(|e| format!("Failed to read settings: {}", e))?;
-    let mut settings: Value = serde_json::from_str(&content).unwrap_or(serde_json::json!({}));
+    let mut settings: Value = serde_json::from_str(&content).map_err(|error| {
+        format!(
+            "Refusing to modify invalid JSON config {}: {}",
+            settings_path.display(),
+            error
+        )
+    })?;
+
+    let settings_object = settings.as_object_mut().ok_or_else(|| {
+        format!(
+            "Refusing to modify JSON config whose root is not an object: {}",
+            settings_path.display()
+        )
+    })?;
+    if let Some(hooks_value) = settings_object.get_mut("hooks") {
+        let hooks = hooks_value.as_object_mut().ok_or_else(|| {
+            format!(
+                "Refusing to modify JSON config whose hooks value is not an object: {}",
+                settings_path.display()
+            )
+        })?;
+        remove_humhum_handlers_from_hooks_object(hooks);
+    }
 
     // Remove only HumHum hook entries, preserve other tools' hooks
     if let Some(hooks) = settings.get_mut("hooks").and_then(|h| h.as_object_mut()) {
         let events = ["PermissionRequest", "Stop", "TaskCompleted", "Notification"];
         for event in &events {
             if let Some(arr) = hooks.get_mut(*event).and_then(|v| v.as_array_mut()) {
-                arr.retain(|group| {
-                    let is_humhum = group
-                        .get("hooks")
-                        .and_then(|h| h.as_array())
-                        .map(|hs| {
-                            hs.iter().any(|h| {
-                                h.get("command")
-                                    .and_then(|c| c.as_str())
-                                    .map(|c| c.contains("humhum"))
-                                    .unwrap_or(false)
-                            })
-                        })
-                        .unwrap_or(false);
-                    !is_humhum
-                });
+                *arr = std::mem::take(arr)
+                    .into_iter()
+                    .filter_map(remove_humhum_handlers_from_group)
+                    .collect();
                 if arr.is_empty() {
                     hooks.remove(*event);
                 }
@@ -1952,7 +2308,8 @@ pub async fn uninstall_hooks() -> Result<String, String> {
 
     let content = serde_json::to_string_pretty(&settings)
         .map_err(|e| format!("Failed to serialize: {}", e))?;
-    std::fs::write(&settings_path, content).map_err(|e| format!("Failed to write: {}", e))?;
+    crate::knowledge_store::write_file_atomically(&settings_path, content.as_bytes())
+        .map_err(|e| format!("Failed to atomically write settings: {}", e))?;
 
     Ok("HumHum hooks removed from Claude Code settings".to_string())
 }
@@ -1976,11 +2333,43 @@ pub async fn toggle_settings(app: tauri::AppHandle) -> Result<(), String> {
             if let Some(main_win) = app.get_webview_window("main") {
                 if let Ok(pos) = main_win.outer_position() {
                     let sf = main_win.scale_factor().unwrap_or(1.0);
-                    let x = (pos.x as f64 / sf) as i32 - 440;
-                    let y = (pos.y as f64 / sf) as i32;
-                    let _ = win.set_position(tauri::Position::Logical(
-                        tauri::LogicalPosition::new(x.max(0) as f64, y.max(0) as f64),
-                    ));
+                    let settings_size = win.outer_size().unwrap_or_else(|_| {
+                        tauri::PhysicalSize::new(
+                            (420.0 * sf).round().max(1.0) as u32,
+                            (620.0 * sf).round().max(1.0) as u32,
+                        )
+                    });
+                    let main_size = main_win.outer_size().unwrap_or_else(|_| {
+                        tauri::PhysicalSize::new(
+                            (280.0 * sf).round().max(1.0) as u32,
+                            (210.0 * sf).round().max(1.0) as u32,
+                        )
+                    });
+                    let gap = (20.0 * sf).round() as i64;
+                    let mut x = i64::from(pos.x) - i64::from(settings_size.width) - gap;
+                    // Bottom-align the much taller settings window with the
+                    // pet instead of placing its top at the pet's bottom-edge
+                    // position, which pushed most of it below a Windows taskbar.
+                    let mut y = i64::from(pos.y) + i64::from(main_size.height)
+                        - i64::from(settings_size.height);
+                    if let Ok(Some(monitor)) = main_win.current_monitor() {
+                        let work_area = monitor.work_area();
+                        let left = i64::from(work_area.position.x);
+                        let top = i64::from(work_area.position.y);
+                        let right = left + i64::from(work_area.size.width);
+                        let bottom = top + i64::from(work_area.size.height);
+
+                        if x < left {
+                            x = i64::from(pos.x) + i64::from(main_size.width) + gap;
+                        }
+                        x = x.clamp(left, (right - i64::from(settings_size.width)).max(left));
+                        y = y.clamp(top, (bottom - i64::from(settings_size.height)).max(top));
+                    }
+                    let _ =
+                        win.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(
+                            x.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32,
+                            y.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32,
+                        )));
                 }
             }
 
@@ -2353,8 +2742,7 @@ fn parse_codex_session_file(path: &Path) -> Option<Session> {
         cwd: cwd.clone(),
         project_name: cwd
             .as_deref()
-            .and_then(|path| path.rsplit('/').next())
-            .map(str::to_string)
+            .and_then(crate::session_store::project_name_from_cwd)
             .or_else(|| Some("Codex Desktop".to_string())),
         started_at,
         last_event_at,
@@ -2416,8 +2804,7 @@ fn truncate_display_text(text: &str, limit: usize) -> String {
     if text.len() <= limit {
         text.to_string()
     } else {
-        let end = text.floor_char_boundary(limit);
-        format!("{}...", &text[..end])
+        format!("{}...", crate::user_safe_text::utf8_prefix(text, limit))
     }
 }
 
@@ -2593,11 +2980,7 @@ pub async fn install_hooks_for_client(
         None
     } else {
         let hook_script = ensure_hook_script_installed(&home)?;
-        Some(format!(
-            "{} --client {}",
-            shell_quote(&hook_script.to_string_lossy()),
-            shell_quote(&client_id)
-        ))
+        Some(build_hook_command(&hook_script, port, Some(&client_id)))
     };
 
     install_client_format(
@@ -2606,6 +2989,8 @@ pub async fn install_hooks_for_client(
         hook_cmd.as_deref(),
         profile.hook_events,
         port,
+        profile.permission_timeout,
+        profile.id,
     )?;
     if client_id == "cursor" {
         crate::cursor_focus_extension::install_at(&home)?;
@@ -2644,11 +3029,21 @@ fn install_client_format(
     hook_cmd: Option<&str>,
     events: &[&str],
     port: u16,
+    permission_timeout: u64,
+    client_id: &str,
 ) -> Result<(), String> {
     let command = || hook_cmd.ok_or_else(|| "Hook command is required for this client".to_string());
     match format {
-        ConfigFormat::Json => install_json_hooks(config_path, command()?, events),
-        ConfigFormat::Toml => install_toml_hooks(config_path, command()?, events),
+        ConfigFormat::Json => install_json_hooks(
+            config_path,
+            command()?,
+            events,
+            permission_timeout,
+            client_id,
+        ),
+        ConfigFormat::KimiToml => {
+            install_kimi_hooks(config_path, command()?, events, permission_timeout)
+        }
         ConfigFormat::FlatJson => install_flat_json_hooks(config_path, command()?, events, false),
         ConfigFormat::CopilotJson => install_flat_json_hooks(config_path, command()?, events, true),
         ConfigFormat::OpenCodePlugin => install_opencode_plugin(config_path, port),
@@ -2666,7 +3061,7 @@ fn uninstall_client_format(
 ) -> Result<(), String> {
     match format {
         ConfigFormat::Json => uninstall_json_hooks(config_path, events),
-        ConfigFormat::Toml => uninstall_toml_hooks(config_path, events),
+        ConfigFormat::KimiToml => uninstall_kimi_hooks(config_path),
         ConfigFormat::FlatJson => uninstall_flat_json_hooks(config_path, events, false),
         ConfigFormat::CopilotJson => uninstall_flat_json_hooks(config_path, events, true),
         ConfigFormat::OpenCodePlugin => uninstall_opencode_plugin(config_path),
@@ -2701,19 +3096,43 @@ fn install_json_hooks(
     config_path: &std::path::Path,
     hook_cmd: &str,
     events: &[&str],
+    permission_timeout: u64,
+    _client_id: &str,
 ) -> Result<(), String> {
     let mut settings: Value = if config_path.exists() {
         let content =
             std::fs::read_to_string(config_path).map_err(|e| format!("Failed to read: {}", e))?;
-        serde_json::from_str(&content).unwrap_or(serde_json::json!({}))
+        serde_json::from_str(&content).map_err(|error| {
+            format!(
+                "Refusing to modify invalid JSON config {}: {}",
+                config_path.display(),
+                error
+            )
+        })?
     } else {
         serde_json::json!({})
     };
 
-    let mut hooks = serde_json::Map::new();
+    let settings_object = settings.as_object_mut().ok_or_else(|| {
+        format!(
+            "Refusing to modify JSON config whose root is not an object: {}",
+            config_path.display()
+        )
+    })?;
+    let hooks_value = settings_object
+        .entry("hooks".to_string())
+        .or_insert_with(|| Value::Object(serde_json::Map::new()));
+    let hooks = hooks_value.as_object_mut().ok_or_else(|| {
+        format!(
+            "Refusing to modify JSON config whose hooks value is not an object: {}",
+            config_path.display()
+        )
+    })?;
+    remove_humhum_handlers_from_hooks_object(hooks);
+
     for event in events {
         let timeout = if *event == "PermissionRequest" {
-            Some(120000)
+            Some(permission_timeout)
         } else {
             None
         };
@@ -2721,52 +3140,40 @@ fn install_json_hooks(
             "type": "command",
             "command": hook_cmd
         });
+        #[cfg(target_os = "windows")]
+        if _client_id == "codex" {
+            hook_obj["commandWindows"] = serde_json::json!(hook_cmd);
+        }
         if let Some(t) = timeout {
             hook_obj["timeout"] = serde_json::json!(t);
         }
-        hooks.insert(
-            event.to_string(),
-            serde_json::json!([{ "matcher": "*", "hooks": [hook_obj] }]),
-        );
-    }
 
-    if let Some(existing) = settings.get("hooks").and_then(|h| h.as_object()) {
-        let mut merged = existing.clone();
-        for (k, v) in hooks {
-            if let Some(existing_arr) = merged.get(&k).and_then(|val| val.as_array()) {
-                let already = existing_arr.iter().any(|group| {
-                    group
-                        .get("hooks")
-                        .and_then(|h| h.as_array())
-                        .map(|hs| {
-                            hs.iter().any(|h| {
-                                h.get("command")
-                                    .and_then(|c| c.as_str())
-                                    .map(|c| c.contains("humhum"))
-                                    .unwrap_or(false)
-                            })
-                        })
-                        .unwrap_or(false)
-                });
-                if !already {
-                    let mut combined = existing_arr.clone();
-                    if let Some(new_arr) = v.as_array() {
-                        combined.extend(new_arr.iter().cloned());
-                    }
-                    merged.insert(k, Value::Array(combined));
-                }
-            } else {
-                merged.insert(k, v);
+        let mut groups = match hooks.remove(*event) {
+            Some(Value::Array(existing)) => existing
+                .into_iter()
+                .filter_map(remove_humhum_handlers_from_group)
+                .collect::<Vec<_>>(),
+            Some(other) => {
+                hooks.insert(event.to_string(), other);
+                return Err(format!(
+                    "Refusing to modify non-array hook event {} in {}",
+                    event,
+                    config_path.display()
+                ));
             }
-        }
-        settings["hooks"] = Value::Object(merged);
-    } else {
-        settings["hooks"] = Value::Object(hooks);
+            None => Vec::new(),
+        };
+        groups.push(serde_json::json!({
+            "matcher": "*",
+            "hooks": [hook_obj]
+        }));
+        hooks.insert(event.to_string(), Value::Array(groups));
     }
 
     let content =
         serde_json::to_string_pretty(&settings).map_err(|e| format!("Serialize error: {}", e))?;
-    std::fs::write(config_path, content).map_err(|e| format!("Write error: {}", e))?;
+    crate::knowledge_store::write_file_atomically(config_path, content.as_bytes())
+        .map_err(|e| format!("Atomic write error: {}", e))?;
 
     Ok(())
 }
@@ -2808,7 +3215,7 @@ fn install_flat_json_hooks(
         let command = format!(
             "{} --event {}",
             hook_cmd,
-            shell_quote(normalized_hook_event(event))
+            command_argument_quote(normalized_hook_event(event))
         );
         let entries = hooks
             .entry((*event).to_string())
@@ -2874,7 +3281,8 @@ fn write_json_config(path: &Path, value: &Value) -> Result<(), String> {
         std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
     let content = serde_json::to_string_pretty(value).map_err(|error| error.to_string())?;
-    std::fs::write(path, content).map_err(|error| error.to_string())
+    crate::knowledge_store::write_file_atomically(path, content.as_bytes())
+        .map_err(|error| error.to_string())
 }
 
 fn install_opencode_plugin(config_path: &Path, port: u16) -> Result<(), String> {
@@ -2899,9 +3307,14 @@ pub(crate) fn ensure_hook_script_installed(
     let hook_dir = home.join(".humhum").join("hooks");
     std::fs::create_dir_all(&hook_dir).map_err(|e| format!("Failed to create hook dir: {}", e))?;
 
-    let hook_script = hook_dir.join("humhum-hook.sh");
-    std::fs::write(&hook_script, HUMHUM_HOOK_SCRIPT)
-        .map_err(|e| format!("Failed to write hook script: {}", e))?;
+    #[cfg(target_os = "windows")]
+    let (hook_script, hook_contents) =
+        (hook_dir.join("humhum-hook.ps1"), HUMHUM_HOOK_SCRIPT_WINDOWS);
+    #[cfg(not(target_os = "windows"))]
+    let (hook_script, hook_contents) = (hook_dir.join("humhum-hook.sh"), HUMHUM_HOOK_SCRIPT_UNIX);
+
+    crate::knowledge_store::write_file_atomically(&hook_script, hook_contents.as_bytes())
+        .map_err(|e| format!("Failed to atomically write hook script: {}", e))?;
 
     #[cfg(unix)]
     {
@@ -2916,35 +3329,95 @@ pub(crate) fn ensure_hook_script_installed(
     Ok(hook_script)
 }
 
+fn build_hook_command(script: &Path, port: u16, client_id: Option<&str>) -> String {
+    #[cfg(target_os = "windows")]
+    {
+        let script = windows_command_quote(&script.to_string_lossy());
+        let mut command = format!(
+            "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File {} -Port {}",
+            script, port
+        );
+        if let Some(client_id) = client_id {
+            command.push_str(" -Client ");
+            command.push_str(&windows_command_quote(client_id));
+        }
+        return command;
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let mut command = format!("{} --port {}", shell_quote(&script.to_string_lossy()), port);
+        if let Some(client_id) = client_id {
+            command.push_str(" --client ");
+            command.push_str(&shell_quote(client_id));
+        }
+        command
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn windows_command_quote(value: &str) -> String {
+    format!("\"{}\"", value.replace('"', "\\\""))
+}
+
+fn command_argument_quote(value: &str) -> String {
+    #[cfg(target_os = "windows")]
+    {
+        windows_command_quote(value)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        shell_quote(value)
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
 fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
-fn uninstall_json_hooks(config_path: &std::path::Path, events: &[&str]) -> Result<(), String> {
+fn uninstall_json_hooks(config_path: &std::path::Path, _events: &[&str]) -> Result<(), String> {
     let content =
         std::fs::read_to_string(config_path).map_err(|e| format!("Failed to read: {}", e))?;
-    let mut settings: Value = serde_json::from_str(&content).unwrap_or(serde_json::json!({}));
+    let mut settings: Value = serde_json::from_str(&content).map_err(|error| {
+        format!(
+            "Refusing to modify invalid JSON config {}: {}",
+            config_path.display(),
+            error
+        )
+    })?;
 
-    if let Some(hooks) = settings.get_mut("hooks").and_then(|h| h.as_object_mut()) {
-        for event in events {
-            if let Some(arr) = hooks.get_mut(*event).and_then(|v| v.as_array_mut()) {
-                arr.retain(|group| {
-                    let is_humhum = group
-                        .get("hooks")
-                        .and_then(|h| h.as_array())
-                        .map(|hs| {
-                            hs.iter().any(|h| {
-                                h.get("command")
-                                    .and_then(|c| c.as_str())
-                                    .map(|c| c.contains("humhum"))
-                                    .unwrap_or(false)
-                            })
-                        })
-                        .unwrap_or(false);
-                    !is_humhum
-                });
-                if arr.is_empty() {
-                    hooks.remove(*event);
+    let settings_object = settings.as_object_mut().ok_or_else(|| {
+        format!(
+            "Refusing to modify JSON config whose root is not an object: {}",
+            config_path.display()
+        )
+    })?;
+    if let Some(hooks_value) = settings_object.get_mut("hooks") {
+        let hooks = hooks_value.as_object_mut().ok_or_else(|| {
+            format!(
+                "Refusing to modify JSON config whose hooks value is not an object: {}",
+                config_path.display()
+            )
+        })?;
+        let event_names = hooks.keys().cloned().collect::<Vec<_>>();
+        for event in event_names {
+            let Some(value) = hooks.remove(&event) else {
+                continue;
+            };
+            match value {
+                Value::Array(groups) => {
+                    let retained = groups
+                        .into_iter()
+                        .filter_map(remove_humhum_handlers_from_group)
+                        .collect::<Vec<_>>();
+                    if !retained.is_empty() {
+                        hooks.insert(event, Value::Array(retained));
+                    }
+                }
+                other => {
+                    // Preserve unknown future client schema fields verbatim.
+                    hooks.insert(event, other);
                 }
             }
         }
@@ -2952,49 +3425,202 @@ fn uninstall_json_hooks(config_path: &std::path::Path, events: &[&str]) -> Resul
 
     let content =
         serde_json::to_string_pretty(&settings).map_err(|e| format!("Serialize error: {}", e))?;
-    std::fs::write(config_path, content).map_err(|e| format!("Write error: {}", e))?;
+    crate::knowledge_store::write_file_atomically(config_path, content.as_bytes())
+        .map_err(|e| format!("Atomic write error: {}", e))?;
 
     Ok(())
 }
 
-fn install_toml_hooks(
+fn remove_humhum_handlers_from_group(mut group: Value) -> Option<Value> {
+    let Some(handlers) = group.get_mut("hooks").and_then(Value::as_array_mut) else {
+        return Some(group);
+    };
+    handlers.retain(|handler| !is_humhum_hook_handler(handler));
+    if handlers.is_empty() {
+        None
+    } else {
+        Some(group)
+    }
+}
+
+fn remove_humhum_handlers_from_hooks_object(hooks: &mut serde_json::Map<String, Value>) {
+    let event_names = hooks.keys().cloned().collect::<Vec<_>>();
+    for event in event_names {
+        let Some(value) = hooks.remove(&event) else {
+            continue;
+        };
+        match value {
+            Value::Array(groups) => {
+                let retained = groups
+                    .into_iter()
+                    .filter_map(remove_humhum_handlers_from_group)
+                    .collect::<Vec<_>>();
+                if !retained.is_empty() {
+                    hooks.insert(event, Value::Array(retained));
+                }
+            }
+            other => {
+                hooks.insert(event, other);
+            }
+        }
+    }
+}
+
+fn is_humhum_hook_handler(handler: &Value) -> bool {
+    ["command", "commandWindows"]
+        .into_iter()
+        .filter_map(|field| handler.get(field).and_then(Value::as_str))
+        .any(|command| command.to_ascii_lowercase().contains("humhum-hook"))
+}
+
+fn install_kimi_hooks(
     config_path: &std::path::Path,
     hook_cmd: &str,
     events: &[&str],
+    timeout_seconds: u64,
 ) -> Result<(), String> {
-    let mut content = if config_path.exists() {
+    use toml_edit::{value, ArrayOfTables, DocumentMut, Item, Table};
+
+    let content = if config_path.exists() {
         std::fs::read_to_string(config_path).map_err(|e| format!("Failed to read: {}", e))?
     } else {
         String::new()
     };
+    let mut document = content.parse::<DocumentMut>().map_err(|error| {
+        format!(
+            "Refusing to modify invalid TOML config {}: {}",
+            config_path.display(),
+            error
+        )
+    })?;
 
-    if !content.contains("[hooks]") {
-        content.push_str("\n[hooks]\n");
-    }
-
-    for event in events {
-        let entry = format!("{} = \"{}\"", event, hook_cmd);
-        if !content.contains(&format!("{} =", event)) {
-            content.push_str(&entry);
-            content.push('\n');
+    // Migrate the invalid [hooks] Event = "...humhum..." layout emitted by
+    // older HumHum versions, but never discard unrelated user configuration.
+    let mut remove_legacy_table = false;
+    if let Some(table) = document.get_mut("hooks").and_then(Item::as_table_mut) {
+        let humhum_keys = table
+            .iter()
+            .filter_map(|(key, item)| {
+                item.as_str()
+                    .filter(|command| command.contains("humhum"))
+                    .map(|_| key.to_string())
+            })
+            .collect::<Vec<_>>();
+        for key in humhum_keys {
+            table.remove(&key);
+        }
+        remove_legacy_table = table.is_empty();
+        if !remove_legacy_table {
+            return Err(format!(
+                "{} contains a legacy [hooks] table with non-HumHum values; migrate it to [[hooks]] before installing",
+                config_path.display()
+            ));
         }
     }
+    if remove_legacy_table {
+        document.remove("hooks");
+    }
 
-    std::fs::write(config_path, content).map_err(|e| format!("Write error: {}", e))?;
+    if document.get("hooks").is_none() {
+        document["hooks"] = Item::ArrayOfTables(ArrayOfTables::new());
+    }
+    let hooks = document["hooks"].as_array_of_tables_mut().ok_or_else(|| {
+        format!(
+            "{} has a hooks value that is not a [[hooks]] array",
+            config_path.display()
+        )
+    })?;
+
+    // Replace every older HumHum entry so a changed port, script path, timeout,
+    // or supported-event set is applied on reinstall without duplicating hooks.
+    let retained = hooks
+        .iter()
+        .filter(|table| {
+            !table
+                .get("command")
+                .and_then(Item::as_str)
+                .map(|command| command.contains("humhum"))
+                .unwrap_or(false)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut replacement = ArrayOfTables::new();
+    for table in retained {
+        replacement.push(table);
+    }
+    *hooks = replacement;
+
+    for event in events {
+        let mut table = Table::new();
+        table["event"] = value(*event);
+        table["command"] = value(hook_cmd);
+        table["timeout"] = value(timeout_seconds as i64);
+        hooks.push(table);
+    }
+
+    let content = document.to_string();
+    crate::knowledge_store::write_file_atomically(config_path, content.as_bytes())
+        .map_err(|e| format!("Atomic write error: {}", e))?;
 
     Ok(())
 }
 
-fn uninstall_toml_hooks(config_path: &std::path::Path, events: &[&str]) -> Result<(), String> {
+fn uninstall_kimi_hooks(config_path: &std::path::Path) -> Result<(), String> {
+    use toml_edit::{ArrayOfTables, DocumentMut, Item};
+
     let content =
         std::fs::read_to_string(config_path).map_err(|e| format!("Failed to read: {}", e))?;
+    let mut document = content.parse::<DocumentMut>().map_err(|error| {
+        format!(
+            "Refusing to modify invalid TOML config {}: {}",
+            config_path.display(),
+            error
+        )
+    })?;
 
-    let filtered: Vec<&str> = content
-        .lines()
-        .filter(|line| !events.iter().any(|e| line.starts_with(&format!("{} =", e))))
-        .collect();
+    let mut remove_hooks_item = false;
+    if let Some(hooks) = document
+        .get_mut("hooks")
+        .and_then(Item::as_array_of_tables_mut)
+    {
+        let retained = hooks
+            .iter()
+            .filter(|table| {
+                !table
+                    .get("command")
+                    .and_then(Item::as_str)
+                    .map(|command| command.contains("humhum"))
+                    .unwrap_or(false)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut replacement = ArrayOfTables::new();
+        for table in retained {
+            replacement.push(table);
+        }
+        *hooks = replacement;
+        remove_hooks_item = hooks.is_empty();
+    } else if let Some(table) = document.get_mut("hooks").and_then(Item::as_table_mut) {
+        let humhum_keys = table
+            .iter()
+            .filter_map(|(key, item)| {
+                item.as_str()
+                    .filter(|command| command.contains("humhum"))
+                    .map(|_| key.to_string())
+            })
+            .collect::<Vec<_>>();
+        for key in humhum_keys {
+            table.remove(&key);
+        }
+        remove_hooks_item = table.is_empty();
+    }
+    if remove_hooks_item {
+        document.remove("hooks");
+    }
 
-    std::fs::write(config_path, filtered.join("\n")).map_err(|e| format!("Write error: {}", e))?;
+    let content = document.to_string();
+    crate::knowledge_store::write_file_atomically(config_path, content.as_bytes())
+        .map_err(|e| format!("Atomic write error: {}", e))?;
 
     Ok(())
 }
@@ -3042,7 +3668,7 @@ pub async fn proxy_post(url: String, headers: Value, body: String) -> Result<Str
         return Err(format!(
             "HTTP {}: {}",
             status,
-            &text[..text.floor_char_boundary(200)]
+            crate::user_safe_text::utf8_prefix(&text, 200)
         ));
     }
 
@@ -3081,7 +3707,7 @@ pub async fn proxy_post_binary(
         return Err(format!(
             "HTTP {}: {}",
             status,
-            &text[..text.floor_char_boundary(200)]
+            crate::user_safe_text::utf8_prefix(&text, 200)
         ));
     }
 
@@ -3093,7 +3719,100 @@ pub async fn proxy_post_binary(
     Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
 }
 
-/// Play MP3 audio natively via afplay (bypasses WebView audio restrictions)
+/// Upload a microphone recording through Rust so WebView CORS rules do not
+/// break Whisper-compatible transcription endpoints.
+#[tauri::command]
+pub async fn transcribe_audio(
+    base64_data: String,
+    filename: String,
+    api_base: String,
+    api_key: String,
+    model: Option<String>,
+    language: Option<String>,
+) -> Result<String, String> {
+    use base64::Engine;
+
+    if api_key.trim().is_empty() {
+        return Err("A transcription API key is required".to_string());
+    }
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(base64_data)
+        .map_err(|error| format!("Invalid recording data: {}", error))?;
+    if bytes.is_empty() {
+        return Err("The microphone recording was empty".to_string());
+    }
+    if bytes.len() > 25 * 1024 * 1024 {
+        return Err("The microphone recording exceeds the 25 MB limit".to_string());
+    }
+
+    let safe_filename = std::path::Path::new(&filename)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or("recording.webm")
+        .to_string();
+    let mime = if safe_filename.to_ascii_lowercase().ends_with(".ogg") {
+        "audio/ogg"
+    } else if safe_filename.to_ascii_lowercase().ends_with(".mp4") {
+        "audio/mp4"
+    } else {
+        "audio/webm"
+    };
+    let part = reqwest::multipart::Part::bytes(bytes)
+        .file_name(safe_filename)
+        .mime_str(mime)
+        .map_err(|error| format!("Invalid recording MIME type: {}", error))?;
+    let mut form = reqwest::multipart::Form::new()
+        .part("file", part)
+        .text("model", model.unwrap_or_else(|| "whisper-1".to_string()));
+    if let Some(language) = language.filter(|value| !value.trim().is_empty()) {
+        form = form.text("language", language);
+    }
+
+    let endpoint = format!(
+        "{}/audio/transcriptions",
+        api_base.trim().trim_end_matches('/')
+    );
+    let response = reqwest::Client::new()
+        .post(endpoint)
+        .bearer_auth(api_key)
+        .multipart(form)
+        .send()
+        .await
+        .map_err(|error| format!("Transcription request failed: {}", error))?;
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .map_err(|error| format!("Failed to read transcription response: {}", error))?;
+    if !status.is_success() {
+        return Err(format!(
+            "Transcription API returned HTTP {}: {}",
+            status.as_u16(),
+            crate::user_safe_text::utf8_prefix(&body, 500)
+        ));
+    }
+    let payload: Value = serde_json::from_str(&body)
+        .map_err(|error| format!("Invalid transcription response: {}", error))?;
+    payload
+        .get("text")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| "Transcription response did not contain text".to_string())
+}
+
+/// Generate speech with the operating system voice when the optional Edge TTS
+/// bridge is unavailable.
+#[tauri::command]
+pub async fn synthesize_system_speech(
+    text: String,
+    voice: Option<String>,
+    speed: Option<f64>,
+) -> Result<String, String> {
+    crate::system_tts::synthesize(&text, voice.as_deref(), speed.unwrap_or(1.0)).await
+}
+
+/// Play audio through the platform-native backend.
 /// Blocks until playback finishes so AudioQueue can sequence correctly.
 #[tauri::command]
 pub async fn play_audio(base64_data: String) -> Result<(), String> {
@@ -3106,7 +3825,8 @@ pub async fn play_audio(base64_data: String) -> Result<(), String> {
 
     let tmp_dir = std::env::temp_dir().join("humhum-audio");
     std::fs::create_dir_all(&tmp_dir).ok();
-    let tmp_file = tmp_dir.join(format!("tts-{}.mp3", uuid::Uuid::new_v4()));
+    let extension = audio_file_extension(&bytes);
+    let tmp_file = tmp_dir.join(format!("tts-{}.{}", uuid::Uuid::new_v4(), extension));
 
     let mut file = std::fs::File::create(&tmp_file)
         .map_err(|e| format!("Failed to create temp file: {}", e))?;
@@ -3114,35 +3834,321 @@ pub async fn play_audio(base64_data: String) -> Result<(), String> {
         .map_err(|e| format!("Failed to write audio: {}", e))?;
     drop(file);
 
-    let path_str = tmp_file.to_string_lossy().to_string();
-    let mut child = tokio::process::Command::new("afplay")
-        .arg(&path_str)
-        .spawn()
-        .map_err(|e| format!("afplay spawn failed: {}", e))?;
+    let playback = crate::native_audio::play_file(&tmp_file).await;
+    let _ = std::fs::remove_file(&tmp_file);
+    playback
+}
 
-    let status = child
-        .wait()
-        .await
-        .map_err(|e| format!("afplay wait failed: {}", e))?;
-
-    let _ = std::fs::remove_file(&path_str);
-
-    if status.success() {
-        Ok(())
+fn audio_file_extension(bytes: &[u8]) -> &'static str {
+    if bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(&b"WAVE"[..]) {
+        "wav"
+    } else if bytes.starts_with(b"FORM")
+        && matches!(bytes.get(8..12), Some(kind) if kind == b"AIFF" || kind == b"AIFC")
+    {
+        "aiff"
     } else {
-        Err(format!("afplay exited with: {}", status))
+        "mp3"
     }
 }
 
-/// Stop any currently playing afplay audio
+/// Stop the audio file currently owned by HumHum.
 #[tauri::command]
 pub async fn stop_audio() -> Result<(), String> {
-    tokio::process::Command::new("killall")
-        .args(["-9", "afplay"])
-        .status()
-        .await
-        .ok();
-    Ok(())
+    crate::native_audio::stop().await
+}
+
+#[cfg(test)]
+mod hook_config_protocol_tests {
+    use super::{
+        audio_file_extension, install_json_hooks, install_kimi_hooks, uninstall_json_hooks,
+        uninstall_kimi_hooks,
+    };
+    use std::path::{Path, PathBuf};
+    use toml_edit::{DocumentMut, Item};
+
+    struct TempConfig {
+        directory: PathBuf,
+        path: PathBuf,
+    }
+
+    impl TempConfig {
+        fn new(file_name: &str) -> Self {
+            let directory =
+                std::env::temp_dir().join(format!("humhum-protocol-test-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&directory).expect("create protocol test directory");
+            let path = directory.join(file_name);
+            Self { directory, path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+
+        fn read(&self) -> String {
+            std::fs::read_to_string(&self.path).expect("read protocol test config")
+        }
+    }
+
+    impl Drop for TempConfig {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.directory);
+        }
+    }
+
+    fn parse_toml(config: &TempConfig) -> DocumentMut {
+        config.read().parse().expect("parse generated TOML")
+    }
+
+    #[test]
+    fn kimi_generates_array_hooks_idempotently_and_uninstalls_only_humhum() {
+        let config = TempConfig::new("config.toml");
+        std::fs::write(
+            config.path(),
+            r#"[ui]
+theme = "moon"
+
+[[hooks]]
+event = "CustomEvent"
+command = "other-agent-hook"
+timeout = 9
+"#,
+        )
+        .unwrap();
+
+        let humhum_command = "'/tmp/humhum-hook.sh' --client 'kimi-k1'";
+        install_kimi_hooks(
+            config.path(),
+            humhum_command,
+            &["Stop", "Notification"],
+            130,
+        )
+        .unwrap();
+        // Reinstalling must not duplicate HumHum entries.
+        install_kimi_hooks(
+            config.path(),
+            humhum_command,
+            &["Stop", "Notification"],
+            130,
+        )
+        .unwrap();
+
+        let document = parse_toml(&config);
+        assert_eq!(document["ui"]["theme"].as_str(), Some("moon"));
+        let hooks = document["hooks"]
+            .as_array_of_tables()
+            .expect("Kimi hooks must use [[hooks]]");
+        assert_eq!(hooks.len(), 3);
+        for event in ["Stop", "Notification"] {
+            let hook = hooks
+                .iter()
+                .find(|hook| hook.get("event").and_then(Item::as_str) == Some(event))
+                .expect("generated HumHum hook");
+            assert_eq!(
+                hook.get("command").and_then(Item::as_str),
+                Some(humhum_command)
+            );
+            assert_eq!(hook.get("timeout").and_then(Item::as_integer), Some(130));
+        }
+
+        uninstall_kimi_hooks(config.path()).unwrap();
+        let document = parse_toml(&config);
+        assert_eq!(document["ui"]["theme"].as_str(), Some("moon"));
+        let hooks = document["hooks"]
+            .as_array_of_tables()
+            .expect("foreign [[hooks]] entry must remain");
+        assert_eq!(hooks.len(), 1);
+        let foreign_hook = hooks.get(0).expect("foreign hook entry");
+        assert_eq!(foreign_hook["event"].as_str(), Some("CustomEvent"));
+        assert_eq!(foreign_hook["command"].as_str(), Some("other-agent-hook"));
+    }
+
+    #[test]
+    fn kimi_migrates_legacy_humhum_hook_table_to_array_tables() {
+        let config = TempConfig::new("config.toml");
+        std::fs::write(
+            config.path(),
+            r#"model = "kimi-for-coding"
+
+[hooks]
+Stop = "'/tmp/humhum-hook.sh' --client 'kimi-k1'"
+Notification = "'/tmp/humhum-hook.sh' --client 'kimi-k1'"
+"#,
+        )
+        .unwrap();
+
+        install_kimi_hooks(
+            config.path(),
+            "'/tmp/humhum-hook.sh' --client 'kimi-k1'",
+            &["Stop", "Notification"],
+            130,
+        )
+        .unwrap();
+
+        let document = parse_toml(&config);
+        assert_eq!(document["model"].as_str(), Some("kimi-for-coding"));
+        let hooks = document["hooks"]
+            .as_array_of_tables()
+            .expect("legacy [hooks] must migrate to [[hooks]]");
+        assert_eq!(hooks.len(), 2);
+        assert!(hooks.iter().all(|hook| {
+            hook.get("command")
+                .and_then(Item::as_str)
+                .map(|command| command.contains("humhum"))
+                .unwrap_or(false)
+        }));
+    }
+
+    #[test]
+    fn kimi_uninstall_removes_legacy_humhum_values_and_preserves_foreign_values() {
+        let config = TempConfig::new("config.toml");
+        std::fs::write(
+            config.path(),
+            r#"model = "kimi-for-coding"
+
+[hooks]
+Stop = "'/tmp/humhum-hook.sh' --client 'kimi-k1'"
+CustomEvent = "other-agent-hook"
+"#,
+        )
+        .unwrap();
+
+        uninstall_kimi_hooks(config.path()).unwrap();
+
+        let document = parse_toml(&config);
+        assert_eq!(document["model"].as_str(), Some("kimi-for-coding"));
+        let legacy_hooks = document["hooks"]
+            .as_table()
+            .expect("foreign legacy hook must remain");
+        assert!(legacy_hooks.get("Stop").is_none());
+        assert_eq!(
+            legacy_hooks.get("CustomEvent").and_then(Item::as_str),
+            Some("other-agent-hook")
+        );
+    }
+
+    #[test]
+    fn json_reinstall_refreshes_humhum_and_preserves_same_group_handlers() {
+        let config = TempConfig::new("settings.json");
+        std::fs::write(
+            config.path(),
+            r#"{
+  "theme": "moon",
+  "hooks": {
+    "Stop": [{
+      "matcher": "*",
+      "hooks": [
+        {"type": "command", "command": "other-agent-hook"},
+        {"type": "command", "command": "old-humhum-hook --port 1"}
+      ]
+    }],
+    "TaskCompleted": [{
+      "matcher": "*",
+      "hooks": [{"type": "command", "command": "old-humhum-hook"}]
+    }]
+  }
+}"#,
+        )
+        .unwrap();
+
+        install_json_hooks(
+            config.path(),
+            "new-humhum-hook --port 31275",
+            &["Stop", "Notification"],
+            130,
+            "claude-code",
+        )
+        .unwrap();
+        // A second install must update in place rather than duplicate entries.
+        install_json_hooks(
+            config.path(),
+            "new-humhum-hook --port 40000",
+            &["Stop", "Notification"],
+            130,
+            "claude-code",
+        )
+        .unwrap();
+
+        let installed: serde_json::Value = serde_json::from_str(&config.read()).unwrap();
+        assert_eq!(installed["theme"], "moon");
+        assert!(installed["hooks"].get("TaskCompleted").is_none());
+        let stop_groups = installed["hooks"]["Stop"].as_array().unwrap();
+        assert_eq!(stop_groups.len(), 2);
+        let commands = stop_groups
+            .iter()
+            .flat_map(|group| group["hooks"].as_array().into_iter().flatten())
+            .filter_map(|handler| handler["command"].as_str())
+            .collect::<Vec<_>>();
+        assert!(commands.contains(&"other-agent-hook"));
+        assert!(commands.contains(&"new-humhum-hook --port 40000"));
+        assert!(!commands.iter().any(|command| command.contains("--port 1")));
+
+        uninstall_json_hooks(config.path(), &["Stop", "Notification"]).unwrap();
+        let uninstalled: serde_json::Value = serde_json::from_str(&config.read()).unwrap();
+        let remaining_handlers = uninstalled["hooks"]["Stop"][0]["hooks"].as_array().unwrap();
+        assert_eq!(remaining_handlers.len(), 1);
+        assert_eq!(remaining_handlers[0]["command"], "other-agent-hook");
+        assert!(uninstalled["hooks"].get("Notification").is_none());
+    }
+
+    #[test]
+    fn invalid_json_and_toml_configs_are_never_rewritten() {
+        let json_config = TempConfig::new("settings.json");
+        let invalid_json = "{\"hooks\": [ this is not valid JSON";
+        std::fs::write(json_config.path(), invalid_json).unwrap();
+        assert!(install_json_hooks(
+            json_config.path(),
+            "humhum-hook",
+            &["Stop"],
+            130,
+            "claude-code",
+        )
+        .is_err());
+        assert_eq!(json_config.read(), invalid_json);
+        assert!(uninstall_json_hooks(json_config.path(), &["Stop"]).is_err());
+        assert_eq!(json_config.read(), invalid_json);
+
+        let incompatible_json = TempConfig::new("incompatible-settings.json");
+        let incompatible_content = "{\n  \"hooks\": []\n}\n";
+        std::fs::write(incompatible_json.path(), incompatible_content).unwrap();
+        assert!(install_json_hooks(
+            incompatible_json.path(),
+            "humhum-hook",
+            &["Stop"],
+            130,
+            "claude-code",
+        )
+        .is_err());
+        assert_eq!(incompatible_json.read(), incompatible_content);
+        assert!(uninstall_json_hooks(incompatible_json.path(), &["Stop"]).is_err());
+        assert_eq!(incompatible_json.read(), incompatible_content);
+
+        let toml_config = TempConfig::new("config.toml");
+        let invalid_toml = "[[hooks]\nevent = \"Stop\"";
+        std::fs::write(toml_config.path(), invalid_toml).unwrap();
+        assert!(install_kimi_hooks(toml_config.path(), "humhum-hook", &["Stop"], 130,).is_err());
+        assert_eq!(toml_config.read(), invalid_toml);
+        assert!(uninstall_kimi_hooks(toml_config.path()).is_err());
+        assert_eq!(toml_config.read(), invalid_toml);
+    }
+
+    #[test]
+    fn recognizes_wav_aiff_aifc_and_mp3_file_headers() {
+        assert_eq!(audio_file_extension(b"RIFF\x24\x00\x00\x00WAVEfmt "), "wav");
+        assert_eq!(
+            audio_file_extension(b"FORM\x00\x00\x00\x12AIFFCOMM"),
+            "aiff"
+        );
+        assert_eq!(
+            audio_file_extension(b"FORM\x00\x00\x00\x12AIFCCOMM"),
+            "aiff"
+        );
+        assert_eq!(
+            audio_file_extension(b"ID3\x04\x00\x00\x00\x00\x00\x15"),
+            "mp3"
+        );
+        assert_eq!(audio_file_extension(b"\xff\xfb\x90\x64"), "mp3");
+        assert_eq!(audio_file_extension(b"FORM\x00\x00\x00\x04JUNK"), "mp3");
+    }
 }
 
 #[tauri::command]
@@ -4572,6 +5578,15 @@ fn write_local_kernel_memory(
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("Failed to create local memory dir: {}", e))?;
     }
+    if std::fs::symlink_metadata(&memory_path)
+        .is_ok_and(|metadata| metadata.file_type().is_symlink())
+    {
+        return Err("Local agent memory cannot be a symbolic link".into());
+    }
+    if memory_path.exists() {
+        crate::local_api_auth::protect_owner_only(&memory_path)
+            .map_err(|error| format!("Failed to protect local agent memory: {error}"))?;
+    }
 
     let mut entry = String::new();
     entry.push_str("\n\n## Local Agent Kernel Run\n");
@@ -4593,8 +5608,13 @@ fn write_local_kernel_memory(
         "# HUMHUM Local Agent Memory\n\nThis file is maintained by HUMHUM's local fallback agent kernel.\n".to_string()
     };
     content.push_str(&entry);
-    std::fs::write(&memory_path, content)
-        .map_err(|e| format!("Failed to write local kernel memory: {}", e))?;
+    crate::local_api_auth::write_private_file_atomically(&memory_path, content.as_bytes())
+        .map_err(|e| {
+            format!(
+                "Failed to atomically write private local kernel memory: {}",
+                e
+            )
+        })?;
 
     Ok(memory_path.to_string_lossy().to_string())
 }

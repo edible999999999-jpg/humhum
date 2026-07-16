@@ -1,4 +1,5 @@
-use std::path::Path;
+use crate::codex_bridge::transport::{command_for_cli_with_untrusted_args, resolve_cli_binary};
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
@@ -34,7 +35,12 @@ pub async fn send_followup(
         return Err("OpenCode workspace must be a directory".into());
     }
     let binary = opencode_binary();
-    let mut command = tokio::process::Command::new(&binary);
+    let mut command = command_for_cli_with_untrusted_args(&binary).map_err(|error| {
+        format!(
+            "Could not safely prepare OpenCode CLI at {}: {error}",
+            binary.display()
+        )
+    })?;
     command
         .args(args)
         .arg(message)
@@ -115,19 +121,23 @@ fn is_completion_line(line: &str, session_id: &str) -> bool {
     })
 }
 
-fn opencode_binary() -> std::path::PathBuf {
+fn opencode_binary() -> PathBuf {
     let mut candidates = vec![
-        std::path::PathBuf::from("/opt/homebrew/bin/opencode"),
-        std::path::PathBuf::from("/usr/local/bin/opencode"),
+        PathBuf::from("/opt/homebrew/bin/opencode"),
+        PathBuf::from("/usr/local/bin/opencode"),
     ];
     if let Some(home) = dirs::home_dir() {
         candidates.push(home.join(".opencode/bin/opencode"));
         candidates.push(home.join(".local/bin/opencode"));
+        #[cfg(target_os = "windows")]
+        {
+            candidates.push(home.join(".opencode/bin/opencode.exe"));
+            candidates.push(home.join(".opencode/bin/opencode.cmd"));
+            candidates.push(home.join(".local/bin/opencode.exe"));
+            candidates.push(home.join(".local/bin/opencode.cmd"));
+        }
     }
-    candidates
-        .into_iter()
-        .find(|path| path.is_file())
-        .unwrap_or_else(|| std::path::PathBuf::from("opencode"))
+    resolve_cli_binary("opencode", candidates)
 }
 
 #[cfg(test)]

@@ -44,7 +44,12 @@ export function useVoiceCommand(
     });
 
     setIsListening(true);
-    await provider.startListening({ language: "zh-CN", interimResults: true });
+    try {
+      await provider.startListening({ language: "zh-CN", interimResults: true });
+    } catch (error) {
+      console.error("[VoiceCommand] Failed to start STT:", error);
+      setIsListening(false);
+    }
   }, [isListening]);
 
   const stopListening = useCallback(() => {

@@ -6,8 +6,8 @@ Thank you for your interest in contributing! HumHum is an open-source project an
 
 1. Fork the repository
 2. Clone your fork locally
-3. Install dependencies: `pnpm install`
-4. Start development: `pnpm tauri dev`
+3. Install dependencies: `npm ci`
+4. Start development: `npm run tauri dev`
 
 ## Development Workflow
 
@@ -18,11 +18,12 @@ Thank you for your interest in contributing! HumHum is an open-source project an
 
 ### Backend (Rust/Tauri)
 - Source: `src-tauri/src/`
-- Changes require restart of `pnpm tauri dev`
+- Changes require restart of `npm run tauri dev`
 
 ### Hook Scripts
 - Source: `hooks/`
-- Test with: `echo '{"hook_event_name":"Stop","session_id":"test"}' | ./hooks/humhum-hook.sh`
+- Test on macOS/Linux with: `echo '{"hook_event_name":"Stop","session_id":"test"}' | ./hooks/humhum-hook.sh`
+- Test on Windows with: `'{"hook_event_name":"Stop","session_id":"test"}' | powershell.exe -NoProfile -File .\hooks\humhum-hook.ps1`
 
 ## Adding a New TTS Provider
 
@@ -75,5 +76,5 @@ Follow [Conventional Commits](https://www.conventionalcommits.org/):
 All contributions go through code review. Please:
 - Keep PRs focused on a single concern
 - Include a clear description of what and why
-- Ensure `pnpm tauri dev` starts without errors
+- Ensure `npm run tauri dev` starts without errors
 - Add types for any new interfaces or data structures

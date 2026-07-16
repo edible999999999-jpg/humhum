@@ -1,3 +1,14 @@
+pub(crate) fn utf8_prefix(value: &str, max_bytes: usize) -> &str {
+    if value.len() <= max_bytes {
+        return value;
+    }
+    let mut end = max_bytes;
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    &value[..end]
+}
+
 pub(crate) fn project_user_safe_text(raw: &str) -> String {
     let without_metadata = strip_transport_metadata(raw);
     let redacted = redact_local_paths(without_metadata);
@@ -110,7 +121,14 @@ fn is_path_end_boundary(ch: char) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::project_user_safe_text;
+    use super::{project_user_safe_text, utf8_prefix};
+
+    #[test]
+    fn utf8_prefix_clamps_short_text_and_preserves_character_boundaries() {
+        assert_eq!(utf8_prefix("short", 200), "short");
+        assert_eq!(utf8_prefix("你好世界", 7), "你好");
+        assert_eq!(utf8_prefix("你好", 0), "");
+    }
 
     #[test]
     fn removes_transport_metadata_and_keeps_the_actual_message() {
