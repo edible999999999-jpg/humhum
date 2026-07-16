@@ -8,7 +8,9 @@
 [中文文档](./README.zh-CN.md)
 
 <p align="center">
-  <a href="https://github.com/edible999999999-jpg/humhum/releases/latest/download/HUMHUM-macOS-0.3.10-arm64.dmg"><strong>Download for macOS</strong></a>
+  <a href="https://github.com/edible999999999-jpg/humhum/releases/latest/download/HumHum_0.3.12_aarch64.dmg"><strong>Download for macOS</strong></a>
+  ·
+  <a href="https://github.com/edible999999999-jpg/humhum/releases/latest/download/HumHum_0.3.12_x64-setup.exe"><strong>Download Windows Preview</strong></a>
   ·
   <a href="https://github.com/edible999999999-jpg/humhum/releases/latest/download/HUMHUM-Android-0.3.8-Xiaomi.zip"><strong>Download for Android / Xiaomi</strong></a>
   ·
@@ -17,9 +19,9 @@
   <a href="https://github.com/edible999999999-jpg/humhum/releases">Latest Release</a>
 </p>
 
-<p align="center"><em>Available for macOS Apple Silicon and Android 8.0+. The Windows 10/11 x64 port is in developer preview; Linux remains on the roadmap.</em></p>
+<p align="center"><em>Available for macOS Apple Silicon, Windows 10/11 x64 preview, and Android 8.0+. Linux remains on the roadmap.</em></p>
 
-Windows contributors can use the [Windows development, build, and installation guide](./docs/windows-development.md). CI produces an unsigned NSIS installer for validation; it is not yet a signed public release.
+Windows contributors can use the [Windows development, build, and installation guide](./docs/windows-development.md). The preview installer is unsigned, so Microsoft SmartScreen may require an explicit confirmation. Windows code signing is still required before a formal public release.
 
 ---
 

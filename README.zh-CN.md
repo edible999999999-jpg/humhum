@@ -8,7 +8,9 @@
 **让所有 Agent 围绕你工作** —— 个人生活的 Agent 中枢
 
 <p align="center">
-  <a href="https://github.com/edible999999999-jpg/humhum/releases/latest/download/HUMHUM-macOS-0.3.10-arm64.dmg"><strong>下载 macOS 版</strong></a>
+  <a href="https://github.com/edible999999999-jpg/humhum/releases/latest/download/HumHum_0.3.12_aarch64.dmg"><strong>下载 macOS 版</strong></a>
+  ·
+  <a href="https://github.com/edible999999999-jpg/humhum/releases/latest/download/HumHum_0.3.12_x64-setup.exe"><strong>下载 Windows 预览版</strong></a>
   ·
   <a href="https://github.com/edible999999999-jpg/humhum/releases/latest/download/HUMHUM-Android-0.3.8-Xiaomi.zip"><strong>下载 Android / 小米版</strong></a>
   ·
@@ -17,9 +19,9 @@
   <a href="https://github.com/edible999999999-jpg/humhum/releases">最新 Release</a>
 </p>
 
-<p align="center"><em>当前提供 macOS Apple Silicon 与 Android 8.0+ 安装包；Windows 10/11 x64 版本处于开发者预览阶段，Linux 仍在路线图中。</em></p>
+<p align="center"><em>当前提供 macOS Apple Silicon、Windows 10/11 x64 预览版与 Android 8.0+ 安装包；Linux 仍在路线图中。</em></p>
 
-Windows 开发者可参考 [Windows 开发、构建与安装指南](./docs/windows-development.md)。CI 会生成用于验证的未签名 NSIS 安装包，目前还不是已签名的正式发行版。
+Windows 开发者可参考 [Windows 开发、构建与安装指南](./docs/windows-development.md)。预览版安装包尚未签名，Microsoft SmartScreen 仍可能要求用户手动确认；在完成 Windows 代码签名之前，它不算正式发行版。
 
 ---
 

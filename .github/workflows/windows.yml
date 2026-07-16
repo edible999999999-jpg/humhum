@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: windows-ci-${{ github.ref }}
@@ -135,3 +135,27 @@ jobs:
           path: src-tauri/target/release/bundle/nsis/*.exe
           if-no-files-found: error
           retention-days: 14
+
+      - name: Publish Windows preview to the GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $installer = Get-ChildItem "src-tauri/target/release/bundle/nsis/*.exe" |
+            Select-Object -First 1 -ExpandProperty FullName
+          if (-not $installer) {
+            throw "Windows NSIS installer was not found"
+          }
+
+          gh release view $env:GITHUB_REF_NAME 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $env:GITHUB_REF_NAME $installer --clobber
+          } else {
+            gh release create $env:GITHUB_REF_NAME $installer `
+              --title "HUMHUM $env:GITHUB_REF_NAME" `
+              --generate-notes
+            if ($LASTEXITCODE -ne 0) {
+              gh release upload $env:GITHUB_REF_NAME $installer --clobber
+            }
+          }

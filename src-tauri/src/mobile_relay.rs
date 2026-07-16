@@ -1821,17 +1821,24 @@ mod tests {
             .send((201, r#"{"sequence":7}"#.into()))
             .unwrap();
 
-        let revoke_completed = tokio::time::timeout(Duration::from_millis(100), &mut revoked)
-            .await
-            .is_ok();
-        let next_request = tokio::time::timeout(Duration::from_millis(100), requests.recv()).await;
+        let revoke_result = tokio::time::timeout(Duration::from_secs(1), async {
+            tokio::select! {
+                biased;
+                result = &mut revoked => result,
+                _ = requests.recv() => panic!("revoke started the next device before it completed"),
+            }
+        })
+        .await
+        .expect("revoke did not complete after the current request")
+        .unwrap();
+        revoke_result.unwrap();
+
+        let next_request = tokio::time::timeout(Duration::from_secs(1), requests.recv()).await;
         if let Ok(Some(request)) = next_request {
             let _ = request.respond.send((201, r#"{"sequence":7}"#.into()));
         }
         stop_publisher(publisher).await;
         server.abort();
-
-        assert!(revoke_completed, "revoke waited beyond the current request");
     }
 
     #[tokio::test]
