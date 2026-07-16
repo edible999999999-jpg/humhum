@@ -350,21 +350,14 @@ impl MobileBridgeState {
             ))
         }
         .await;
-        let (
-            relay_base_url,
-            relay_invite_code,
-            local_host,
-            tailnet_ip,
-            cert,
-            tls_config,
-            listener,
-        ) = match setup {
-            Ok(setup) => setup,
-            Err(error) => {
-                self.abandon_enable(generation);
-                return Err(error);
-            }
-        };
+        let (relay_base_url, relay_invite_code, local_host, tailnet_ip, cert, tls_config, listener) =
+            match setup {
+                Ok(setup) => setup,
+                Err(error) => {
+                    self.abandon_enable(generation);
+                    return Err(error);
+                }
+            };
         let url = format!("https://{local_host}:{DEFAULT_MOBILE_PORT}");
         let tailnet_url = tailnet_ip.map(|ip| format!("https://{ip}:{DEFAULT_MOBILE_PORT}"));
         let relay_enabled = relay_base_url.is_some();
@@ -1291,44 +1284,46 @@ async fn pair_device(
             .runtime
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        (runtime.relay_base_url.clone(), runtime.relay_invite_code.clone())
+        (
+            runtime.relay_base_url.clone(),
+            runtime.relay_invite_code.clone(),
+        )
     };
-    let wake_relay = if let (Some(base_url), Some(invite_code)) =
-        (relay_base_url, relay_invite_code)
-    {
-        let client = match crate::mobile_relay::RelayClient::new(base_url) {
-            Ok(client) => client,
-            Err(_) => {
+    let wake_relay =
+        if let (Some(base_url), Some(invite_code)) = (relay_base_url, relay_invite_code) {
+            let client = match crate::mobile_relay::RelayClient::new(base_url) {
+                Ok(client) => client,
+                Err(_) => {
+                    rollback_paired_device(bridge, &device.id);
+                    return json_error(StatusCode::BAD_GATEWAY, "Wake relay pairing failed");
+                }
+            };
+            let provision = match client.register(&device.id, &invite_code).await {
+                Ok(provision) => provision,
+                Err(_) => {
+                    rollback_paired_device(bridge, &device.id);
+                    return json_error(StatusCode::BAD_GATEWAY, "Wake relay pairing failed");
+                }
+            };
+            if bridge
+                .relay_secrets
+                .lock()
+                .map_err(|error| error.to_string())
+                .and_then(|mut secrets| secrets.put(provision.desktop.clone()))
+                .is_err()
+            {
+                let _ = client.delete(&provision.desktop).await;
                 rollback_paired_device(bridge, &device.id);
-                return json_error(StatusCode::BAD_GATEWAY, "Wake relay pairing failed");
+                return json_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Wake relay pairing failed",
+                );
             }
+            bridge.relay_changes.notify_one();
+            Some(provision.android)
+        } else {
+            None
         };
-        let provision = match client.register(&device.id, &invite_code).await {
-            Ok(provision) => provision,
-            Err(_) => {
-                rollback_paired_device(bridge, &device.id);
-                return json_error(StatusCode::BAD_GATEWAY, "Wake relay pairing failed");
-            }
-        };
-        if bridge
-            .relay_secrets
-            .lock()
-            .map_err(|error| error.to_string())
-            .and_then(|mut secrets| secrets.put(provision.desktop.clone()))
-            .is_err()
-        {
-            let _ = client.delete(&provision.desktop).await;
-            rollback_paired_device(bridge, &device.id);
-            return json_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Wake relay pairing failed",
-            );
-        }
-        bridge.relay_changes.notify_one();
-        Some(provision.android)
-    } else {
-        None
-    };
     json_response(
         StatusCode::OK,
         &pair_success_value(&token, challenge_scope, wake_relay),

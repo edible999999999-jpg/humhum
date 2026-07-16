@@ -649,10 +649,7 @@ impl RelayClient {
         }
         self.client
             .delete(self.endpoint(&format!("/v1/channels/{channel_id}"))?)
-            .header(
-                reqwest::header::AUTHORIZATION,
-                format!("Bearer {token}"),
-            )
+            .header(reqwest::header::AUTHORIZATION, format!("Bearer {token}"))
             .header(reqwest::header::ACCEPT, "application/json")
             .build()
             .map_err(|_| "Could not build relay deletion".into())
@@ -703,7 +700,10 @@ impl RelayClient {
         let health: Health = serde_json::from_slice(&bytes)
             .map_err(|_| "Wake relay returned invalid health data".to_string())?;
         if health.status != "ok"
-            || !matches!(health.name.as_str(), "HUMHUM Wake Relay" | "HUMHUM Anywhere Relay")
+            || !matches!(
+                health.name.as_str(),
+                "HUMHUM Wake Relay" | "HUMHUM Anywhere Relay"
+            )
         {
             return Err("Wake relay returned invalid health data".into());
         }
@@ -1393,7 +1393,10 @@ mod tests {
         let request = client.registration_request("beta-invite-secret").unwrap();
 
         assert_eq!(request.headers()["x-humhum-invite"], "beta-invite-secret");
-        assert_eq!(request.body().and_then(reqwest::Body::as_bytes), Some("{}".as_bytes()));
+        assert_eq!(
+            request.body().and_then(reqwest::Body::as_bytes),
+            Some("{}".as_bytes())
+        );
     }
 
     #[test]
