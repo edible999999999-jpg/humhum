@@ -31,6 +31,7 @@ use crate::window_focus;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::io::{BufRead, BufReader, Read};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -2653,7 +2654,7 @@ fn collect_codex_session_files(limit: usize) -> Result<Vec<PathBuf>, String> {
 }
 
 fn parse_codex_session_file(path: &Path) -> Option<Session> {
-    let content = std::fs::read_to_string(path).ok()?;
+    let lines = read_codex_session_prefix(path, 600).ok()?;
     let mut session_id = path
         .file_stem()
         .and_then(|name| name.to_str())
@@ -2667,8 +2668,8 @@ fn parse_codex_session_file(path: &Path) -> Option<Session> {
     let mut event_names: Vec<String> = Vec::new();
     let mut event_count = 0_u32;
 
-    for line in content.lines().take(600) {
-        let Ok(value) = serde_json::from_str::<Value>(line) else {
+    for line in lines {
+        let Ok(value) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
         event_count += 1;
@@ -2760,6 +2761,38 @@ fn parse_codex_session_file(path: &Path) -> Option<Session> {
         has_pending_permission: false,
         route: None,
     })
+}
+
+const MAX_CODEX_SESSION_PREFIX_BYTES: u64 = 4 * 1024 * 1024;
+
+fn read_codex_session_prefix(path: &Path, max_lines: usize) -> Result<Vec<String>, String> {
+    let file = std::fs::File::open(path).map_err(|error| error.to_string())?;
+    BufReader::new(file.take(MAX_CODEX_SESSION_PREFIX_BYTES))
+        .lines()
+        .take(max_lines)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(test)]
+mod codex_session_io_tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn codex_session_prefix_reader_stops_at_600_lines() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("large-session.jsonl");
+        let mut file = std::fs::File::create(&path).unwrap();
+        for index in 0..700 {
+            writeln!(file, "{{\"type\":\"event\",\"index\":{index}}}").unwrap();
+        }
+
+        let lines = read_codex_session_prefix(&path, 600).unwrap();
+
+        assert_eq!(lines.len(), 600);
+        assert!(lines.last().unwrap().contains("\"index\":599"));
+    }
 }
 
 fn map_codex_event_name(event_type: &str) -> &'static str {
