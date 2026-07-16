@@ -2,6 +2,7 @@ use crate::session_store::SessionRoute;
 use serde::Serialize;
 use std::process::Command;
 
+#[cfg(target_os = "macos")]
 const TERMINALS: &[&str] = &[
     "iTerm2",
     "iTerm",
@@ -15,6 +16,7 @@ const TERMINALS: &[&str] = &[
     "Code",
 ];
 
+#[cfg(any(not(target_os = "windows"), test))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum FocusStrategy {
     TmuxPane(String),
@@ -52,12 +54,14 @@ fn normalize_terminal_application(program: &str) -> Option<&'static str> {
     }
 }
 
+#[cfg(any(not(target_os = "windows"), test))]
 fn is_valid_tmux_pane(value: &str) -> bool {
     value
         .strip_prefix('%')
         .is_some_and(|digits| !digits.is_empty() && digits.chars().all(|ch| ch.is_ascii_digit()))
 }
 
+#[cfg(any(not(target_os = "windows"), test))]
 fn normalize_tty(value: &str) -> Option<String> {
     let value = value.trim();
     let suffix = value.strip_prefix("/dev/").unwrap_or(value);
@@ -66,6 +70,7 @@ fn normalize_tty(value: &str) -> Option<String> {
         .then(|| format!("/dev/{suffix}"))
 }
 
+#[cfg(any(not(target_os = "windows"), test))]
 fn choose_focus_strategy(route: &SessionRoute) -> FocusStrategy {
     if let Some(pane) = route
         .tmux_pane
@@ -115,6 +120,21 @@ fn choose_focus_strategy(route: &SessionRoute) -> FocusStrategy {
     FocusStrategy::GenericTerminal
 }
 
+#[cfg(target_os = "windows")]
+pub fn focus_agent_route(route: Option<&SessionRoute>) -> Result<FocusResult, String> {
+    let application = route
+        .and_then(|item| item.term_program.as_deref())
+        .and_then(normalize_terminal_application)
+        .map(str::to_string);
+    windows::focus_terminal_window()?;
+    Ok(FocusResult {
+        strategy: "windows_terminal".into(),
+        application,
+        exact: false,
+    })
+}
+
+#[cfg(not(target_os = "windows"))]
 pub fn focus_agent_route(route: Option<&SessionRoute>) -> Result<FocusResult, String> {
     let strategy = route
         .map(choose_focus_strategy)
@@ -209,6 +229,7 @@ end tell"#;
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 fn focus_ghostty_terminal(terminal_id: &str) -> Result<FocusResult, String> {
     if terminal_id.is_empty() || terminal_id.len() > 256 {
         return Err("Invalid Ghostty terminal identifier".into());
@@ -268,10 +289,22 @@ pub fn focus_codex_thread(thread_id: &str) -> Result<FocusResult, String> {
             exact: true,
         })
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("explorer.exe")
+            .arg(&url)
+            .spawn()
+            .map_err(|error| format!("Could not open Codex thread: {error}"))?;
+        Ok(FocusResult {
+            strategy: "codex_thread".into(),
+            application: Some("Codex".into()),
+            exact: true,
+        })
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         let _ = url;
-        Err("Codex thread focus only supported on macOS".into())
+        Err("Codex thread focus is only supported on macOS and Windows".into())
     }
 }
 
@@ -346,10 +379,20 @@ end tell"#;
             exact: true,
         })
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
     {
         let _ = path;
-        Err("Ghostty workspace focus only supported on macOS".into())
+        windows::focus_terminal_window()?;
+        Ok(FocusResult {
+            strategy: "windows_terminal".into(),
+            application: Some("Ghostty".into()),
+            exact: false,
+        })
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let _ = path;
+        Err("Ghostty workspace focus is only supported on macOS and Windows".into())
     }
 }
 
@@ -377,10 +420,19 @@ pub fn focus_cursor_workspace(workspace: &str) -> Result<FocusResult, String> {
             exact: false,
         })
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        windows::open_cursor_workspace(path)?;
+        Ok(FocusResult {
+            strategy: "cursor_workspace".into(),
+            application: Some("Cursor".into()),
+            exact: false,
+        })
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         let _ = path;
-        Err("Cursor workspace focus only supported on macOS".into())
+        Err("Cursor workspace focus is only supported on macOS and Windows".into())
     }
 }
 
@@ -449,13 +501,45 @@ pub fn focus_cursor_terminal(route: &SessionRoute, workspace: &str) -> Result<Fo
         let _ = std::fs::remove_file(receipt);
         Err("Cursor did not confirm an exact terminal match".into())
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        let nonce = uuid::Uuid::new_v4().to_string();
+        let receipt = crate::cursor_focus_extension::receipt_path(&home, &nonce)?;
+        if let Some(parent) = receipt.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| format!("Could not prepare Cursor focus receipt: {error}"))?;
+        }
+        let url = crate::cursor_focus_extension::focus_request_url(path, route, &nonce)?;
+        windows::open_cursor_workspace(path)?;
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        windows::open_cursor_uri(&url)?;
+        for _ in 0..40 {
+            if receipt.is_file() {
+                let acknowledged =
+                    std::fs::read_to_string(&receipt).is_ok_and(|value| value.trim() == "focused");
+                let _ = std::fs::remove_file(&receipt);
+                if acknowledged {
+                    return Ok(FocusResult {
+                        strategy: "cursor_terminal".into(),
+                        application: Some("Cursor".into()),
+                        exact: true,
+                    });
+                }
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        let _ = std::fs::remove_file(receipt);
+        Err("Cursor did not confirm an exact terminal match".into())
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         let _ = route;
-        Err("Cursor terminal focus only supported on macOS".into())
+        Err("Cursor terminal focus is only supported on macOS and Windows".into())
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 fn focus_tmux_pane(pane: &str) -> Result<(), String> {
     if !is_valid_tmux_pane(pane) {
         return Err("Invalid tmux pane identifier".into());
@@ -483,6 +567,7 @@ fn focus_tmux_pane(pane: &str) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(not(target_os = "windows"))]
 fn activate_application(application: &str) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
@@ -507,6 +592,7 @@ fn activate_application(application: &str) -> Result<(), String> {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 fn focus_iterm_session(session_id: &str) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
@@ -545,6 +631,7 @@ end tell"#
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 fn focus_terminal_tty(tty: &str) -> Result<(), String> {
     let tty = normalize_tty(tty).ok_or("Invalid Terminal TTY identifier")?;
     #[cfg(target_os = "macos")]
@@ -580,42 +667,43 @@ end tell"#
         Err("Terminal TTY focus only supported on macOS".into())
     }
 }
-
+#[cfg(target_os = "macos")]
 pub fn focus_terminal_app() -> Result<(), String> {
-    #[cfg(target_os = "macos")]
-    {
-        for app in TERMINALS {
-            let status = Command::new("osascript")
-                .arg("-e")
-                .arg(format!(
-                    "tell application \"System Events\" to set frontmost of process \"{}\" to true",
-                    app
-                ))
-                .output();
+    for app in TERMINALS {
+        let status = Command::new("osascript")
+            .arg("-e")
+            .arg(format!(
+                "tell application \"System Events\" to set frontmost of process \"{}\" to true",
+                app
+            ))
+            .output();
 
-            if let Ok(output) = status {
-                if output.status.success() {
-                    return Ok(());
-                }
+        if let Ok(output) = status {
+            if output.status.success() {
+                return Ok(());
             }
         }
-        Err("No known terminal app found".to_string())
     }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        Err("Window focus only supported on macOS".to_string())
-    }
+    Err("No known terminal app found".to_string())
 }
 
-pub async fn type_in_terminal_async(text: &str) -> Result<(), String> {
-    #[cfg(target_os = "macos")]
-    {
-        let escaped = text.replace('\\', "\\\\").replace('"', "\\\"");
+#[cfg(target_os = "windows")]
+pub fn focus_terminal_app() -> Result<(), String> {
+    windows::focus_terminal_window()
+}
 
-        // Single osascript: find a terminal, activate it, wait, type, press Enter
-        let script = format!(
-            r#"
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+pub fn focus_terminal_app() -> Result<(), String> {
+    Err("Window focus is only supported on macOS and Windows".to_string())
+}
+
+#[cfg(target_os = "macos")]
+pub async fn type_in_terminal_async(text: &str) -> Result<(), String> {
+    let escaped = text.replace('\\', "\\\\").replace('"', "\\\"");
+
+    // Single osascript: find a terminal, activate it, wait, type, press Enter
+    let script = format!(
+        r#"
 set termApps to {{"iTerm2", "iTerm", "Terminal", "WezTerm", "Alacritty", "kitty", "Cursor", "Code", "Warp"}}
 set foundApp to ""
 tell application "System Events"
@@ -637,28 +725,371 @@ tell application "System Events"
     key code 36
 end tell
 "#,
-            escaped
-        );
+        escaped
+    );
 
-        let output = tokio::process::Command::new("osascript")
-            .arg("-e")
-            .arg(&script)
-            .output()
-            .await
-            .map_err(|e| format!("osascript failed: {}", e))?;
+    let output = tokio::process::Command::new("osascript")
+        .arg("-e")
+        .arg(&script)
+        .output()
+        .await
+        .map_err(|e| format!("osascript failed: {}", e))?;
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("osascript error: {}", stderr));
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("osascript error: {}", stderr));
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+pub async fn type_in_terminal_async(text: &str) -> Result<(), String> {
+    windows::focus_terminal_window()?;
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    // Resolve and focus the terminal once more after the delay. This avoids
+    // sending an answer if another application took focus in the meantime.
+    windows::type_text_and_enter(text)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+pub async fn type_in_terminal_async(_text: &str) -> Result<(), String> {
+    Err("Terminal input is only supported on macOS and Windows".to_string())
+}
+
+#[cfg(target_os = "windows")]
+mod windows {
+    use std::ffi::c_void;
+    use std::mem::size_of;
+    use std::os::windows::process::CommandExt;
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+    use std::ptr::null_mut;
+
+    type Bool = i32;
+    type Dword = u32;
+    type Handle = *mut c_void;
+    type Hwnd = *mut c_void;
+    type Lparam = isize;
+    type Uint = u32;
+    type Word = u16;
+
+    const PROCESS_QUERY_LIMITED_INFORMATION: Dword = 0x1000;
+    const SW_RESTORE: i32 = 9;
+    const INPUT_KEYBOARD: Dword = 1;
+    const KEYEVENTF_KEYUP: Dword = 0x0002;
+    const KEYEVENTF_UNICODE: Dword = 0x0004;
+    const VK_RETURN: Word = 0x0d;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    #[derive(Clone, Copy)]
+    struct TerminalWindow {
+        hwnd: Hwnd,
+        priority: usize,
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct MouseInput {
+        dx: i32,
+        dy: i32,
+        mouse_data: Dword,
+        flags: Dword,
+        time: Dword,
+        extra_info: usize,
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct KeyboardInput {
+        virtual_key: Word,
+        scan_code: Word,
+        flags: Dword,
+        time: Dword,
+        extra_info: usize,
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct HardwareInput {
+        message: Dword,
+        parameter_low: Word,
+        parameter_high: Word,
+    }
+
+    #[repr(C)]
+    union InputData {
+        mouse: MouseInput,
+        keyboard: KeyboardInput,
+        hardware: HardwareInput,
+    }
+
+    #[repr(C)]
+    struct Input {
+        input_type: Dword,
+        data: InputData,
+    }
+
+    #[link(name = "user32")]
+    extern "system" {
+        fn AttachThreadInput(attach: Dword, attach_to: Dword, should_attach: Bool) -> Bool;
+        fn BringWindowToTop(hwnd: Hwnd) -> Bool;
+        fn EnumWindows(
+            callback: Option<unsafe extern "system" fn(Hwnd, Lparam) -> Bool>,
+            data: Lparam,
+        ) -> Bool;
+        fn GetForegroundWindow() -> Hwnd;
+        fn GetWindowTextLengthW(hwnd: Hwnd) -> i32;
+        fn GetWindowThreadProcessId(hwnd: Hwnd, process_id: *mut Dword) -> Dword;
+        fn IsWindowVisible(hwnd: Hwnd) -> Bool;
+        fn SendInput(count: Uint, inputs: *const Input, input_size: i32) -> Uint;
+        fn SetFocus(hwnd: Hwnd) -> Hwnd;
+        fn SetForegroundWindow(hwnd: Hwnd) -> Bool;
+        fn ShowWindow(hwnd: Hwnd, command: i32) -> Bool;
+    }
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn CloseHandle(handle: Handle) -> Bool;
+        fn GetCurrentThreadId() -> Dword;
+        fn OpenProcess(access: Dword, inherit_handle: Bool, process_id: Dword) -> Handle;
+        fn QueryFullProcessImageNameW(
+            process: Handle,
+            flags: Dword,
+            executable_name: *mut u16,
+            size: *mut Dword,
+        ) -> Bool;
+    }
+
+    pub(super) fn focus_terminal_window() -> Result<(), String> {
+        let window = find_terminal_window()?;
+        focus_window(window.hwnd)
+    }
+
+    pub(super) fn open_cursor_workspace(path: &Path) -> Result<(), String> {
+        let mut last_error = None;
+        for executable in cursor_executable_candidates() {
+            if executable.components().count() > 1 && !executable.is_file() {
+                continue;
+            }
+            let mut command = Command::new(&executable);
+            command.arg(path).creation_flags(CREATE_NO_WINDOW);
+            match command.spawn() {
+                Ok(_) => return Ok(()),
+                Err(error) => last_error = Some(error),
+            }
         }
+        Err(format!(
+            "Could not open Cursor workspace: {}",
+            last_error
+                .map(|error| error.to_string())
+                .unwrap_or_else(|| "Cursor.exe was not found".to_string())
+        ))
+    }
 
+    pub(super) fn open_cursor_uri(url: &str) -> Result<(), String> {
+        Command::new("explorer.exe")
+            .arg(url)
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .map_err(|error| format!("Could not request Cursor terminal focus: {error}"))?;
         Ok(())
     }
 
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = text;
-        Err("type_in_terminal only supported on macOS".to_string())
+    fn cursor_executable_candidates() -> Vec<PathBuf> {
+        let mut candidates = Vec::new();
+        if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
+            let programs = PathBuf::from(local_app_data).join("Programs");
+            candidates.push(programs.join("cursor").join("Cursor.exe"));
+            candidates.push(programs.join("Cursor").join("Cursor.exe"));
+        }
+        for variable in ["ProgramFiles", "ProgramW6432"] {
+            if let Some(program_files) = std::env::var_os(variable) {
+                candidates.push(
+                    PathBuf::from(program_files)
+                        .join("Cursor")
+                        .join("Cursor.exe"),
+                );
+            }
+        }
+        candidates.push(PathBuf::from("cursor.exe"));
+        candidates
+    }
+
+    pub(super) fn type_text_and_enter(text: &str) -> Result<(), String> {
+        let window = find_terminal_window()?;
+        focus_window(window.hwnd)?;
+
+        let mut inputs = Vec::with_capacity(text.encode_utf16().count() * 2 + 2);
+        for code_unit in text.encode_utf16() {
+            inputs.push(keyboard_input(0, code_unit, KEYEVENTF_UNICODE));
+            inputs.push(keyboard_input(
+                0,
+                code_unit,
+                KEYEVENTF_UNICODE | KEYEVENTF_KEYUP,
+            ));
+        }
+        inputs.push(keyboard_input(VK_RETURN, 0, 0));
+        inputs.push(keyboard_input(VK_RETURN, 0, KEYEVENTF_KEYUP));
+
+        let sent = unsafe {
+            SendInput(
+                inputs.len() as Uint,
+                inputs.as_ptr(),
+                size_of::<Input>() as i32,
+            )
+        };
+        if sent != inputs.len() as Uint {
+            return Err(format!(
+                "Windows sent only {sent} of {} terminal keystrokes: {}",
+                inputs.len(),
+                std::io::Error::last_os_error()
+            ));
+        }
+        Ok(())
+    }
+
+    fn keyboard_input(virtual_key: Word, scan_code: Word, flags: Dword) -> Input {
+        Input {
+            input_type: INPUT_KEYBOARD,
+            data: InputData {
+                keyboard: KeyboardInput {
+                    virtual_key,
+                    scan_code,
+                    flags,
+                    time: 0,
+                    extra_info: 0,
+                },
+            },
+        }
+    }
+
+    fn find_terminal_window() -> Result<TerminalWindow, String> {
+        let mut candidates = Vec::<TerminalWindow>::new();
+        let enumerated = unsafe {
+            EnumWindows(
+                Some(collect_terminal_windows),
+                (&mut candidates as *mut Vec<TerminalWindow>) as Lparam,
+            )
+        };
+        if enumerated == 0 {
+            return Err(format!(
+                "Failed to enumerate Windows terminals: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+
+        // EnumWindows yields top-level windows in Z order. Preserve that
+        // recency signal so an answer goes to the terminal the user most
+        // recently worked in instead of an arbitrary preferred brand. IDE
+        // windows remain a last resort because Win32 cannot prove that their
+        // integrated terminal pane currently owns keyboard focus.
+        candidates.sort_by_key(|candidate| candidate.priority >= 20);
+        candidates
+            .into_iter()
+            .next()
+            .ok_or_else(|| "No known Windows terminal window found".to_string())
+    }
+
+    unsafe extern "system" fn collect_terminal_windows(hwnd: Hwnd, data: Lparam) -> Bool {
+        if IsWindowVisible(hwnd) == 0 || GetWindowTextLengthW(hwnd) == 0 {
+            return 1;
+        }
+
+        if let Some(process_name) = process_name_for_window(hwnd) {
+            if let Some(priority) = terminal_priority(&process_name) {
+                let candidates = &mut *(data as *mut Vec<TerminalWindow>);
+                candidates.push(TerminalWindow { hwnd, priority });
+            }
+        }
+        1
+    }
+
+    unsafe fn process_name_for_window(hwnd: Hwnd) -> Option<String> {
+        let mut process_id = 0;
+        GetWindowThreadProcessId(hwnd, &mut process_id);
+        if process_id == 0 {
+            return None;
+        }
+
+        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, process_id);
+        if process.is_null() {
+            return None;
+        }
+
+        let mut buffer = vec![0_u16; 32_768];
+        let mut length = buffer.len() as Dword;
+        let queried = QueryFullProcessImageNameW(process, 0, buffer.as_mut_ptr(), &mut length);
+        CloseHandle(process);
+        if queried == 0 || length == 0 {
+            return None;
+        }
+
+        let executable_path = String::from_utf16_lossy(&buffer[..length as usize]);
+        executable_path
+            .rsplit(['\\', '/'])
+            .next()
+            .map(|name| name.to_ascii_lowercase())
+    }
+
+    fn terminal_priority(process_name: &str) -> Option<usize> {
+        match process_name {
+            "windowsterminal.exe" | "wt.exe" => Some(0),
+            "wezterm-gui.exe" => Some(1),
+            "alacritty.exe" => Some(2),
+            "kitty.exe" => Some(3),
+            "ghostty.exe" | "warp.exe" | "warp-terminal.exe" => Some(4),
+            "tabby.exe" | "conemu.exe" | "conemu64.exe" => Some(5),
+            "pwsh.exe" | "powershell.exe" => Some(6),
+            "cmd.exe" | "conhost.exe" => Some(7),
+            // Integrated terminals are a last resort because Win32 cannot
+            // tell whether the editor or terminal pane currently has focus.
+            "cursor.exe" | "code.exe" => Some(20),
+            _ => None,
+        }
+    }
+
+    fn focus_window(hwnd: Hwnd) -> Result<(), String> {
+        unsafe {
+            ShowWindow(hwnd, SW_RESTORE);
+
+            let current_thread = GetCurrentThreadId();
+            let target_thread = GetWindowThreadProcessId(hwnd, null_mut());
+            let foreground_window = GetForegroundWindow();
+            let foreground_thread = if foreground_window.is_null() {
+                0
+            } else {
+                GetWindowThreadProcessId(foreground_window, null_mut())
+            };
+
+            let attached_target = target_thread != 0 && target_thread != current_thread;
+            let attached_foreground = foreground_thread != 0
+                && foreground_thread != current_thread
+                && foreground_thread != target_thread;
+            if attached_foreground {
+                AttachThreadInput(current_thread, foreground_thread, 1);
+            }
+            if attached_target {
+                AttachThreadInput(current_thread, target_thread, 1);
+            }
+
+            BringWindowToTop(hwnd);
+            let foreground_set = SetForegroundWindow(hwnd) != 0;
+            SetFocus(hwnd);
+
+            if attached_target {
+                AttachThreadInput(current_thread, target_thread, 0);
+            }
+            if attached_foreground {
+                AttachThreadInput(current_thread, foreground_thread, 0);
+            }
+
+            if foreground_set || GetForegroundWindow() == hwnd {
+                Ok(())
+            } else {
+                Err("Windows prevented HumHum from focusing the terminal".to_string())
+            }
+        }
     }
 }
 

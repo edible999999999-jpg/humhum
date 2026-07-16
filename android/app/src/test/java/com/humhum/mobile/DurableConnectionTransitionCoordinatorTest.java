@@ -127,7 +127,7 @@ public class DurableConnectionTransitionCoordinatorTest {
         try {
             assertTrue(coordinator.begin(
                     DurableConnectionTransitionCoordinator.State.DISCONNECTING,
-                    () -> "Mac 未确认撤销"));
+                    () -> "桌面端未确认撤销"));
             DurableConnectionTransitionCoordinator.Completion notified =
                     notifications.poll(1, TimeUnit.SECONDS);
             assertNotNull(notified);

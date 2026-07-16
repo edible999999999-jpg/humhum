@@ -45,13 +45,26 @@ export class HumSprite extends Container {
   }
 
   private updateTexture(dt: number) {
-    const offscreen = this.fallback.render(dt);
-    const bitmap = offscreen.transferToImageBitmap();
+    const rendered = this.fallback.render(dt);
+
+    if (!("transferToImageBitmap" in rendered)) {
+      if (this.sprite.texture === Texture.EMPTY) {
+        this.sprite.texture = Texture.from({
+          resource: rendered,
+          resolution: this.dpr,
+        });
+      } else {
+        this.sprite.texture.source.update();
+      }
+      return;
+    }
+
+    const source = rendered.transferToImageBitmap();
     if (this.sprite.texture !== Texture.EMPTY) {
       this.sprite.texture.destroy(true);
     }
     this.sprite.texture = Texture.from({
-      resource: bitmap,
+      resource: source,
       resolution: this.dpr,
     });
   }

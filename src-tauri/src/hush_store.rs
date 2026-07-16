@@ -60,10 +60,22 @@ impl HushStore {
     pub fn new() -> Self {
         let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
         let file_path = home.join(".humhum").join("hush-inbox.json");
-        let messages = std::fs::read_to_string(&file_path)
-            .ok()
-            .and_then(|contents| serde_json::from_str::<Vec<HushInboxMessage>>(&contents).ok())
-            .unwrap_or_default();
+        let messages = if std::fs::symlink_metadata(&file_path)
+            .is_ok_and(|metadata| metadata.file_type().is_symlink())
+        {
+            log::warn!("Refusing to read a symbolic-link Hush inbox");
+            Vec::new()
+        } else {
+            if file_path.exists() {
+                if let Err(error) = crate::local_api_auth::protect_owner_only(&file_path) {
+                    log::warn!("Failed to protect Hush inbox before reading it: {error}");
+                }
+            }
+            std::fs::read_to_string(&file_path)
+                .ok()
+                .and_then(|contents| serde_json::from_str::<Vec<HushInboxMessage>>(&contents).ok())
+                .unwrap_or_default()
+        };
         Self {
             messages,
             file_path,
@@ -169,11 +181,15 @@ impl HushStore {
             raw,
         };
 
+        let previous = self.messages.clone();
         self.messages.insert(0, message.clone());
         if self.messages.len() > MAX_HUSH_MESSAGES {
             self.messages.truncate(MAX_HUSH_MESSAGES);
         }
-        self.save()?;
+        if let Err(error) = self.save() {
+            self.messages = previous;
+            return Err(error);
+        }
         Ok(message)
     }
 
@@ -205,19 +221,23 @@ impl HushStore {
     }
 
     pub fn clear(&mut self) -> Result<(), String> {
-        self.messages.clear();
-        self.save()
+        let previous = std::mem::take(&mut self.messages);
+        if let Err(error) = self.save() {
+            self.messages = previous;
+            return Err(error);
+        }
+        Ok(())
     }
 
     fn save(&self) -> Result<(), String> {
         if let Some(parent) = self.file_path.parent() {
             std::fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create Hush store dir: {}", e))?;
+                .map_err(|e| format!("Failed to create Hush inbox directory: {}", e))?;
         }
         let json = serde_json::to_string_pretty(&self.messages)
             .map_err(|e| format!("Failed to serialize Hush inbox: {}", e))?;
-        std::fs::write(&self.file_path, json)
-            .map_err(|e| format!("Failed to write Hush inbox: {}", e))
+        crate::local_api_auth::write_private_file_atomically(&self.file_path, json.as_bytes())
+            .map_err(|e| format!("Failed to atomically write private Hush inbox: {}", e))
     }
 
     #[cfg(test)]
@@ -360,5 +380,24 @@ mod tests {
         assert_eq!(store.summary().total, 1);
 
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn failed_private_persistence_rolls_back_hush_memory() {
+        let temp = tempfile::tempdir().unwrap();
+        let blocker = temp.path().join("not-a-directory");
+        std::fs::write(&blocker, b"block child creation").unwrap();
+        let mut store = HushStore::with_file_path(blocker.join("hush-inbox.json"));
+
+        let error = store
+            .add_from_value(json!({
+                "platform": "wechat",
+                "sender": "WeChat",
+                "text": "private message"
+            }))
+            .unwrap_err();
+
+        assert!(error.contains("Hush"));
+        assert_eq!(store.summary().total, 0);
     }
 }

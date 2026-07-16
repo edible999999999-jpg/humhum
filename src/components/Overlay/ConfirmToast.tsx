@@ -1,14 +1,15 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { t } from "@/lib/i18n";
+import { compactFilePath } from "@/lib/path-display";
 import type { HookEvent } from "@/types";
 
 interface ConfirmToastProps {
   event: HookEvent;
   onConfirm: (behavior: "allow" | "deny" | "allowAlways") => void;
-  onDismiss: () => void;
 }
 
-export function ConfirmToast({ event, onConfirm, onDismiss }: ConfirmToastProps) {
+export function ConfirmToast({ event, onConfirm }: ConfirmToastProps) {
   const payload = event.payload as Record<string, unknown>;
   const toolName = (payload.tool_name as string) ?? "Unknown";
   const toolInput = (payload.tool_input as Record<string, unknown>) ?? {};
@@ -41,49 +42,15 @@ export function ConfirmToast({ event, onConfirm, onDismiss }: ConfirmToastProps)
     setStatus("sending");
     console.log(`[ConfirmToast] Button clicked: ${behavior}, event_id: ${event.id}`);
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
-
     try {
-      const res = await fetch("http://localhost:31275/respond", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ event_id: event.id, behavior }),
-        signal: controller.signal,
-      });
-      clearTimeout(timeout);
-      const data = await res.json();
-      console.log("[ConfirmToast] HTTP respond result:", res.status, data);
-
-      if (res.ok) {
-        setStatus("sent");
-        setTimeout(() => dismiss(behavior), 300);
-        return;
-      }
-      // Stale request (receiver dropped) — auto-dismiss
-      if (res.status === 404 || res.status === 500 || res.status === 409) {
-        console.warn("[ConfirmToast] Stale request, auto-dismissing:", data);
-        dismiss(behavior);
-        return;
-      }
-      setErrorMsg(`HTTP ${res.status}: ${JSON.stringify(data)}`);
-    } catch (e) {
-      clearTimeout(timeout);
-      console.warn("[ConfirmToast] HTTP failed:", e);
-      setErrorMsg(`HTTP failed: ${e}`);
-    }
-
-    // Fallback to IPC
-    try {
-      const { invoke } = await import("@tauri-apps/api/core");
       await invoke("respond_to_permission", { eventId: event.id, behavior });
       console.log("[ConfirmToast] IPC respond succeeded");
       setStatus("sent");
       setTimeout(() => dismiss(behavior), 300);
     } catch (e) {
-      console.error("[ConfirmToast] IPC also failed:", e);
+      console.error("[ConfirmToast] IPC respond failed:", e);
       setStatus("error");
-      setErrorMsg(`Both HTTP and IPC failed`);
+      setErrorMsg(`Response failed: ${String(e)}`);
       setTimeout(() => dismiss(behavior), 2000);
     }
   };
@@ -105,7 +72,15 @@ export function ConfirmToast({ event, onConfirm, onDismiss }: ConfirmToastProps)
           <span className="confirm-tag confirm-tag-time">{timeLabel}</span>
           <span className="confirm-tag confirm-tag-client">{event.client_type || "CC"}</span>
         </div>
-        <button onClick={onDismiss} className="text-xs transition-colors leading-none" style={{ color: "#94a3b8" }}>✕</button>
+        <button
+          onClick={() => handleClick("deny")}
+          disabled={status === "sending" || status === "sent"}
+          className="text-xs transition-colors leading-none"
+          style={{ color: "#94a3b8" }}
+          aria-label={t("confirm.deny")}
+        >
+          ✕
+        </button>
       </div>
 
       {/* Tool info */}
@@ -172,8 +147,7 @@ function getToolDetail(toolName: string, input: Record<string, unknown>): string
     case "Read": {
       const fp = input.file_path as string;
       if (!fp) return "";
-      const parts = fp.split("/");
-      return parts.length > 3 ? `.../${parts.slice(-3).join("/")}` : fp;
+      return compactFilePath(fp);
     }
     case "WebFetch":
     case "WebSearch": {

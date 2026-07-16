@@ -116,7 +116,10 @@ def _deliver(payload):
             },
             method="POST",
         )
-        with urllib.request.urlopen(request, timeout=1):
+        # The hook server is loopback-only. Never forward its bearer token to
+        # an HTTP(S) proxy inherited from the user's shell or desktop session.
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(request, timeout=1):
             pass
     except Exception:
         pass
@@ -328,26 +331,21 @@ pub fn is_installed_at(plugin_dir: &Path) -> bool {
 }
 
 fn write_atomic(path: &Path, content: &str) -> Result<(), String> {
-    let file_name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| "Invalid Hermes plugin file name".to_string())?;
-    let temporary = path.with_file_name(format!(".{file_name}.{}.tmp", uuid::Uuid::new_v4()));
-    std::fs::write(&temporary, content)
-        .map_err(|error| format!("Could not write Hermes plugin: {error}"))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&temporary, std::fs::Permissions::from_mode(0o600))
-            .map_err(|error| format!("Could not protect Hermes plugin: {error}"))?;
-    }
-    std::fs::rename(&temporary, path)
+    crate::knowledge_store::write_file_atomically(path, content.as_bytes())
         .map_err(|error| format!("Could not install Hermes plugin: {error}"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn python_command() -> &'static str {
+        if cfg!(target_os = "windows") {
+            "python"
+        } else {
+            "python3"
+        }
+    }
 
     #[test]
     fn installs_complete_owned_plugin_and_uninstalls_it() {
@@ -418,7 +416,7 @@ mod tests {
         let plugin_dir = temp.path().join("humhum");
         install_at(&plugin_dir).unwrap();
 
-        let output = std::process::Command::new("python3")
+        let output = std::process::Command::new(python_command())
             .args(["-m", "py_compile"])
             .arg(plugin_dir.join("__init__.py"))
             .output()
@@ -503,9 +501,14 @@ print(json.dumps({{"events": events, "headers": headers, "returns": returns}}))
         );
         std::fs::write(&runner, script).unwrap();
 
-        let output = std::process::Command::new("python3")
+        let output = std::process::Command::new(python_command())
             .arg(&runner)
             .env("HOME", temp.path())
+            .env("HTTP_PROXY", "http://127.0.0.1:9")
+            .env("HTTPS_PROXY", "http://127.0.0.1:9")
+            .env("ALL_PROXY", "http://127.0.0.1:9")
+            .env_remove("NO_PROXY")
+            .env_remove("no_proxy")
             .output()
             .unwrap();
         assert!(

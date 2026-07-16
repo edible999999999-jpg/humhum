@@ -33,9 +33,9 @@ export class AudioPlayer {
       }
       const base64 = btoa(binary);
 
-      console.log("[AudioPlayer] Playing via afplay,", buffer.byteLength, "bytes");
+      console.log("[AudioPlayer] Playing via native audio,", buffer.byteLength, "bytes");
       await invoke("play_audio", { base64Data: base64 });
-      console.log("[AudioPlayer] afplay finished");
+      console.log("[AudioPlayer] Native audio finished");
     } catch (e) {
       if (!this.aborted) {
         console.error("[AudioPlayer] play_audio error:", e);

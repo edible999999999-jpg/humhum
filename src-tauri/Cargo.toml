@@ -6,6 +6,7 @@ authors = ["HumHum Contributors"]
 license = "MIT"
 repository = "https://github.com/edible999999999-jpg/humhum"
 edition = "2021"
+rust-version = "1.89"
 
 [lib]
 name = "humhum_lib"
@@ -23,17 +24,14 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = ["tray-icon", "macos-private-api"] }
-tauri-plugin-fs = { version = "2", features = ["watch"] }
 tauri-plugin-notification = "2"
-tauri-plugin-shell = "2"
-tauri-plugin-store = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 hyper = { version = "1", features = ["full"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", features = ["json", "multipart"] }
 log = "0.4"
 env_logger = "0.11"
 dirs = "5"
@@ -44,10 +42,13 @@ sha2 = "0.10"
 aes-gcm = "0.10"
 hex = "0.4"
 getrandom = "0.3"
-tokio-rustls = "0.26"
+tokio-rustls = { version = "0.26", default-features = false, features = ["logging", "tls12", "ring"] }
 rustls-pemfile = "2"
+rcgen = { version = "0.13", default-features = false, features = ["pem", "ring"] }
 tauri-plugin-autostart = "2"
 tauri-plugin-dialog = "2"
+rusqlite = { version = "0.32", features = ["bundled"] }
+toml_edit = "0.22"
 
 [dev-dependencies]
 tempfile = "3"
@@ -57,4 +58,14 @@ cocoa = "0.26"
 objc = "0.2"
 dispatch = "0.2"
 plist = "1"
-rusqlite = { version = "0.32", features = ["bundled"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_NetworkManagement_Ndis",
+    "Win32_Networking_WinSock",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_Threading",
+] }

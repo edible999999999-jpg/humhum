@@ -1,6 +1,6 @@
 # HUMHUM Android 0.3.7
 
-HUMHUM Android is a native private-network client for the desktop Mobile Bridge. It supports Android 8.0 and newer, including current Xiaomi and Redmi phones. Pair on the same LAN by default, or use an optional Tailscale tailnet when the Mac and phone are on different networks.
+HUMHUM Android is a native private-network client for the desktop Mobile Bridge. It supports Android 8.0 and newer, including current Xiaomi and Redmi phones. Pair on the same LAN by default, or use an optional Tailscale tailnet when the desktop and phone are on different networks.
 
 ## Installable APK
 
@@ -14,7 +14,7 @@ HUMHUM Android is a native private-network client for the desktop Mobile Bridge.
 
 The APK and AAB use HUMHUM's durable local release certificate. They are installable and update-compatible with later builds signed by the same key, but they have not been published to Xiaomi GetApps or Google Play.
 
-If a debug build is already installed, uninstall it once before installing the release APK. Android does not allow the debug and release certificates to update each other. Uninstalling clears the phone's local pairing, so pair with the Mac again afterward.
+If a debug build is already installed, uninstall it once before installing the release APK. Android does not allow the debug and release certificates to update each other. Uninstalling clears the phone's local pairing, so pair with the desktop again afterward.
 
 ## Install On A Xiaomi Phone
 
@@ -29,39 +29,41 @@ If a debug build is already installed, uninstall it once before installing the r
 Connect an authorized phone, then run:
 
 ```bash
-~/Library/Android/sdk/platform-tools/adb install -r \
+adb install -r \
   build/releases/HUMHUM-Android-0.3.7.apk
 ```
 
-## Pair With The Mac
+Put Android SDK Platform Tools on `PATH` first. On Windows, `adb.exe` is commonly under `%LOCALAPPDATA%\Android\Sdk\platform-tools`.
 
-1. Put the Mac and phone on the same trusted Wi-Fi network. Guest Wi-Fi or client isolation can prevent local devices from seeing each other.
-2. Open HUMHUM Hub on the Mac, choose Hexa, and enable mobile access.
+## Pair With The Desktop
+
+1. Put the computer and phone on the same trusted Wi-Fi network. Guest Wi-Fi or client isolation can prevent local devices from seeing each other.
+2. Open HUMHUM Hub on the desktop, choose Hexa, and enable mobile access.
 3. Generate a read-only or control pairing code. Control scope is required for approvals and follow-up messages.
-4. Hexa displays a short-lived QR code containing the Mac URL, expiring code, access scope, and certificate fingerprint. It never contains a durable device token.
-5. In the Android app, tap **扫描 Mac 配对二维码**, allow camera access, and scan within five minutes. HUMHUM validates the setup and starts certificate-pinned pairing automatically. **粘贴配对资料** and manual fields remain available as recovery paths.
+4. Hexa displays a short-lived QR code containing the desktop URL, expiring code, access scope, and certificate fingerprint. It never contains a durable device token.
+5. In the Android app, tap **扫描电脑配对二维码**, allow camera access, and scan within five minutes. HUMHUM validates the setup and starts certificate-pinned pairing automatically. **粘贴配对资料** and manual fields remain available as recovery paths.
 
-After pairing, the app stores its token in app-private storage and verifies the exact TLS certificate fingerprint on every connection. Pressing **Disconnect** revokes that device on the Mac before clearing the local credential. If the Mac is unreachable, the app clears the phone and asks the user to revoke the stale device from Hexa.
+After pairing, the app stores its token in app-private storage and verifies the exact TLS certificate fingerprint on every connection. Pressing **Disconnect** revokes that device on the desktop before clearing the local credential. If the desktop is unreachable, the app clears the phone and asks the user to revoke the stale device from Hexa.
 
 ## Read A Recent Agent Conversation
 
-On a live session backed by a supported local transcript, tap **查看最近对话**. HUMHUM reads only the final bounded portion of the user-owned transcript on the Mac and returns at most 12 chronological user/Agent messages. It omits reasoning, tool calls, tool results, attachments, identifiers, timestamps and usage metadata, replaces local paths with **[本机路径]**, and limits the raw response to 64 KiB.
+On a live session backed by a supported local transcript, tap **查看最近对话**. HUMHUM reads only the final bounded portion of the user-owned transcript on the desktop and returns at most 12 chronological user/Agent messages. It omits reasoning, tool calls, tool results, attachments, identifiers, timestamps and usage metadata, replaces local paths with **[本机路径]**, and limits the raw response to 64 KiB.
 
 Conversation text stays only in the current Android Activity. It is never written to the encrypted offline snapshot, notifications, push payloads or Android saved-state storage. While a conversation is expanded, Android task previews and screenshots are blocked with `FLAG_SECURE`. Collapsing hides the disclosure while retaining only Activity memory for a quick reopen; disconnecting, changing the pairing or destroying the Activity clears it. Offline snapshot cards never offer conversation, approval or follow-up controls.
 
 ## Use Away From Home With Tailnet
 
-1. Install Tailscale on both the Mac and phone, sign both into the same tailnet, and confirm they can reach each other. HUMHUM never installs Tailscale or reads its credentials.
-2. Restart HUMHUM Mobile access. When Hexa detects the Mac's current `100.64.0.0/10` address, it shows **同网 LAN / 外出 Tailnet**.
+1. Install Tailscale on both the computer and phone, sign both into the same tailnet, and confirm they can reach each other. HUMHUM never installs Tailscale or reads its credentials.
+2. Restart HUMHUM Mobile access. When Hexa detects the desktop's current `100.64.0.0/10` address, it shows **同网 LAN / 外出 Tailnet**.
 3. Select **外出 Tailnet**, generate a fresh read-only or control setup, and paste it into Android as usual.
 
 The Android app accepts only a bounded assignable tailnet IPv4 address, the exact configured host, and the exact pinned HUMHUM certificate. Pairing codes, hashed device tokens, read/control scope, revocation, realtime wake, approvals and follow-ups remain the same. Port `31276` is not exposed as a public internet service.
 
-If the Tailnet choice is absent, Tailscale is unavailable or not connected on the Mac; LAN pairing continues to work. The current release was fallback-tested on a Mac without Tailscale, so actual cross-network routing still requires physical verification with both devices joined to one tailnet.
+If the Tailnet choice is absent, Tailscale is unavailable or not connected on the desktop; LAN pairing continues to work. The current release was fallback-tested on a Mac without Tailscale, so actual cross-network routing still requires physical verification with both devices joined to one tailnet.
 
 ## Background Monitoring On Xiaomi
 
-Turn on **后台监控** from the paired session screen. Android 13 and newer asks for notification permission at that moment. HUMHUM then shows a persistent notification while it watches the paired Mac over trusted Wi-Fi and sends a generic notification when a new Agent approval appears.
+Turn on **后台监控** from the paired session screen. Android 13 and newer asks for notification permission at that moment. HUMHUM then shows a persistent notification while it watches the paired desktop over trusted Wi-Fi and sends a generic notification when a new Agent approval appears.
 
 For stronger survival on HyperOS or MIUI, open HUMHUM's system App info and enable **Autostart**, then set Battery saver to **No restrictions**. Menu names vary by Xiaomi system version. The service can restore after reboot only when the user previously enabled background monitoring, notification permission remains granted, and a valid pairing still exists.
 
@@ -77,9 +79,9 @@ FCM registration is generation- and relay-channel-bound. Transient network, `429
 
 The downloadable 0.3.4 artifacts were deliberately built with empty Firebase client identifiers because no production HUMHUM Firebase project is configured on this machine. They therefore use encrypted relay/private-network monitoring but do not request an FCM token or registration network call. A real Firebase project and matching release build are still required before claiming killed-process delivery.
 
-Hexa now shows whether each paired phone is **正在使用**, **后台监控**, or **离线**. Android reports only one bounded mode through the authenticated pinned-HTTPS bridge; the Mac supplies the timestamp and keeps it in memory. If no report arrives for 90 seconds, both mode and last-seen time disappear and Hexa shows offline. This prevents a stopped Xiaomi process from looking healthy without collecting app activity, location, network names, or message content.
+Hexa now shows whether each paired phone is **正在使用**, **后台监控**, or **离线**. Android reports only one bounded mode through the authenticated pinned-HTTPS bridge; the desktop supplies the timestamp and keeps it in memory. If no report arrives for 90 seconds, both mode and last-seen time disappear and Hexa shows offline. This prevents a stopped Xiaomi process from looking healthy without collecting app activity, location, network names, or message content.
 
-Version 0.3.4 keeps one encrypted offline snapshot of at most 30 redacted sessions for at most seven days. It stores only project, Agent, status, last activity and attention state in `noBackupFilesDir`, encrypted by an Android Keystore AES-256-GCM key and authenticated against the current Mac URL, pinned certificate and pairing scope. If the Mac becomes unreachable, the header explicitly says **离线快照** and every stale card is read-only: session IDs, approvals, approval summaries, follow-up drafts, messages, tokens and credentials are never cached. Reconnecting replaces the snapshot with live state. Pairing changes, corruption, authentication failure, expiration and in-app disconnect delete both ciphertext and key.
+Version 0.3.4 keeps one encrypted offline snapshot of at most 30 redacted sessions for at most seven days. It stores only project, Agent, status, last activity and attention state in `noBackupFilesDir`, encrypted by an Android Keystore AES-256-GCM key and authenticated against the current desktop URL, pinned certificate and pairing scope. If the desktop becomes unreachable, the header explicitly says **离线快照** and every stale card is read-only: session IDs, approvals, approval summaries, follow-up drafts, messages, tokens and credentials are never cached. Reconnecting replaces the snapshot with live state. Pairing changes, corruption, authentication failure, expiration and in-app disconnect delete both ciphertext and key.
 
 ## Runtime Validation
 

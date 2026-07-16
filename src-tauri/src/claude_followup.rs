@@ -1,4 +1,5 @@
-use std::path::Path;
+use crate::codex_bridge::transport::{command_for_cli_with_untrusted_args, resolve_cli_binary};
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
@@ -33,7 +34,12 @@ pub async fn send_followup(
         return Err("Claude workspace must be a directory".into());
     }
     let binary = claude_binary();
-    let mut command = tokio::process::Command::new(&binary);
+    let mut command = command_for_cli_with_untrusted_args(&binary).map_err(|error| {
+        format!(
+            "Could not safely prepare Claude CLI at {}: {error}",
+            binary.display()
+        )
+    })?;
     command
         .args(args)
         .arg(message)
@@ -65,19 +71,23 @@ pub async fn send_followup(
     })
 }
 
-fn claude_binary() -> std::path::PathBuf {
+fn claude_binary() -> PathBuf {
     let mut candidates = vec![
-        std::path::PathBuf::from("/opt/homebrew/bin/claude"),
-        std::path::PathBuf::from("/usr/local/bin/claude"),
+        PathBuf::from("/opt/homebrew/bin/claude"),
+        PathBuf::from("/usr/local/bin/claude"),
     ];
     if let Some(home) = dirs::home_dir() {
         candidates.push(home.join(".local/bin/claude"));
         candidates.push(home.join(".claude/local/claude"));
+        #[cfg(target_os = "windows")]
+        {
+            candidates.push(home.join(".local/bin/claude.exe"));
+            candidates.push(home.join(".local/bin/claude.cmd"));
+            candidates.push(home.join(".claude/local/claude.exe"));
+            candidates.push(home.join(".claude/local/claude.cmd"));
+        }
     }
-    candidates
-        .into_iter()
-        .find(|path| path.is_file())
-        .unwrap_or_else(|| std::path::PathBuf::from("claude"))
+    resolve_cli_binary("claude", candidates)
 }
 
 #[cfg(test)]

@@ -285,28 +285,7 @@ fn write_json_atomic(path: &Path, value: &Value) -> Result<(), String> {
 }
 
 fn write_atomic(path: &Path, content: &str) -> Result<(), String> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| "Invalid OpenClaw managed path".to_string())?;
-    std::fs::create_dir_all(parent)
-        .map_err(|error| format!("Could not create OpenClaw directory: {error}"))?;
-    let name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| "Invalid OpenClaw managed file name".to_string())?;
-    let temporary = path.with_file_name(format!(".{name}.{}.tmp", uuid::Uuid::new_v4()));
-    std::fs::write(&temporary, content)
-        .map_err(|error| format!("Could not write OpenClaw managed file: {error}"))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mode = std::fs::metadata(path)
-            .map(|metadata| metadata.permissions().mode() & 0o777)
-            .unwrap_or(0o600);
-        std::fs::set_permissions(&temporary, std::fs::Permissions::from_mode(mode))
-            .map_err(|error| format!("Could not protect OpenClaw managed file: {error}"))?;
-    }
-    std::fs::rename(&temporary, path)
+    crate::knowledge_store::write_file_atomically(path, content.as_bytes())
         .map_err(|error| format!("Could not install OpenClaw managed file: {error}"))
 }
 

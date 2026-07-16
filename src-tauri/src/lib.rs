@@ -19,6 +19,7 @@ mod local_api_auth;
 mod mac_notification_watcher;
 mod mobile_bridge;
 mod mobile_relay;
+mod native_audio;
 mod openclaw_hook;
 mod openclaw_transcript;
 mod opencode_followup;
@@ -28,6 +29,7 @@ mod remote_bridge;
 mod session_store;
 mod sound_pack;
 mod stats_store;
+mod system_tts;
 mod tailnet;
 mod transcript_reader;
 mod user_safe_text;
@@ -37,21 +39,36 @@ mod window_focus;
 mod wukong_watcher;
 
 use std::sync::Arc;
-use tauri::{Emitter, Manager};
+#[cfg(target_os = "macos")]
+use tauri::Emitter;
+use tauri::Manager;
 
 pub fn run() {
     env_logger::init();
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
+        .on_window_event(|window, event| {
+            #[cfg(target_os = "windows")]
+            {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    // HumHum is a tray companion. Alt+F4 should hide a window
+                    // so it can be reopened from the tray; the explicit tray
+                    // Quit action still terminates the application cleanly.
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                let _ = (window, event);
+            }
+        })
         .setup(|app| {
             let app_handle = app.handle().clone();
 
@@ -60,6 +77,9 @@ pub fn run() {
                 let _ = window.set_skip_taskbar(true);
                 let _ = window.set_shadow(false);
                 let _ = window.set_background_color(Some(tauri::window::Color(0, 0, 0, 0)));
+
+                #[cfg(target_os = "windows")]
+                apply_windows_window_behavior(&window);
 
                 #[cfg(target_os = "macos")]
                 apply_macos_transparency(&window);
@@ -77,6 +97,18 @@ pub fn run() {
 
             // Load configuration
             let config = config::AppConfig::load(&app_handle);
+            #[cfg(not(target_os = "macos"))]
+            let config = {
+                let mut config = config;
+                if config.ui.awake_mode {
+                    config.ui.awake_mode = false;
+                    if let Err(error) = config.save() {
+                        log::warn!("Could not clear unsupported Awake Mode setting: {error}");
+                    }
+                }
+                config
+            };
+            #[cfg(target_os = "macos")]
             let restore_awake_mode = config.ui.awake_mode;
             let analytics_enabled = config.ui.analytics_enabled;
             app.manage(Arc::new(std::sync::Mutex::new(config)));
@@ -121,34 +153,39 @@ pub fn run() {
 
             let wake_guard = Arc::new(wake_guard::WakeGuardState::default());
             app.manage(wake_guard.clone());
-            let wake_handle = app_handle.clone();
-            tauri::async_runtime::spawn(async move {
-                if restore_awake_mode {
-                    if let Err(error) = wake_guard.set_enabled(true).await {
-                        log::warn!("Could not restore Awake Mode: {error}");
-                    }
-                }
-                let mut pulse = tokio::time::interval(std::time::Duration::from_secs(120));
-                loop {
-                    pulse.tick().await;
-                    let desired_enabled = wake_handle
-                        .state::<Arc<std::sync::Mutex<config::AppConfig>>>()
-                        .lock()
-                        .map(|config| config.ui.awake_mode)
-                        .unwrap_or(false);
-                    if let Err(error) = wake_guard.reconcile_desired_state(desired_enabled).await {
-                        log::warn!("Could not reconcile Awake Mode: {error}");
-                        continue;
-                    }
-                    match wake_guard.pulse_user_activity().await {
-                        Ok(true) => {
-                            let _ = wake_handle.emit("humhum://awake-mode-pulse", ());
+            #[cfg(target_os = "macos")]
+            {
+                let wake_handle = app_handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    if restore_awake_mode {
+                        if let Err(error) = wake_guard.set_enabled(true).await {
+                            log::warn!("Could not restore Awake Mode: {error}");
                         }
-                        Ok(false) => {}
-                        Err(error) => log::warn!("Awake Mode activity pulse failed: {error}"),
                     }
-                }
-            });
+                    let mut pulse = tokio::time::interval(std::time::Duration::from_secs(120));
+                    loop {
+                        pulse.tick().await;
+                        let desired_enabled = wake_handle
+                            .state::<Arc<std::sync::Mutex<config::AppConfig>>>()
+                            .lock()
+                            .map(|config| config.ui.awake_mode)
+                            .unwrap_or(false);
+                        if let Err(error) =
+                            wake_guard.reconcile_desired_state(desired_enabled).await
+                        {
+                            log::warn!("Could not reconcile Awake Mode: {error}");
+                            continue;
+                        }
+                        match wake_guard.pulse_user_activity().await {
+                            Ok(true) => {
+                                let _ = wake_handle.emit("humhum://awake-mode-pulse", ());
+                            }
+                            Ok(false) => {}
+                            Err(error) => log::warn!("Awake Mode activity pulse failed: {error}"),
+                        }
+                    }
+                });
+            }
 
             // Session store
             let session_store = session_store::SessionStore::new();
@@ -287,8 +324,10 @@ pub fn run() {
             commands::webview_log,
             commands::proxy_post,
             commands::proxy_post_binary,
+            commands::transcribe_audio,
             commands::play_audio,
             commands::stop_audio,
+            commands::synthesize_system_speech,
             commands::get_sound_packs,
             commands::select_sound_pack,
             commands::clear_sound_pack,
@@ -313,6 +352,47 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running HumHum");
+}
+
+#[cfg(target_os = "windows")]
+fn apply_windows_window_behavior(window: &tauri::WebviewWindow) {
+    if let Err(error) = window.set_always_on_top(true) {
+        log::warn!("[Window] Failed to keep the pet above Windows apps: {error}");
+    }
+
+    let monitor = match window.current_monitor() {
+        Ok(Some(monitor)) => monitor,
+        Ok(None) => {
+            log::warn!("[Window] No Windows monitor found for pet positioning");
+            return;
+        }
+        Err(error) => {
+            log::warn!("[Window] Failed to query the Windows monitor: {error}");
+            return;
+        }
+    };
+    let window_size = match window.outer_size() {
+        Ok(size) => size,
+        Err(error) => {
+            log::warn!("[Window] Failed to query pet window size: {error}");
+            return;
+        }
+    };
+
+    // Use the work area rather than the full monitor so the pet stays clear of
+    // taskbars on every edge and on secondary monitors with negative origins.
+    let work_area = monitor.work_area();
+    let left = i64::from(work_area.position.x);
+    let top = i64::from(work_area.position.y);
+    let x = (left + i64::from(work_area.size.width) - i64::from(window_size.width) - 20).max(left);
+    let y = (top + i64::from(work_area.size.height) - i64::from(window_size.height) - 40).max(top);
+    let position = tauri::PhysicalPosition::new(
+        x.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32,
+        y.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32,
+    );
+    if let Err(error) = window.set_position(position) {
+        log::warn!("[Window] Failed to position the pet on Windows: {error}");
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -494,22 +574,40 @@ pub(crate) fn move_to_skylight_space(ns_window: cocoa::base::id) {
 
 fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     use tauri::{
-        menu::{Menu, MenuItem},
+        menu::{Menu, MenuItem, PredefinedMenuItem},
         tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     };
 
+    let show = MenuItem::with_id(app, "show", "Show HumHum", true, None::<&str>)?;
+    let settings = MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
     let hub = MenuItem::with_id(app, "hub", "Hub", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&hub])?;
+    let separator = PredefinedMenuItem::separator(app)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit HumHum", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&show, &settings, &hub, &separator, &quit])?;
 
+    // Keep this as the single tray creation site. Adding app.trayIcon to
+    // tauri.conf.json would create a second native icon before setup runs.
     TrayIconBuilder::with_id("humhum-tray")
         .icon(app.default_window_icon().unwrap().clone())
+        .icon_as_template(true)
         .menu(&menu)
         .tooltip("HumHum - AI Coding Companion")
         .show_menu_on_left_click(false)
-        .on_menu_event(|app, event| {
-            if event.id.as_ref() == "hub" {
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "show" => {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }
+            "settings" => {
+                let _ = tauri::async_runtime::block_on(commands::toggle_settings(app.clone()));
+            }
+            "hub" => {
                 let _ = tauri::async_runtime::block_on(commands::toggle_hub(app.clone()));
             }
+            "quit" => app.exit(0),
+            _ => {}
         })
         .on_tray_icon_event(|tray, event| {
             if let TrayIconEvent::Click {

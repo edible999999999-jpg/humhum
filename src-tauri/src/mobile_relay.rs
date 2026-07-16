@@ -554,6 +554,18 @@ impl RelayBaseUrl {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    fn is_loopback(&self) -> bool {
+        reqwest::Url::parse(&self.0)
+            .ok()
+            .and_then(|url| url.host_str().map(str::to_string))
+            .is_some_and(|host| {
+                host.eq_ignore_ascii_case("localhost")
+                    || host
+                        .parse::<IpAddr>()
+                        .is_ok_and(|address| address.is_loopback())
+            })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -589,11 +601,18 @@ pub struct RelayClient {
 
 impl RelayClient {
     pub fn new(base_url: RelayBaseUrl) -> Result<Self, String> {
-        let client = reqwest::Client::builder()
+        let mut builder = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(3))
             .timeout(Duration::from_secs(5))
-            .user_agent("HUMHUM-Wake-Relay/0.1")
+            .user_agent("HUMHUM-Wake-Relay/0.1");
+        // Loopback relay URLs are allowed for local development and tests.
+        // They must never traverse an environment-configured proxy, which
+        // could expose publisher credentials or make a local relay unreachable.
+        if base_url.is_loopback() {
+            builder = builder.no_proxy();
+        }
+        let client = builder
             .build()
             .map_err(|_| "Could not configure relay client".to_string())?;
         Ok(Self { base_url, client })
@@ -848,6 +867,7 @@ impl MobileRelaySecretStore {
             return Err("Relay secret store cannot be a symbolic link".into());
         }
         let devices = if path.exists() {
+            set_owner_only(&path)?;
             let bytes = std::fs::read(&path)
                 .map_err(|error| format!("Could not read relay secrets: {error}"))?;
             if bytes.len() > 1_048_576 {
@@ -875,8 +895,17 @@ impl MobileRelaySecretStore {
 
     pub fn put(&mut self, secret: RelayDeviceSecret) -> Result<(), String> {
         secret.validate()?;
-        self.devices.insert(secret.device_id.clone(), secret);
-        self.persist()
+        let device_id = secret.device_id.clone();
+        let previous = self.devices.insert(device_id.clone(), secret);
+        if let Err(error) = self.persist() {
+            if let Some(previous) = previous {
+                self.devices.insert(device_id, previous);
+            } else {
+                self.devices.remove(&device_id);
+            }
+            return Err(error);
+        }
+        Ok(())
     }
 
     pub(crate) fn all(&self) -> Vec<RelayDeviceSecret> {
@@ -911,12 +940,13 @@ impl MobileRelaySecretStore {
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn remove(&mut self, device_id: &str) -> Result<(), String> {
         let _ = self.take(device_id)?;
         Ok(())
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn clear(&mut self) -> Result<(), String> {
         let _ = self.take_all()?;
         Ok(())
@@ -924,6 +954,9 @@ impl MobileRelaySecretStore {
 
     pub fn take(&mut self, device_id: &str) -> Result<Option<RelayDeviceSecret>, String> {
         let removed = self.devices.remove(device_id);
+        if removed.is_none() {
+            return Ok(None);
+        }
         if let Err(error) = self.persist() {
             if let Some(secret) = removed.clone() {
                 self.devices.insert(device_id.to_string(), secret);
@@ -943,37 +976,48 @@ impl MobileRelaySecretStore {
         Ok(removed)
     }
 
+    pub(crate) fn restore_all(&mut self, secrets: &[RelayDeviceSecret]) -> Result<(), String> {
+        let mut restored = BTreeMap::new();
+        for secret in secrets {
+            secret.validate()?;
+            if restored
+                .insert(secret.device_id.clone(), secret.clone())
+                .is_some()
+            {
+                return Err("Relay secret rollback contains duplicate devices".into());
+            }
+        }
+        let previous = std::mem::replace(&mut self.devices, restored);
+        if let Err(error) = self.persist() {
+            self.devices = previous;
+            return Err(error);
+        }
+        Ok(())
+    }
+
     fn persist(&self) -> Result<(), String> {
         let values = self.devices.values().collect::<Vec<_>>();
         let content = serde_json::to_vec_pretty(&values)
             .map_err(|error| format!("Could not serialize relay secrets: {error}"))?;
-        let temp_path = self.path.with_extension("json.tmp");
-        std::fs::write(&temp_path, content)
-            .map_err(|error| format!("Could not write relay secrets: {error}"))?;
-        set_owner_only(&temp_path)?;
-        std::fs::rename(&temp_path, &self.path)
-            .map_err(|error| format!("Could not replace relay secrets: {error}"))?;
-        set_owner_only(&self.path)
+        crate::local_api_auth::write_private_file_atomically(&self.path, &content)
+            .map_err(|error| format!("Could not write relay secrets: {error}"))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_path_for_test(&mut self, path: PathBuf) {
+        self.path = path;
     }
 }
 
-fn set_owner_only(path: &Path) -> Result<(), String> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut permissions = std::fs::metadata(path)
-            .map_err(|error| format!("Could not inspect relay secret permissions: {error}"))?
-            .permissions();
-        permissions.set_mode(0o600);
-        std::fs::set_permissions(path, permissions)
-            .map_err(|error| format!("Could not protect relay secrets: {error}"))?;
-    }
-    Ok(())
+fn set_owner_only(_path: &Path) -> Result<(), String> {
+    crate::local_api_auth::protect_owner_only(_path)
+        .map_err(|error| format!("Could not protect relay secrets: {error}"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     use std::sync::{Arc, Mutex};
 
@@ -1151,11 +1195,14 @@ mod tests {
 
         store.put(phone.clone()).unwrap();
         store.put(tablet.clone()).unwrap();
-        let path = temp.path().join("mobile-relay-secrets.json");
-        assert_eq!(
-            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
-            0o600
-        );
+        #[cfg(unix)]
+        {
+            let path = temp.path().join("mobile-relay-secrets.json");
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
 
         let mut restored = MobileRelaySecretStore::load_or_create(temp.path()).unwrap();
         assert_eq!(restored.get("device-phone"), Some(&phone));
@@ -1444,6 +1491,24 @@ mod tests {
                 .next_sequence,
             8
         );
+    }
+
+    #[test]
+    fn failed_relay_persistence_rolls_back_memory() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut store = MobileRelaySecretStore::load_or_create(temp.path()).unwrap();
+        let original = relay_secret("https://relay.example.com");
+        store.put(original.clone()).unwrap();
+        let blocker = temp.path().join("not-a-directory");
+        std::fs::write(&blocker, b"block child creation").unwrap();
+        store.path = blocker.join("mobile-relay-secrets.json");
+
+        let mut replacement = original.clone();
+        replacement.next_sequence = 42;
+        assert!(store.put(replacement).is_err());
+        assert_eq!(store.get("device-phone"), Some(&original));
+        assert!(store.advance_sequence("device-phone", 7).is_err());
+        assert_eq!(store.get("device-phone"), Some(&original));
     }
 
     #[test]

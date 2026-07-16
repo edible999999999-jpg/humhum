@@ -1,14 +1,14 @@
 use crate::event_bus::{self, HookEvent, PermissionDecision};
 use crate::hexa_watch_store::{
-    HexaAuditMutationRequest, HexaWatchDeleteRequest, HexaWatchRegisterRequest, HexaWatchStore,
-    HexaWatchUpdateRequest,
+    HexaAuditMutation, HexaAuditMutationRequest, HexaWatchDeleteRequest, HexaWatchRegisterRequest,
+    HexaWatchStore, HexaWatchUpdateRequest,
 };
 use crate::local_api_auth::{LocalApiAuth, TOKEN_HEADER};
 use crate::mobile_bridge::MobileBridgeState;
 use crate::remote_bridge::RemoteBridgeState;
 use crate::session_store::SessionStore;
 use crate::stats_store::StatsStore;
-use http_body_util::{BodyExt, Full};
+use http_body_util::{BodyExt, Full, LengthLimitError, Limited};
 use hyper::body::Bytes;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
@@ -23,6 +23,8 @@ use tauri::{Emitter, Manager};
 use tokio::net::TcpListener;
 use tokio::sync::{oneshot, Mutex};
 use uuid::Uuid;
+
+const MAX_HEXA_AUDIT_BODY_BYTES: usize = 64 * 1024;
 
 /// Stores a pending permission request with its event info
 pub struct PendingRequest {
@@ -353,13 +355,11 @@ async fn handle_event(
     };
     let mut payload = normalize_agent_payload(payload);
 
-    let hook_event_name = payload
+    let source_hook_event_name = payload
         .get("hook_event_name")
         .and_then(|v| v.as_str())
         .unwrap_or("unknown")
         .to_string();
-
-    enrich_ghostty_route(&mut payload, &hook_event_name);
 
     let event_id = Uuid::new_v4().to_string();
 
@@ -381,9 +381,11 @@ async fn handle_event(
         })
         .unwrap_or_else(|| "claude-code".to_string());
 
+    let hook_event_name = canonical_hook_event_name(&client_type, &source_hook_event_name);
+    enrich_ghostty_route(&mut payload, hook_event_name);
     let hook_event = HookEvent {
         id: event_id.clone(),
-        hook_event_name: hook_event_name.clone(),
+        hook_event_name: hook_event_name.to_string(),
         session_id: payload
             .get("session_id")
             .and_then(|v| v.as_str())
@@ -409,11 +411,8 @@ async fn handle_event(
         }
     }
 
-    // Record stats on session end events
-    if matches!(
-        hook_event_name.as_str(),
-        "Stop" | "TaskCompleted" | "SessionEnd"
-    ) {
+    // Record stats on session end events.
+    if matches!(hook_event_name, "Stop" | "TaskCompleted" | "SessionEnd") {
         let analytics_enabled = app_handle
             .try_state::<Arc<std::sync::Mutex<crate::config::AppConfig>>>()
             .and_then(|config| config.lock().ok().map(|config| config.ui.analytics_enabled))
@@ -474,12 +473,7 @@ async fn handle_event(
 
     // PermissionRequest for AskUserQuestion: auto-allow immediately (answer goes via PreToolUse)
     if hook_event_name == "PermissionRequest" && is_ask_question {
-        let response = serde_json::json!({
-            "hookSpecificOutput": {
-                "hookEventName": "PermissionRequest",
-                "decision": { "behavior": "allow" }
-            }
-        });
+        let response = permission_hook_response(&hook_event.client_type, "allow");
         return Ok(json_response(StatusCode::OK, &response));
     }
 
@@ -508,14 +502,7 @@ async fn handle_event(
                 store.clear_pending_permission(&hook_event.session_id);
             }
             let _ = app_handle.emit("humhum://permission-auto-confirmed", &event_id);
-            let response = serde_json::json!({
-                "hookSpecificOutput": {
-                    "hookEventName": "PermissionRequest",
-                    "decision": {
-                        "behavior": "allow",
-                    }
-                }
-            });
+            let response = permission_hook_response(&hook_event.client_type, "allow");
             event_bus::emit_status_change(&app_handle, "idle");
             return Ok(json_response(StatusCode::OK, &response));
         }
@@ -579,17 +566,7 @@ async fn handle_event(
                         })
                     }
                 } else {
-                    // PermissionRequest: standard hookSpecificOutput format
-                    let mut hook_output = serde_json::json!({
-                        "hookEventName": "PermissionRequest",
-                        "decision": { "behavior": hook_behavior }
-                    });
-                    if is_ask_question {
-                        if let Some(answer) = &d.answer {
-                            hook_output["updatedInput"] = answer.clone();
-                        }
-                    }
-                    serde_json::json!({"hookSpecificOutput": hook_output})
+                    permission_hook_response(&hook_event.client_type, hook_behavior)
                 };
 
                 event_bus::emit_status_change(&app_handle, "idle");
@@ -618,10 +595,7 @@ async fn handle_event(
         }
     } else {
         // Non-blocking events: return immediately
-        Ok(json_response(
-            StatusCode::OK,
-            &serde_json::json!({"status": "received"}),
-        ))
+        Ok(empty_response(StatusCode::NO_CONTENT))
     }
 }
 
@@ -896,6 +870,26 @@ async fn handle_hush_inbox_post(
     ))
 }
 
+fn canonical_hook_event_name<'a>(client_type: &str, source_event: &'a str) -> &'a str {
+    match (client_type, source_event) {
+        ("gemini-cli", "AfterAgent") => "TaskCompleted",
+        ("gemini-cli", "BeforeTool") => "PreToolUse",
+        ("gemini-cli", "AfterTool") => "PostToolUse",
+        _ => source_event,
+    }
+}
+
+fn permission_hook_response(client_type: &str, behavior: &str) -> Value {
+    let _ = client_type;
+    let behavior = if behavior == "deny" { "deny" } else { "allow" };
+    serde_json::json!({
+        "hookSpecificOutput": {
+            "hookEventName": "PermissionRequest",
+            "decision": { "behavior": behavior }
+        }
+    })
+}
+
 /// GET /knowledge?q=<keyword> — query the knowledge base
 async fn handle_knowledge_query(
     req: Request<hyper::body::Incoming>,
@@ -1057,12 +1051,23 @@ async fn handle_hexa_audit(
     req: Request<hyper::body::Incoming>,
     app_handle: tauri::AppHandle,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
-    let body = match req.collect().await {
+    let body = match Limited::new(req.into_body(), MAX_HEXA_AUDIT_BODY_BYTES)
+        .collect()
+        .await
+    {
         Ok(collected) => collected.to_bytes(),
         Err(error) => {
+            let (status, message) = if error.downcast_ref::<LengthLimitError>().is_some() {
+                (
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    "Hexa audit body is too large",
+                )
+            } else {
+                (StatusCode::BAD_REQUEST, "failed to read Hexa audit body")
+            };
             return Ok(json_response(
-                StatusCode::BAD_REQUEST,
-                &serde_json::json!({"error": format!("failed to read body: {error}")}),
+                status,
+                &serde_json::json!({"error": format!("{message}: {error}")}),
             ));
         }
     };
@@ -1075,6 +1080,14 @@ async fn handle_hexa_audit(
             ));
         }
     };
+    if !hexa_audit_mutation_allowed_over_agent_api(&request.mutation) {
+        return Ok(json_response(
+            StatusCode::FORBIDDEN,
+            &serde_json::json!({
+                "error": "user review can only be recorded from the desktop UI"
+            }),
+        ));
+    }
 
     let session = {
         let store = app_handle.state::<Arc<std::sync::Mutex<HexaWatchStore>>>();
@@ -1105,6 +1118,10 @@ async fn handle_hexa_audit(
         StatusCode::OK,
         &serde_json::to_value(session).unwrap_or_default(),
     ))
+}
+
+fn hexa_audit_mutation_allowed_over_agent_api(mutation: &HexaAuditMutation) -> bool {
+    !matches!(mutation, HexaAuditMutation::SetUserReview { .. })
 }
 
 fn hexa_audit_error_status(error: &str) -> StatusCode {
@@ -1191,6 +1208,13 @@ fn json_response(status: StatusCode, body: &Value) -> Response<Full<Bytes>> {
         .status(status)
         .header("content-type", "application/json")
         .body(Full::new(Bytes::from(json)))
+        .unwrap()
+}
+
+fn empty_response(status: StatusCode) -> Response<Full<Bytes>> {
+    Response::builder()
+        .status(status)
+        .body(Full::new(Bytes::new()))
         .unwrap()
 }
 
@@ -1289,6 +1313,44 @@ mod session_auto_confirm_tests {
 }
 
 #[cfg(test)]
+mod hook_protocol_tests {
+    use super::{canonical_hook_event_name, permission_hook_response};
+
+    #[test]
+    fn codex_permission_response_uses_nested_decision() {
+        let response = permission_hook_response("codex", "allowAlways");
+        assert_eq!(
+            response.pointer("/hookSpecificOutput/decision/behavior"),
+            Some(&serde_json::json!("allow"))
+        );
+        assert!(response
+            .pointer("/hookSpecificOutput/permissionDecision")
+            .is_none());
+    }
+
+    #[test]
+    fn claude_permission_response_keeps_nested_decision() {
+        let response = permission_hook_response("claude-code", "deny");
+        assert_eq!(
+            response.pointer("/hookSpecificOutput/decision/behavior"),
+            Some(&serde_json::json!("deny"))
+        );
+    }
+
+    #[test]
+    fn gemini_after_agent_is_normalized_to_task_completed() {
+        assert_eq!(
+            canonical_hook_event_name("gemini-cli", "AfterAgent"),
+            "TaskCompleted"
+        );
+        assert_eq!(
+            canonical_hook_event_name("claude-code", "AfterAgent"),
+            "AfterAgent"
+        );
+    }
+}
+
+#[cfg(test)]
 mod hexa_audit_endpoint_tests {
     use super::*;
 
@@ -1310,5 +1372,30 @@ mod hexa_audit_endpoint_tests {
             hexa_audit_error_status("Could not write Hexa watch store"),
             StatusCode::INTERNAL_SERVER_ERROR
         );
+    }
+
+    #[test]
+    fn agent_api_cannot_impersonate_a_user_review() {
+        let user_review = HexaAuditMutation::SetUserReview {
+            review: crate::hexa_watch_store::HexaReviewInput {
+                rating: crate::hexa_watch_store::HexaReviewRating::Satisfied,
+                summary: "Looks good".into(),
+                evidence: vec![],
+            },
+        };
+        let hexa_review = HexaAuditMutation::SetHexaReview {
+            review: crate::hexa_watch_store::HexaReviewInput {
+                rating: crate::hexa_watch_store::HexaReviewRating::Satisfied,
+                summary: "Evidence-backed review".into(),
+                evidence: vec![crate::hexa_watch_store::HexaEvidenceInput {
+                    kind: "test".into(),
+                    label: "cargo test passed".into(),
+                    location: None,
+                }],
+            },
+        };
+
+        assert!(!hexa_audit_mutation_allowed_over_agent_api(&user_review));
+        assert!(hexa_audit_mutation_allowed_over_agent_api(&hexa_review));
     }
 }

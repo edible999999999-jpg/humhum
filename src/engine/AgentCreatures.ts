@@ -1,5 +1,5 @@
 import { AGENT_COLORS } from "./constants";
-import type { AgentCreatureColors, ActiveAgent } from "./types";
+import type { AgentCreatureColors, ActiveAgent, RenderContext2D } from "./types";
 
 function getColors(id: string): AgentCreatureColors {
   return AGENT_COLORS[id] ?? { light: "#94a3b8", med: "#64748b", dark: "#475569" };
@@ -13,7 +13,7 @@ function hexToRgba(hex: string, alpha: number): string {
 }
 
 export function drawAbsorbedAgents(
-  ctx: OffscreenCanvasRenderingContext2D,
+  ctx: RenderContext2D,
   agents: ActiveAgent[],
   cx: number,
   dcy: number,
@@ -63,7 +63,7 @@ export function drawAbsorbedAgents(
 }
 
 function drawLogoBubble(
-  ctx: OffscreenCanvasRenderingContext2D,
+  ctx: RenderContext2D,
   image: CanvasImageSource,
   x: number,
   y: number,
@@ -121,7 +121,7 @@ function drawLogoBubble(
 }
 
 function drawCreature(
-  ctx: OffscreenCanvasRenderingContext2D,
+  ctx: RenderContext2D,
   id: string,
   x: number,
   y: number,
@@ -164,7 +164,7 @@ function drawCreature(
 }
 
 function drawFireShrimp(
-  ctx: OffscreenCanvasRenderingContext2D,
+  ctx: RenderContext2D,
   x: number, y: number, r: number,
   eR: number, hR: number,
   c: AgentCreatureColors,
@@ -276,7 +276,7 @@ function drawFireShrimp(
 }
 
 function drawCloudPuff(
-  ctx: OffscreenCanvasRenderingContext2D,
+  ctx: RenderContext2D,
   x: number, y: number, r: number, s: number,
   eR: number, hR: number,
   c: AgentCreatureColors,
@@ -360,7 +360,7 @@ function drawCloudPuff(
 }
 
 function drawBlueSeahorse(
-  ctx: OffscreenCanvasRenderingContext2D,
+  ctx: RenderContext2D,
   x: number, y: number, r: number, s: number,
   eR: number, hR: number,
   c: AgentCreatureColors,
@@ -461,7 +461,7 @@ function drawBlueSeahorse(
 }
 
 function drawCrystalStarfish(
-  ctx: OffscreenCanvasRenderingContext2D,
+  ctx: RenderContext2D,
   x: number, y: number, r: number, s: number,
   eR: number,
   c: AgentCreatureColors,
@@ -547,7 +547,7 @@ function drawCrystalStarfish(
 }
 
 function drawMoonJelly(
-  ctx: OffscreenCanvasRenderingContext2D,
+  ctx: RenderContext2D,
   x: number, y: number, r: number, s: number,
   eR: number, hR: number,
   c: AgentCreatureColors,
@@ -644,7 +644,7 @@ function drawMoonJelly(
 }
 
 function drawStar(
-  ctx: OffscreenCanvasRenderingContext2D,
+  ctx: RenderContext2D,
   sx: number, sy: number, sr: number,
   fill: string,
 ) {
@@ -665,7 +665,7 @@ function drawStar(
 }
 
 function drawCoralPolyp(
-  ctx: OffscreenCanvasRenderingContext2D,
+  ctx: RenderContext2D,
   x: number, y: number, r: number, s: number,
   eR: number, hR: number,
   c: AgentCreatureColors,
@@ -766,7 +766,7 @@ function drawCoralPolyp(
 }
 
 function drawGoldenCloud(
-  ctx: OffscreenCanvasRenderingContext2D,
+  ctx: RenderContext2D,
   x: number, y: number, r: number, _s: number,
   eR: number, _hR: number,
   c: AgentCreatureColors,

@@ -1,11 +1,53 @@
 import { COLORS, BABY_THRESHOLD } from "./constants";
 import { drawAbsorbedAgents } from "./AgentCreatures";
-import type { HumColors, PetState, ActiveAgent } from "./types";
+import type {
+  ActiveAgent,
+  HumColors,
+  PetState,
+  RenderCanvas,
+  RenderContext2D,
+} from "./types";
 import type { MascotTheme } from "@/lib/mascot-theme";
 
+interface RenderSurface {
+  canvas: RenderCanvas;
+  ctx: RenderContext2D;
+}
+
+function getRenderContext(canvas: RenderCanvas): RenderContext2D | null {
+  return canvas.getContext("2d") as RenderContext2D | null;
+}
+
+function createHtmlCanvasSurface(width: number, height: number): RenderSurface {
+  if (typeof document === "undefined") {
+    throw new Error("Canvas rendering is not available in this environment");
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = getRenderContext(canvas);
+  if (!ctx) throw new Error("Cannot get 2D context");
+  return { canvas, ctx };
+}
+
+function createRenderSurface(width: number, height: number): RenderSurface {
+  if (typeof OffscreenCanvas !== "undefined") {
+    try {
+      const canvas = new OffscreenCanvas(width, height);
+      const ctx = getRenderContext(canvas);
+      if (ctx) return { canvas, ctx };
+    } catch {
+      // Some WebViews expose OffscreenCanvas without a usable 2D backend.
+    }
+  }
+
+  return createHtmlCanvasSurface(width, height);
+}
+
 export class FallbackRenderer {
-  private canvas: OffscreenCanvas;
-  private ctx: OffscreenCanvasRenderingContext2D;
+  private canvas: RenderCanvas;
+  private ctx: RenderContext2D;
   private sz: number;
   private time = 0;
   private state: PetState = "idle";
@@ -16,10 +58,9 @@ export class FallbackRenderer {
 
   constructor(size: number, dpr: number) {
     this.sz = size;
-    this.canvas = new OffscreenCanvas(size * dpr, size * dpr);
-    const ctx = this.canvas.getContext("2d");
-    if (!ctx) throw new Error("Cannot get 2D context");
-    this.ctx = ctx;
+    const surface = createRenderSurface(size * dpr, size * dpr);
+    this.canvas = surface.canvas;
+    this.ctx = surface.ctx;
     this.ctx.scale(dpr, dpr);
   }
 
@@ -43,7 +84,7 @@ export class FallbackRenderer {
     this.theme = theme;
   }
 
-  render(dt: number): OffscreenCanvas {
+  render(dt: number): RenderCanvas {
     this.time += dt;
     const ctx = this.ctx;
     const sz = this.sz;
@@ -81,7 +122,7 @@ export class FallbackRenderer {
   }
 
   private drawThemeRing(
-    ctx: OffscreenCanvasRenderingContext2D,
+    ctx: RenderContext2D,
     cx: number,
     dcy: number,
     R: number,
@@ -99,7 +140,7 @@ export class FallbackRenderer {
   }
 
   private drawSpritePet(
-    ctx: OffscreenCanvasRenderingContext2D,
+    ctx: RenderContext2D,
     cx: number,
     dcy: number,
     dby: number,
@@ -137,7 +178,7 @@ export class FallbackRenderer {
   }
 
   private drawSpriteStateOverlay(
-    ctx: OffscreenCanvasRenderingContext2D,
+    ctx: RenderContext2D,
     cx: number,
     dcy: number,
     R: number,
@@ -193,7 +234,7 @@ export class FallbackRenderer {
   }
 
   private drawShadow(
-    ctx: OffscreenCanvasRenderingContext2D,
+    ctx: RenderContext2D,
     cx: number, dby: number, R: number,
   ) {
     const grad = ctx.createRadialGradient(cx, dby + R * 0.95, 0, cx, dby + R * 0.95, R * 1.2);
@@ -217,7 +258,7 @@ export class FallbackRenderer {
   }
 
   private drawGlow(
-    ctx: OffscreenCanvasRenderingContext2D,
+    ctx: RenderContext2D,
     cx: number, dcy: number, R: number, C: HumColors,
   ) {
     let opacity = 0.08;
@@ -244,7 +285,7 @@ export class FallbackRenderer {
   }
 
   private drawStatusDot(
-    ctx: OffscreenCanvasRenderingContext2D,
+    ctx: RenderContext2D,
     cx: number, dcy: number, R: number, C: HumColors,
   ) {
     const alpha = 0.35 + 0.4 * Math.abs(Math.sin(this.time * 1.57));
