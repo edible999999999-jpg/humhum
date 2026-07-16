@@ -67,8 +67,11 @@ public final class MainActivity extends Activity {
     private EncryptedSessionSnapshotStore snapshotStore;
     private SessionSnapshotGenerationGate snapshotGenerationGate;
     private MonitorStore monitorStore;
+    private AnywhereStateStore anywhereStateStore;
     private ConnectionStore.Connection connection;
     private MobileProtocol protocol;
+    private AnywhereRelayClient anywhereRelayClient;
+    private AnywhereGateway anywhereGateway;
     private boolean refreshInFlight;
     private MobileRoleDashboard.Role selectedRole = MobileRoleDashboard.Role.HUMI;
     private final Map<MobileRoleDashboard.Role, LinearLayout> roleTabs =
@@ -128,6 +131,8 @@ public final class MainActivity extends Activity {
         snapshotStore = new EncryptedSessionSnapshotStore(this);
         snapshotGenerationGate = SessionSnapshotGenerationGate.open();
         monitorStore = AgentMonitorService.monitorStore(this);
+        anywhereStateStore = new AnywhereStateStore(
+                getSharedPreferences("humhum_anywhere", MODE_PRIVATE));
         pushPreferences = getSharedPreferences("humhum_push", MODE_PRIVATE);
         connectButton.setOnClickListener(view -> pair());
         findViewById(R.id.scanSetupButton).setOnClickListener(view -> scanSetup());
@@ -219,6 +224,7 @@ public final class MainActivity extends Activity {
         sendingSessionIds.clear();
         collapseConversationDisclosure();
         renderedSessions = List.of();
+        if (anywhereRelayClient != null) anywhereRelayClient.cancel();
         snapshotGenerationGate.close();
         network.shutdownNow();
         super.onDestroy();
@@ -614,6 +620,14 @@ public final class MainActivity extends Activity {
         renderedSessions = List.of();
         connection = saved;
         protocol = new MobileProtocol(saved.config(), saved.token(), saved.scope());
+        if (anywhereRelayClient != null) anywhereRelayClient.cancel();
+        if (saved.wakeRelay() != null && saved.wakeRelay().version() == 2) {
+            anywhereRelayClient = new AnywhereRelayClient();
+            anywhereGateway = new AnywhereGateway(anywhereRelayClient, anywhereStateStore);
+        } else {
+            anywhereRelayClient = null;
+            anywhereGateway = null;
+        }
         connectPanel.setVisibility(View.GONE);
         sessionPanel.setVisibility(View.VISIBLE);
         roleNavigation.setVisibility(View.VISIBLE);
@@ -648,6 +662,9 @@ public final class MainActivity extends Activity {
         sendingSessionIds.clear();
         collapseConversationDisclosure();
         renderedSessions = List.of();
+        if (anywhereRelayClient != null) anywhereRelayClient.cancel();
+        anywhereRelayClient = null;
+        anywhereGateway = null;
         protocol = null;
         connection = null;
         connectPanel.setVisibility(View.VISIBLE);
@@ -677,6 +694,7 @@ public final class MainActivity extends Activity {
                     }
                     SessionSnapshotGenerationGate.runExclusiveTransition(() -> {
                         clearSnapshotSafely();
+                        anywhereStateStore.clear();
                         connectionStore.clear();
                     });
                     return warning;
@@ -799,6 +817,7 @@ public final class MainActivity extends Activity {
         if (userInitiated) statusText.setText("正在刷新");
         MobileProtocol current = protocol;
         ConnectionStore.Connection currentConnection = connection;
+        AnywhereGateway currentAnywhere = anywhereGateway;
         long refreshGeneration = snapshotGenerationGate.capture();
         network.execute(() -> {
             try {
@@ -825,6 +844,38 @@ public final class MainActivity extends Activity {
                     clearRevokedConnection(
                             refreshGeneration, current, currentConnection);
                     return;
+                }
+                if (canUseAnywhere(error, currentConnection, currentAnywhere)) {
+                    try {
+                        Models.SessionPage page = currentAnywhere.sessions(
+                                currentConnection.wakeRelay());
+                        long savedAtMillis = System.currentTimeMillis();
+                        boolean written = snapshotGenerationGate.callIfCurrent(
+                                refreshGeneration,
+                                () -> {
+                                    if (!isCurrentConnection(current, currentConnection)) {
+                                        return false;
+                                    }
+                                    writeSnapshotSafely(
+                                            currentConnection, page.sessions(), savedAtMillis);
+                                    return true;
+                                },
+                                false);
+                        if (!written) {
+                            postStaleRefreshReset(refreshGeneration, current, currentConnection);
+                            return;
+                        }
+                        postRefreshIfCurrent(
+                                refreshGeneration, current, currentConnection, () -> {
+                                    refreshInFlight = false;
+                                    refreshButton.setEnabled(true);
+                                    statusText.setText("远程连接 · 刚刚同步");
+                                    renderSessions(page.sessions());
+                                });
+                        return;
+                    } catch (Exception ignored) {
+                        // The encrypted local snapshot remains the last bounded fallback.
+                    }
                 }
                 long nowMillis = System.currentTimeMillis();
                 SessionSnapshot snapshot = OfflineFallbackPolicy.canUseSnapshot(error)
@@ -859,6 +910,7 @@ public final class MainActivity extends Activity {
         boolean cleared = snapshotGenerationGate.callIfCurrent(generation, () -> {
             if (!isCurrentConnection(expectedProtocol, expectedConnection)) return false;
             clearSnapshotSafely();
+            anywhereStateStore.clear();
             connectionStore.clear();
             return true;
         }, false);
@@ -1066,7 +1118,33 @@ public final class MainActivity extends Activity {
         return Objects.equals(first.baseUrl(), second.baseUrl())
                 && Objects.equals(first.channelId(), second.channelId())
                 && Objects.equals(first.subscriberToken(), second.subscriberToken())
-                && Objects.equals(first.wakeKey(), second.wakeKey());
+                && Objects.equals(first.wakeKey(), second.wakeKey())
+                && Objects.equals(first.commandChannelId(), second.commandChannelId())
+                && Objects.equals(
+                        first.commandPublisherToken(), second.commandPublisherToken())
+                && Objects.equals(first.commandKey(), second.commandKey());
+    }
+
+    private static boolean canUseAnywhere(
+            Throwable directError,
+            ConnectionStore.Connection activeConnection,
+            AnywhereGateway gateway) {
+        return gateway != null
+                && activeConnection != null
+                && activeConnection.wakeRelay() != null
+                && activeConnection.wakeRelay().version() == 2
+                && OfflineFallbackPolicy.canUseSnapshot(directError);
+    }
+
+    private static boolean canUseAnywhereForWrite(
+            Throwable directError,
+            ConnectionStore.Connection activeConnection,
+            AnywhereGateway gateway) {
+        return gateway != null
+                && activeConnection != null
+                && activeConnection.wakeRelay() != null
+                && activeConnection.wakeRelay().version() == 2
+                && OfflineFallbackPolicy.canRetryWriteThroughRelay(directError);
     }
 
     private void writeSnapshotSafely(
@@ -1359,6 +1437,7 @@ public final class MainActivity extends Activity {
     private void loadConversation(Models.Session session) {
         MobileProtocol current = protocol;
         ConnectionStore.Connection currentConnection = connection;
+        AnywhereGateway currentAnywhere = anywhereGateway;
         if (current == null || currentConnection == null) return;
         String sessionId = session.id();
         long generation = snapshotGenerationGate.capture();
@@ -1382,6 +1461,30 @@ public final class MainActivity extends Activity {
                     clearRevokedConnection(generation, current, currentConnection);
                     return;
                 }
+                if (canUseAnywhere(error, currentConnection, currentAnywhere)) {
+                    try {
+                        List<Models.ConversationMessage> messages = currentAnywhere.conversation(
+                                currentConnection.wakeRelay(), session);
+                        postConversationIfCurrent(
+                                generation,
+                                current,
+                                currentConnection,
+                                sessionId,
+                                () -> {
+                                    recentConversationBySessionId.put(
+                                            sessionId, List.copyOf(messages));
+                                    loadingConversationSessionId = null;
+                                    conversationErrorSessionId = null;
+                                    conversationErrorText = "";
+                                    statusText.setText("远程连接");
+                                    renderSessions(renderedSessions);
+                                });
+                        return;
+                    } catch (Exception remoteError) {
+                        error = remoteError;
+                    }
+                }
+                String visibleError = safeError(error);
                 postConversationIfCurrent(
                         generation,
                         current,
@@ -1390,7 +1493,7 @@ public final class MainActivity extends Activity {
                         () -> {
                             loadingConversationSessionId = null;
                             conversationErrorSessionId = sessionId;
-                            conversationErrorText = safeError(error);
+                            conversationErrorText = visibleError;
                             renderSessions(renderedSessions);
                         });
             }
@@ -1418,6 +1521,7 @@ public final class MainActivity extends Activity {
         second.setEnabled(false);
         MobileProtocol current = protocol;
         ConnectionStore.Connection currentConnection = connection;
+        AnywhereGateway currentAnywhere = anywhereGateway;
         long generation = snapshotGenerationGate.capture();
         network.execute(() -> {
             try {
@@ -1428,10 +1532,27 @@ public final class MainActivity extends Activity {
                     clearRevokedConnection(generation, current, currentConnection);
                     return;
                 }
+                if (canUseAnywhereForWrite(error, currentConnection, currentAnywhere)) {
+                    try {
+                        currentAnywhere.resolveApproval(
+                                currentConnection.wakeRelay(),
+                                currentConnection.scope(),
+                                action,
+                                decision);
+                        postIfCurrent(generation, current, currentConnection, () -> {
+                            statusText.setText("远程连接 · 已处理");
+                            refreshSessions(true);
+                        });
+                        return;
+                    } catch (Exception remoteError) {
+                        error = remoteError;
+                    }
+                }
+                String visibleError = safeError(error);
                 postIfCurrent(generation, current, currentConnection, () -> {
                     first.setEnabled(true);
                     second.setEnabled(true);
-                    statusText.setText(safeError(error));
+                    statusText.setText(visibleError);
                 });
             }
         });
@@ -1445,6 +1566,7 @@ public final class MainActivity extends Activity {
         send.setEnabled(false);
         MobileProtocol current = protocol;
         ConnectionStore.Connection currentConnection = connection;
+        AnywhereGateway currentAnywhere = anywhereGateway;
         long generation = snapshotGenerationGate.capture();
         network.execute(() -> {
             try {
@@ -1461,9 +1583,31 @@ public final class MainActivity extends Activity {
                     clearRevokedConnection(generation, current, currentConnection);
                     return;
                 }
+                if (canUseAnywhereForWrite(error, currentConnection, currentAnywhere)) {
+                    try {
+                        String state = currentAnywhere.sendMessage(
+                                currentConnection.wakeRelay(),
+                                currentConnection.scope(),
+                                session,
+                                message);
+                        postIfCurrent(generation, current, currentConnection, () -> {
+                            sendingSessionIds.remove(session.id());
+                            messageDraftBySessionId.remove(session.id());
+                            statusText.setText("delivered".equals(state)
+                                    ? "远程连接 · 跟进已送达"
+                                    : "远程连接 · 跟进已进入队列");
+                            renderSessions(renderedSessions);
+                            refreshSessions(false);
+                        });
+                        return;
+                    } catch (Exception remoteError) {
+                        error = remoteError;
+                    }
+                }
+                String visibleError = safeError(error);
                 postIfCurrent(generation, current, currentConnection, () -> {
                     sendingSessionIds.remove(session.id());
-                    statusText.setText(safeError(error));
+                    statusText.setText(visibleError);
                     renderSessions(renderedSessions);
                 });
             }

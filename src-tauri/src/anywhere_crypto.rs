@@ -172,12 +172,32 @@ pub fn decrypt_anywhere(
     now: i64,
     expected_after: u64,
 ) -> Result<AnywhereMessage, AnywhereCryptoError> {
+    let message =
+        decrypt_anywhere_authenticated(key_hex, channel, direction, envelope, expected_after)?;
+    if !anywhere_message_is_current(&message, now) {
+        return Err(AnywhereCryptoError::InvalidEnvelope);
+    }
+    Ok(message)
+}
+
+pub(crate) fn anywhere_message_is_current(message: &AnywhereMessage, now: i64) -> bool {
+    now > 0
+        && now >= message.issued_at.saturating_sub(MAX_CLOCK_SKEW_SECONDS)
+        && now <= message.expires_at
+}
+
+pub(crate) fn decrypt_anywhere_authenticated(
+    key_hex: &str,
+    channel: &str,
+    direction: AnywhereDirection,
+    envelope: &AnywhereEnvelope,
+    expected_after: u64,
+) -> Result<AnywhereMessage, AnywhereCryptoError> {
     if envelope.version != VERSION
         || envelope.sequence <= expected_after
         || envelope.nonce.len() != 16
         || envelope.ciphertext.is_empty()
         || envelope.ciphertext.len() > MAX_CIPHERTEXT_CHARS
-        || now <= 0
     {
         return Err(AnywhereCryptoError::InvalidEnvelope);
     }
@@ -212,9 +232,6 @@ pub fn decrypt_anywhere(
     let mut message: AnywhereMessage =
         serde_json::from_slice(&plaintext).map_err(|_| AnywhereCryptoError::InvalidEnvelope)?;
     validate_message(direction, &message)?;
-    if now < message.issued_at.saturating_sub(MAX_CLOCK_SKEW_SECONDS) || now > message.expires_at {
-        return Err(AnywhereCryptoError::InvalidEnvelope);
-    }
     message.sequence = envelope.sequence;
     Ok(message)
 }
@@ -290,6 +307,10 @@ mod tests {
             0,
         )
         .is_err());
+        let authenticated =
+            decrypt_anywhere_authenticated(KEY, CHANNEL, AnywhereDirection::Uplink, &envelope, 0)
+                .unwrap();
+        assert!(!anywhere_message_is_current(&authenticated, 1_783_836_301));
         assert!(decrypt_anywhere(
             KEY,
             CHANNEL,

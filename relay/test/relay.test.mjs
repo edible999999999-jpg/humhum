@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { connect } from "node:net";
 import { afterEach, test } from "node:test";
 import { DatabaseSync } from "node:sqlite";
-import { createRelayServer } from "../src/server.mjs";
+import { createRateLimiter, createRelayServer } from "../src/server.mjs";
 
 const cleanups = [];
 const PUSH_TOKEN_KEY = "11".repeat(32);
@@ -464,4 +464,17 @@ test("strict query, JSON shape, and rate bounds fail closed", async () => {
     finalStatus = (await fetch(`${baseUrl}/health`)).status;
   }
   assert.equal(finalStatus, 429);
+});
+
+test("rate limiter expires old unauthenticated buckets", () => {
+  let now = 0;
+  const limiter = createRateLimiter(() => now);
+  for (let index = 0; index < 300; index += 1) {
+    assert.equal(limiter.allow(`random:${index}`), true);
+  }
+  assert.equal(limiter.size(), 300);
+
+  now = 3 * 60_000;
+  assert.equal(limiter.allow("current"), true);
+  assert.equal(limiter.size(), 1);
 });

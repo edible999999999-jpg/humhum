@@ -30,9 +30,12 @@ public final class AgentMonitorService extends Service {
     private final ScheduledExecutorService network = Executors.newSingleThreadScheduledExecutor();
     private final NetworkRecoveryGate recoveryGate = new NetworkRecoveryGate();
     private final WakeRelayClient relayClient = new WakeRelayClient();
+    private final AnywhereRelayClient anywhereRelayClient = new AnywhereRelayClient();
     private final ServiceLifecycleGate lifecycle = new ServiceLifecycleGate();
     private ScheduledFuture<?> nextPoll;
     private MonitorStore monitorStore;
+    private AnywhereStateStore anywhereStateStore;
+    private EncryptedSessionSnapshotStore snapshotStore;
     private AttentionTracker tracker;
     private int failures;
     private volatile boolean destroyed;
@@ -76,6 +79,9 @@ public final class AgentMonitorService extends Service {
     @Override public void onCreate() {
         super.onCreate();
         monitorStore = monitorStore(this);
+        anywhereStateStore = new AnywhereStateStore(
+                getSharedPreferences("humhum_anywhere", MODE_PRIVATE));
+        snapshotStore = new EncryptedSessionSnapshotStore(this);
         tracker = new AttentionTracker(monitorStore.knownDigests());
         createChannels();
         promote(notification(getString(R.string.monitor_notification_text)));
@@ -95,6 +101,7 @@ public final class AgentMonitorService extends Service {
         lifecycle.close(() -> {
             destroyed = true;
             relayClient.cancel();
+            anywhereRelayClient.cancel();
             unregisterNetworkRecovery();
             if (nextPoll != null) nextPoll.cancel(true);
             network.shutdownNow();
@@ -183,6 +190,10 @@ public final class AgentMonitorService extends Service {
             scheduleDirectFallback();
             return;
         }
+        if (relay.version() == 2) {
+            anywhereRelayOnce(connection, relay);
+            return;
+        }
         try {
             long accepted = relayClient.poll(
                     relay,
@@ -216,6 +227,66 @@ public final class AgentMonitorService extends Service {
                     relaySupported = false;
                     failures = 0;
                     updateOngoing(getString(R.string.monitor_notification_text));
+                    scheduleDirectFallback();
+                });
+            } else {
+                retryAfterRelayFailure();
+            }
+        } catch (java.security.GeneralSecurityException | org.json.JSONException error) {
+            if (destroyed) return;
+            lifecycle.commit(() -> {
+                relaySupported = false;
+                failures = 0;
+                scheduleDirectFallback();
+            });
+        } catch (Exception error) {
+            if (destroyed) return;
+            retryAfterRelayFailure();
+        }
+    }
+
+    private void anywhereRelayOnce(
+            ConnectionStore.Connection connection, Models.WakeRelayConfig relay) {
+        try {
+            long after = anywhereStateStore.downlinkSequence(relay);
+            java.util.List<AnywhereEnvelopeCipher.Message> messages = anywhereRelayClient.poll(
+                    relay, after, 20, System.currentTimeMillis() / 1_000L);
+            int attentionCount = 0;
+            for (AnywhereEnvelopeCipher.Message message : messages) {
+                anywhereStateStore.advanceDownlink(relay, message.sequence());
+                if ("response".equals(message.kind())) {
+                    anywhereStateStore.saveResponse(relay, message.requestId(), message.body());
+                    continue;
+                }
+                if (!"snapshot".equals(message.kind())) continue;
+                Models.SessionPage page = MobileProtocol.parseSessions(message.body().toString());
+                snapshotStore.write(connection, page.sessions(), System.currentTimeMillis());
+                AttentionTracker.Result result = tracker.evaluate(page);
+                monitorStore.saveKnownDigests(result.knownDigests());
+                attentionCount += result.newCount();
+                lastCursor = page.cursor();
+            }
+            ConnectionStore.Connection current = connectionStore(this).load();
+            boolean sameChannel = current != null
+                    && current.wakeRelay() != null
+                    && relay.channelId().equals(current.wakeRelay().channelId());
+            if (!MonitorRoute.canCommitRelayResult(
+                    destroyed, monitorStore.isEnabled(), sameChannel)) return;
+            int notifications = attentionCount;
+            lifecycle.commit(() -> {
+                if (!MonitorRoute.canCommitRelayResult(
+                        destroyed, monitorStore.isEnabled(), sameChannel)) return;
+                failures = 0;
+                updateOngoing(getString(R.string.monitor_notification_text));
+                if (notifications > 0) notifyAttention(notifications);
+                scheduleRelay(anywhereStateStore.downlinkSequence(relay));
+            });
+        } catch (AnywhereRelayClient.RelayStatusException error) {
+            if (destroyed) return;
+            if (WakeRelayClient.isPermanentlyUnavailable(error.status())) {
+                lifecycle.commit(() -> {
+                    relaySupported = false;
+                    failures = 0;
                     scheduleDirectFallback();
                 });
             } else {

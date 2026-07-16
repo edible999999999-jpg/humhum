@@ -894,12 +894,6 @@ async fn run_wake_observer(
 #[derive(Default)]
 struct AnywhereDeviceState {
     published_cursor: Option<String>,
-    pending: Option<PendingAnywhereDownlink>,
-}
-
-struct PendingAnywhereDownlink {
-    envelope: crate::anywhere_crypto::AnywhereEnvelope,
-    snapshot_cursor: Option<String>,
 }
 
 async fn sync_anywhere_device(
@@ -911,22 +905,33 @@ async fn sync_anywhere_device(
     cursor: &str,
     state: &mut AnywhereDeviceState,
 ) {
-    if state.pending.is_some()
-        && flush_anywhere_downlink(bridge, secret, state)
-            .await
-            .is_err()
-    {
-        return;
-    }
     let current = bridge
         .relay_secrets
         .lock()
         .unwrap_or_else(|error| error.into_inner())
         .get(&secret.device_id)
         .cloned();
-    let Some(current) = current else {
+    let Some(mut current) = current else {
         return;
     };
+    if current.pending_downlink.is_some() {
+        if flush_anywhere_downlink(bridge, &current, state)
+            .await
+            .is_err()
+        {
+            return;
+        }
+        current = match bridge
+            .relay_secrets
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .get(&current.device_id)
+            .cloned()
+        {
+            Some(secret) => secret,
+            None => return,
+        };
+    }
     let Some(command) = current.command.as_ref() else {
         return;
     };
@@ -938,12 +943,11 @@ async fn sync_anywhere_device(
     };
     if let Ok(commands) = client.poll_commands(&current, 0).await {
         if let Some(envelope) = commands.first() {
-            let message = crate::anywhere_crypto::decrypt_anywhere(
+            let message = crate::anywhere_crypto::decrypt_anywhere_authenticated(
                 &command.key,
                 &command.channel_id,
                 crate::anywhere_crypto::AnywhereDirection::Uplink,
                 envelope,
-                chrono::Utc::now().timestamp(),
                 command.last_sequence,
             );
             if bridge
@@ -956,19 +960,25 @@ async fn sync_anywhere_device(
                 return;
             }
             if let Ok(message) = message {
-                let response = match parse_anywhere_request(scope, &message.body) {
-                    Ok(request) => execute_anywhere_request(app, scope, request)
-                        .await
-                        .map(|data| serde_json::json!({"ok": true, "data": data})),
-                    Err(error) => Err(error),
-                }
-                .unwrap_or_else(|error| {
-                    let safe = crate::user_safe_text::project_user_safe_text(&error);
-                    serde_json::json!({
-                        "ok": false,
-                        "error": truncate_scalar_value(&safe, 200)
-                    })
-                });
+                let now = chrono::Utc::now().timestamp();
+                let response =
+                    if !crate::anywhere_crypto::anywhere_message_is_current(&message, now) {
+                        Err("This remote action expired before the Mac received it".to_string())
+                    } else {
+                        match parse_anywhere_request(scope, &message.body) {
+                            Ok(request) => execute_anywhere_request(app, scope, request)
+                                .await
+                                .map(|data| serde_json::json!({"ok": true, "data": data})),
+                            Err(error) => Err(error),
+                        }
+                    }
+                    .unwrap_or_else(|error| {
+                        let safe = crate::user_safe_text::project_user_safe_text(&error);
+                        serde_json::json!({
+                            "ok": false,
+                            "error": truncate_scalar_value(&safe, 200)
+                        })
+                    });
                 let latest = {
                     bridge
                         .relay_secrets
@@ -985,11 +995,24 @@ async fn sync_anywhere_device(
                         &response,
                         300,
                     ) {
-                        state.pending = Some(PendingAnywhereDownlink {
-                            envelope,
-                            snapshot_cursor: None,
-                        });
-                        let _ = flush_anywhere_downlink(bridge, &latest, state).await;
+                        let staged = bridge
+                            .relay_secrets
+                            .lock()
+                            .unwrap_or_else(|error| error.into_inner())
+                            .stage_downlink(&latest.device_id, envelope, None);
+                        if staged.is_ok() {
+                            let staged = {
+                                bridge
+                                    .relay_secrets
+                                    .lock()
+                                    .unwrap_or_else(|error| error.into_inner())
+                                    .get(&latest.device_id)
+                                    .cloned()
+                            };
+                            if let Some(staged) = staged {
+                                let _ = flush_anywhere_downlink(bridge, &staged, state).await;
+                            }
+                        }
                     }
                 }
             }
@@ -1006,11 +1029,24 @@ async fn sync_anywhere_device(
         page,
         86_400,
     ) {
-        state.pending = Some(PendingAnywhereDownlink {
-            envelope,
-            snapshot_cursor: Some(cursor.to_string()),
-        });
-        let _ = flush_anywhere_downlink(bridge, &current, state).await;
+        let staged = bridge
+            .relay_secrets
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .stage_downlink(&current.device_id, envelope, Some(cursor.to_string()));
+        if staged.is_ok() {
+            let staged = {
+                bridge
+                    .relay_secrets
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .get(&current.device_id)
+                    .cloned()
+            };
+            if let Some(staged) = staged {
+                let _ = flush_anywhere_downlink(bridge, &staged, state).await;
+            }
+        }
     }
 }
 
@@ -1019,8 +1055,8 @@ async fn flush_anywhere_downlink(
     secret: &crate::mobile_relay::RelayDeviceSecret,
     state: &mut AnywhereDeviceState,
 ) -> Result<(), String> {
-    let pending = state
-        .pending
+    let pending = secret
+        .pending_downlink
         .as_ref()
         .ok_or_else(|| "Anywhere downlink is empty".to_string())?;
     if pending.envelope.sequence != secret.next_sequence {
@@ -1034,11 +1070,10 @@ async fn flush_anywhere_downlink(
         .relay_secrets
         .lock()
         .unwrap_or_else(|error| error.into_inner())
-        .advance_sequence(&secret.device_id, secret.next_sequence)?;
+        .complete_downlink(&secret.device_id, pending.envelope.sequence)?;
     if let Some(cursor) = pending.snapshot_cursor.clone() {
         state.published_cursor = Some(cursor);
     }
-    state.pending = None;
     Ok(())
 }
 
@@ -2903,6 +2938,7 @@ mod tests {
                 publisher_token: "33".repeat(32),
                 next_sequence: 1,
                 command: None,
+                pending_downlink: None,
             })
             .unwrap();
 
@@ -2951,6 +2987,7 @@ mod tests {
                     publisher_token: "33".repeat(32),
                     next_sequence: 1,
                     command: None,
+                    pending_downlink: None,
                 })
                 .unwrap();
         }
@@ -3082,6 +3119,7 @@ mod tests {
             publisher_token: "33".repeat(32),
             next_sequence: 7,
             command: None,
+            pending_downlink: None,
         };
         let envelope =
             wake_envelope_for_secret(&secret, 1_783_836_000, "000102030405060708090a0b").unwrap();
@@ -3125,6 +3163,7 @@ mod tests {
                 key: "66".repeat(32),
                 last_sequence: 0,
             }),
+            pending_downlink: None,
         };
         let page = serde_json::json!({
             "scope": "read",

@@ -567,6 +567,16 @@ pub struct RelayDeviceSecret {
     pub next_sequence: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<RelayCommandSubscriberSecret>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_downlink: Option<RelayPendingDownlink>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RelayPendingDownlink {
+    pub envelope: crate::anywhere_crypto::AnywhereEnvelope,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot_cursor: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -916,12 +926,10 @@ impl RelayClient {
             .ok_or_else(|| "Anywhere command channel is unavailable".to_string())?;
         let mut expected = command.last_sequence;
         for envelope in &result.messages {
-            expected = expected
-                .checked_add(1)
-                .ok_or_else(|| "Anywhere command sequence is exhausted".to_string())?;
-            if envelope.sequence != expected {
-                return Err("Relay returned non-contiguous Anywhere commands".into());
+            if envelope.sequence <= expected || envelope.sequence > MAX_RELAY_SEQUENCE {
+                return Err("Relay returned non-monotonic Anywhere commands".into());
             }
+            expected = envelope.sequence;
         }
         Ok(result.messages)
     }
@@ -993,6 +1001,7 @@ fn split_registration(
         publisher_token: registration.publisher_token,
         next_sequence: 1,
         command: None,
+        pending_downlink: None,
     };
     desktop.validate()?;
     let android = WakeRelayBundle {
@@ -1035,6 +1044,7 @@ fn split_anywhere_registration(
             key: command_key.to_string(),
             last_sequence: 0,
         }),
+        pending_downlink: None,
     };
     desktop.validate()?;
     let android = WakeRelayBundle {
@@ -1063,6 +1073,17 @@ impl RelayDeviceSecret {
                 && command.channel_id != self.channel_id
                 && command.key != self.wake_key
         });
+        let pending_valid = self.pending_downlink.as_ref().is_none_or(|pending| {
+            pending.envelope.version == 1
+                && pending.envelope.sequence == self.next_sequence
+                && pending.envelope.nonce.len() == 16
+                && !pending.envelope.ciphertext.is_empty()
+                && pending.envelope.ciphertext.len() <= 65_536
+                && pending
+                    .snapshot_cursor
+                    .as_ref()
+                    .is_none_or(|cursor| is_secret(cursor))
+        });
         if self.device_id.is_empty()
             || self.device_id.len() > 128
             || !self
@@ -1075,6 +1096,7 @@ impl RelayDeviceSecret {
             || self.next_sequence == 0
             || self.next_sequence > MAX_RELAY_SEQUENCE
             || !command_valid
+            || !pending_valid
         {
             return Err("Relay device secret is invalid".into());
         }
@@ -1186,12 +1208,74 @@ impl MobileRelaySecretStore {
             .get_mut(device_id)
             .and_then(|secret| secret.command.as_mut())
             .ok_or_else(|| "Anywhere command channel is unavailable".to_string())?;
-        if command.last_sequence.checked_add(1) != Some(consumed_sequence)
-            || consumed_sequence > MAX_RELAY_SEQUENCE
-        {
+        if consumed_sequence <= command.last_sequence || consumed_sequence > MAX_RELAY_SEQUENCE {
             return Err("Anywhere command sequence changed during consumption".into());
         }
         command.last_sequence = consumed_sequence;
+        if let Err(error) = self.persist() {
+            self.devices.insert(device_id.to_string(), previous);
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn stage_downlink(
+        &mut self,
+        device_id: &str,
+        envelope: crate::anywhere_crypto::AnywhereEnvelope,
+        snapshot_cursor: Option<String>,
+    ) -> Result<(), String> {
+        let previous = self
+            .devices
+            .get(device_id)
+            .cloned()
+            .ok_or_else(|| "Relay device secret is unavailable".to_string())?;
+        if previous.pending_downlink.is_some() || envelope.sequence != previous.next_sequence {
+            return Err("Anywhere downlink is already pending".into());
+        }
+        let secret = self
+            .devices
+            .get_mut(device_id)
+            .expect("relay secret checked above");
+        secret.pending_downlink = Some(RelayPendingDownlink {
+            envelope,
+            snapshot_cursor,
+        });
+        if let Err(error) = secret.validate().and_then(|_| self.persist()) {
+            self.devices.insert(device_id.to_string(), previous);
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn complete_downlink(
+        &mut self,
+        device_id: &str,
+        published_sequence: u64,
+    ) -> Result<(), String> {
+        let previous = self
+            .devices
+            .get(device_id)
+            .cloned()
+            .ok_or_else(|| "Relay device secret is unavailable".to_string())?;
+        if previous
+            .pending_downlink
+            .as_ref()
+            .map(|pending| pending.envelope.sequence)
+            != Some(published_sequence)
+        {
+            return Err("Anywhere downlink changed during publication".into());
+        }
+        let next = published_sequence
+            .checked_add(1)
+            .filter(|sequence| *sequence <= MAX_RELAY_SEQUENCE)
+            .ok_or_else(|| "Relay sequence is exhausted".to_string())?;
+        let secret = self
+            .devices
+            .get_mut(device_id)
+            .expect("relay secret checked above");
+        secret.next_sequence = next;
+        secret.pending_downlink = None;
         if let Err(error) = self.persist() {
             self.devices.insert(device_id.to_string(), previous);
             return Err(error);
@@ -1370,6 +1454,7 @@ mod tests {
             publisher_token: "33".repeat(32),
             next_sequence: 7,
             command: None,
+            pending_downlink: None,
         }
     }
 
@@ -1429,6 +1514,7 @@ mod tests {
             publisher_token: "33".repeat(32),
             next_sequence: 1,
             command: None,
+            pending_downlink: None,
         };
         let tablet = RelayDeviceSecret {
             device_id: "device-tablet".into(),
@@ -1438,6 +1524,7 @@ mod tests {
             publisher_token: "66".repeat(32),
             next_sequence: 7,
             command: None,
+            pending_downlink: None,
         };
 
         store.put(phone.clone()).unwrap();
@@ -1600,6 +1687,7 @@ mod tests {
             publisher_token: "33".repeat(32),
             next_sequence: 1,
             command: None,
+            pending_downlink: None,
         };
         let deletion = client
             .deletion_request_for(&secret.channel_id, &secret.publisher_token)
@@ -1635,6 +1723,7 @@ mod tests {
                 key: "66".repeat(32),
                 last_sequence: 9,
             }),
+            pending_downlink: None,
         };
         let envelope = crate::anywhere_crypto::encrypt_anywhere(
             &secret.wake_key,
@@ -1694,7 +1783,71 @@ mod tests {
             1
         );
         assert!(store.advance_command_sequence("device-phone", 1).is_err());
-        assert!(store.advance_command_sequence("device-phone", 3).is_err());
+        store.advance_command_sequence("device-phone", 3).unwrap();
+        assert_eq!(
+            store
+                .get("device-phone")
+                .unwrap()
+                .command
+                .as_ref()
+                .unwrap()
+                .last_sequence,
+            3
+        );
+    }
+
+    #[test]
+    fn pending_downlink_survives_restart_for_exact_envelope_retry() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut store = MobileRelaySecretStore::load_or_create(temp.path()).unwrap();
+        let mut secret = relay_secret("https://relay.example.com");
+        secret.next_sequence = 1;
+        secret.command = Some(RelayCommandSubscriberSecret {
+            channel_id: "44".repeat(32),
+            subscriber_token: "55".repeat(32),
+            key: "66".repeat(32),
+            last_sequence: 0,
+        });
+        store.put(secret.clone()).unwrap();
+        let envelope = crate::anywhere_crypto::encrypt_anywhere(
+            &secret.wake_key,
+            &secret.channel_id,
+            crate::anywhere_crypto::AnywhereDirection::Downlink,
+            1,
+            "snapshot",
+            &"77".repeat(16),
+            1_783_836_000,
+            1_783_922_400,
+            &serde_json::json!({"scope": "read", "sessions": []}),
+            "000102030405060708090a0b",
+        )
+        .unwrap();
+
+        store
+            .stage_downlink("device-phone", envelope.clone(), Some("88".repeat(32)))
+            .unwrap();
+        drop(store);
+
+        let mut restored = MobileRelaySecretStore::load_or_create(temp.path()).unwrap();
+        let pending = restored
+            .get("device-phone")
+            .unwrap()
+            .pending_downlink
+            .as_ref()
+            .unwrap();
+        assert_eq!(pending.envelope, envelope);
+        let expected_cursor = "88".repeat(32);
+        assert_eq!(
+            pending.snapshot_cursor.as_deref(),
+            Some(expected_cursor.as_str())
+        );
+        restored.complete_downlink("device-phone", 1).unwrap();
+        assert_eq!(restored.get("device-phone").unwrap().next_sequence, 2);
+        assert!(restored
+            .get("device-phone")
+            .unwrap()
+            .pending_downlink
+            .is_none());
     }
 
     #[tokio::test]

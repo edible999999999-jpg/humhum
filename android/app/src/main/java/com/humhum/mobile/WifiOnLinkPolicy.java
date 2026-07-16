@@ -7,7 +7,9 @@ import android.net.LinkProperties;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.RouteInfo;
+import android.os.Build;
 import java.net.Inet4Address;
+import java.net.InetAddress;
 
 public final class WifiOnLinkPolicy {
     private WifiOnLinkPolicy() {}
@@ -31,7 +33,7 @@ public final class WifiOnLinkPolicy {
                 if (destination == null
                         || !(destination.getAddress() instanceof Inet4Address)
                         || destination.getPrefixLength() <= 0
-                        || route.hasGateway()) {
+                        || routeHasGateway(route)) {
                     continue;
                 }
                 if (matchesIpv4Prefix(
@@ -43,6 +45,15 @@ public final class WifiOnLinkPolicy {
             }
         }
         return false;
+    }
+
+    private static boolean routeHasGateway(RouteInfo route) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) return route.hasGateway();
+        return gatewayPresent(route.getGateway());
+    }
+
+    static boolean gatewayPresent(InetAddress gateway) {
+        return gateway != null && !gateway.isAnyLocalAddress();
     }
 
     static boolean matchesIpv4Prefix(String host, byte[] network, int prefixLength) {

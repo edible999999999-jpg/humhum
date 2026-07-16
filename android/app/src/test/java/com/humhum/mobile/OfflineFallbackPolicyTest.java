@@ -55,6 +55,20 @@ public class OfflineFallbackPolicyTest {
     }
 
     @Test
+    public void remoteWritesFallbackOnlyBeforeAConnectionCouldExecute() {
+        assertTrue(OfflineFallbackPolicy.canRetryWriteThroughRelay(
+                new ConnectException("refused")));
+        assertTrue(OfflineFallbackPolicy.canRetryWriteThroughRelay(
+                new UnknownHostException("offline")));
+        assertTrue(OfflineFallbackPolicy.canRetryWriteThroughRelay(
+                new NoRouteToHostException("no route")));
+        assertFalse(OfflineFallbackPolicy.canRetryWriteThroughRelay(
+                new SocketTimeoutException("response timed out")));
+        assertFalse(OfflineFallbackPolicy.canRetryWriteThroughRelay(
+                new SocketException("connection reset")));
+    }
+
+    @Test
     public void traversesNestedCausesButExplicitDenialsWin() {
         assertTrue(OfflineFallbackPolicy.canUseSnapshot(
                 new IOException("request failed", new ConnectException("refused"))));

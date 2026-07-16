@@ -104,14 +104,26 @@ function query(url) {
   return { after, wait };
 }
 
-function limiter(clock) {
+export function createRateLimiter(clock) {
   const buckets = new Map();
-  return (key) => {
+  let lastSweepMinute = -1;
+  return {
+    allow(key) {
     const minute = Math.floor(clock() / 60_000);
+    if (minute !== lastSweepMinute) {
+      for (const [bucketKey, bucket] of buckets) {
+        if (bucket.minute < minute - 1) buckets.delete(bucketKey);
+      }
+      lastSweepMinute = minute;
+    }
     const current = buckets.get(key);
     const count = current?.minute === minute ? current.count + 1 : 1;
     buckets.set(key, { minute, count });
     return count <= 300;
+    },
+    size() {
+      return buckets.size;
+    },
   };
 }
 
@@ -131,13 +143,13 @@ export function createRelayServer({
     throw new Error("adminSecret must contain 16 to 256 printable characters");
   }
   const store = new RelayStore(databasePath, clock, pushTokenKey);
-  const allow = limiter(clock);
+  const limiter = createRateLimiter(clock);
   const server = createServer(async (request, response) => {
     try {
       const host = request.headers.host || "localhost";
       const url = new URL(request.url, `http://${host}`);
       const remote = request.socket.remoteAddress || "unknown";
-      if (!allow(`ip:${remote}`)) return send(response, 429, { error: "Rate limited" });
+      if (!limiter.allow(`ip:${remote}`)) return send(response, 429, { error: "Rate limited" });
 
       if (request.method === "GET" && url.pathname === "/health" && !url.search) {
         return send(response, 200, { status: "ok", name: "HUMHUM Anywhere Relay" });
@@ -158,7 +170,7 @@ export function createRelayServer({
       }
 
       const messageMatch = MESSAGES_PATH.exec(url.pathname);
-      if (messageMatch && !allow(`channel:${messageMatch[1]}`)) {
+      if (messageMatch && !limiter.allow(`channel:${messageMatch[1]}`)) {
         return send(response, 429, { error: "Rate limited" });
       }
       if (request.method === "POST" && messageMatch && !url.search) {
