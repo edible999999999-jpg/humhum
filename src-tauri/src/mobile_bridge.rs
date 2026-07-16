@@ -156,6 +156,7 @@ struct MobileRuntime {
     shutdown: Option<oneshot::Sender<()>>,
     observer_shutdown: Option<oneshot::Sender<()>>,
     relay_base_url: Option<crate::mobile_relay::RelayBaseUrl>,
+    relay_invite_code: Option<String>,
     relay_status: crate::mobile_relay::RelayPublisherStatus,
     publisher: Option<Arc<crate::mobile_relay::WakePublisher>>,
 }
@@ -196,6 +197,7 @@ impl MobileBridgeState {
                 shutdown: None,
                 observer_shutdown: None,
                 relay_base_url: None,
+                relay_invite_code: None,
                 relay_status: crate::mobile_relay::RelayPublisherStatus::Connected,
                 publisher: None,
             }),
@@ -311,6 +313,7 @@ impl MobileBridgeState {
                 .mobile_relay
                 .clone();
             let relay_base_url = relay_base_from_config(&relay_config)?;
+            let relay_invite_code = relay_invite_from_config(&relay_config)?;
             if let Some(base_url) = relay_base_url.clone() {
                 crate::mobile_relay::RelayClient::new(base_url)?
                     .health()
@@ -338,6 +341,7 @@ impl MobileBridgeState {
             }
             Ok((
                 relay_base_url,
+                relay_invite_code,
                 local_host,
                 tailnet_ip,
                 cert,
@@ -346,7 +350,15 @@ impl MobileBridgeState {
             ))
         }
         .await;
-        let (relay_base_url, local_host, tailnet_ip, cert, tls_config, listener) = match setup {
+        let (
+            relay_base_url,
+            relay_invite_code,
+            local_host,
+            tailnet_ip,
+            cert,
+            tls_config,
+            listener,
+        ) = match setup {
             Ok(setup) => setup,
             Err(error) => {
                 self.abandon_enable(generation);
@@ -381,6 +393,7 @@ impl MobileBridgeState {
             runtime.shutdown = Some(shutdown_tx);
             runtime.observer_shutdown = Some(observer_shutdown_tx);
             runtime.relay_base_url = relay_base_url;
+            runtime.relay_invite_code = relay_invite_code;
             runtime.relay_status = if relay_enabled {
                 crate::mobile_relay::RelayPublisherStatus::Connected
             } else {
@@ -455,6 +468,7 @@ impl MobileBridgeState {
             runtime.tailnet_url = None;
             runtime.certificate_fingerprint = None;
             runtime.relay_base_url = None;
+            runtime.relay_invite_code = None;
             runtime.relay_status = crate::mobile_relay::RelayPublisherStatus::Disabled;
             (
                 runtime.shutdown.take(),
@@ -689,6 +703,24 @@ fn relay_base_from_config(
         .as_deref()
         .ok_or("Wake relay URL is required")?;
     crate::mobile_relay::RelayBaseUrl::parse(value).map(Some)
+}
+
+fn relay_invite_from_config(
+    config: &crate::config::MobileRelayConfig,
+) -> Result<Option<String>, String> {
+    if !config.enabled {
+        return Ok(None);
+    }
+    let value = config
+        .invite_code
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| {
+            (16..=256).contains(&value.len())
+                && value.bytes().all(|byte| (0x21..=0x7e).contains(&byte))
+        })
+        .ok_or("Anywhere beta invite code is required")?;
+    Ok(Some(value.to_string()))
 }
 
 fn pair_success_value(
@@ -1254,13 +1286,16 @@ async fn pair_device(
             )
         }
     };
-    let relay_base_url = bridge
-        .runtime
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .relay_base_url
-        .clone();
-    let wake_relay = if let Some(base_url) = relay_base_url {
+    let (relay_base_url, relay_invite_code) = {
+        let runtime = bridge
+            .runtime
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        (runtime.relay_base_url.clone(), runtime.relay_invite_code.clone())
+    };
+    let wake_relay = if let (Some(base_url), Some(invite_code)) =
+        (relay_base_url, relay_invite_code)
+    {
         let client = match crate::mobile_relay::RelayClient::new(base_url) {
             Ok(client) => client,
             Err(_) => {
@@ -1268,7 +1303,7 @@ async fn pair_device(
                 return json_error(StatusCode::BAD_GATEWAY, "Wake relay pairing failed");
             }
         };
-        let provision = match client.register(&device.id).await {
+        let provision = match client.register(&device.id, &invite_code).await {
             Ok(provision) => provision,
             Err(_) => {
                 rollback_paired_device(bridge, &device.id);
@@ -2443,6 +2478,7 @@ mod tests {
             channel_id: "11".repeat(32),
             subscriber_token: "22".repeat(32),
             wake_key: "33".repeat(32),
+            command: None,
         };
         let relayed = pair_success_value("aa", MobileDeviceScope::Control, Some(bundle));
         assert_eq!(relayed.as_object().unwrap().len(), 3);
@@ -2472,6 +2508,7 @@ mod tests {
                 wake_key: "22".repeat(32),
                 publisher_token: "33".repeat(32),
                 next_sequence: 1,
+                command: None,
             })
             .unwrap();
 
@@ -2519,6 +2556,7 @@ mod tests {
                     wake_key: "22".repeat(32),
                     publisher_token: "33".repeat(32),
                     next_sequence: 1,
+                    command: None,
                 })
                 .unwrap();
         }
@@ -2551,16 +2589,19 @@ mod tests {
         let disabled = crate::config::MobileRelayConfig {
             enabled: false,
             base_url: Some("http://public.example.com".into()),
+            invite_code: None,
         };
         assert!(relay_base_from_config(&disabled).unwrap().is_none());
         assert!(relay_base_from_config(&crate::config::MobileRelayConfig {
             enabled: true,
             base_url: None,
+            invite_code: Some("beta-invite-secret".into()),
         })
         .is_err());
         let enabled = relay_base_from_config(&crate::config::MobileRelayConfig {
             enabled: true,
             base_url: Some("https://relay.example.com".into()),
+            invite_code: Some("beta-invite-secret".into()),
         })
         .unwrap()
         .unwrap();
@@ -2568,12 +2609,14 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let bridge = MobileBridgeState::load_or_create(temp.path()).unwrap();
         bridge.runtime.lock().unwrap().relay_base_url = Some(enabled);
+        bridge.runtime.lock().unwrap().relay_invite_code = Some("beta-invite-secret".into());
         let status = serde_json::to_string(&bridge.status()).unwrap();
         assert!(status.contains(r#""relay_status":"connected""#));
         assert!(status.contains(r#""relay_url":"https://relay.example.com""#));
         assert!(!status.contains("publisher_token"));
         assert!(!status.contains("subscriber_token"));
         assert!(!status.contains("wake_key"));
+        assert!(!status.contains("beta-invite-secret"));
     }
 
     #[test]
@@ -2644,6 +2687,7 @@ mod tests {
             wake_key: "22".repeat(32),
             publisher_token: "33".repeat(32),
             next_sequence: 7,
+            command: None,
         };
         let envelope =
             wake_envelope_for_secret(&secret, 1_783_836_000, "000102030405060708090a0b").unwrap();

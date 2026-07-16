@@ -12,6 +12,9 @@ public final class ConnectionStore {
     private static final String RELAY_CHANNEL_ID = "relay_channel_id";
     private static final String RELAY_SUBSCRIBER_TOKEN = "relay_subscriber_token";
     private static final String RELAY_WAKE_KEY = "relay_wake_key";
+    private static final String RELAY_COMMAND_CHANNEL_ID = "relay_command_channel_id";
+    private static final String RELAY_COMMAND_PUBLISHER_TOKEN = "relay_command_publisher_token";
+    private static final String RELAY_COMMAND_KEY = "relay_command_key";
 
     interface KeyValueStore {
         String get(String key);
@@ -54,6 +57,12 @@ public final class ConnectionStore {
         storage.put(RELAY_CHANNEL_ID, relay == null ? "" : relay.channelId());
         storage.put(RELAY_SUBSCRIBER_TOKEN, relay == null ? "" : relay.subscriberToken());
         storage.put(RELAY_WAKE_KEY, relay == null ? "" : relay.wakeKey());
+        storage.put(RELAY_COMMAND_CHANNEL_ID,
+                relay == null || relay.version() < 2 ? "" : relay.commandChannelId());
+        storage.put(RELAY_COMMAND_PUBLISHER_TOKEN,
+                relay == null || relay.version() < 2 ? "" : relay.commandPublisherToken());
+        storage.put(RELAY_COMMAND_KEY,
+                relay == null || relay.version() < 2 ? "" : relay.commandKey());
     }
 
     public Connection load() {
@@ -95,6 +104,9 @@ public final class ConnectionStore {
         String channelId = storage.get(RELAY_CHANNEL_ID);
         String subscriberToken = storage.get(RELAY_SUBSCRIBER_TOKEN);
         String wakeKey = storage.get(RELAY_WAKE_KEY);
+        String commandChannelId = storage.get(RELAY_COMMAND_CHANNEL_ID);
+        String commandPublisherToken = storage.get(RELAY_COMMAND_PUBLISHER_TOKEN);
+        String commandKey = storage.get(RELAY_COMMAND_KEY);
         if (isMissing(baseUrl)
                 || isMissing(channelId)
                 || isMissing(subscriberToken)
@@ -102,6 +114,19 @@ public final class ConnectionStore {
             return null;
         }
         try {
+            boolean hasAnyCommand = !isMissing(commandChannelId)
+                    || !isMissing(commandPublisherToken)
+                    || !isMissing(commandKey);
+            if (hasAnyCommand) {
+                return new Models.WakeRelayConfig(
+                        baseUrl,
+                        channelId,
+                        subscriberToken,
+                        wakeKey,
+                        commandChannelId,
+                        commandPublisherToken,
+                        commandKey);
+            }
             return new Models.WakeRelayConfig(baseUrl, channelId, subscriberToken, wakeKey);
         } catch (IllegalArgumentException error) {
             return null;

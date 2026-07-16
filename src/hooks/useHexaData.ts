@@ -759,6 +759,7 @@ export function useHexaData() {
   const [mobileRelayConfig, setMobileRelayConfig] = useState<MobileRelayConfig>({
     enabled: false,
     base_url: null,
+    invite_code: null,
   });
   const [mobilePairing, setMobilePairing] = useState<MobilePairingInfo | null>(null);
   const [queuedInterventions, setQueuedInterventions] = useState<QueuedIntervention[]>([]);
@@ -1058,11 +1059,15 @@ export function useHexaData() {
     return state;
   }, []);
 
-  const configureMobileRelay = useCallback(async (enabled: boolean, rawBaseUrl: string) => {
+  const configureMobileRelay = useCallback(async (
+    enabled: boolean,
+    rawBaseUrl: string,
+    rawInviteCode: string,
+  ) => {
     if (mobileBridge.enabled) {
       throw new Error("请先关闭 HUMHUM 移动访问，再修改加密唤醒中继");
     }
-    const mobileRelay = normalizeMobileRelayConfig(enabled, rawBaseUrl);
+    const mobileRelay = normalizeMobileRelayConfig(enabled, rawBaseUrl, rawInviteCode);
     const config = await invoke<AppConfig>("get_config");
     await invoke("save_config", {
       newConfig: { ...config, mobile_relay: mobileRelay },

@@ -44,23 +44,59 @@ public final class Models {
         private final String channelId;
         private final String subscriberToken;
         private final String wakeKey;
+        private final String commandChannelId;
+        private final String commandPublisherToken;
+        private final String commandKey;
 
         public WakeRelayConfig(
                 String baseUrl,
                 String channelId,
                 String subscriberToken,
                 String wakeKey) {
+            this(baseUrl, channelId, subscriberToken, wakeKey, null, null, null);
+        }
+
+        public WakeRelayConfig(
+                String baseUrl,
+                String channelId,
+                String subscriberToken,
+                String wakeKey,
+                String commandChannelId,
+                String commandPublisherToken,
+                String commandKey) {
             this.baseUrl = WakeRelayClient.validateBaseUrl(baseUrl);
             this.channelId = requireSecret(channelId, "Relay channel is invalid");
             this.subscriberToken = requireSecret(
                     subscriberToken, "Relay subscriber credential is invalid");
             this.wakeKey = requireSecret(wakeKey, "Relay wake key is invalid");
+            boolean hasAnyCommand = commandChannelId != null
+                    || commandPublisherToken != null
+                    || commandKey != null;
+            if (hasAnyCommand) {
+                this.commandChannelId = requireSecret(
+                        commandChannelId, "Anywhere command channel is invalid");
+                this.commandPublisherToken = requireSecret(
+                        commandPublisherToken, "Anywhere publisher credential is invalid");
+                this.commandKey = requireSecret(commandKey, "Anywhere command key is invalid");
+                if (this.commandChannelId.equals(this.channelId)
+                        || this.commandKey.equals(this.wakeKey)) {
+                    throw new IllegalArgumentException("Anywhere channel roles are not independent");
+                }
+            } else {
+                this.commandChannelId = null;
+                this.commandPublisherToken = null;
+                this.commandKey = null;
+            }
         }
 
         public String baseUrl() { return baseUrl; }
         public String channelId() { return channelId; }
         public String subscriberToken() { return subscriberToken; }
         public String wakeKey() { return wakeKey; }
+        public int version() { return commandChannelId == null ? 1 : 2; }
+        public String commandChannelId() { return commandChannelId; }
+        public String commandPublisherToken() { return commandPublisherToken; }
+        public String commandKey() { return commandKey; }
 
         private static String requireSecret(String value, String message) {
             String safe = value == null ? "" : value.trim();

@@ -56,8 +56,10 @@ public final class MobileProtocol {
         Models.WakeRelayConfig wakeRelay = null;
         if (response.has("wake_relay")) {
             JSONObject relay = response.getJSONObject("wake_relay");
-            if (relay.length() != 5
-                    || strictInteger(relay, "version") != 1
+            int version = strictInteger(relay, "version");
+            if ((version == 1 && relay.length() != 5)
+                    || (version == 2 && relay.length() != 6)
+                    || (version != 1 && version != 2)
                     || !relay.has("base_url")
                     || !relay.has("channel_id")
                     || !relay.has("subscriber_token")
@@ -65,11 +67,29 @@ public final class MobileProtocol {
                 throw new JSONException("Wake relay pairing data is invalid");
             }
             try {
-                wakeRelay = new Models.WakeRelayConfig(
-                        relay.getString("base_url"),
-                        relay.getString("channel_id"),
-                        relay.getString("subscriber_token"),
-                        relay.getString("wake_key"));
+                if (version == 1) {
+                    wakeRelay = new Models.WakeRelayConfig(
+                            relay.getString("base_url"),
+                            relay.getString("channel_id"),
+                            relay.getString("subscriber_token"),
+                            relay.getString("wake_key"));
+                } else {
+                    JSONObject command = relay.getJSONObject("command");
+                    if (command.length() != 3
+                            || !command.has("channel_id")
+                            || !command.has("publisher_token")
+                            || !command.has("key")) {
+                        throw new JSONException("Anywhere command pairing data is invalid");
+                    }
+                    wakeRelay = new Models.WakeRelayConfig(
+                            relay.getString("base_url"),
+                            relay.getString("channel_id"),
+                            relay.getString("subscriber_token"),
+                            relay.getString("wake_key"),
+                            command.getString("channel_id"),
+                            command.getString("publisher_token"),
+                            command.getString("key"));
+                }
             } catch (IllegalArgumentException error) {
                 JSONException invalid = new JSONException("Wake relay pairing data is invalid");
                 invalid.initCause(error);

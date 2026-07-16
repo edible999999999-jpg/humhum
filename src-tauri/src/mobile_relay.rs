@@ -565,6 +565,17 @@ pub struct RelayDeviceSecret {
     pub wake_key: String,
     pub publisher_token: String,
     pub next_sequence: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<RelayCommandSubscriberSecret>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RelayCommandSubscriberSecret {
+    pub channel_id: String,
+    pub subscriber_token: String,
+    pub key: String,
+    pub last_sequence: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -575,6 +586,16 @@ pub struct WakeRelayBundle {
     pub channel_id: String,
     pub subscriber_token: String,
     pub wake_key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<RelayCommandPublisherBundle>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RelayCommandPublisherBundle {
+    pub channel_id: String,
+    pub publisher_token: String,
+    pub key: String,
 }
 
 pub(crate) struct RelayProvision {
@@ -604,9 +625,13 @@ impl RelayClient {
             .map_err(|_| "Relay endpoint is invalid".into())
     }
 
-    fn registration_request(&self) -> Result<reqwest::Request, String> {
+    fn registration_request(&self, invite_code: &str) -> Result<reqwest::Request, String> {
+        if !valid_invite_code(invite_code) {
+            return Err("Relay invite code is invalid".into());
+        }
         self.client
             .post(self.endpoint("/v1/channels")?)
+            .header("x-humhum-invite", invite_code)
             .header(reqwest::header::ACCEPT, "application/json")
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .body("{}")
@@ -614,16 +639,19 @@ impl RelayClient {
             .map_err(|_| "Could not build relay registration".into())
     }
 
-    fn deletion_request(&self, secret: &RelayDeviceSecret) -> Result<reqwest::Request, String> {
-        secret.validate()?;
-        if secret.base_url != self.base_url.as_str() {
-            return Err("Relay device secret uses another server".into());
+    fn deletion_request_for(
+        &self,
+        channel_id: &str,
+        token: &str,
+    ) -> Result<reqwest::Request, String> {
+        if !is_secret(channel_id) || !is_secret(token) {
+            return Err("Relay deletion credential is invalid".into());
         }
         self.client
-            .delete(self.endpoint(&format!("/v1/channels/{}", secret.channel_id))?)
+            .delete(self.endpoint(&format!("/v1/channels/{channel_id}"))?)
             .header(
                 reqwest::header::AUTHORIZATION,
-                format!("Bearer {}", secret.publisher_token),
+                format!("Bearer {token}"),
             )
             .header(reqwest::header::ACCEPT, "application/json")
             .build()
@@ -674,36 +702,81 @@ impl RelayClient {
         }
         let health: Health = serde_json::from_slice(&bytes)
             .map_err(|_| "Wake relay returned invalid health data".to_string())?;
-        if health.status != "ok" || health.name != "HUMHUM Wake Relay" {
+        if health.status != "ok"
+            || !matches!(health.name.as_str(), "HUMHUM Wake Relay" | "HUMHUM Anywhere Relay")
+        {
             return Err("Wake relay returned invalid health data".into());
         }
         Ok(())
     }
 
-    pub async fn register(&self, device_id: &str) -> Result<RelayProvision, String> {
+    async fn register_channel(&self, invite_code: &str) -> Result<Vec<u8>, String> {
         let response = self
             .client
-            .execute(self.registration_request()?)
+            .execute(self.registration_request(invite_code)?)
             .await
             .map_err(|_| "Could not register wake relay channel".to_string())?;
         if response.status() != reqwest::StatusCode::CREATED {
             return Err("Wake relay rejected channel registration".into());
         }
-        let bytes = bounded_response(response, 1024).await?;
+        bounded_response(response, 1024).await
+    }
+
+    pub async fn register(
+        &self,
+        device_id: &str,
+        invite_code: &str,
+    ) -> Result<RelayProvision, String> {
+        let downlink = self.register_channel(invite_code).await?;
+        let uplink = match self.register_channel(invite_code).await {
+            Ok(uplink) => uplink,
+            Err(error) => {
+                if let Ok(registration) = parse_registration(&downlink) {
+                    let _ = self
+                        .client
+                        .execute(self.deletion_request_for(
+                            &registration.channel_id,
+                            &registration.publisher_token,
+                        )?)
+                        .await;
+                }
+                return Err(error);
+            }
+        };
         let mut wake_key = [0_u8; 32];
         getrandom::fill(&mut wake_key)
             .map_err(|_| "Could not create wake encryption key".to_string())?;
-        split_registration(device_id, &self.base_url, &bytes, &hex::encode(wake_key))
+        let mut command_key = [0_u8; 32];
+        getrandom::fill(&mut command_key)
+            .map_err(|_| "Could not create command encryption key".to_string())?;
+        split_anywhere_registration(
+            device_id,
+            &self.base_url,
+            &downlink,
+            &uplink,
+            &hex::encode(wake_key),
+            &hex::encode(command_key),
+        )
     }
 
     pub async fn delete(&self, secret: &RelayDeviceSecret) -> Result<(), String> {
-        let response = self
-            .client
-            .execute(self.deletion_request(secret)?)
-            .await
-            .map_err(|_| "Could not delete wake relay channel".to_string())?;
-        if response.status() != reqwest::StatusCode::NO_CONTENT {
-            return Err("Wake relay rejected channel deletion".into());
+        secret.validate()?;
+        if secret.base_url != self.base_url.as_str() {
+            return Err("Relay device secret uses another server".into());
+        }
+        let mut channels = vec![(&secret.channel_id, &secret.publisher_token)];
+        if let Some(command) = &secret.command {
+            channels.push((&command.channel_id, &command.subscriber_token));
+        }
+        for (channel_id, token) in channels {
+            let response = self
+                .client
+                .execute(self.deletion_request_for(channel_id, token)?)
+                .await
+                .map_err(|_| "Could not delete relay channel".to_string())?;
+            if response.status() != reqwest::StatusCode::NO_CONTENT {
+                return Err("Relay rejected channel deletion".into());
+            }
         }
         Ok(())
     }
@@ -768,13 +841,8 @@ struct RelayRegistrationResponse {
     subscriber_token: String,
 }
 
-fn split_registration(
-    device_id: &str,
-    base_url: &RelayBaseUrl,
-    response: &[u8],
-    wake_key: &str,
-) -> Result<RelayProvision, String> {
-    if response.len() > 1024 || !is_secret(wake_key) {
+fn parse_registration(response: &[u8]) -> Result<RelayRegistrationResponse, String> {
+    if response.len() > 1024 {
         return Err("Relay registration is invalid".into());
     }
     let registration: RelayRegistrationResponse = serde_json::from_slice(response)
@@ -786,6 +854,19 @@ fn split_registration(
     {
         return Err("Relay registration is invalid".into());
     }
+    Ok(registration)
+}
+
+fn split_registration(
+    device_id: &str,
+    base_url: &RelayBaseUrl,
+    response: &[u8],
+    wake_key: &str,
+) -> Result<RelayProvision, String> {
+    if response.len() > 1024 || !is_secret(wake_key) {
+        return Err("Relay registration is invalid".into());
+    }
+    let registration = parse_registration(response)?;
     let desktop = RelayDeviceSecret {
         device_id: device_id.to_string(),
         base_url: base_url.as_str().to_string(),
@@ -793,6 +874,7 @@ fn split_registration(
         wake_key: wake_key.to_string(),
         publisher_token: registration.publisher_token,
         next_sequence: 1,
+        command: None,
     };
     desktop.validate()?;
     let android = WakeRelayBundle {
@@ -801,6 +883,53 @@ fn split_registration(
         channel_id: registration.channel_id,
         subscriber_token: registration.subscriber_token,
         wake_key: wake_key.to_string(),
+        command: None,
+    };
+    Ok(RelayProvision { desktop, android })
+}
+
+fn split_anywhere_registration(
+    device_id: &str,
+    base_url: &RelayBaseUrl,
+    downlink_response: &[u8],
+    uplink_response: &[u8],
+    wake_key: &str,
+    command_key: &str,
+) -> Result<RelayProvision, String> {
+    if !is_secret(wake_key) || !is_secret(command_key) || wake_key == command_key {
+        return Err("Relay registration is invalid".into());
+    }
+    let downlink = parse_registration(downlink_response)?;
+    let uplink = parse_registration(uplink_response)?;
+    if downlink.channel_id == uplink.channel_id {
+        return Err("Relay registration is invalid".into());
+    }
+    let desktop = RelayDeviceSecret {
+        device_id: device_id.to_string(),
+        base_url: base_url.as_str().to_string(),
+        channel_id: downlink.channel_id.clone(),
+        wake_key: wake_key.to_string(),
+        publisher_token: downlink.publisher_token,
+        next_sequence: 1,
+        command: Some(RelayCommandSubscriberSecret {
+            channel_id: uplink.channel_id.clone(),
+            subscriber_token: uplink.subscriber_token,
+            key: command_key.to_string(),
+            last_sequence: 0,
+        }),
+    };
+    desktop.validate()?;
+    let android = WakeRelayBundle {
+        version: 2,
+        base_url: base_url.as_str().to_string(),
+        channel_id: downlink.channel_id,
+        subscriber_token: downlink.subscriber_token,
+        wake_key: wake_key.to_string(),
+        command: Some(RelayCommandPublisherBundle {
+            channel_id: uplink.channel_id,
+            publisher_token: uplink.publisher_token,
+            key: command_key.to_string(),
+        }),
     };
     Ok(RelayProvision { desktop, android })
 }
@@ -808,6 +937,14 @@ fn split_registration(
 impl RelayDeviceSecret {
     fn validate(&self) -> Result<(), String> {
         RelayBaseUrl::parse(&self.base_url)?;
+        let command_valid = self.command.as_ref().is_none_or(|command| {
+            is_secret(&command.channel_id)
+                && is_secret(&command.subscriber_token)
+                && is_secret(&command.key)
+                && command.last_sequence <= MAX_RELAY_SEQUENCE
+                && command.channel_id != self.channel_id
+                && command.key != self.wake_key
+        });
         if self.device_id.is_empty()
             || self.device_id.len() > 128
             || !self
@@ -819,11 +956,16 @@ impl RelayDeviceSecret {
             || !is_secret(&self.publisher_token)
             || self.next_sequence == 0
             || self.next_sequence > MAX_RELAY_SEQUENCE
+            || !command_valid
         {
             return Err("Relay device secret is invalid".into());
         }
         Ok(())
     }
+}
+
+fn valid_invite_code(value: &str) -> bool {
+    (16..=256).contains(&value.len()) && value.bytes().all(|byte| (0x21..=0x7e).contains(&byte))
 }
 
 fn is_secret(value: &str) -> bool {
@@ -1081,6 +1223,7 @@ mod tests {
             wake_key: "22".repeat(32),
             publisher_token: "33".repeat(32),
             next_sequence: 7,
+            command: None,
         }
     }
 
@@ -1139,6 +1282,7 @@ mod tests {
             wake_key: "22".repeat(32),
             publisher_token: "33".repeat(32),
             next_sequence: 1,
+            command: None,
         };
         let tablet = RelayDeviceSecret {
             device_id: "device-tablet".into(),
@@ -1147,6 +1291,7 @@ mod tests {
             wake_key: "55".repeat(32),
             publisher_token: "66".repeat(32),
             next_sequence: 7,
+            command: None,
         };
 
         store.put(phone.clone()).unwrap();
@@ -1199,6 +1344,59 @@ mod tests {
     }
 
     #[test]
+    fn anywhere_registration_splits_independent_downlink_and_uplink_roles() {
+        let base = RelayBaseUrl::parse("https://relay.example.com").unwrap();
+        let downlink = serde_json::json!({
+            "channel_id": "11".repeat(32),
+            "publisher_token": "22".repeat(32),
+            "subscriber_token": "33".repeat(32),
+        });
+        let uplink = serde_json::json!({
+            "channel_id": "44".repeat(32),
+            "publisher_token": "55".repeat(32),
+            "subscriber_token": "66".repeat(32),
+        });
+
+        let provision = split_anywhere_registration(
+            "device-phone",
+            &base,
+            &serde_json::to_vec(&downlink).unwrap(),
+            &serde_json::to_vec(&uplink).unwrap(),
+            &"77".repeat(32),
+            &"88".repeat(32),
+        )
+        .unwrap();
+
+        assert_eq!(provision.android.version, 2);
+        assert_eq!(provision.desktop.publisher_token, "22".repeat(32));
+        assert_eq!(provision.android.subscriber_token, "33".repeat(32));
+        assert_eq!(
+            provision.android.command.as_ref().unwrap().publisher_token,
+            "55".repeat(32)
+        );
+        assert_eq!(
+            provision.desktop.command.as_ref().unwrap().subscriber_token,
+            "66".repeat(32)
+        );
+        let desktop_json = serde_json::to_string(&provision.desktop).unwrap();
+        let android_json = serde_json::to_string(&provision.android).unwrap();
+        assert!(!desktop_json.contains(&"33".repeat(32)));
+        assert!(!desktop_json.contains(&"55".repeat(32)));
+        assert!(!android_json.contains(&"22".repeat(32)));
+        assert!(!android_json.contains(&"66".repeat(32)));
+    }
+
+    #[test]
+    fn relay_registration_sends_the_invite_without_putting_it_in_the_body() {
+        let client =
+            RelayClient::new(RelayBaseUrl::parse("https://relay.example.com").unwrap()).unwrap();
+        let request = client.registration_request("beta-invite-secret").unwrap();
+
+        assert_eq!(request.headers()["x-humhum-invite"], "beta-invite-secret");
+        assert_eq!(request.body().and_then(reqwest::Body::as_bytes), Some("{}".as_bytes()));
+    }
+
+    #[test]
     fn relay_registration_rejects_unknown_fields_and_malformed_secrets() {
         let base = RelayBaseUrl::parse("https://relay.example.com").unwrap();
         let valid = serde_json::json!({
@@ -1233,7 +1431,7 @@ mod tests {
         let client =
             RelayClient::new(RelayBaseUrl::parse("https://relay.example.com:8443").unwrap())
                 .unwrap();
-        let registration = client.registration_request().unwrap();
+        let registration = client.registration_request("beta-invite-secret").unwrap();
         assert_eq!(registration.method(), reqwest::Method::POST);
         assert_eq!(
             registration.url().as_str(),
@@ -1252,8 +1450,11 @@ mod tests {
             wake_key: "22".repeat(32),
             publisher_token: "33".repeat(32),
             next_sequence: 1,
+            command: None,
         };
-        let deletion = client.deletion_request(&secret).unwrap();
+        let deletion = client
+            .deletion_request_for(&secret.channel_id, &secret.publisher_token)
+            .unwrap();
         assert_eq!(deletion.method(), reqwest::Method::DELETE);
         assert_eq!(
             deletion.url().as_str(),
