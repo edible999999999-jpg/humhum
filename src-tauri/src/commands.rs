@@ -9,7 +9,8 @@ use crate::event_bus::{self, HookEvent, PermissionDecision};
 use crate::git_changes::GitChangeSummary;
 use crate::hexa_protocol::HexaSessionProjection;
 use crate::hexa_watch_store::{
-    HexaAuditMutationRequest, HexaWatchStore, HexaWatchedAgent, HexaWatchedSession,
+    HexaAuditMutationRequest, HexaPlanSyncRequest, HexaWatchStore, HexaWatchedAgent,
+    HexaWatchedSession,
 };
 use crate::hook_server::PendingMap;
 use crate::hush_store::{HushInboxSummary, HushStore};
@@ -360,6 +361,21 @@ pub async fn mutate_hexa_session_audit(
             .map_err(|error| format!("Lock error: {error}"))?;
         store.mutate_audit(request)?
     };
+    app.emit("humhum://hexa-session-changed", &updated)
+        .map_err(|error| format!("Emit error: {error}"))?;
+    Ok(updated)
+}
+
+#[tauri::command]
+pub async fn sync_hexa_session_plan(
+    state: State<'_, Arc<std::sync::Mutex<HexaWatchStore>>>,
+    app: AppHandle,
+    request: HexaPlanSyncRequest,
+) -> Result<HexaWatchedSession, String> {
+    let updated = state
+        .lock()
+        .map_err(|error| format!("Lock error: {error}"))?
+        .sync_plan(request)?;
     app.emit("humhum://hexa-session-changed", &updated)
         .map_err(|error| format!("Emit error: {error}"))?;
     Ok(updated)

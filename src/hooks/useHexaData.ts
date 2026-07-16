@@ -5,6 +5,7 @@ import type { AgentStats, AppConfig } from "@/types";
 import type { GitChangeSummary } from "./sessionChangesState";
 import { sortHexaSessions } from "./hexaPriority";
 import { normalizeMobileRelayConfig, type MobileRelayConfigValue } from "./mobileRelayConfig";
+import type { HexaPlanningCapability, HexaWorkItemSource } from "./hexaPlanningCapability";
 import {
   WATCHED_REFRESH_INTERVAL_MS,
   createCoalescedRefresh,
@@ -161,6 +162,10 @@ export interface HexaWorkItem {
   started_at: string | null;
   updated_at: string;
   completed_at: string | null;
+  source?: HexaWorkItemSource;
+  source_provider?: string | null;
+  source_item_id?: string | null;
+  confidence?: "authoritative" | "reported" | "inferred";
 }
 
 export interface HexaWorkItemInput {
@@ -257,6 +262,8 @@ export interface HexaWatchedSession {
   started_at: string;
   updated_at: string;
   audit: HexaSessionAudit;
+  planning_capability?: HexaPlanningCapability;
+  plan_revision?: string | null;
 }
 
 export interface HexaWatchedAgent {

@@ -92,6 +92,45 @@ pub enum HexaWorkItemStatus {
     Failed,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum HexaWorkItemSource {
+    NativePlan,
+    AgentReport,
+    HexaInferred,
+    User,
+    LegacyMigration,
+}
+
+fn default_work_item_source() -> HexaWorkItemSource {
+    HexaWorkItemSource::AgentReport
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum HexaWorkItemConfidence {
+    Authoritative,
+    Reported,
+    Inferred,
+}
+
+fn default_work_item_confidence() -> HexaWorkItemConfidence {
+    HexaWorkItemConfidence::Reported
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum HexaPlanningCapability {
+    Native,
+    Reported,
+    Inferred,
+    Unavailable,
+}
+
+fn default_planning_capability() -> HexaPlanningCapability {
+    HexaPlanningCapability::Inferred
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HexaWorkItem {
     pub id: String,
@@ -106,6 +145,12 @@ pub struct HexaWorkItem {
     pub started_at: Option<String>,
     pub updated_at: String,
     pub completed_at: Option<String>,
+    #[serde(default = "default_work_item_source")]
+    pub source: HexaWorkItemSource,
+    pub source_provider: Option<String>,
+    pub source_item_id: Option<String>,
+    #[serde(default = "default_work_item_confidence")]
+    pub confidence: HexaWorkItemConfidence,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -119,6 +164,16 @@ pub struct HexaWorkItemInput {
     pub depends_on: Vec<String>,
     #[serde(default)]
     pub evidence: Vec<HexaEvidenceInput>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HexaPlanSyncRequest {
+    pub session_id: String,
+    pub capability: HexaPlanningCapability,
+    pub source_provider: String,
+    pub revision: Option<String>,
+    #[serde(default)]
+    pub items: Vec<HexaWorkItemInput>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -247,6 +302,9 @@ pub struct HexaWatchedSession {
     pub updated_at: String,
     #[serde(default)]
     pub audit: HexaSessionAudit,
+    #[serde(default = "default_planning_capability")]
+    pub planning_capability: HexaPlanningCapability,
+    pub plan_revision: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -291,7 +349,8 @@ impl HexaWatchStore {
 
     pub fn load_or_create(humhum_dir: &Path) -> Result<Self, String> {
         let storage_path = humhum_dir.join("hexa-watch.json");
-        let agents = read_agents(&storage_path)?;
+        let mut agents = read_agents(&storage_path)?;
+        migrate_legacy_sessions(&mut agents);
 
         Ok(Self {
             agents,
@@ -304,6 +363,7 @@ impl HexaWatchStore {
             return Ok(());
         };
         self.agents = read_agents(storage_path)?;
+        migrate_legacy_sessions(&mut self.agents);
         Ok(())
     }
 
@@ -374,7 +434,7 @@ impl HexaWatchStore {
                 }
                 (session, target_agent_key)
             } else {
-                let session = HexaWatchedSession {
+                let mut session = HexaWatchedSession {
                     session_id,
                     agent,
                     name: name.clone(),
@@ -389,7 +449,30 @@ impl HexaWatchStore {
                     started_at: now.clone(),
                     updated_at: now.clone(),
                     audit: HexaSessionAudit::default(),
+                    planning_capability: HexaPlanningCapability::Inferred,
+                    plan_revision: None,
                 };
+                if let Some(title) = session.goal.clone() {
+                    session.audit.work_items.push(HexaWorkItem {
+                        id: "hexa-current".to_string(),
+                        title,
+                        description: Some(
+                            "Hexa 根据 Agent 注册目标整理的当前工作；这不是 Agent 原生计划。"
+                                .to_string(),
+                        ),
+                        acceptance_criteria: None,
+                        status: HexaWorkItemStatus::InProgress,
+                        depends_on: Vec::new(),
+                        evidence: Vec::new(),
+                        started_at: Some(now.clone()),
+                        updated_at: now.clone(),
+                        completed_at: None,
+                        source: HexaWorkItemSource::HexaInferred,
+                        source_provider: Some(provider.clone()),
+                        source_item_id: Some("hexa-current".to_string()),
+                        confidence: HexaWorkItemConfidence::Inferred,
+                    });
+                }
                 let target_agent_key = agent_key(&provider, requested_workspace.as_deref());
                 (session, target_agent_key)
             };
@@ -445,6 +528,28 @@ impl HexaWatchStore {
             if let Some(goal) = request.goal.clone().and_then(clean_text) {
                 session.goal = Some(goal);
             }
+            if session.planning_capability == HexaPlanningCapability::Inferred {
+                if let Some(item) = session.audit.work_items.iter_mut().find(|item| {
+                    matches!(
+                        item.source,
+                        HexaWorkItemSource::HexaInferred | HexaWorkItemSource::LegacyMigration
+                    )
+                }) {
+                    item.description = session.current_step.clone();
+                    item.status = match session.status {
+                        HexaWatchStatus::Completed => HexaWorkItemStatus::Completed,
+                        HexaWatchStatus::Starting
+                        | HexaWatchStatus::Idle
+                        | HexaWatchStatus::Waiting => HexaWorkItemStatus::Pending,
+                        HexaWatchStatus::Working | HexaWatchStatus::Blocked => {
+                            HexaWorkItemStatus::InProgress
+                        }
+                    };
+                    item.updated_at = now.clone();
+                    item.completed_at =
+                        (item.status == HexaWorkItemStatus::Completed).then(|| now.clone());
+                }
+            }
             session.updated_at = now.clone();
             watched_agent.updated_at = now.clone();
             updated = Some(session.clone());
@@ -486,6 +591,57 @@ impl HexaWatchStore {
         }
 
         let updated = updated.ok_or_else(|| format!("watched session not found: {session_id}"))?;
+        self.persist_agents(&agents)?;
+        self.agents = agents;
+        Ok(updated)
+    }
+
+    pub fn sync_plan(
+        &mut self,
+        request: HexaPlanSyncRequest,
+    ) -> Result<HexaWatchedSession, String> {
+        self.reload_from_disk()?;
+        let mut agents = self.agents.clone();
+        let now = chrono::Utc::now().to_rfc3339();
+        let provider = required_text(request.source_provider, "plan source provider")?;
+        let mut updated = None;
+
+        for watched_agent in agents.values_mut() {
+            let Some(session) = watched_agent
+                .runs
+                .iter_mut()
+                .find(|session| session.session_id == request.session_id)
+            else {
+                continue;
+            };
+            let source = if request.capability == HexaPlanningCapability::Native {
+                HexaWorkItemSource::NativePlan
+            } else {
+                HexaWorkItemSource::AgentReport
+            };
+            session.audit.work_items.retain(|item| {
+                item.source == HexaWorkItemSource::User
+                    || (!matches!(
+                        item.source,
+                        HexaWorkItemSource::HexaInferred | HexaWorkItemSource::LegacyMigration
+                    ) && item.source_provider.as_deref() != Some(provider.as_str()))
+            });
+            for input in request.items {
+                let id = required_text(input.id.clone(), "work item id")?;
+                let item =
+                    work_item_from_input(input, id, &now, source.clone(), Some(provider.clone()))?;
+                session.audit.work_items.push(item);
+            }
+            validate_workflow(&session.audit.work_items)?;
+            session.planning_capability = request.capability.clone();
+            session.plan_revision = request.revision.clone();
+            session.updated_at = now.clone();
+            watched_agent.updated_at = now.clone();
+            updated = Some(session.clone());
+            break;
+        }
+        let updated =
+            updated.ok_or_else(|| format!("watched session not found: {}", request.session_id))?;
         self.persist_agents(&agents)?;
         self.agents = agents;
         Ok(updated)
@@ -598,46 +754,21 @@ fn apply_audit_mutation(
             });
         }
         HexaAuditMutation::UpsertWorkItem { work_item } => {
-            let id = required_text(work_item.id, "work item id")?;
-            let title = required_text(work_item.title, "work item title")?;
-            let depends_on = clean_text_list(work_item.depends_on);
-            if depends_on.iter().any(|dependency| dependency == &id) {
-                return Err(format!("workflow cycle: work item {id} depends on itself"));
-            }
+            let id = required_text(work_item.id.clone(), "work item id")?;
             let existing = session
                 .audit
                 .work_items
                 .iter()
                 .find(|item| item.id == id)
                 .cloned();
-            let started_at = if work_item.status == HexaWorkItemStatus::Pending {
-                existing.as_ref().and_then(|item| item.started_at.clone())
-            } else {
-                existing
-                    .as_ref()
-                    .and_then(|item| item.started_at.clone())
-                    .or_else(|| Some(now.to_string()))
-            };
-            let completed_at = if work_item.status == HexaWorkItemStatus::Completed {
-                existing
-                    .as_ref()
-                    .and_then(|item| item.completed_at.clone())
-                    .or_else(|| Some(now.to_string()))
-            } else {
-                None
-            };
-            let item = HexaWorkItem {
-                id: id.clone(),
-                title,
-                description: work_item.description.and_then(clean_text),
-                acceptance_criteria: work_item.acceptance_criteria.and_then(clean_text),
-                status: work_item.status,
-                depends_on,
-                evidence: evidence_refs(work_item.evidence, now)?,
-                started_at,
-                updated_at: now.to_string(),
-                completed_at,
-            };
+            let mut item =
+                work_item_from_input(work_item, id.clone(), now, HexaWorkItemSource::User, None)?;
+            if let Some(existing) = existing {
+                item.started_at = existing.started_at.or(item.started_at);
+                if item.status == HexaWorkItemStatus::Completed {
+                    item.completed_at = existing.completed_at.or(item.completed_at);
+                }
+            }
             if let Some(index) = session
                 .audit
                 .work_items
@@ -733,6 +864,93 @@ fn apply_audit_mutation(
         }
     }
     Ok(())
+}
+
+fn work_item_from_input(
+    input: HexaWorkItemInput,
+    id: String,
+    now: &str,
+    source: HexaWorkItemSource,
+    source_provider: Option<String>,
+) -> Result<HexaWorkItem, String> {
+    let title = required_text(input.title, "work item title")?;
+    let depends_on = clean_text_list(input.depends_on);
+    if depends_on.iter().any(|dependency| dependency == &id) {
+        return Err(format!("workflow cycle: work item {id} depends on itself"));
+    }
+    let started_at = (input.status != HexaWorkItemStatus::Pending).then(|| now.to_string());
+    let completed_at = (input.status == HexaWorkItemStatus::Completed).then(|| now.to_string());
+    let confidence = match source {
+        HexaWorkItemSource::NativePlan => HexaWorkItemConfidence::Authoritative,
+        HexaWorkItemSource::HexaInferred | HexaWorkItemSource::LegacyMigration => {
+            HexaWorkItemConfidence::Inferred
+        }
+        HexaWorkItemSource::AgentReport | HexaWorkItemSource::User => {
+            HexaWorkItemConfidence::Reported
+        }
+    };
+    Ok(HexaWorkItem {
+        source_item_id: Some(id.clone()),
+        id,
+        title,
+        description: input.description.and_then(clean_text),
+        acceptance_criteria: input.acceptance_criteria.and_then(clean_text),
+        status: input.status,
+        depends_on,
+        evidence: evidence_refs(input.evidence, now)?,
+        started_at,
+        updated_at: now.to_string(),
+        completed_at,
+        source,
+        source_provider,
+        confidence,
+    })
+}
+
+fn migrate_legacy_sessions(agents: &mut HashMap<String, HexaWatchedAgent>) {
+    for agent in agents.values_mut() {
+        for session in &mut agent.runs {
+            if !session.audit.work_items.is_empty() {
+                continue;
+            }
+            let Some(title) = session
+                .goal
+                .clone()
+                .or_else(|| session.current_step.clone())
+                .and_then(clean_text)
+            else {
+                session.planning_capability = HexaPlanningCapability::Unavailable;
+                continue;
+            };
+            let status = match session.status {
+                HexaWatchStatus::Completed => HexaWorkItemStatus::Completed,
+                HexaWatchStatus::Blocked => HexaWorkItemStatus::InProgress,
+                HexaWatchStatus::Starting | HexaWatchStatus::Idle | HexaWatchStatus::Waiting => {
+                    HexaWorkItemStatus::Pending
+                }
+                HexaWatchStatus::Working => HexaWorkItemStatus::InProgress,
+            };
+            let now = session.updated_at.clone();
+            session.audit.work_items.push(HexaWorkItem {
+                id: "legacy-current".to_string(),
+                title,
+                description: session.current_step.clone(),
+                acceptance_criteria: None,
+                status: status.clone(),
+                depends_on: Vec::new(),
+                evidence: Vec::new(),
+                started_at: (status != HexaWorkItemStatus::Pending)
+                    .then(|| session.started_at.clone()),
+                updated_at: now.clone(),
+                completed_at: (status == HexaWorkItemStatus::Completed).then_some(now),
+                source: HexaWorkItemSource::LegacyMigration,
+                source_provider: Some(session.provider.clone()),
+                source_item_id: Some("legacy-current".to_string()),
+                confidence: HexaWorkItemConfidence::Inferred,
+            });
+            session.planning_capability = HexaPlanningCapability::Inferred;
+        }
+    }
 }
 
 fn evidence_refs(
@@ -1245,8 +1463,72 @@ mod tests {
         let session = restored.sessions().pop().unwrap();
 
         assert_eq!(session.session_id, "legacy-run");
-        assert!(session.audit.work_items.is_empty());
+        assert_eq!(
+            session.planning_capability,
+            HexaPlanningCapability::Inferred
+        );
+        assert_eq!(session.audit.work_items.len(), 1);
+        assert_eq!(
+            session.audit.work_items[0].source,
+            HexaWorkItemSource::LegacyMigration
+        );
         assert!(session.audit.hexa_review.is_none());
+    }
+
+    #[test]
+    fn provider_plan_sync_is_idempotent_and_preserves_user_items() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut store = HexaWatchStore::load_or_create(directory.path()).unwrap();
+        store.register(register_request()).unwrap();
+        store
+            .mutate_audit(HexaAuditMutationRequest {
+                session_id: "run-1".to_string(),
+                mutation: HexaAuditMutation::UpsertWorkItem {
+                    work_item: work_item("user-check", vec![]),
+                },
+            })
+            .unwrap();
+        let request = HexaPlanSyncRequest {
+            session_id: "run-1".to_string(),
+            capability: HexaPlanningCapability::Native,
+            source_provider: "claude-code".to_string(),
+            revision: Some("1".to_string()),
+            items: vec![work_item("native-build", vec![])],
+        };
+
+        store.sync_plan(request.clone()).unwrap();
+        let synced = store.sync_plan(request).unwrap();
+
+        assert_eq!(synced.planning_capability, HexaPlanningCapability::Native);
+        assert_eq!(
+            synced
+                .audit
+                .work_items
+                .iter()
+                .filter(|item| item.id == "native-build")
+                .count(),
+            1
+        );
+        assert!(synced
+            .audit
+            .work_items
+            .iter()
+            .any(|item| item.id == "user-check"));
+        assert!(!synced
+            .audit
+            .work_items
+            .iter()
+            .any(|item| item.id == "hexa-current"));
+        assert_eq!(
+            synced
+                .audit
+                .work_items
+                .iter()
+                .find(|item| item.id == "native-build")
+                .unwrap()
+                .source,
+            HexaWorkItemSource::NativePlan
+        );
     }
 
     #[test]
@@ -1295,7 +1577,11 @@ mod tests {
         let restored = HexaWatchStore::load_or_create(directory.path()).unwrap();
         let session = restored.sessions().pop().unwrap();
 
-        assert_eq!(session.audit.work_items[0].id, "verify");
+        assert!(session
+            .audit
+            .work_items
+            .iter()
+            .any(|item| item.id == "verify"));
         assert_eq!(session.audit.interventions.len(), 1);
         assert_eq!(
             session.audit.hexa_review.unwrap().rating,

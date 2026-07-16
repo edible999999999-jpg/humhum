@@ -271,6 +271,7 @@ pub fn run() {
             commands::get_hexa_watched_agents,
             commands::get_hexa_watched_sessions,
             commands::mutate_hexa_session_audit,
+            commands::sync_hexa_session_plan,
             commands::delete_hexa_watched_session,
             commands::get_session_change_summary,
             commands::hexa_enable_codex_remote_control,

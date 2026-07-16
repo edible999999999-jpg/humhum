@@ -12,6 +12,7 @@ import type {
   HexaWorkItemInput,
   HexaWorkItemStatus,
 } from "../../../hooks/useHexaData";
+import { workItemSourceLabel } from "../../../hooks/hexaPlanningCapability";
 
 const STATUS: Record<HexaWorkItemStatus, { label: string; color: string }> = {
   pending: { label: "待开始", color: "#94a3b8" },
@@ -122,7 +123,7 @@ export function HexaWorkflowEditor({
                 <div className="hexa-workflow-node">
                   <span className="hexa-workflow-index" style={{ borderColor: status.color, color: status.color }}>{index + 1}</span>
                   <button type="button" className="hexa-workflow-main" onClick={() => expanded ? setEditingId(null) : edit(item)}>
-                    <strong>{item.title}</strong>
+                    <strong>{item.title} <small style={{ opacity: 0.55 }}>· {workItemSourceLabel(item.source)}</small></strong>
                     <span>{item.acceptance_criteria ?? "尚未填写验收条件"}</span>
                   </button>
                   <span className="hexa-workflow-status" style={{ color: status.color }}>{status.label}</span>

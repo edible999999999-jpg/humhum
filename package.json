@@ -25,6 +25,7 @@
     "tauri": "tauri",
     "hexa:watch": "node scripts/hexa-watch.mjs",
     "hexa:update": "node scripts/hexa-update.mjs",
+    "hexa:plan": "node scripts/hexa-plan.mjs",
     "hexa:unwatch": "node scripts/hexa-unwatch.mjs"
   },
   "dependencies": {

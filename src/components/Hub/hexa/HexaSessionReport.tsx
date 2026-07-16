@@ -20,6 +20,7 @@ import type {
 } from "../../../hooks/useHexaData";
 import { HexaUserReview } from "./HexaUserReview";
 import { HexaWorkflowEditor } from "./HexaWorkflowEditor";
+import { planningCapabilityCopy } from "../../../hooks/hexaPlanningCapability";
 
 const ALIGNMENT: Record<HexaAlignment, { label: string; color: string }> = {
   on_track: { label: "方向一致", color: "#22c55e" },
@@ -78,6 +79,7 @@ export function HexaSessionReportView({
   const report = buildHexaSessionReport(session, pendingConfirmations);
   const alignment = ALIGNMENT[report.alignment];
   const status = STATUS[session.status];
+  const planning = planningCapabilityCopy(session.planning_capability);
   const evidence = [
     ...report.outputs,
     ...report.milestones.flatMap((milestone) => milestone.evidence),
@@ -135,6 +137,11 @@ export function HexaSessionReportView({
         <strong>{report.nextAction}</strong>
         <small>最近更新 {timeAgo(session.updated_at)}</small>
       </div>
+
+      <section className="hexa-report-section" data-tone={planning.tone}>
+        <div className="hexa-report-section-title"><span><ShieldQuestion size={15} /> {planning.label}</span></div>
+        <p className="hexa-report-empty">{planning.detail}</p>
+      </section>
 
       <div className="hexa-report-metrics">
         <Metric label="工作项" value={report.metrics.total} />
