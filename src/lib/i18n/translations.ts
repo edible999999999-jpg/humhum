@@ -192,6 +192,7 @@ export const translations: TranslationMap = {
   "hub.title": { zh: "HUMHUM", en: "HUMHUM" },
   "hub.subtitle": { zh: "", en: "" },
   "hub.close": { zh: "关闭", en: "Close" },
+  "hub.minimize": { zh: "最小化到任务栏", en: "Minimize to taskbar" },
   "hub.common.save": { zh: "保存", en: "Save" },
   "hub.common.cancel": { zh: "取消", en: "Cancel" },
   "hub.common.demo": { zh: "演示", en: "Demo" },

@@ -585,8 +585,11 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let quit = MenuItem::with_id(app, "quit", "Quit HumHum", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&show, &settings, &hub, &separator, &quit])?;
 
+    // Keep this as the single tray creation site. Adding app.trayIcon to
+    // tauri.conf.json would create a second native icon before setup runs.
     TrayIconBuilder::with_id("humhum-tray")
         .icon(app.default_window_icon().unwrap().clone())
+        .icon_as_template(true)
         .menu(&menu)
         .tooltip("HumHum - AI Coding Companion")
         .show_menu_on_left_click(false)
