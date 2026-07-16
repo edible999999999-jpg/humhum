@@ -119,6 +119,7 @@ public class AnywhereGatewayTest {
         assertNotNull(state.pending(relay));
         assertEquals(2, state.pending(relay).envelope().sequence());
         assertEquals(2, state.nextUplinkSequence(relay));
+        assertNotNull(state.completedResponse(relay, previousDigest, 1_783_836_001L));
     }
 
     private static AnywhereRelayClient.TransportResponse remotePageResponse(

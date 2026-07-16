@@ -98,7 +98,7 @@ public final class AnywhereGateway {
         }
         JSONObject completed = state.completedResponse(relay, digest, now);
         if (completed != null) return responseData(completed);
-        state.clearCompletedIfDifferent(relay, digest);
+        if (retainCompleted) state.clearCompletedIfDifferent(relay, digest);
         if (pending != null && !pending.bodyDigest().equals(digest)) {
             throw new IOException("A previous remote action is still being delivered");
         }

@@ -9,9 +9,9 @@ HUMHUM Android is a native private-network client for the desktop Mobile Bridge.
 - Play-compatible bundle: `build/releases/HUMHUM-Android-0.3.9.aab`
 - Package: `com.humhum.mobile`
 - Version: `0.3.9` (`versionCode 12`)
-- APK SHA-256: `70ace1204732a715de64b32ecc12d659e5222fe38a5957d92721e16d30dba7ae`
-- AAB SHA-256: `244e016abd2fceda9d8f37e82f3ed4dd2b4bea38968a68c0daa94deaafdb5528`
-- Xiaomi ZIP SHA-256: `f9ee9d806c077002dc8d1fdca3174c6f20fdc90ea92df88814f21590f36ae662`
+- APK SHA-256: `6a7ff62fb4d82b5f0f03ad09e26f4433735290c3b9a8bf20982e4e18c58838f8`
+- AAB SHA-256: `f6b4fb4076df7c7669c5244959798b3eaba2d865ffc5e06b4c75f4ce25521cb1`
+- Xiaomi ZIP SHA-256: `b8d5a03ad48db8b9d5a0f3d0887f1e4f7c63435537f9aaf6ae6c40e3688aec24`
 - Release certificate SHA-256: `C2:8C:FF:BE:03:98:B2:DB:58:DB:B7:14:DD:39:4F:06:36:CB:55:A6:90:EE:FE:6F:DA:20:2A:78:ED:4E:12:F8`
 
 The APK and AAB use HUMHUM's durable local release certificate. They are installable and update-compatible with later builds signed by the same key, but they have not been published to Xiaomi GetApps or Google Play.

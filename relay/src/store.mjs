@@ -65,6 +65,29 @@ export class RelayStore {
     if (!channelColumns.some((column) => column.name === "last_envelope_digest")) {
       this.database.exec("ALTER TABLE channels ADD COLUMN last_envelope_digest TEXT");
     }
+    const legacyLatest = this.database.prepare(`
+      SELECT c.id, m.version, m.sequence, m.nonce, m.ciphertext
+      FROM channels c JOIN messages m
+        ON m.channel_id = c.id AND m.sequence = c.last_sequence
+      WHERE c.last_envelope_digest IS NULL
+    `).all();
+    const backfillDigest = this.database.prepare(
+      "UPDATE channels SET last_envelope_digest = ? WHERE id = ?",
+    );
+    if (legacyLatest.length) {
+      this.database.exec("BEGIN IMMEDIATE");
+      try {
+        for (const row of legacyLatest) {
+          backfillDigest.run(digest(JSON.stringify([
+            row.version, row.sequence, row.nonce, row.ciphertext,
+          ])), row.id);
+        }
+        this.database.exec("COMMIT");
+      } catch (error) {
+        this.database.exec("ROLLBACK");
+        throw error;
+      }
+    }
     this.insertChannel = this.database.prepare(`
       INSERT INTO channels
         (id, publisher_digest, subscriber_digest, last_sequence, created_at)
@@ -81,6 +104,9 @@ export class RelayStore {
     `);
     this.updateSequence = this.database.prepare(
       "UPDATE channels SET last_sequence = ?, last_envelope_digest = ? WHERE id = ?",
+    );
+    this.updateEnvelopeDigest = this.database.prepare(
+      "UPDATE channels SET last_envelope_digest = ? WHERE id = ?",
     );
     this.selectMessages = this.database.prepare(`
       SELECT sequence, version, nonce, ciphertext
@@ -169,7 +195,12 @@ export class RelayStore {
       if (existing
           && existing.version === envelope.version
           && existing.nonce === envelope.nonce
-          && existing.ciphertext === envelope.ciphertext) return "duplicate";
+          && existing.ciphertext === envelope.ciphertext) {
+        if (!channel.last_envelope_digest) {
+          this.updateEnvelopeDigest.run(envelopeDigest, channelId);
+        }
+        return "duplicate";
+      }
       if (envelope.sequence === channel.last_sequence
           && channel.last_envelope_digest
           && sameDigest(channel.last_envelope_digest, envelopeDigest)) {

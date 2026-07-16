@@ -123,6 +123,37 @@ public class AnywhereStateStoreTest {
         assertNull(restored.completedResponse(relay, bodyDigest, 2_001));
     }
 
+    @Test
+    public void legacyPendingAndCompletedRecordsMigrateConservatively() throws Exception {
+        MemoryStore memory = new MemoryStore();
+        Models.WakeRelayConfig relay = relay();
+        String requestId = "77".repeat(16);
+        String bodyDigest = "88".repeat(32);
+        memory.put("pending", new JSONObject()
+                .put("channel", relay.commandChannelId())
+                .put("request_id", requestId)
+                .put("body_digest", bodyDigest)
+                .put("envelope", new JSONObject(new AnywhereEnvelope(
+                        1, 1, "AAECAwQFBgcICQoL", "AQIDBA").toJson()))
+                .toString());
+        JSONObject response = new JSONObject().put("ok", true).put(
+                "data", new JSONObject().put("status", "delivered"));
+        memory.put("completed", new JSONObject()
+                .put("channel", relay.commandChannelId())
+                .put("request_id", requestId)
+                .put("body_digest", bodyDigest)
+                .put("body", response)
+                .toString());
+
+        AnywhereStateStore store = new AnywhereStateStore(memory);
+        assertEquals(requestId, store.pending(relay).requestId());
+        assertEquals(true, store.pending(relay).retainCompleted());
+        assertEquals(response.toString(), store.completedResponse(
+                relay, bodyDigest, 1_000).toString());
+        assertEquals(response.toString(), new AnywhereStateStore(memory)
+                .completedResponse(relay, bodyDigest, 1_001).toString());
+    }
+
     private static Models.WakeRelayConfig relay() {
         return new Models.WakeRelayConfig(
                 "https://relay.example.com",

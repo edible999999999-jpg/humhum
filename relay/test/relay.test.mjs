@@ -445,9 +445,17 @@ test("expired ciphertext disappears and either credential can delete the channel
 
 test("exact latest retry restores ciphertext after retention without accepting a rewrite", async () => {
   let now = 1_800_000_000_000;
-  const { baseUrl } = await relay({ clock: () => now });
+  const { baseUrl, databasePath } = await relay({ clock: () => now });
   const channel = await createChannel(baseUrl);
   const first = envelope(1);
+  assert.equal((await publish(
+    baseUrl, channel.channel_id, channel.publisher_token, first,
+  )).status, 201);
+  const database = new DatabaseSync(databasePath);
+  database.prepare(
+    "UPDATE channels SET last_envelope_digest = NULL WHERE id = ?",
+  ).run(channel.channel_id);
+  database.close();
   assert.equal((await publish(
     baseUrl, channel.channel_id, channel.publisher_token, first,
   )).status, 201);

@@ -101,11 +101,13 @@ public final class AnywhereStateStore {
         if (payload == null || payload.isBlank()) return null;
         try {
             JSONObject root = new JSONObject(payload);
-            if (root.length() != 5
+            if ((root.length() != 4 && root.length() != 5)
                     || !safe.commandChannelId().equals(root.getString("channel"))) return null;
             String requestId = root.getString("request_id");
             String bodyDigest = root.getString("body_digest");
-            boolean retainCompleted = root.getBoolean("retain_completed");
+            boolean retainCompleted = root.has("retain_completed")
+                    ? root.getBoolean("retain_completed")
+                    : true;
             JSONObject raw = root.getJSONObject("envelope");
             if (!requestId.matches("[a-f0-9]{32}")
                     || !bodyDigest.matches("[a-f0-9]{64}")
@@ -142,16 +144,24 @@ public final class AnywhereStateStore {
         if (payload == null || payload.isBlank()) return null;
         try {
             JSONObject root = new JSONObject(payload);
-            if (root.length() != 5
+            if ((root.length() != 4 && root.length() != 5)
                     || !safe.commandChannelId().equals(root.getString("channel"))
                     || !bodyDigest.equals(root.getString("body_digest"))
                     || !root.getString("request_id").matches("[a-f0-9]{32}")) return null;
-            long expiresAt = root.getLong("expires_at");
+            long expiresAt = root.has("expires_at")
+                    ? root.getLong("expires_at")
+                    : nowSeconds + COMPLETED_TTL_SECONDS;
             if (expiresAt <= nowSeconds) {
                 storage.remove(COMPLETED);
                 return null;
             }
-            return root.getJSONObject("body");
+            JSONObject body = root.getJSONObject("body");
+            if (!root.has("expires_at")) {
+                storage.put(COMPLETED, new JSONObject(root.toString())
+                        .put("expires_at", expiresAt)
+                        .toString());
+            }
+            return body;
         } catch (JSONException error) {
             storage.remove(COMPLETED);
             return null;
