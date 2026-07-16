@@ -3464,6 +3464,8 @@ mod tests {
             wake_key: "22".repeat(32),
             publisher_token: "33".repeat(32),
             next_sequence: 1,
+            command: None,
+            pending_downlink: None,
         };
         let bundle = crate::mobile_relay::WakeRelayBundle {
             version: 1,
@@ -3471,6 +3473,7 @@ mod tests {
             channel_id: secret.channel_id.clone(),
             subscriber_token: "44".repeat(32),
             wake_key: secret.wake_key.clone(),
+            command: None,
         };
         let (registered_tx, registered_rx) = std::sync::mpsc::sync_channel(0);
         let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel(0);
@@ -3533,6 +3536,8 @@ mod tests {
             wake_key: "22".repeat(32),
             publisher_token: "33".repeat(32),
             next_sequence: 1,
+            command: None,
+            pending_downlink: None,
         };
         relay_secrets.put(secret.clone()).unwrap();
         let blocker = temp.path().join("not-a-directory");
@@ -3570,6 +3575,8 @@ mod tests {
             wake_key: "22".repeat(32),
             publisher_token: "33".repeat(32),
             next_sequence: 1,
+            command: None,
+            pending_downlink: None,
         };
         relay_secrets.put(secret.clone()).unwrap();
         let blocker = temp.path().join("not-a-directory");
@@ -3601,6 +3608,8 @@ mod tests {
             wake_key: "22".repeat(32),
             publisher_token: "33".repeat(32),
             next_sequence: 1,
+            command: None,
+            pending_downlink: None,
         };
         relay_secrets.put(secret.clone()).unwrap();
         let blocker = temp.path().join("not-a-directory");
