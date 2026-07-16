@@ -52,6 +52,8 @@ docker compose exec relay node -e \
 
 Keep port 3005 private; only Caddy should publish ports. Back up the `relay-data` Docker volume while the relay is stopped, and protect backups like private metadata even though message bodies remain encrypted. Rotating the invite secret affects only new pairing; existing channel credentials continue to work. Rotating the admin secret affects only capacity inspection. Encryption keys are device-held and cannot be recovered from this service.
 
+Compose enables `HUMHUM_TRUST_PROXY=1` because the bundled Caddyfile overwrites `X-Forwarded-For` with the actual peer address. Never enable that variable when clients can reach Node directly or when using a proxy that passes untrusted forwarding headers; otherwise attackers can evade the per-IP limiter.
+
 ## Limits
 
 - 65,536-character ciphertext field per envelope.

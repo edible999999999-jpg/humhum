@@ -6,6 +6,7 @@ services:
       HUMHUM_RELAY_DB: /data/humhum-relay.sqlite
       HUMHUM_RELAY_INVITE_SECRET: ${HUMHUM_RELAY_INVITE_SECRET:?set in relay/.env}
       HUMHUM_RELAY_ADMIN_SECRET: ${HUMHUM_RELAY_ADMIN_SECRET:?set in relay/.env}
+      HUMHUM_TRUST_PROXY: "1"
     volumes:
       - relay-data:/data
     healthcheck:

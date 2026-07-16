@@ -1,5 +1,6 @@
 import { createServer } from "node:http";
 import { createHash, timingSafeEqual } from "node:crypto";
+import { isIP } from "node:net";
 import { pathToFileURL } from "node:url";
 import { loadFcmProviderFromEnvironment } from "./fcm.mjs";
 import { RelayStore } from "./store.mjs";
@@ -127,6 +128,11 @@ export function createRateLimiter(clock) {
   };
 }
 
+export function rateLimitIdentity(forwarded, remote, trustProxy) {
+  if (!trustProxy) return remote || "unknown";
+  return typeof forwarded === "string" && isIP(forwarded) ? forwarded : "invalid-proxy";
+}
+
 export function createRelayServer({
   databasePath,
   clock = Date.now,
@@ -134,6 +140,7 @@ export function createRelayServer({
   adminSecret,
   pushTokenKey = null,
   pushProvider = null,
+  trustProxy = false,
 }) {
   if (!databasePath) throw new Error("databasePath is required");
   if (!validServerSecret(inviteSecret)) {
@@ -148,7 +155,9 @@ export function createRelayServer({
     try {
       const host = request.headers.host || "localhost";
       const url = new URL(request.url, `http://${host}`);
-      const remote = request.socket.remoteAddress || "unknown";
+      const remote = rateLimitIdentity(
+        request.headers["x-forwarded-for"], request.socket.remoteAddress, trustProxy,
+      );
       if (!limiter.allow(`ip:${remote}`)) return send(response, 429, { error: "Rate limited" });
 
       if (request.method === "GET" && url.pathname === "/health" && !url.search) {
@@ -290,6 +299,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] || "").href) {
     adminSecret,
     pushProvider,
     pushTokenKey: pushProvider ? process.env.HUMHUM_PUSH_TOKEN_KEY : null,
+    trustProxy: process.env.HUMHUM_TRUST_PROXY === "1",
   });
   server.listen(port, "0.0.0.0", () => {
     process.stdout.write(`HUMHUM Wake Relay listening on ${port}\n`);

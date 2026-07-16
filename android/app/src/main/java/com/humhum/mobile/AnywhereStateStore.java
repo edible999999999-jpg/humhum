@@ -242,9 +242,19 @@ public final class AnywhereStateStore {
 
         @Override public String get(String key) { return preferences.getString(key, null); }
         @Override public void put(String key, String value) {
-            preferences.edit().putString(key, value).commit();
+            if (!preferences.edit().putString(key, value).commit()) {
+                throw new IllegalStateException("Could not persist Anywhere state");
+            }
         }
-        @Override public void remove(String key) { preferences.edit().remove(key).commit(); }
-        @Override public void clear() { preferences.edit().clear().commit(); }
+        @Override public void remove(String key) {
+            if (!preferences.edit().remove(key).commit()) {
+                throw new IllegalStateException("Could not persist Anywhere state");
+            }
+        }
+        @Override public void clear() {
+            if (!preferences.edit().clear().commit()) {
+                throw new IllegalStateException("Could not clear Anywhere state");
+            }
+        }
     }
 }

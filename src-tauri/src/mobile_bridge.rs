@@ -28,7 +28,7 @@ pub const DEFAULT_MOBILE_PORT: u16 = 31_276;
 const MAX_CONVERSATION_REQUEST_BYTES: usize = 4 * 1024;
 const MAX_CONVERSATION_ID_CHARS: usize = 256;
 const MAX_CONVERSATION_TEXT_CHARS: usize = 500;
-const MAX_CONVERSATION_RESPONSE_BYTES: usize = 64 * 1024;
+const MAX_CONVERSATION_RESPONSE_BYTES: usize = 40 * 1024;
 
 type HttpBody = Full<Bytes>;
 
@@ -935,6 +935,33 @@ async fn sync_anywhere_device(
     let Some(command) = current.command.as_ref() else {
         return;
     };
+    if let Some(request_id) = command.pending_request_id.clone() {
+        let response = serde_json::json!({
+            "ok": false,
+            "error": "The Mac restarted before this remote action completed"
+        });
+        if let Ok(envelope) = command_response_envelope(&current, &request_id, &response) {
+            let staged = bridge
+                .relay_secrets
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .stage_command_response(&current.device_id, &request_id, envelope);
+            if staged.is_ok() {
+                let staged = {
+                    bridge
+                        .relay_secrets
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner())
+                        .get(&current.device_id)
+                        .cloned()
+                };
+                if let Some(staged) = staged {
+                    let _ = flush_anywhere_downlink(bridge, &staged, state).await;
+                }
+            }
+        }
+        return;
+    }
     let client = match crate::mobile_relay::RelayBaseUrl::parse(&current.base_url)
         .and_then(crate::mobile_relay::RelayClient::new)
     {
@@ -950,16 +977,23 @@ async fn sync_anywhere_device(
                 envelope,
                 command.last_sequence,
             );
+            let Ok(message) = message else {
+                return;
+            };
             if bridge
                 .relay_secrets
                 .lock()
                 .unwrap_or_else(|error| error.into_inner())
-                .advance_command_sequence(&current.device_id, envelope.sequence)
+                .advance_command_sequence(
+                    &current.device_id,
+                    envelope.sequence,
+                    &message.request_id,
+                )
                 .is_err()
             {
                 return;
             }
-            if let Ok(message) = message {
+            {
                 let now = chrono::Utc::now().timestamp();
                 let response =
                     if !crate::anywhere_crypto::anywhere_message_is_current(&message, now) {
@@ -988,18 +1022,18 @@ async fn sync_anywhere_device(
                         .cloned()
                 };
                 if let Some(latest) = latest {
-                    if let Ok(envelope) = anywhere_downlink_envelope(
-                        &latest,
-                        "response",
-                        &message.request_id,
-                        &response,
-                        300,
-                    ) {
+                    if let Ok(envelope) =
+                        command_response_envelope(&latest, &message.request_id, &response)
+                    {
                         let staged = bridge
                             .relay_secrets
                             .lock()
                             .unwrap_or_else(|error| error.into_inner())
-                            .stage_downlink(&latest.device_id, envelope, None);
+                            .stage_command_response(
+                                &latest.device_id,
+                                &message.request_id,
+                                envelope,
+                            );
                         if staged.is_ok() {
                             let staged = {
                                 bridge
@@ -1106,6 +1140,25 @@ fn anywhere_downlink_envelope(
         &random_anywhere_hex::<12>(),
     )
     .map_err(|_| "Could not encrypt Anywhere downlink".to_string())
+}
+
+fn command_response_envelope(
+    secret: &crate::mobile_relay::RelayDeviceSecret,
+    request_id: &str,
+    response: &serde_json::Value,
+) -> Result<crate::anywhere_crypto::AnywhereEnvelope, String> {
+    anywhere_downlink_envelope(secret, "response", request_id, response, 86_400).or_else(|_| {
+        anywhere_downlink_envelope(
+            secret,
+            "response",
+            request_id,
+            &serde_json::json!({
+                "ok": false,
+                "error": "The remote result was too large to send safely"
+            }),
+            86_400,
+        )
+    })
 }
 
 fn select_mobile_url<'a>(
@@ -3162,6 +3215,7 @@ mod tests {
                 subscriber_token: "55".repeat(32),
                 key: "66".repeat(32),
                 last_sequence: 0,
+                pending_request_id: None,
             }),
             pending_downlink: None,
         };
@@ -3247,6 +3301,43 @@ mod tests {
             }),
         )
         .is_err());
+    }
+
+    #[test]
+    fn anywhere_command_response_remains_available_for_offline_phone() {
+        let secret = crate::mobile_relay::RelayDeviceSecret {
+            device_id: "device-phone".into(),
+            base_url: "https://relay.example.com".into(),
+            channel_id: "11".repeat(32),
+            wake_key: "22".repeat(32),
+            publisher_token: "33".repeat(32),
+            next_sequence: 1,
+            command: Some(crate::mobile_relay::RelayCommandSubscriberSecret {
+                channel_id: "44".repeat(32),
+                subscriber_token: "55".repeat(32),
+                key: "66".repeat(32),
+                last_sequence: 1,
+                pending_request_id: Some("77".repeat(16)),
+            }),
+            pending_downlink: None,
+        };
+        let now = chrono::Utc::now().timestamp();
+        let envelope = command_response_envelope(
+            &secret,
+            &"77".repeat(16),
+            &serde_json::json!({"ok": true, "data": {"status": "resolved"}}),
+        )
+        .unwrap();
+
+        assert!(crate::anywhere_crypto::decrypt_anywhere(
+            &secret.wake_key,
+            &secret.channel_id,
+            crate::anywhere_crypto::AnywhereDirection::Downlink,
+            &envelope,
+            now + 3_600,
+            0,
+        )
+        .is_ok());
     }
 
     #[test]

@@ -1,4 +1,6 @@
 {$HUMHUM_RELAY_DOMAIN} {
   encode zstd gzip
-  reverse_proxy relay:3005
+  reverse_proxy relay:3005 {
+    header_up X-Forwarded-For {remote_host}
+  }
 }

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { connect } from "node:net";
 import { afterEach, test } from "node:test";
 import { DatabaseSync } from "node:sqlite";
-import { createRateLimiter, createRelayServer } from "../src/server.mjs";
+import { createRateLimiter, createRelayServer, rateLimitIdentity } from "../src/server.mjs";
 
 const cleanups = [];
 const PUSH_TOKEN_KEY = "11".repeat(32);
@@ -477,4 +477,10 @@ test("rate limiter expires old unauthenticated buckets", () => {
   now = 3 * 60_000;
   assert.equal(limiter.allow("current"), true);
   assert.equal(limiter.size(), 1);
+});
+
+test("proxy rate identity is explicit and rejects spoofed lists", () => {
+  assert.equal(rateLimitIdentity("203.0.113.4", "172.18.0.2", true), "203.0.113.4");
+  assert.equal(rateLimitIdentity("1.1.1.1, 2.2.2.2", "172.18.0.2", true), "invalid-proxy");
+  assert.equal(rateLimitIdentity("203.0.113.4", "127.0.0.1", false), "127.0.0.1");
 });

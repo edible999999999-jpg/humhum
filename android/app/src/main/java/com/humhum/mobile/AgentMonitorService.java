@@ -253,9 +253,9 @@ public final class AgentMonitorService extends Service {
                     relay, after, 20, System.currentTimeMillis() / 1_000L);
             int attentionCount = 0;
             for (AnywhereEnvelopeCipher.Message message : messages) {
-                anywhereStateStore.advanceDownlink(relay, message.sequence());
                 if ("response".equals(message.kind())) {
                     anywhereStateStore.saveResponse(relay, message.requestId(), message.body());
+                    anywhereStateStore.advanceDownlink(relay, message.sequence());
                     continue;
                 }
                 if (!"snapshot".equals(message.kind())) continue;
@@ -265,6 +265,7 @@ public final class AgentMonitorService extends Service {
                 monitorStore.saveKnownDigests(result.knownDigests());
                 attentionCount += result.newCount();
                 lastCursor = page.cursor();
+                anywhereStateStore.advanceDownlink(relay, message.sequence());
             }
             ConnectionStore.Connection current = connectionStore(this).load();
             boolean sameChannel = current != null
