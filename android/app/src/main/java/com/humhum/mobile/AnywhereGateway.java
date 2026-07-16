@@ -108,21 +108,27 @@ public final class AnywhereGateway {
         }
         client.publish(relay, pending.envelope());
         String requestId = pending.requestId();
-        state.completePending(relay);
         for (int attempt = 0; attempt < RESPONSE_POLLS; attempt++) {
             JSONObject cached = state.takeResponse(relay, requestId);
-            if (cached != null) return responseData(cached);
+            if (cached != null) {
+                state.completePending(relay);
+                return responseData(cached);
+            }
             long after = state.downlinkSequence(relay);
             List<AnywhereEnvelopeCipher.Message> messages = client.poll(
                     relay, after, RESPONSE_WAIT_SECONDS, clock.getAsLong());
             for (AnywhereEnvelopeCipher.Message message : messages) {
-                state.advanceDownlink(relay, message.sequence());
-                if ("response".equals(message.kind())
-                        && requestId.equals(message.requestId())) {
-                    return responseData(message.body());
-                }
                 if ("response".equals(message.kind())) {
-                    state.saveResponse(relay, message.requestId(), message.body());
+                    state.saveResponseAndAdvance(
+                            relay, message.sequence(), message.requestId(), message.body());
+                    if (requestId.equals(message.requestId())) {
+                        JSONObject response = state.takeResponse(relay, requestId);
+                        if (response == null) throw new IOException("Remote response was not saved");
+                        state.completePending(relay);
+                        return responseData(response);
+                    }
+                } else {
+                    state.advanceDownlink(relay, message.sequence());
                 }
             }
         }

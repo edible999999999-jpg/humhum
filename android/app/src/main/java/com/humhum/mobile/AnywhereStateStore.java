@@ -16,6 +16,7 @@ public final class AnywhereStateStore {
     interface KeyValueStore {
         String get(String key);
         void put(String key, String value);
+        void putPair(String firstKey, String firstValue, String secondKey, String secondValue);
         void remove(String key);
         void clear();
     }
@@ -124,24 +125,49 @@ public final class AnywhereStateStore {
             Models.WakeRelayConfig relay, String requestId, JSONObject body) throws JSONException {
         synchronized (PROCESS_LOCK) {
             Models.WakeRelayConfig safe = requireV2(relay);
-            if (requestId == null || !requestId.matches("[a-f0-9]{32}") || body == null) {
-                throw new IllegalArgumentException("Anywhere response is invalid");
-            }
-            JSONArray responses = responseArray(safe.channelId());
-            JSONArray next = new JSONArray();
-            for (int index = Math.max(0, responses.length() - MAX_RESPONSES + 1);
-                    index < responses.length(); index++) {
-                JSONObject item = responses.optJSONObject(index);
-                if (item != null && !requestId.equals(item.optString("request_id"))) next.put(item);
-            }
-            next.put(new JSONObject()
-                    .put("request_id", requestId)
-                    .put("body", new JSONObject(body.toString())));
-            storage.put(RESPONSE, new JSONObject()
-                    .put("channel", safe.channelId())
-                    .put("responses", next)
-                    .toString());
+            storage.put(RESPONSE, responsePayload(safe, requestId, body));
         }
+    }
+
+    public synchronized void saveResponseAndAdvance(
+            Models.WakeRelayConfig relay,
+            long sequence,
+            String requestId,
+            JSONObject body) throws JSONException {
+        synchronized (PROCESS_LOCK) {
+            Models.WakeRelayConfig safe = requireV2(relay);
+            long previous = sequenceFor(DOWNLINK, safe.channelId());
+            if (sequence == previous) return;
+            if (sequence < previous) {
+                throw new IllegalStateException("Anywhere downlink moved backward");
+            }
+            storage.putPair(
+                    RESPONSE,
+                    responsePayload(safe, requestId, body),
+                    DOWNLINK,
+                    encodedSequence(safe.channelId(), sequence));
+        }
+    }
+
+    private String responsePayload(
+            Models.WakeRelayConfig safe, String requestId, JSONObject body) throws JSONException {
+        if (requestId == null || !requestId.matches("[a-f0-9]{32}") || body == null) {
+            throw new IllegalArgumentException("Anywhere response is invalid");
+        }
+        JSONArray responses = responseArray(safe.channelId());
+        JSONArray next = new JSONArray();
+        for (int index = Math.max(0, responses.length() - MAX_RESPONSES + 1);
+                index < responses.length(); index++) {
+            JSONObject item = responses.optJSONObject(index);
+            if (item != null && !requestId.equals(item.optString("request_id"))) next.put(item);
+        }
+        next.put(new JSONObject()
+                .put("request_id", requestId)
+                .put("body", new JSONObject(body.toString())));
+        return new JSONObject()
+                .put("channel", safe.channelId())
+                .put("responses", next)
+                .toString();
     }
 
     public synchronized JSONObject takeResponse(
@@ -243,6 +269,15 @@ public final class AnywhereStateStore {
         @Override public String get(String key) { return preferences.getString(key, null); }
         @Override public void put(String key, String value) {
             if (!preferences.edit().putString(key, value).commit()) {
+                throw new IllegalStateException("Could not persist Anywhere state");
+            }
+        }
+        @Override public void putPair(
+                String firstKey, String firstValue, String secondKey, String secondValue) {
+            if (!preferences.edit()
+                    .putString(firstKey, firstValue)
+                    .putString(secondKey, secondValue)
+                    .commit()) {
                 throw new IllegalStateException("Could not persist Anywhere state");
             }
         }

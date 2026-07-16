@@ -9,9 +9,9 @@ HUMHUM Android is a native private-network client for the desktop Mobile Bridge.
 - Play-compatible bundle: `build/releases/HUMHUM-Android-0.3.9.aab`
 - Package: `com.humhum.mobile`
 - Version: `0.3.9` (`versionCode 12`)
-- APK SHA-256: `e4b063aa5c3cf28f3b5386a6e7f291a962018cbe6dc75a199662e3dbd76dd6ca`
-- AAB SHA-256: `a4b5128bdad62b2dac96e12593e1b83226ca1c2ef209d93eb14fb6395a0c854e`
-- Xiaomi ZIP SHA-256: `b50a936324324131643b70a59409f557bc472cfd001b66b4229e49da29c2ef3c`
+- APK SHA-256: `b255df49b89b2cde083d4d4bdcf6881f1731baab6fcdde7f5d66e1e923e3757b`
+- AAB SHA-256: `b3dfb800457a5a22abfbf569ed2adaa4e67f1c27d2c92b38fae3bf84539f1ccb`
+- Xiaomi ZIP SHA-256: `a9aad5bf5c343636dd8d5732f6934f82eed7878c80cf0fb6c3a3c7a26361fac3`
 - Release certificate SHA-256: `C2:8C:FF:BE:03:98:B2:DB:58:DB:B7:14:DD:39:4F:06:36:CB:55:A6:90:EE:FE:6F:DA:20:2A:78:ED:4E:12:F8`
 
 The APK and AAB use HUMHUM's durable local release certificate. They are installable and update-compatible with later builds signed by the same key, but they have not been published to Xiaomi GetApps or Google Play.
@@ -49,7 +49,7 @@ After pairing, the app stores its token in app-private storage and verifies the 
 
 ## Read A Recent Agent Conversation
 
-On a live session backed by a supported local transcript, tap **查看最近对话**. HUMHUM reads only the final bounded portion of the user-owned transcript on the desktop and returns at most 12 chronological user/Agent messages. It omits reasoning, tool calls, tool results, attachments, identifiers, timestamps and usage metadata, replaces local paths with **[本机路径]**, and limits the raw response to 64 KiB.
+On a live session backed by a supported local transcript, tap **查看最近对话**. HUMHUM reads only the final bounded portion of the user-owned transcript on the desktop and returns at most 12 chronological user/Agent messages. It omits reasoning, tool calls, tool results, attachments, identifiers, timestamps and usage metadata, replaces local paths with **[本机路径]**, and limits the raw remote response to 40 KiB.
 
 Conversation text stays only in the current Android Activity. It is never written to the encrypted offline snapshot, notifications, push payloads or Android saved-state storage. While a conversation is expanded, Android task previews and screenshots are blocked with `FLAG_SECURE`. Collapsing hides the disclosure while retaining only Activity memory for a quick reopen; disconnecting, changing the pairing or destroying the Activity clears it. Offline snapshot cards never offer conversation, approval or follow-up controls.
 

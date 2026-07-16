@@ -78,6 +78,21 @@ public class AnywhereStateStoreTest {
         assertEquals(second.toString(), store.takeResponse(relay, "88".repeat(16)).toString());
     }
 
+    @Test
+    public void foregroundConsumerCommitsResponseAndSequenceTogether() throws Exception {
+        MemoryStore memory = new MemoryStore();
+        AnywhereStateStore store = new AnywhereStateStore(memory);
+        Models.WakeRelayConfig relay = relay();
+        JSONObject body = new JSONObject().put("ok", true).put(
+                "data", new JSONObject().put("status", "resolved"));
+
+        store.saveResponseAndAdvance(relay, 5, "77".repeat(16), body);
+
+        AnywhereStateStore restored = new AnywhereStateStore(memory);
+        assertEquals(5, restored.downlinkSequence(relay));
+        assertEquals(body.toString(), restored.takeResponse(relay, "77".repeat(16)).toString());
+    }
+
     private static Models.WakeRelayConfig relay() {
         return new Models.WakeRelayConfig(
                 "https://relay.example.com",
@@ -90,6 +105,11 @@ public class AnywhereStateStoreTest {
 
         @Override public String get(String key) { return values.get(key); }
         @Override public void put(String key, String value) { values.put(key, value); }
+        @Override public void putPair(
+                String firstKey, String firstValue, String secondKey, String secondValue) {
+            values.put(firstKey, firstValue);
+            values.put(secondKey, secondValue);
+        }
         @Override public void remove(String key) { values.remove(key); }
         @Override public void clear() { values.clear(); }
     }

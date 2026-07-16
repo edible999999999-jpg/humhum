@@ -952,7 +952,7 @@ async fn sync_anywhere_device(
     if let Some(request_id) = command.pending_request_id.clone() {
         let response = serde_json::json!({
             "ok": false,
-            "error": "The Mac restarted before this remote action completed"
+            "error": "The Mac restarted while recording this action's result. It may already have completed; check its state before retrying"
         });
         if let Ok(envelope) = command_response_envelope(&current, &request_id, &response) {
             let staged = bridge

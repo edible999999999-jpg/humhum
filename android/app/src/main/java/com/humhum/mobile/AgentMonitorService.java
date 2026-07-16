@@ -254,8 +254,8 @@ public final class AgentMonitorService extends Service {
             int attentionCount = 0;
             for (AnywhereEnvelopeCipher.Message message : messages) {
                 if ("response".equals(message.kind())) {
-                    anywhereStateStore.saveResponse(relay, message.requestId(), message.body());
-                    anywhereStateStore.advanceDownlink(relay, message.sequence());
+                    anywhereStateStore.saveResponseAndAdvance(
+                            relay, message.sequence(), message.requestId(), message.body());
                     continue;
                 }
                 if (!"snapshot".equals(message.kind())) continue;
