@@ -226,6 +226,15 @@ impl AppConfig {
         }
 
         if path.exists() {
+            if std::fs::symlink_metadata(&path)
+                .is_ok_and(|metadata| metadata.file_type().is_symlink())
+            {
+                log::warn!("Refusing to read a symbolic-link HUMHUM config");
+                return Self::default();
+            }
+            if let Err(error) = crate::local_api_auth::protect_owner_only(&path) {
+                log::warn!("Failed to protect config before reading it: {error}");
+            }
             match std::fs::read_to_string(&path) {
                 Ok(content) => match serde_json::from_str::<AppConfig>(&content) {
                     Ok(mut config) => {
@@ -266,8 +275,8 @@ impl AppConfig {
         }
         let content = serde_json::to_string_pretty(self)
             .map_err(|e| format!("Failed to serialize: {}", e))?;
-        std::fs::write(&path, content).map_err(|e| format!("Failed to write config: {}", e))?;
-        Ok(())
+        crate::local_api_auth::write_private_file_atomically(&path, content.as_bytes())
+            .map_err(|e| format!("Failed to atomically write private config: {}", e))
     }
 }
 

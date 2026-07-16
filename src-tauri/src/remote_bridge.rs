@@ -1,5 +1,7 @@
 use serde::Serialize;
 use sha2::{Digest, Sha256};
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::RwLock;
 use tokio::io::AsyncWriteExt;
@@ -159,7 +161,8 @@ impl RemoteBridgeState {
         );
         bootstrap_remote(&target, DEFAULT_REMOTE_PORT, &token).await?;
 
-        let mut command = Command::new("/usr/bin/ssh");
+        let ssh = ssh_executable()?;
+        let mut command = ssh_command(&ssh);
         command
             .args(reverse_tunnel_args(
                 &target,
@@ -170,9 +173,9 @@ impl RemoteBridgeState {
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
-        let mut child = command
-            .spawn()
-            .map_err(|error| format!("Could not start SSH tunnel: {error}"))?;
+        let mut child = command.spawn().map_err(|error| {
+            format!("Could not start SSH tunnel with {}: {error}", ssh.display())
+        })?;
         tokio::time::sleep(std::time::Duration::from_millis(700)).await;
         if let Some(exit) = child
             .try_wait()
@@ -254,7 +257,8 @@ async fn run_remote_write(
     remote_command: &str,
     input: &[u8],
 ) -> Result<(), String> {
-    let mut command = Command::new("/usr/bin/ssh");
+    let ssh = ssh_executable()?;
+    let mut command = ssh_command(&ssh);
     command
         .args(ssh_connection_args(target))
         .arg(remote_command)
@@ -262,9 +266,12 @@ async fn run_remote_write(
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    let mut child = command
-        .spawn()
-        .map_err(|error| format!("Could not start SSH bootstrap: {error}"))?;
+    let mut child = command.spawn().map_err(|error| {
+        format!(
+            "Could not start SSH bootstrap with {}: {error}",
+            ssh.display()
+        )
+    })?;
     child
         .stdin
         .take()
@@ -298,6 +305,93 @@ fn ssh_connection_args(target: &SshTarget) -> Vec<String> {
         "StrictHostKeyChecking=yes".into(),
         target.as_str().into(),
     ]
+}
+
+fn ssh_command(program: &Path) -> Command {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let mut command = Command::new(program);
+        command.as_std_mut().creation_flags(CREATE_NO_WINDOW);
+        command
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Command::new(program)
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn ssh_executable() -> Result<PathBuf, String> {
+    let system_root = std::env::var_os("SystemRoot")
+        .or_else(|| std::env::var_os("WINDIR"))
+        .map(PathBuf::from);
+    let candidates =
+        windows_ssh_candidates(system_root.as_deref(), std::env::var_os("PATH").as_deref());
+    first_existing_executable(&candidates).ok_or_else(|| {
+        let searched = candidates
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "Windows OpenSSH client was not found. Install the Windows OpenSSH Client optional feature. Searched: {searched}"
+        )
+    })
+}
+
+#[cfg(not(target_os = "windows"))]
+fn ssh_executable() -> Result<PathBuf, String> {
+    let system_ssh = PathBuf::from("/usr/bin/ssh");
+    if system_ssh.is_file() {
+        return Ok(system_ssh);
+    }
+    let candidates = path_ssh_candidates(std::env::var_os("PATH").as_deref(), &["ssh"]);
+    first_existing_executable(&candidates)
+        .ok_or_else(|| "OpenSSH client was not found at /usr/bin/ssh or on PATH".to_string())
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn windows_ssh_candidates(system_root: Option<&Path>, path: Option<&OsStr>) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(root) = system_root {
+        push_unique_path(
+            &mut candidates,
+            root.join("System32").join("OpenSSH").join("ssh.exe"),
+        );
+        // A 32-bit process reaches the native System32 directory through Sysnative.
+        push_unique_path(
+            &mut candidates,
+            root.join("Sysnative").join("OpenSSH").join("ssh.exe"),
+        );
+    }
+    for candidate in path_ssh_candidates(path, &["ssh.exe", "ssh"]) {
+        push_unique_path(&mut candidates, candidate);
+    }
+    candidates
+}
+
+fn path_ssh_candidates(path: Option<&OsStr>, names: &[&str]) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(path) = path {
+        for directory in std::env::split_paths(path) {
+            for name in names {
+                push_unique_path(&mut candidates, directory.join(name));
+            }
+        }
+    }
+    candidates
+}
+
+fn first_existing_executable(candidates: &[PathBuf]) -> Option<PathBuf> {
+    candidates.iter().find(|path| path.is_file()).cloned()
+}
+
+fn push_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
+    if !paths.contains(&path) {
+        paths.push(path);
+    }
 }
 
 fn remote_claude_installer(remote_port: u16, target: &str) -> String {
@@ -368,6 +462,42 @@ mod tests {
             .windows(2)
             .any(|pair| pair == ["-o", "StrictHostKeyChecking=yes"]));
         assert!(!args.join(" ").contains("0.0.0.0"));
+    }
+
+    #[test]
+    fn windows_ssh_candidates_prefer_system_openssh_then_path() {
+        let system_root = PathBuf::from("C:/Windows");
+        let path =
+            std::env::join_paths([PathBuf::from("/tools"), PathBuf::from("/secondary")]).unwrap();
+
+        let candidates = windows_ssh_candidates(Some(&system_root), Some(&path));
+
+        assert_eq!(
+            candidates.first(),
+            Some(&PathBuf::from("C:/Windows/System32/OpenSSH/ssh.exe"))
+        );
+        assert!(candidates.contains(&PathBuf::from("/tools/ssh.exe")));
+        assert!(candidates.contains(&PathBuf::from("/tools/ssh")));
+        assert_eq!(
+            candidates
+                .iter()
+                .filter(|path| path.ends_with("ssh.exe"))
+                .count(),
+            4
+        );
+    }
+
+    #[test]
+    fn executable_resolution_reports_only_existing_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let missing = temp.path().join("missing-ssh.exe");
+        let existing = temp.path().join("ssh.exe");
+        std::fs::write(&existing, b"fixture").unwrap();
+
+        assert_eq!(
+            first_existing_executable(&[missing, existing.clone()]),
+            Some(existing)
+        );
     }
 
     #[test]

@@ -1,0 +1,98 @@
+<style>
+  .role-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:18px; margin-top:24px; }
+  .role-preview { min-width:0; }
+  .phone { position:relative; width:100%; max-width:244px; aspect-ratio:9/18.9; margin:0 auto; overflow:hidden; border:6px solid #263241; border-radius:30px; background:radial-gradient(circle at 12% 4%,rgba(218,241,255,.95),transparent 34%),radial-gradient(circle at 92% 12%,rgba(241,229,255,.9),transparent 38%),linear-gradient(165deg,#fffaf7,#f4fbff 54%,#f6f1ff); color:#263241; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+  .notch { width:62px; height:15px; margin:0 auto 3px; border-radius:0 0 12px 12px; background:#263241; }
+  .screen { padding:8px 12px 58px; }
+  .head { display:flex; align-items:center; justify-content:space-between; gap:7px; margin-bottom:14px; }
+  .brand { font-size:13px; font-weight:850; }
+  .online { display:flex; align-items:center; gap:4px; color:#708198; font-size:8px; }
+  .online:before { content:""; width:5px; height:5px; border-radius:50%; background:#42c98b; }
+  .role-tag { margin:0 0 4px; color:#8d7ddf; font-size:8px; font-weight:850; }
+  h3.page-title { margin:0; font-size:18px; line-height:1.18; font-weight:780; letter-spacing:0; }
+  .lead { margin:6px 0 12px; color:#65768d; font-size:8.5px; line-height:1.48; }
+  .section-head { display:flex; justify-content:space-between; margin:13px 0 6px; font-size:9px; font-weight:850; }
+  .section-head span { color:#8d7ddf; font-weight:700; }
+  .card { padding:10px; border:1px solid rgba(116,143,165,.14); border-radius:8px; background:rgba(255,255,255,.72); margin-bottom:7px; }
+  .card-row { display:flex; align-items:center; justify-content:space-between; gap:6px; }
+  .card strong { display:block; min-width:0; font-size:9px; }
+  .card p { margin:4px 0 0; color:#68798e; font-size:8px; line-height:1.42; }
+  .source { display:inline-flex; align-items:center; gap:4px; flex:none; padding:2px 5px; border-radius:999px; font-size:7px; font-weight:850; }
+  .hype { color:#6d6ade; background:#f0ecff; }
+  .hush { color:#2b8295; background:#eaf7ff; }
+  .hexa { color:#2d8a65; background:#e8f8f1; }
+  .humi { color:#a05b39; background:#fff0e7; }
+  .attention { border-left:3px solid #f0a466; }
+  .primary { width:100%; padding:8px; border:1px solid rgba(141,125,223,.22); border-radius:8px; color:#625bb3; background:linear-gradient(135deg,#f0ecff,#eaf7ff); font-size:8px; font-weight:850; }
+  .bottom-nav { position:absolute; left:0; right:0; bottom:0; height:50px; display:flex; align-items:center; justify-content:space-around; border-top:1px solid rgba(116,143,165,.14); background:rgba(255,255,255,.9); }
+  .nav { display:grid; place-items:center; gap:2px; color:#98a5b5; font-size:7px; }
+  .icon { width:21px; height:21px; display:grid; place-items:center; border-radius:7px; background:#f5f7fa; font-size:8px; font-weight:850; }
+  .nav.active { color:#6d6ade; font-weight:850; }
+  .nav.active .icon { background:linear-gradient(135deg,#f0ecff,#eaf7ff); color:#6d6ade; }
+  .role-copy { margin:10px auto 0; max-width:244px; }
+  .role-copy strong { font-size:13px; }
+  .role-copy p { margin:4px 0 0; color:#64748b; font-size:11px; line-height:1.45; }
+  .decision { margin-top:24px; padding:16px 18px; border:1px solid #d9d2f5; border-radius:12px; background:linear-gradient(135deg,#faf8ff,#f4fbff); cursor:pointer; }
+  .decision.selected { border:2px solid #8477d4; box-shadow:0 14px 34px rgba(108,99,180,.14); }
+  .decision h3 { margin:0 0 5px; font-size:16px; }
+  .decision p { margin:0; color:#64748b; font-size:13px; }
+  @media(max-width:1100px){.role-grid{grid-template-columns:repeat(2,minmax(0,1fr));}.phone{width:244px;}}
+  @media(max-width:620px){.role-grid{grid-template-columns:1fr;}}
+</style>
+
+<h2>四个角色，一套移动体验</h2>
+<p class="subtitle">Humi 负责把其他角色的发现翻译成“今天与你有关的事”，Hype、Hush、Hexa 各自拥有清晰页面。</p>
+
+<div class="role-grid">
+  <div class="role-preview">
+    <div class="phone"><div class="notch"></div><div class="screen">
+      <div class="head"><div class="brand">HUMHUM</div><div class="online">Mac 已连接</div></div>
+      <p class="role-tag">HUMI · 今天</p><h3 class="page-title">我替你留意了<br>这三件事。</h3><p class="lead">不用看数据，我先告诉你今天真正值得处理什么。</p>
+      <div class="card"><div class="card-row"><strong>最近反复在做 Android 发布</strong><span class="source hype">Hype</span></div><p>可以沉淀成一套固定发布流程。</p></div>
+      <div class="card"><div class="card-row"><strong>微信有一位朋友联系你</strong><span class="source hush">Hush</span></div><p>系统通知没有预览，等你决定是否查看。</p></div>
+      <div class="card attention"><div class="card-row"><strong>Codex 等待一次确认</strong><span class="source hexa">Hexa</span></div><p>HUMHUM Android 想执行发布检查。</p></div>
+    </div><div class="bottom-nav"><div class="nav active"><div class="icon">H</div>Humi</div><div class="nav"><div class="icon">Y</div>Hype</div><div class="nav"><div class="icon">S</div>Hush</div><div class="nav"><div class="icon">X</div>Hexa</div></div></div>
+    <div class="role-copy"><strong>Humi · 总入口</strong><p>先解释“最近在干嘛”，再给一个小而有用的下一步。</p></div>
+  </div>
+
+  <div class="role-preview">
+    <div class="phone"><div class="notch"></div><div class="screen">
+      <div class="head"><div class="brand">HUMHUM</div><div class="online">知识已同步</div></div>
+      <p class="role-tag">HYPE · 个人知识</p><h3 class="page-title">你的工作方式<br>正在成形。</h3><p class="lead">不是展示文件，而是告诉你哪些经验值得留下。</p>
+      <div class="section-head">最近学到 <span>本周</span></div>
+      <div class="card"><strong>你偏好直接执行，少做重复确认</strong><p>来自最近 8 个 Agent 会话，可保存为长期偏好。</p></div>
+      <div class="card"><strong>Android 发布流程出现 4 次</strong><p>建议整理为“构建、验证、签名、Release”工作流。</p></div>
+      <button class="primary">保存为我的记忆</button>
+      <div class="section-head">仍缺少 <span>1 项</span></div><div class="card"><strong>小米真机验证</strong><p>APK 已生成，但还没有设备安装证据。</p></div>
+    </div><div class="bottom-nav"><div class="nav"><div class="icon">H</div>Humi</div><div class="nav active"><div class="icon">Y</div>Hype</div><div class="nav"><div class="icon">S</div>Hush</div><div class="nav"><div class="icon">X</div>Hexa</div></div></div>
+    <div class="role-copy"><strong>Hype · 个人知识</strong><p>呈现技能、偏好、记忆建议和知识缺口，而不是文件列表。</p></div>
+  </div>
+
+  <div class="role-preview">
+    <div class="phone"><div class="notch"></div><div class="screen">
+      <div class="head"><div class="brand">HUMHUM</div><div class="online">只读模式</div></div>
+      <p class="role-tag">HUSH · 消息</p><h3 class="page-title">两个人值得<br>你留意。</h3><p class="lead">从你的角度整理关系与待回复，不会替你偷偷发送。</p>
+      <div class="section-head">朋友 <span>1 条</span></div><div class="card"><div class="card-row"><strong>WeChat</strong><span class="source hush">17:14</span></div><p>你收到了一条消息，系统通知没有联系人或内容预览。</p></div>
+      <div class="section-head">工作 <span>稍后</span></div><div class="card"><strong>没有需要立即处理的消息</strong><p>其余通知已经安静归档。</p></div>
+      <button class="primary">查看消息来源</button>
+    </div><div class="bottom-nav"><div class="nav"><div class="icon">H</div>Humi</div><div class="nav"><div class="icon">Y</div>Hype</div><div class="nav active"><div class="icon">S</div>Hush</div><div class="nav"><div class="icon">X</div>Hexa</div></div></div>
+    <div class="role-copy"><strong>Hush · 消息关系</strong><p>按朋友、工作、家庭组织，并始终把隐私和用户决定放在前面。</p></div>
+  </div>
+
+  <div class="role-preview">
+    <div class="phone"><div class="notch"></div><div class="screen">
+      <div class="head"><div class="brand">HUMHUM</div><div class="online">3 个 Agent 在线</div></div>
+      <p class="role-tag">HEXA · AGENT 监工</p><h3 class="page-title">电脑离开后，<br>我替你看着。</h3><p class="lead">只把需要决定、可能卡住和刚完成的工作带到手机。</p>
+      <div class="card attention"><div class="card-row"><strong>需要一次确认</strong><span class="source hexa">Codex</span></div><p>执行 Android 发布前检查。</p></div><button class="primary">查看并决定</button>
+      <div class="section-head">最近在做什么 <span>3 个会话</span></div>
+      <div class="card"><div class="card-row"><strong>统一 Android 界面</strong><span class="source hexa">进行中</span></div><p>正在对齐四角色体验和桌面视觉。</p></div>
+      <div class="card"><div class="card-row"><strong>发布 v0.3.4</strong><span class="source hype">完成</span></div><p>macOS 与 Android 已并列发布。</p></div>
+    </div><div class="bottom-nav"><div class="nav"><div class="icon">H</div>Humi</div><div class="nav"><div class="icon">Y</div>Hype</div><div class="nav"><div class="icon">S</div>Hush</div><div class="nav active"><div class="icon">X</div>Hexa</div></div></div>
+    <div class="role-copy"><strong>Hexa · Agent 监工</strong><p>集中展示进展、确认、近期会话和后续指令，不再堆技术统计。</p></div>
+  </div>
+</div>
+
+<div class="decision" data-choice="approve-four-role-system" onclick="toggleSelect(this)">
+  <h3>采用这套四角色移动结构</h3>
+  <p>保留现有安全配对和控制能力，首轮实现四角色导航、Humi 总览，以及完整 Hexa 会话与控制；Hype、Hush 使用真实本机已有数据逐步填充。</p>
+</div>

@@ -328,14 +328,14 @@ public final class MainActivity extends Activity {
         switch (selectedRole) {
             case HUMI -> renderHumiRole(accent, soft);
             case HYPE -> renderCapabilityRole(
-                    "你的知识仍安静地留在 Mac 上",
+                    "你的知识仍安静地留在电脑上",
                     "这台手机还没有获得个人知识摘要权限。Hype 不会把本地记忆、技能文件或路径偷偷同步过来。",
                     "等桌面端提供经过解释的只读摘要后，这里会显示值得保存的偏好、工作流和知识缺口。",
                     accent,
                     soft);
             case HUSH -> renderCapabilityRole(
                     "消息内容没有同步到手机",
-                    "Hush 仍在 Mac 上按朋友、工作和家庭整理通知；没有明确授权时，手机只会说明能力边界。",
+                    "Hush 仍在电脑上按朋友、工作和家庭整理通知；没有明确授权时，手机只会说明能力边界。",
                     "未来的移动摘要会继续保持只读，并由你主动决定是否查看具体消息。",
                     accent,
                     soft);
@@ -583,7 +583,7 @@ public final class MainActivity extends Activity {
         IntentIntegrator integrator = new IntentIntegrator(this);
         integrator.setCaptureActivity(QrCaptureActivity.class);
         integrator.setDesiredBarcodeFormats(IntentIntegrator.QR_CODE);
-        integrator.setPrompt("扫描 Mac 上 Hexa 的配对二维码");
+        integrator.setPrompt("扫描电脑上 Hexa 的配对二维码");
         integrator.setBeepEnabled(false);
         integrator.setBarcodeImageEnabled(false);
         integrator.initiateScan();
@@ -690,7 +690,7 @@ public final class MainActivity extends Activity {
                     try {
                         current.disconnect();
                     } catch (Exception error) {
-                        warning = "本机连接已清除；Mac 未确认撤销，请在 Hexa 中撤销旧设备。";
+                        warning = "本机连接已清除；桌面端未确认撤销，请在 Hexa 中撤销旧设备。";
                     }
                     SessionSnapshotGenerationGate.runExclusiveTransition(() -> {
                         clearSnapshotSafely();
@@ -739,7 +739,7 @@ public final class MainActivity extends Activity {
             return;
         }
         setMonitorSwitch(true);
-        monitorStatusText.setText("正在监控这台 Mac");
+        monitorStatusText.setText("正在监控这台电脑");
         AgentMonitorService.start(this);
     }
 
@@ -748,7 +748,7 @@ public final class MainActivity extends Activity {
             monitorStore.setEnabled(true);
             AgentMonitorService.start(this);
             setMonitorSwitch(true);
-            monitorStatusText.setText("正在监控这台 Mac");
+            monitorStatusText.setText("正在监控这台电脑");
         } catch (RuntimeException error) {
             monitorStore.clear();
             setMonitorSwitch(false);
@@ -891,7 +891,7 @@ public final class MainActivity extends Activity {
                     refreshInFlight = false;
                     refreshButton.setEnabled(true);
                     if (snapshot == null) {
-                        statusText.setText("Mac 离线");
+                        statusText.setText("电脑离线");
                         renderUnavailableSessions();
                         return;
                     }
@@ -1677,7 +1677,7 @@ public final class MainActivity extends Activity {
 
     private static String safeError(Throwable error) {
         String message = error.getMessage();
-        if (message == null || message.isBlank()) return "操作失败，请检查 Mac 是否在线";
+        if (message == null || message.isBlank()) return "操作失败，请检查电脑是否在线";
         return message.length() <= 120 ? message : message.substring(0, 120);
     }
 }

@@ -770,7 +770,7 @@ function DingTalkSourcePanel({
         </>
       ) : (
         <div style={{ padding: 12, borderRadius: 12, background: "rgba(255,255,255,0.018)", color: "rgba(255,255,255,0.36)", fontSize: 11, lineHeight: 1.5 }}>
-          DingTalk is not connected by opening the app. Click scan to find Ali Ding local storage candidates on this Mac.
+          DingTalk is not connected by opening the app. Click scan to find Ali Ding local storage candidates on this computer.
         </div>
       )}
 
@@ -785,7 +785,7 @@ function DingTalkSourcePanel({
           <input
             value={importPath}
             onChange={(event) => onImportPathChange(event.target.value)}
-            placeholder="~/Library/.../DingTalk export.jsonl"
+            placeholder="Choose a DingTalk export file or folder"
             style={{
               flex: 1,
               minWidth: 0,
@@ -857,7 +857,7 @@ function LiveInboxPanel({
             Live message inbox
           </div>
           <div style={{ marginTop: 2, fontSize: 10, color: "rgba(255,255,255,0.38)" }}>
-            POST real messages to <span style={{ color: "#94eff4" }}>http://127.0.0.1:31275/hush/inbox</span>
+            Authenticated local endpoint: <span style={{ color: "#94eff4" }}>http://127.0.0.1:31275/hush/inbox</span>
           </div>
         </div>
         <button className="kawaii-tab" onClick={onRefresh} style={{ fontSize: 10, padding: "5px 9px" }}>
@@ -879,7 +879,7 @@ function LiveInboxPanel({
         <div style={{ padding: 14, borderRadius: 12, background: "rgba(255,255,255,0.018)", color: "rgba(255,255,255,0.34)", fontSize: 11, lineHeight: 1.55 }}>
           No live messages yet. Try:
           <div style={{ marginTop: 6, fontFamily: "monospace", color: "rgba(255,255,255,0.5)" }}>
-            curl -X POST http://127.0.0.1:31275/hush/inbox -H 'content-type: application/json' -d '&#123;"platform":"dingtalk","sender":"PM","chat":"Project A","text":"需求文档已更新，今天需要确认"&#125;'
+            curl -X POST http://127.0.0.1:31275/hush/inbox -H 'X-HumHum-Token: &lt;token&gt;' -H 'content-type: application/json' -d '&#123;"platform":"dingtalk","sender":"PM","chat":"Project A","text":"需求文档已更新，今天需要确认"&#125;'
           </div>
         </div>
       ) : (

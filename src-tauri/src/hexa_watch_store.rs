@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -565,40 +564,15 @@ impl HexaWatchStore {
         };
         let contents = serde_json::to_vec_pretty(&snapshot)
             .map_err(|error| format!("Could not serialize Hexa watch store: {error}"))?;
-        let temporary_path =
-            storage_path.with_extension(format!("json.tmp-{}", uuid::Uuid::new_v4()));
-        let write_result = (|| -> Result<(), String> {
-            let mut temporary_file = fs::File::create(&temporary_path).map_err(|error| {
+        crate::local_api_auth::write_private_file_atomically(storage_path, &contents).map_err(
+            |error| {
                 format!(
-                    "Could not create temporary Hexa watch store {}: {error}",
-                    temporary_path.display()
-                )
-            })?;
-            temporary_file.write_all(&contents).map_err(|error| {
-                format!(
-                    "Could not write temporary Hexa watch store {}: {error}",
-                    temporary_path.display()
-                )
-            })?;
-            temporary_file.sync_all().map_err(|error| {
-                format!(
-                    "Could not sync temporary Hexa watch store {}: {error}",
-                    temporary_path.display()
-                )
-            })?;
-            fs::rename(&temporary_path, storage_path).map_err(|error| {
-                format!(
-                    "Could not replace Hexa watch store {}: {error}",
+                    "Could not write Hexa watch store {}: {error}",
                     storage_path.display()
                 )
-            })?;
-            sync_parent_directory(parent)?;
-            Ok(())
-        })();
-        if write_result.is_err() {
-            let _ = fs::remove_file(&temporary_path);
-        }
-        write_result
+            },
+        )?;
+        sync_parent_directory(parent)
     }
 }
 
@@ -844,9 +818,39 @@ fn visit_work_item<'a>(
 }
 
 fn read_agents(storage_path: &Path) -> Result<HashMap<String, HexaWatchedAgent>, String> {
+    match fs::symlink_metadata(storage_path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            return Err(format!(
+                "Hexa watch store cannot be a symbolic link: {}",
+                storage_path.display()
+            ));
+        }
+        Ok(metadata) if !metadata.file_type().is_file() => {
+            return Err(format!(
+                "Could not read Hexa watch store {}: path is not a regular file",
+                storage_path.display()
+            ));
+        }
+        Ok(_) => crate::local_api_auth::protect_owner_only(storage_path).map_err(|error| {
+            format!(
+                "Could not protect Hexa watch store {}: {error}",
+                storage_path.display()
+            )
+        })?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(HashMap::new());
+        }
+        Err(error) => {
+            return Err(format!(
+                "Could not inspect Hexa watch store {}: {error}",
+                storage_path.display()
+            ));
+        }
+    }
+
     match fs::read_to_string(storage_path) {
         Ok(contents) => match serde_json::from_str::<HexaWatchStoreSnapshot>(&contents) {
-            Ok(snapshot) => Ok(snapshot.agents),
+            Ok(snapshot) => Ok(normalize_agent_keys(snapshot.agents)),
             Err(error) => {
                 log::warn!(
                     "Could not parse Hexa watch store {}; starting with an empty durable store: {error}",
@@ -855,7 +859,6 @@ fn read_agents(storage_path: &Path) -> Result<HashMap<String, HexaWatchedAgent>,
                 Ok(HashMap::new())
             }
         },
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(HashMap::new()),
         Err(error) => Err(format!(
             "Could not read Hexa watch store {}: {error}",
             storage_path.display()
@@ -864,8 +867,76 @@ fn read_agents(storage_path: &Path) -> Result<HashMap<String, HexaWatchedAgent>,
 }
 
 fn agent_key(provider: &str, workspace: Option<&str>) -> String {
-    serde_json::to_string(&(provider, workspace.unwrap_or_default()))
+    serde_json::to_string(&(provider, normalize_workspace_key(workspace)))
         .expect("agent key components are serializable")
+}
+
+fn normalize_workspace_key(workspace: Option<&str>) -> String {
+    let workspace = workspace.unwrap_or_default().trim();
+    let bytes = workspace.as_bytes();
+    let windows_path = (bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':')
+        || workspace.starts_with("\\\\")
+        || workspace.starts_with("//");
+    if !windows_path {
+        return workspace.to_string();
+    }
+
+    let unc = workspace.starts_with("\\\\") || workspace.starts_with("//");
+    let mut normalized = String::with_capacity(workspace.len());
+    for character in workspace.chars() {
+        let character = if character == '\\' { '/' } else { character };
+        if character != '/' || !normalized.ends_with('/') {
+            normalized.push(character);
+        }
+    }
+    if unc && normalized.starts_with('/') && !normalized.starts_with("//") {
+        normalized.insert(0, '/');
+    }
+    while normalized.ends_with('/')
+        && !normalized.ends_with(":/")
+        && normalized.len() > usize::from(unc) * 2
+    {
+        normalized.pop();
+    }
+    normalized.make_ascii_lowercase();
+    normalized
+}
+
+fn normalize_agent_keys(
+    agents: HashMap<String, HexaWatchedAgent>,
+) -> HashMap<String, HexaWatchedAgent> {
+    let mut normalized_agents: HashMap<String, HexaWatchedAgent> = HashMap::new();
+    for (_, mut agent) in agents {
+        let key = agent_key(&agent.provider, agent.workspace.as_deref());
+        agent.key = key.clone();
+        let Some(existing) = normalized_agents.get_mut(&key) else {
+            normalized_agents.insert(key, agent);
+            continue;
+        };
+
+        for run in agent.runs {
+            if let Some(index) = existing
+                .runs
+                .iter()
+                .position(|current| current.session_id == run.session_id)
+            {
+                if run.updated_at > existing.runs[index].updated_at {
+                    existing.runs[index] = run;
+                }
+            } else {
+                existing.runs.push(run);
+            }
+        }
+        if agent.updated_at > existing.updated_at {
+            existing.name = agent.name;
+            existing.workspace = agent.workspace;
+            existing.updated_at = agent.updated_at;
+        }
+        if agent.created_at < existing.created_at {
+            existing.created_at = agent.created_at;
+        }
+    }
+    normalized_agents
 }
 
 #[cfg(unix)]
@@ -922,6 +993,39 @@ mod tests {
         assert_eq!(agents[0].provider, "openai");
         assert_eq!(agents[0].workspace.as_deref(), Some("/workspace/humhum"));
         assert_eq!(agents[0].name, "Codex");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn persisted_store_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        let mut store = HexaWatchStore::load_or_create(directory.path()).unwrap();
+        store.register(register_request()).unwrap();
+
+        let mode = fs::metadata(directory.path().join("hexa-watch.json"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_symbolic_link_store() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir().unwrap();
+        let target = directory.path().join("outside.json");
+        fs::write(&target, r#"{"agents":{}}"#).unwrap();
+        symlink(&target, directory.path().join("hexa-watch.json")).unwrap();
+
+        let error = HexaWatchStore::load_or_create(directory.path()).unwrap_err();
+
+        assert!(error.contains("cannot be a symbolic link"));
+        assert_eq!(fs::read_to_string(target).unwrap(), r#"{"agents":{}}"#);
     }
 
     #[test]
@@ -1013,6 +1117,31 @@ mod tests {
         assert_eq!(agents[0].workspace.as_deref(), Some("/workspace/review"));
         assert_eq!(agents[0].name, "Claude review");
         assert_eq!(agents[0].runs[0].session_id, "run-1");
+    }
+
+    #[test]
+    fn windows_workspace_variants_reuse_one_agent_identity() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut store = HexaWatchStore::load_or_create(directory.path()).unwrap();
+        store
+            .register(HexaWatchRegisterRequest {
+                workspace: Some(r"C:\Users\Alice\Repo\".to_string()),
+                ..register_request()
+            })
+            .unwrap();
+        store
+            .register(HexaWatchRegisterRequest {
+                session_id: Some("run-2".to_string()),
+                workspace: Some("c:/users/alice/repo".to_string()),
+                ..register_request()
+            })
+            .unwrap();
+
+        let agents = store.agents();
+
+        assert_eq!(agents.len(), 1);
+        assert_eq!(agents[0].runs.len(), 2);
+        assert_eq!(agents[0].key, r#"["openai","c:/users/alice/repo"]"#);
     }
 
     #[test]

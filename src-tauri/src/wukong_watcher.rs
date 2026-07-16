@@ -1,6 +1,6 @@
 use crate::event_bus::{self, HookEvent};
 use crate::session_store::SessionStore;
-use std::process::Command;
+use rusqlite::{params, Connection, OpenFlags};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -24,19 +24,31 @@ fn get_db_path() -> Option<std::path::PathBuf> {
 }
 
 fn run_watcher(app_handle: tauri::AppHandle) {
-    let db_path = match get_db_path() {
-        Some(p) => p,
-        None => {
-            log::warn!("[Wukong] r2c database not found at ~/.r2c/logs/session-capture.db");
-            return;
-        }
-    };
-
-    let mut last_tool_ts = latest_tool_timestamp(&db_path).unwrap_or_default();
+    let mut last_tool_ts = String::new();
     let mut last_session_id = String::new();
+    let mut logged_missing = false;
+    let mut initialized = false;
 
     loop {
-        std::thread::sleep(Duration::from_secs(POLL_INTERVAL_SECS));
+        let Some(db_path) = get_db_path() else {
+            if !logged_missing {
+                log::info!("[Wukong] Waiting for ~/.r2c/logs/session-capture.db");
+                logged_missing = true;
+            }
+            std::thread::sleep(Duration::from_secs(POLL_INTERVAL_SECS));
+            continue;
+        };
+        if logged_missing {
+            log::info!("[Wukong] r2c database is now available");
+            logged_missing = false;
+        }
+
+        if !initialized {
+            last_tool_ts = latest_tool_timestamp(&db_path).unwrap_or_default();
+            initialized = true;
+            std::thread::sleep(Duration::from_secs(POLL_INTERVAL_SECS));
+            continue;
+        }
 
         // Query new tool calls since last check
         if let Some(events) = query_new_tool_calls(&db_path, &last_tool_ts) {
@@ -79,6 +91,8 @@ fn run_watcher(app_handle: tauri::AppHandle) {
                 }
             }
         }
+
+        std::thread::sleep(Duration::from_secs(POLL_INTERVAL_SECS));
     }
 }
 
@@ -93,51 +107,55 @@ fn query_new_tool_calls(
     db_path: &std::path::Path,
     since: &str,
 ) -> Option<Vec<(String, String, String, String)>> {
-    let query = if since.is_empty() {
-        "SELECT gmt_create, tool_name, session_id, status FROM session_tool_call WHERE client_type='wukong' ORDER BY gmt_create DESC LIMIT 1".to_string()
+    let connection = Connection::open_with_flags(
+        db_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .ok()?;
+    let _ = connection.busy_timeout(Duration::from_millis(250));
+    let rows = if since.is_empty() {
+        let mut statement = connection
+            .prepare(
+                "SELECT gmt_create, tool_name, session_id, status \
+                 FROM session_tool_call \
+                 WHERE client_type = 'wukong' \
+                 ORDER BY gmt_create DESC LIMIT 1",
+            )
+            .ok()?;
+        let mapped = statement
+            .query_map([], map_tool_call_row)
+            .ok()?
+            .filter_map(Result::ok)
+            .collect::<Vec<_>>();
+        mapped
     } else {
-        format!(
-            "SELECT gmt_create, tool_name, session_id, status FROM session_tool_call WHERE client_type='wukong' AND gmt_create > '{}' ORDER BY gmt_create ASC LIMIT 50",
-            since.replace('\'', "")
-        )
+        let mut statement = connection
+            .prepare(
+                "SELECT gmt_create, tool_name, session_id, status \
+                 FROM session_tool_call \
+                 WHERE client_type = 'wukong' AND gmt_create > ?1 \
+                 ORDER BY gmt_create ASC LIMIT 50",
+            )
+            .ok()?;
+        let mapped = statement
+            .query_map(params![since], map_tool_call_row)
+            .ok()?
+            .filter_map(Result::ok)
+            .collect::<Vec<_>>();
+        mapped
     };
 
-    let output = Command::new("sqlite3")
-        .arg("-separator")
-        .arg("|")
-        .arg(db_path)
-        .arg(&query)
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let results: Vec<(String, String, String, String)> = stdout
-        .lines()
-        .filter(|l| !l.is_empty())
-        .filter_map(|line| {
-            let parts: Vec<&str> = line.splitn(4, '|').collect();
-            if parts.len() >= 4 {
-                Some((
-                    parts[0].to_string(),
-                    parts[1].to_string(),
-                    parts[2].to_string(),
-                    parts[3].to_string(),
-                ))
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    if results.is_empty() {
+    if rows.is_empty() {
         None
     } else {
-        Some(results)
+        Some(rows)
     }
+}
+
+fn map_tool_call_row(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<(String, String, String, String)> {
+    Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
 }
 
 fn update_session(app_handle: &tauri::AppHandle, event: &HookEvent) {

@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::VecDeque;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 const MAX_OBSIDIAN_NOTES: usize = 2000;
@@ -114,6 +115,27 @@ pub struct KnowledgeStore {
     vault_dir: PathBuf,
 }
 
+fn read_private_text(path: &Path) -> Option<String> {
+    let metadata = std::fs::symlink_metadata(path).ok()?;
+    if metadata.file_type().is_symlink() {
+        log::warn!(
+            "Refusing to read symbolic-link HUMHUM private data: {}",
+            path.display()
+        );
+        return None;
+    }
+    if !metadata.is_file() {
+        return None;
+    }
+    if let Err(error) = crate::local_api_auth::protect_owner_only(path) {
+        log::warn!(
+            "Failed to protect HUMHUM private data before reading {}: {error}",
+            path.display()
+        );
+    }
+    std::fs::read_to_string(path).ok()
+}
+
 impl KnowledgeStore {
     pub fn new() -> Self {
         let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
@@ -135,9 +157,9 @@ impl KnowledgeStore {
     }
 
     fn load_from_file(path: &PathBuf) -> KnowledgeData {
-        match std::fs::read_to_string(path) {
-            Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
-            Err(_) => KnowledgeData::default(),
+        match read_private_text(path) {
+            Some(contents) => serde_json::from_str(&contents).unwrap_or_default(),
+            None => KnowledgeData::default(),
         }
     }
 
@@ -178,7 +200,7 @@ impl KnowledgeStore {
         let files = collect_markdown_files(&dir, MAX_OBSIDIAN_NOTES).unwrap_or_default();
         let mut prefs = Vec::new();
         for path in files {
-            if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Some(content) = read_private_text(&path) {
                 if let Some(pref) = preference_from_markdown(&path, &content) {
                     prefs.push(pref);
                 }
@@ -193,7 +215,7 @@ impl KnowledgeStore {
         let files = collect_markdown_files(&dir, MAX_OBSIDIAN_NOTES).unwrap_or_default();
         let mut items = Vec::new();
         for path in files {
-            if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Some(content) = read_private_text(&path) {
                 if let Some(item) = memory_from_markdown(&path, &content) {
                     items.push(item);
                 }
@@ -214,7 +236,11 @@ impl KnowledgeStore {
         let path = self
             .preferences_dir()
             .join(format!("{}.md", slugify(&pref.id)));
-        atomic_write(&path, &contents);
+        if let Err(error) =
+            crate::local_api_auth::write_private_file_atomically(&path, contents.as_bytes())
+        {
+            log::warn!("Failed to write private HUMHUM preference: {error}");
+        }
     }
 
     fn write_memory_file(&self, item: &MemoryItem) {
@@ -228,12 +254,21 @@ impl KnowledgeStore {
         );
         let contents = serialize_note(&frontmatter, &item.content);
         let path = self.memory_dir().join(format!("{}.md", slugify(&item.id)));
-        atomic_write(&path, &contents);
+        if let Err(error) =
+            crate::local_api_auth::write_private_file_atomically(&path, contents.as_bytes())
+        {
+            log::warn!("Failed to write private HUMHUM memory: {error}");
+        }
     }
 
     fn save(&self) {
         if let Ok(json) = serde_json::to_string_pretty(&self.data) {
-            atomic_write(&self.file_path, &json);
+            if let Err(error) = crate::local_api_auth::write_private_file_atomically(
+                &self.file_path,
+                json.as_bytes(),
+            ) {
+                log::warn!("Failed to write private HUMHUM knowledge store: {error}");
+            }
         }
     }
 
@@ -403,12 +438,7 @@ impl KnowledgeStore {
             ("codex", "AGENTS.md", "AGENTS.md"),
         ];
 
-        let search_dirs = vec![
-            home.join("Desktop"),
-            home.join("Documents"),
-            home.join("Projects"),
-            home.clone(),
-        ];
+        let search_dirs = agent_rule_search_dirs(&home, dirs::desktop_dir(), dirs::document_dir());
 
         for dir in &search_dirs {
             for (agent_id, filename, rule_type) in &scan_paths {
@@ -560,6 +590,147 @@ impl KnowledgeStore {
     }
 }
 
+pub(crate) fn replace_file_atomically(source: &Path, destination: &Path) -> std::io::Result<()> {
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::fs::rename(source, destination)
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::iter::once;
+        use std::os::windows::ffi::OsStrExt;
+        use std::ptr::{null, null_mut};
+
+        const MOVEFILE_REPLACE_EXISTING: u32 = 0x1;
+        const MOVEFILE_WRITE_THROUGH: u32 = 0x8;
+
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn ReplaceFileW(
+                replaced_file_name: *const u16,
+                replacement_file_name: *const u16,
+                backup_file_name: *const u16,
+                replace_flags: u32,
+                exclude: *mut std::ffi::c_void,
+                reserved: *mut std::ffi::c_void,
+            ) -> i32;
+            fn MoveFileExW(
+                existing_file_name: *const u16,
+                new_file_name: *const u16,
+                flags: u32,
+            ) -> i32;
+        }
+
+        let source_wide: Vec<u16> = source.as_os_str().encode_wide().chain(once(0)).collect();
+        let destination_wide: Vec<u16> = destination
+            .as_os_str()
+            .encode_wide()
+            .chain(once(0))
+            .collect();
+
+        // ReplaceFileW provides true replacement semantics when the destination exists.
+        // MoveFileExW also handles a destination that disappeared (or did not exist yet)
+        // without introducing a delete-then-rename data-loss window.
+        unsafe {
+            if destination.exists()
+                && ReplaceFileW(
+                    destination_wide.as_ptr(),
+                    source_wide.as_ptr(),
+                    null(),
+                    0,
+                    null_mut(),
+                    null_mut(),
+                ) != 0
+            {
+                return Ok(());
+            }
+
+            if MoveFileExW(
+                source_wide.as_ptr(),
+                destination_wide.as_ptr(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+            ) != 0
+            {
+                Ok(())
+            } else {
+                Err(std::io::Error::last_os_error())
+            }
+        }
+    }
+}
+
+/// Persist a complete file without exposing readers to a partially-written
+/// destination. The temporary file lives beside the destination so Windows'
+/// ReplaceFileW/MoveFileExW replacement remains on the same volume.
+pub(crate) fn write_file_atomically(destination: &Path, contents: &[u8]) -> std::io::Result<()> {
+    write_file_atomically_with(destination, contents, |_| Ok(()))
+}
+
+/// Variant used by private stores that must finish applying permissions to the
+/// temporary file before its contents become visible at the destination.
+pub(crate) fn write_file_atomically_with(
+    destination: &Path,
+    contents: &[u8],
+    before_replace: impl FnOnce(&Path) -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    if let Some(parent) = destination.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let mut temporary_name = destination.as_os_str().to_os_string();
+    temporary_name.push(format!(".{}.tmp", uuid::Uuid::new_v4().simple()));
+    let temporary = PathBuf::from(temporary_name);
+
+    let result = (|| {
+        let mut options = std::fs::OpenOptions::new();
+        options.create_new(true).write(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&temporary)?;
+        // Private callers apply the destination ACL while this file is still
+        // empty, before any token, message, or key bytes can become visible.
+        before_replace(&temporary)?;
+        file.write_all(contents)?;
+        file.sync_all()?;
+        #[cfg(unix)]
+        if let Ok(metadata) = destination.metadata() {
+            file.set_permissions(metadata.permissions())?;
+        }
+        drop(file);
+        replace_file_atomically(&temporary, destination)
+    })();
+
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    result
+}
+
+fn agent_rule_search_dirs(
+    home: &Path,
+    desktop_dir: Option<PathBuf>,
+    document_dir: Option<PathBuf>,
+) -> Vec<PathBuf> {
+    let candidates = [
+        desktop_dir.unwrap_or_else(|| home.join("Desktop")),
+        document_dir.unwrap_or_else(|| home.join("Documents")),
+        home.join("Projects"),
+        home.to_path_buf(),
+    ];
+
+    let mut search_dirs = Vec::new();
+    for path in candidates {
+        if !search_dirs.iter().any(|existing| existing == &path) {
+            search_dirs.push(path);
+        }
+    }
+    search_dirs
+}
+
 fn resolve_agent_asset_roots(roots: Option<Vec<String>>) -> Result<Vec<PathBuf>, String> {
     let home = dirs::home_dir().ok_or_else(|| "Cannot determine home directory".to_string())?;
     let raw_roots = roots.unwrap_or_else(default_agent_asset_root_strings);
@@ -586,15 +757,18 @@ fn default_agent_asset_root_strings() -> Vec<String> {
         "~/.claude".to_string(),
         "~/.agents/skills".to_string(),
         "~/.qoder".to_string(),
-        "~/Desktop/my_station/devpod-ai-companion".to_string(),
-        "~/Documents/数据工作台".to_string(),
+        "~/.qoderwork".to_string(),
+        "~/.gemini".to_string(),
+        "~/.qwen".to_string(),
+        "~/.kimi".to_string(),
+        "~/.pi".to_string(),
     ]
 }
 
 fn expand_home(path: &str, home: &Path) -> PathBuf {
     if path == "~" {
         home.to_path_buf()
-    } else if let Some(rest) = path.strip_prefix("~/") {
+    } else if let Some(rest) = path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\")) {
         home.join(rest)
     } else {
         PathBuf::from(path)
@@ -637,13 +811,17 @@ fn collect_agent_asset_files(root: &Path, limit: usize) -> Result<Vec<PathBuf>, 
     Ok(files)
 }
 
+fn normalized_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/").to_lowercase()
+}
+
 fn agent_asset_file_priority(path: &Path) -> u8 {
     let filename = path
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("")
         .to_lowercase();
-    let lower = path.to_string_lossy().to_lowercase();
+    let lower = normalized_path(path);
 
     if filename == "skill.md" {
         0
@@ -659,7 +837,7 @@ fn agent_asset_file_priority(path: &Path) -> u8 {
 }
 
 fn is_agent_asset_dir(path: &Path) -> bool {
-    let lower = path.to_string_lossy().to_lowercase();
+    let lower = normalized_path(path);
     [
         ".codex", ".claude", ".agents", ".qoder", ".pi", "agent", "agents", "skill", "skills",
         "soul", "memory", "memories", "rules", "hooks",
@@ -669,14 +847,14 @@ fn is_agent_asset_dir(path: &Path) -> bool {
 }
 
 fn is_trusted_agent_asset_root(path: &Path) -> bool {
-    let lower = path.to_string_lossy().to_lowercase();
+    let lower = normalized_path(path);
     [".codex", ".claude", ".agents", ".qoder", ".pi"]
         .iter()
         .any(|needle| lower.ends_with(needle) || lower.contains(&format!("{}/", needle)))
 }
 
 fn is_agent_asset_file(path: &Path) -> bool {
-    let lower = path.to_string_lossy().to_lowercase();
+    let lower = normalized_path(path);
     let filename = path
         .file_name()
         .and_then(|name| name.to_str())
@@ -713,8 +891,8 @@ fn parse_agent_asset(root: &Path, path: &Path, content: &str) -> AgentAsset {
         .strip_prefix(root)
         .unwrap_or(path)
         .to_string_lossy()
-        .to_string();
-    let lower = path.to_string_lossy().to_lowercase();
+        .replace('\\', "/");
+    let lower = normalized_path(path);
     let filename = path
         .file_name()
         .and_then(|name| name.to_str())
@@ -818,8 +996,7 @@ fn truncate_content(content: &str, limit: usize) -> String {
     if content.len() <= limit {
         content.to_string()
     } else {
-        let end = content.floor_char_boundary(limit);
-        let mut truncated = content[..end].to_string();
+        let mut truncated = crate::user_safe_text::utf8_prefix(content, limit).to_string();
         truncated.push_str("\n...(truncated)");
         truncated
     }
@@ -828,7 +1005,7 @@ fn truncate_content(content: &str, limit: usize) -> String {
 fn normalize_vault_path(path: &str) -> Result<String, String> {
     let expanded = if path == "~" {
         dirs::home_dir().ok_or_else(|| "Cannot determine home directory".to_string())?
-    } else if let Some(stripped) = path.strip_prefix("~/") {
+    } else if let Some(stripped) = path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\")) {
         dirs::home_dir()
             .ok_or_else(|| "Cannot determine home directory".to_string())?
             .join(stripped)
@@ -904,7 +1081,7 @@ fn parse_obsidian_note(root: &Path, path: &Path, content: &str) -> ObsidianNote 
         .strip_prefix(root)
         .unwrap_or(path)
         .to_string_lossy()
-        .to_string();
+        .replace('\\', "/");
     let (frontmatter, body) = parse_frontmatter(content);
     let mut tags = collect_frontmatter_tags(&frontmatter);
     tags.extend(collect_inline_tags(body));
@@ -1159,7 +1336,7 @@ fn classify_note(relative_path: &str, tags: &[String], frontmatter: &Map<String,
         .find_map(|key| frontmatter.get(*key).and_then(Value::as_str))
         .map(|value| value.to_lowercase());
 
-    let path = relative_path.to_lowercase();
+    let path = relative_path.replace('\\', "/").to_lowercase();
     let candidates = [
         "preference",
         "memory",
@@ -1257,18 +1434,6 @@ fn build_excerpt(content: &str, limit: usize) -> String {
         excerpt.push_str("...");
     }
     excerpt
-}
-
-/// Atomic write via a sibling `.tmp` file + rename. Silently no-ops on IO
-/// errors, matching the store's previous best-effort persistence behavior.
-fn atomic_write(path: &Path, contents: &str) {
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let tmp = path.with_extension("tmp");
-    if std::fs::write(&tmp, contents).is_ok() {
-        let _ = std::fs::rename(&tmp, path);
-    }
 }
 
 /// Turn an id into a filesystem-safe filename stem. Keeps ASCII alphanumerics,
@@ -1567,5 +1732,97 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    fn temp_test_dir(name: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "humhum-knowledge-{}-{}",
+            name,
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    #[test]
+    fn atomic_replace_overwrites_existing_destination() {
+        let root = temp_test_dir("replace-existing");
+        let source = root.join("knowledge.tmp");
+        let destination = root.join("knowledge.json");
+        std::fs::write(&source, "new content").unwrap();
+        std::fs::write(&destination, "old content").unwrap();
+
+        replace_file_atomically(&source, &destination).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(&destination).unwrap(),
+            "new content"
+        );
+        assert!(!source.exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn atomic_replace_creates_missing_destination() {
+        let root = temp_test_dir("replace-missing");
+        let source = root.join("knowledge.tmp");
+        let destination = root.join("knowledge.json");
+        std::fs::write(&source, "new content").unwrap();
+
+        replace_file_atomically(&source, &destination).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(&destination).unwrap(),
+            "new content"
+        );
+        assert!(!source.exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn atomic_write_replaces_complete_contents_and_cleans_temporary_file() {
+        let root = temp_test_dir("write-complete");
+        let destination = root.join("knowledge.json");
+        std::fs::write(&destination, "old content").unwrap();
+
+        write_file_atomically(&destination, b"complete new content").unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(&destination).unwrap(),
+            "complete new content"
+        );
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn agent_rule_search_dirs_use_redirected_folders_and_deduplicate() {
+        let home = PathBuf::from("test-home");
+        let redirected = home.join("OneDrive").join("Workspace");
+
+        let search_dirs =
+            agent_rule_search_dirs(&home, Some(redirected.clone()), Some(redirected.clone()));
+
+        assert_eq!(
+            search_dirs,
+            vec![redirected, home.join("Projects"), home.clone()]
+        );
+        assert!(!search_dirs.contains(&home.join("Desktop")));
+        assert!(!search_dirs.contains(&home.join("Documents")));
+    }
+
+    #[test]
+    fn agent_rule_search_dirs_fall_back_to_home_folders() {
+        let home = PathBuf::from("test-home");
+
+        assert_eq!(
+            agent_rule_search_dirs(&home, None, None),
+            vec![
+                home.join("Desktop"),
+                home.join("Documents"),
+                home.join("Projects"),
+                home,
+            ]
+        );
     }
 }

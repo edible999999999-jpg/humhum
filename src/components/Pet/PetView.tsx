@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { currentMonitor, getCurrentWindow } from "@tauri-apps/api/window";
 import { LogicalSize, PhysicalPosition } from "@tauri-apps/api/dpi";
 import { invoke } from "@tauri-apps/api/core";
 import { Bubble } from "./Bubble";
@@ -26,6 +26,7 @@ import { activeClientTypesFromSessions, isPetPresenceEvent } from "./agentPresen
 import { nativeNotificationKind, shouldSendNativeNotification } from "../../lib/notification-policy";
 import { t } from "../../lib/i18n";
 import { setLanguage } from "../../lib/i18n";
+import { getPathBasename } from "../../lib/path-display";
 import type { PipelineState } from "../../lib/pipeline";
 import type { AppConfig, HookEvent, VoiceCommand, TranscriptEntry } from "../../types";
 
@@ -152,14 +153,6 @@ export function PetView() {
     else if (command === "reject") handleKeyboardConfirm("deny");
   };
 
-  const handleDismiss = useCallback(() => {
-    setPermissionQueue((q) => q.slice(1));
-    if (queueLength <= 1) {
-      stopListening();
-      setPetState("idle");
-    }
-  }, [queueLength, stopListening, setPetState]);
-
   // --- Dynamic window sizing ---
   const currentWindowHeight = useRef(COMPACT_HEIGHT);
   const requestedWindowHeight = useRef(COMPACT_HEIGHT);
@@ -195,11 +188,17 @@ export function PetView() {
               const pos = await appWindow.outerPosition();
               const sf = (await appWindow.scaleFactor()) || 1;
               const dy = Math.round((height - prevH) * sf);
+              const monitor = await currentMonitor();
+              const workAreaTop =
+                monitor?.workArea.position.y ?? Number.NEGATIVE_INFINITY;
 
               await appWindow.setSize(new LogicalSize(280, height));
               currentWindowHeight.current = height;
               await appWindow.setPosition(
-                new PhysicalPosition(pos.x, Math.max(0, pos.y - dy)),
+                new PhysicalPosition(
+                  pos.x,
+                  Math.max(workAreaTop, pos.y - dy),
+                ),
               );
             },
             height > COMPACT_HEIGHT,
@@ -357,7 +356,7 @@ export function PetView() {
         (toolName === "Write" || toolName === "Edit" || toolName === "Read") &&
         toolInput.file_path
       ) {
-        detail = `\n${t("petview.file")}: ${(toolInput.file_path as string).split("/").pop()}`;
+        detail = `\n${t("petview.file")}: ${getPathBasename(toolInput.file_path as string)}`;
       }
 
       if (
@@ -578,7 +577,6 @@ export function PetView() {
           <ConfirmToast
             event={pendingPermission}
             onConfirm={handleConfirm}
-            onDismiss={handleDismiss}
           />
           {queueLength > 1 && (
             <div className="text-center mt-1.5 text-[10px] pointer-events-auto" style={{ color: "#64748b" }}>
@@ -625,22 +623,6 @@ export function PetView() {
 
 async function respondToPermission(eventId: string, behavior: string) {
   console.log("[PetView] Sending permission response:", eventId, behavior);
-
-  // Try direct HTTP to hook server first (bypasses Tauri IPC)
-  try {
-    const res = await fetch("http://localhost:31275/respond", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ event_id: eventId, behavior }),
-    });
-    const data = await res.json();
-    console.log("[PetView] HTTP respond result:", data);
-    if (res.ok) return;
-  } catch (e) {
-    console.warn("[PetView] HTTP respond failed, falling back to IPC:", e);
-  }
-
-  // Fallback to Tauri IPC
   try {
     await invoke("respond_to_permission", { eventId, behavior });
     console.log("[PetView] IPC respond succeeded");

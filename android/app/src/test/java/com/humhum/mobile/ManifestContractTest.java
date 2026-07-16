@@ -261,7 +261,7 @@ public class ManifestContractTest {
         Document layout = factory.newDocumentBuilder()
                 .parse(Path.of("src/main/res/layout/activity_main.xml").toFile());
         Element scanButton = elementById(layout, "scanSetupButton");
-        assertEquals("扫描 Mac 配对二维码", scanButton.getAttributeNS(ANDROID, "text"));
+        assertEquals("扫描电脑配对二维码", scanButton.getAttributeNS(ANDROID, "text"));
 
         String source = new String(Files.readAllBytes(
                 Path.of("src/main/java/com/humhum/mobile/MainActivity.java")),
@@ -718,7 +718,7 @@ public class ManifestContractTest {
                 "isCurrentConnection(current, currentConnection)",
                 "readSnapshotSafely(currentConnection, nowMillis)",
                 "postRefreshIfCurrent(refreshGeneration, current, currentConnection");
-        assertTrue(refresh.contains("statusText.setText(\"Mac 离线\")"));
+        assertTrue(refresh.contains("statusText.setText(\"电脑离线\")"));
         assertFalse(refresh.contains("statusText.setText(safeError(error))"));
         assertTrue(refresh.contains("postStaleRefreshReset("));
         assertFalse(refresh.contains("postIfCurrent("));

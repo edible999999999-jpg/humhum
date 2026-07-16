@@ -143,9 +143,11 @@ described as revoking controller devices already enrolled with the provider.
 
 - The hook server listens on `127.0.0.1` only (localhost)
 - The Codex bridge uses a local child process and stdio; it opens no network listener
+- Every hook-server route except `/health` requires valid authentication: local clients use `~/.humhum/local-api-token`, while `/event` may also use the separate ingress token for an active SSH remote bridge
+- API responses do not allow wildcard browser CORS, preventing arbitrary web pages from reading local knowledge or injecting events
 - API keys are stored locally in `~/.humhum/config.json`
 - No data is sent to external services except the TTS/STT/LLM APIs the user configures
-- The Tauri capability system restricts filesystem access to specific directories
+- Frontend windows receive only the capabilities needed for window, tray, notification, and file-dialog UI; filesystem and process access is mediated by narrow Rust commands
 
 ## macOS Awake Mode
 

@@ -82,7 +82,7 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="连接这台 Mac"
+                        android:text="连接这台电脑"
                         android:textColor="@color/ink"
                         android:textSize="20sp"
                         android:textStyle="bold" />
@@ -104,7 +104,7 @@
                 android:minHeight="48dp"
                 android:layout_marginTop="14dp"
                 android:backgroundTint="@color/primary"
-                android:text="扫描 Mac 配对二维码"
+                android:text="扫描电脑配对二维码"
                 android:textAllCaps="false"
                 android:textColor="@color/surface"
                 android:textStyle="bold" />

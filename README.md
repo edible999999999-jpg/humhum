@@ -8,7 +8,9 @@
 [中文文档](./README.zh-CN.md)
 
 <p align="center">
-  <a href="https://github.com/edible999999999-jpg/humhum/releases/download/v0.3.11/HumHum_0.3.11_aarch64.dmg"><strong>Download for macOS</strong></a>
+  <a href="https://github.com/edible999999999-jpg/humhum/releases/latest/download/HumHum_0.3.12_aarch64.dmg"><strong>Download for macOS</strong></a>
+  ·
+  <a href="https://github.com/edible999999999-jpg/humhum/releases/latest/download/HumHum_0.3.12_x64-setup.exe"><strong>Download Windows Preview</strong></a>
   ·
   <a href="https://github.com/edible999999999-jpg/humhum/releases/download/v0.3.10/HUMHUM-Android-0.3.8-Xiaomi.zip"><strong>Download for Android / Xiaomi</strong></a>
   ·
@@ -17,7 +19,9 @@
   <a href="https://github.com/edible999999999-jpg/humhum/releases">Latest Release</a>
 </p>
 
-<p align="center"><em>Available for macOS Apple Silicon and Android 8.0+. Windows and Linux are on the roadmap.</em></p>
+<p align="center"><em>Available for macOS Apple Silicon, Windows 10/11 x64 preview, and Android 8.0+. Linux remains on the roadmap.</em></p>
+
+Windows contributors can use the [Windows development, build, and installation guide](./docs/windows-development.md). The preview installer is unsigned, so Microsoft SmartScreen may require an explicit confirmation. Windows code signing is still required before a formal public release.
 
 ---
 
@@ -77,10 +81,12 @@ HUMHUM already ships part of its desktop-pet form (the first version was built a
 
 ### Prerequisites
 
-- [Node.js](https://nodejs.org/) 18+
-- [Rust](https://rustup.rs/) 1.70+
+- [Node.js](https://nodejs.org/) 22.19+
+- [Rust](https://rustup.rs/) 1.89+
 - Python 3 + `edge-tts` (optional, for free voice broadcast)
 - System deps for Tauri: see [Tauri Prerequisites](https://v2.tauri.app/start/prerequisites/)
+
+On Windows, install Visual Studio 2022 Build Tools with the C++ desktop workload and a Windows SDK. See the [Windows guide](./docs/windows-development.md) for the complete setup.
 
 ### Install & Run
 
@@ -92,7 +98,7 @@ git clone https://github.com/edible999999999-jpg/humhum.git
 cd humhum
 
 # 2. Install dependencies
-npm install
+npm ci
 
 # 3. Dev mode (compiles Rust + starts Vite)
 npm run tauri dev
@@ -107,6 +113,13 @@ python3 scripts/edge-tts-bridge.py &
 ```bash
 npm run tauri build
 # Output in src-tauri/target/release/bundle/
+```
+
+On Windows, build only the NSIS installer with:
+
+```powershell
+npm run tauri build -- --bundles nsis
+# Output: src-tauri\target\release\bundle\nsis\*.exe
 ```
 
 ### Open the Hub and connect your Agents
@@ -128,7 +141,9 @@ Anywhere requires a deployed HTTPS relay and an invite code configured in Hexa. 
 HUMHUM is local-first — the data on your own machine is its advantage. All durable data is persisted under `~/.humhum/`:
 
 - `config.json` — app configuration (Pi URL/token/model, hook port, TTS/STT, language)
-- `knowledge.json` — Hype's knowledge base (preferences, rules, assets, Obsidian index)
+- `local-api-token` — per-install secret used to authenticate the local HTTP API; do not share it
+- `knowledge.json` — Hype's rules, Agent assets, and Obsidian index
+- `vault/preferences/*.md` and `vault/memory/*.md` — Hype's preference and memory source of truth; back up the whole `vault/` directory
 - `stats.json` — token and cost statistics
 - `hush-inbox.json` — Hush's local message inbox (up to 500 messages)
 - `local-agent-memory.md` — Humi's local Agent memory
@@ -173,7 +188,7 @@ scripts/                # Edge TTS bridge, etc.
 - [ ] Rich Hush history bridges for user-approved chat exports
 - [ ] Smart permission policies (learning your approval habits)
 - [ ] More Agent integrations and an open hook-protocol standard
-- [ ] Full Windows / Linux support
+- [ ] Signed Windows release and full Linux support
 
 ## Contributing
 

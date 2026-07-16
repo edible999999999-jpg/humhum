@@ -1478,7 +1478,14 @@ option {
   letter-spacing: 0;
 }
 
-.hub-close {
+.hub-window-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.hub-window-control {
   width: 24px;
   height: 24px;
   border-radius: 50%;
@@ -1491,6 +1498,17 @@ option {
   align-items: center;
   justify-content: center;
   transition: all 0.2s;
+}
+
+.hub-window-control:focus-visible {
+  outline: 2px solid rgba(139, 125, 223, 0.45);
+  outline-offset: 2px;
+}
+
+.hub-minimize:hover {
+  background: rgba(139, 125, 223, 0.08);
+  border-color: rgba(139, 125, 223, 0.2);
+  color: #8d7ddf;
 }
 
 .hub-close:hover {

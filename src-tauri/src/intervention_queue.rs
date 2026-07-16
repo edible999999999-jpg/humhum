@@ -47,6 +47,12 @@ impl InterventionQueue {
             .map_err(|error| format!("Could not create HUMHUM directory: {error}"))?;
         let path = humhum_dir.join("intervention-queue.json");
         let mut entries = if path.exists() {
+            if std::fs::symlink_metadata(&path)
+                .is_ok_and(|metadata| metadata.file_type().is_symlink())
+            {
+                return Err("Intervention queue cannot be a symbolic link".into());
+            }
+            set_owner_only(&path)?;
             let content = std::fs::read_to_string(&path)
                 .map_err(|error| format!("Could not read intervention queue: {error}"))?;
             if content.trim().is_empty() {
@@ -139,7 +145,10 @@ impl InterventionQueue {
             provider,
         };
         self.entries.push(entry.clone());
-        self.persist()?;
+        if let Err(error) = self.persist() {
+            self.entries.pop();
+            return Err(error);
+        }
         Ok(entry)
     }
 
@@ -155,6 +164,7 @@ impl InterventionQueue {
         if !self.is_next_for_thread(id)? {
             return Err("An earlier intervention for this thread must be delivered first".into());
         }
+        let previous = self.entries[index].clone();
         let entry = self
             .entries
             .get_mut(index)
@@ -163,19 +173,28 @@ impl InterventionQueue {
         entry.attempts = entry.attempts.saturating_add(1);
         entry.last_error = None;
         let updated = entry.clone();
-        self.persist()?;
+        if let Err(error) = self.persist() {
+            self.entries[index] = previous;
+            return Err(error);
+        }
         Ok(updated)
     }
 
     pub fn mark_failed(&mut self, id: &str, error: &str) -> Result<(), String> {
-        let entry = self
+        let index = self
             .entries
-            .iter_mut()
-            .find(|entry| entry.id == id)
+            .iter()
+            .position(|entry| entry.id == id)
             .ok_or_else(|| format!("Queued intervention not found: {id}"))?;
+        let previous = self.entries[index].clone();
+        let entry = &mut self.entries[index];
         entry.status = InterventionStatus::Failed;
         entry.last_error = Some(error.chars().take(500).collect());
-        self.persist()
+        if let Err(error) = self.persist() {
+            self.entries[index] = previous;
+            return Err(error);
+        }
+        Ok(())
     }
 
     pub fn mark_delivered(&mut self, id: &str) -> Result<(), String> {
@@ -184,9 +203,13 @@ impl InterventionQueue {
             .iter()
             .position(|entry| entry.id == id)
             .ok_or_else(|| format!("Queued intervention not found: {id}"))?;
+        let previous = self.entries[index].clone();
         self.entries[index].status = InterventionStatus::Delivered;
         self.entries[index].last_error = None;
-        self.persist()?;
+        if let Err(error) = self.persist() {
+            self.entries[index] = previous;
+            return Err(error);
+        }
         self.entries.remove(index);
         // The durable delivered marker is the duplicate-send boundary. If compacting
         // the file fails, startup cleanup will remove that marker safely later.
@@ -197,28 +220,14 @@ impl InterventionQueue {
     fn persist(&self) -> Result<(), String> {
         let content = serde_json::to_vec_pretty(&self.entries)
             .map_err(|error| format!("Could not serialize intervention queue: {error}"))?;
-        let temp_path = self.path.with_extension("json.tmp");
-        std::fs::write(&temp_path, content)
-            .map_err(|error| format!("Could not write intervention queue: {error}"))?;
-        set_owner_only(&temp_path)?;
-        std::fs::rename(&temp_path, &self.path)
-            .map_err(|error| format!("Could not replace intervention queue: {error}"))?;
-        set_owner_only(&self.path)
+        crate::local_api_auth::write_private_file_atomically(&self.path, &content)
+            .map_err(|error| format!("Could not replace intervention queue: {error}"))
     }
 }
 
-fn set_owner_only(path: &Path) -> Result<(), String> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut permissions = std::fs::metadata(path)
-            .map_err(|error| format!("Could not inspect intervention queue: {error}"))?
-            .permissions();
-        permissions.set_mode(0o600);
-        std::fs::set_permissions(path, permissions)
-            .map_err(|error| format!("Could not protect intervention queue: {error}"))?;
-    }
-    Ok(())
+fn set_owner_only(_path: &Path) -> Result<(), String> {
+    crate::local_api_auth::protect_owner_only(_path)
+        .map_err(|error| format!("Could not protect intervention queue: {error}"))
 }
 
 #[cfg(test)]
@@ -296,6 +305,24 @@ mod tests {
             .mark_sending(&first.id)
             .unwrap_err()
             .contains("already sending"));
+    }
+
+    #[test]
+    fn failed_persistence_rolls_back_queue_memory() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut queue = InterventionQueue::load_or_create(temp.path()).unwrap();
+        let first = queue.enqueue("thread-1", "first").unwrap();
+        let blocker = temp.path().join("not-a-directory");
+        std::fs::write(&blocker, b"block child creation").unwrap();
+        queue.path = blocker.join("intervention-queue.json");
+
+        assert!(queue.mark_sending(&first.id).is_err());
+        assert!(queue.enqueue("thread-2", "second").is_err());
+
+        let entries = queue.entries();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].status, InterventionStatus::Pending);
+        assert_eq!(entries[0].attempts, 0);
     }
 
     #[test]

@@ -4,9 +4,17 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
+const IS_WINDOWS = process.platform === 'win32';
+
 function run(command, args) {
   try {
-    return childProcess.execFileSync(command, args, { encoding: 'utf8' }).trim();
+    return childProcess.execFileSync(command, args, {
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 2000,
+      maxBuffer: 2 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
   } catch {
     return '';
   }
@@ -18,15 +26,28 @@ function normalizeTty(value) {
 }
 
 function normalizePath(value) {
-  const normalized = String(value || '').trim().replace(/\/+$/, '');
-  return normalized || '/';
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  let normalized = path.normalize(raw);
+  if (IS_WINDOWS && normalized.startsWith('\\\\?\\UNC\\')) {
+    normalized = '\\\\' + normalized.slice(8);
+  } else if (IS_WINDOWS && normalized.startsWith('\\\\?\\')) {
+    normalized = normalized.slice(4);
+  }
+  const root = path.parse(normalized).root;
+  while (normalized.length > root.length && /[\\/]$/.test(normalized)) {
+    normalized = normalized.slice(0, -1);
+  }
+  return IS_WINDOWS ? normalized.toLocaleLowerCase('en-US') : normalized;
 }
 
 function readTty(pid) {
+  if (IS_WINDOWS) return null;
   return normalizeTty(run('/bin/ps', ['-p', String(pid), '-o', 'tty=']));
 }
 
 function readCwd(pid) {
+  if (IS_WINDOWS) return null;
   const lines = run('/usr/sbin/lsof', ['-a', '-d', 'cwd', '-p', String(pid), '-Fn']).split(/\r?\n/);
   const marker = lines.indexOf('fcwd');
   return marker >= 0 && lines[marker + 1]?.startsWith('n')
@@ -34,13 +55,56 @@ function readCwd(pid) {
     : null;
 }
 
-function processTree() {
+function unixProcessTree() {
   const entries = new Map();
   for (const line of run('/bin/ps', ['-axww', '-o', 'pid=,ppid=']).split(/\r?\n/)) {
     const match = line.trim().match(/^(\d+)\s+(\d+)$/);
     if (match) entries.set(Number(match[1]), { pid: Number(match[1]), ppid: Number(match[2]) });
   }
   return entries;
+}
+
+function windowsProcessTree() {
+  const script = [
+    "$ProgressPreference = 'SilentlyContinue'",
+    "$ErrorActionPreference = 'Stop'",
+    '@(Get-CimInstance Win32_Process | ForEach-Object {',
+    "  [pscustomobject]@{ pid = [int]$_.ProcessId; ppid = [int]$_.ParentProcessId }",
+    '}) | ConvertTo-Json -Compress',
+  ].join('\n');
+  let output = '';
+  for (const executable of ['powershell.exe', 'pwsh.exe']) {
+    output = run(executable, [
+      '-NoLogo',
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-Command',
+      script,
+    ]);
+    if (output) break;
+  }
+
+  const entries = new Map();
+  try {
+    const parsed = JSON.parse(output.replace(/^\uFEFF/, ''));
+    const rows = Array.isArray(parsed) ? parsed : [parsed];
+    for (const row of rows) {
+      const pid = Number(row?.pid);
+      const ppid = Number(row?.ppid);
+      if (Number.isInteger(pid) && pid > 0 && Number.isInteger(ppid) && ppid >= 0) {
+        entries.set(pid, { pid, ppid });
+      }
+    }
+  } catch {
+    // Terminal root PIDs and VS Code shell-integration CWDs remain usable.
+  }
+  return entries;
+}
+
+function processTree() {
+  return IS_WINDOWS ? windowsProcessTree() : unixProcessTree();
 }
 
 function descendants(rootPid, entries) {
@@ -59,16 +123,45 @@ function descendants(rootPid, entries) {
   return result;
 }
 
+function cwdFromValue(value) {
+  if (typeof value === 'string') return normalizePath(value);
+  if (value && typeof value.fsPath === 'string') return normalizePath(value.fsPath);
+  return null;
+}
+
+function terminalCwds(terminal) {
+  const result = new Set();
+  const integrated = cwdFromValue(terminal.shellIntegration?.cwd);
+  const configured = cwdFromValue(terminal.creationOptions?.cwd);
+  if (integrated) result.add(integrated);
+  if (configured) result.add(configured);
+  return result;
+}
+
 async function describe(terminal, entries) {
   const rootPid = await terminal.processId;
   if (!Number.isFinite(rootPid) || rootPid <= 0) return null;
   const pids = descendants(rootPid, entries);
+  const cwds = terminalCwds(terminal);
+  if (!IS_WINDOWS) {
+    for (const pid of pids) {
+      const cwd = readCwd(pid);
+      if (cwd) cwds.add(cwd);
+    }
+  }
   return {
     terminal,
     pids,
     ttys: new Set(pids.map(readTty).filter(Boolean)),
-    cwds: new Set(pids.map(readCwd).filter(Boolean)),
+    cwds,
   };
+}
+
+function relatedPath(left, right) {
+  if (!left || !right) return false;
+  if (left === right) return true;
+  const separator = path.sep;
+  return left.startsWith(right + separator) || right.startsWith(left + separator);
 }
 
 function score(descriptor, target) {
@@ -76,9 +169,9 @@ function score(descriptor, target) {
   if (target.pid && descriptor.pids.includes(target.pid)) value += 500;
   if (target.tty && descriptor.ttys.has(target.tty)) value += 300;
   if (target.cwd && descriptor.cwds.has(target.cwd)) value += 200;
-  if (target.cwd && Array.from(descriptor.cwds).some(cwd =>
-    cwd.startsWith(target.cwd + '/') || target.cwd.startsWith(cwd + '/')
-  )) value += 80;
+  if (target.cwd && Array.from(descriptor.cwds).some(cwd => relatedPath(cwd, target.cwd))) {
+    value += 80;
+  }
   return value;
 }
 
