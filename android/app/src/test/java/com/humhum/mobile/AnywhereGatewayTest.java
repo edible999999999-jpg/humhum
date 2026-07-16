@@ -87,6 +87,40 @@ public class AnywhereGatewayTest {
         assertEquals(2, state.nextUplinkSequence(relay));
     }
 
+    @Test
+    public void cachedPreviousResponseIsFinalizedBeforeAutomaticRefresh() throws Exception {
+        Models.WakeRelayConfig relay = relay();
+        MemoryStore memory = new MemoryStore();
+        AnywhereStateStore state = new AnywhereStateStore(memory);
+        String previousId = "77".repeat(16);
+        String previousDigest = "88".repeat(32);
+        state.savePending(relay, previousId, previousDigest,
+                new AnywhereEnvelope(1, 1, "AAECAwQFBgcICQoL", "AQIDBA"), true);
+        state.saveResponseAndAdvance(relay, 1, previousId, new JSONObject()
+                .put("ok", true)
+                .put("data", new JSONObject().put("status", "delivered")));
+        List<String> publications = new ArrayList<>();
+        byte[] empty = new JSONObject().put("messages", new JSONArray()).toString()
+                .getBytes(StandardCharsets.UTF_8);
+        AnywhereRelayClient client = new AnywhereRelayClient(request -> {
+            if ("POST".equals(request.method())) {
+                publications.add(request.body());
+                return new AnywhereRelayClient.TransportResponse(
+                        201,
+                        "{\"sequence\":2}".getBytes(StandardCharsets.UTF_8));
+            }
+            return new AnywhereRelayClient.TransportResponse(200, empty);
+        });
+
+        assertThrows(IOException.class, () -> new AnywhereGateway(
+                client, state, () -> 1_783_836_000L).sessions(relay));
+
+        assertEquals(1, publications.size());
+        assertNotNull(state.pending(relay));
+        assertEquals(2, state.pending(relay).envelope().sequence());
+        assertEquals(2, state.nextUplinkSequence(relay));
+    }
+
     private static AnywhereRelayClient.TransportResponse remotePageResponse(
             Models.WakeRelayConfig relay, String publication) throws IOException {
         try {

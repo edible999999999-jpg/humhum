@@ -86,15 +86,23 @@ public final class AnywhereGateway {
         String digest = sha256(body.toString());
         boolean retainCompleted = "approval".equals(body.optString("action"))
                 || "message".equals(body.optString("action"));
-        JSONObject completed = state.completedResponse(relay, digest);
+        long now = clock.getAsLong();
+        AnywhereStateStore.Pending pending = state.pending(relay);
+        if (pending != null) {
+            JSONObject recovered = state.finalizePendingResponse(
+                    relay, pending.requestId(), now);
+            if (recovered != null) {
+                if (pending.bodyDigest().equals(digest)) return responseData(recovered);
+                pending = null;
+            }
+        }
+        JSONObject completed = state.completedResponse(relay, digest, now);
         if (completed != null) return responseData(completed);
         state.clearCompletedIfDifferent(relay, digest);
-        AnywhereStateStore.Pending pending = state.pending(relay);
         if (pending != null && !pending.bodyDigest().equals(digest)) {
             throw new IOException("A previous remote action is still being delivered");
         }
         if (pending == null) {
-            long now = clock.getAsLong();
             String requestId = randomHex(16);
             AnywhereEnvelope envelope = AnywhereEnvelopeCipher.encrypt(
                     relay.commandKey(),
@@ -107,7 +115,7 @@ public final class AnywhereGateway {
                     now + 300,
                     body,
                     randomHex(12));
-            state.savePending(relay, requestId, digest, envelope);
+            state.savePending(relay, requestId, digest, envelope, retainCompleted);
             pending = state.pending(relay);
             if (pending == null) throw new IOException("Could not persist remote action");
         }
@@ -115,7 +123,7 @@ public final class AnywhereGateway {
         String requestId = pending.requestId();
         for (int attempt = 0; attempt < RESPONSE_POLLS; attempt++) {
             JSONObject cached = state.finalizePendingResponse(
-                    relay, requestId, retainCompleted);
+                    relay, requestId, clock.getAsLong());
             if (cached != null) {
                 return responseData(cached);
             }
@@ -128,7 +136,7 @@ public final class AnywhereGateway {
                             relay, message.sequence(), message.requestId(), message.body());
                     if (requestId.equals(message.requestId())) {
                         JSONObject response = state.finalizePendingResponse(
-                                relay, requestId, retainCompleted);
+                                relay, requestId, clock.getAsLong());
                         if (response == null) throw new IOException("Remote response was not saved");
                         return responseData(response);
                     }

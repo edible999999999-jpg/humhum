@@ -35,7 +35,7 @@ public class AnywhereStateStoreTest {
         AnywhereEnvelope envelope = new AnywhereEnvelope(
                 1, 1, "AAECAwQFBgcICQoL", "AQIDBA");
 
-        store.savePending(relay, "77".repeat(16), "88".repeat(32), envelope);
+        store.savePending(relay, "77".repeat(16), "88".repeat(32), envelope, false);
 
         AnywhereStateStore.Pending pending = new AnywhereStateStore(memory).pending(relay);
         assertEquals("77".repeat(16), pending.requestId());
@@ -103,18 +103,24 @@ public class AnywhereStateStoreTest {
         JSONObject body = new JSONObject().put("ok", true).put(
                 "data", new JSONObject().put("status", "delivered"));
         store.savePending(relay, requestId, bodyDigest,
-                new AnywhereEnvelope(1, 1, "AAECAwQFBgcICQoL", "AQIDBA"));
+                new AnywhereEnvelope(1, 1, "AAECAwQFBgcICQoL", "AQIDBA"), true);
         store.saveResponseAndAdvance(relay, 4, requestId, body);
 
         assertEquals(body.toString(), store.finalizePendingResponse(
-                relay, requestId, true).toString());
+                relay, requestId, 1_000).toString());
 
         AnywhereStateStore restored = new AnywhereStateStore(memory);
         assertNull(restored.pending(relay));
         assertEquals(2, restored.nextUplinkSequence(relay));
-        assertEquals(body.toString(), restored.completedResponse(relay, bodyDigest).toString());
+        assertEquals(body.toString(), restored.completedResponse(
+                relay, bodyDigest, 1_100).toString());
+        assertNull(restored.completedResponse(relay, bodyDigest, 1_301));
+        store.savePending(relay, requestId, bodyDigest,
+                new AnywhereEnvelope(1, 2, "AAECAwQFBgcICQoL", "AQIDBA"), true);
+        store.saveResponseAndAdvance(relay, 5, requestId, body);
+        store.finalizePendingResponse(relay, requestId, 2_000);
         restored.clearCompletedIfDifferent(relay, "99".repeat(32));
-        assertNull(restored.completedResponse(relay, bodyDigest));
+        assertNull(restored.completedResponse(relay, bodyDigest, 2_001));
     }
 
     private static Models.WakeRelayConfig relay() {

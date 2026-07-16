@@ -16,6 +16,7 @@ public final class AnywhereStateStore {
     private static final String RESPONSE = "response";
     private static final String COMPLETED = "completed";
     private static final int MAX_RESPONSES = 16;
+    private static final long COMPLETED_TTL_SECONDS = 300;
     private static final Object PROCESS_LOCK = new Object();
 
     interface KeyValueStore {
@@ -74,7 +75,8 @@ public final class AnywhereStateStore {
             Models.WakeRelayConfig relay,
             String requestId,
             String bodyDigest,
-            AnywhereEnvelope envelope) throws JSONException {
+            AnywhereEnvelope envelope,
+            boolean retainCompleted) throws JSONException {
         Models.WakeRelayConfig safe = requireV2(relay);
         if (requestId == null
                 || !requestId.matches("[a-f0-9]{32}")
@@ -88,6 +90,7 @@ public final class AnywhereStateStore {
                 .put("channel", safe.commandChannelId())
                 .put("request_id", requestId)
                 .put("body_digest", bodyDigest)
+                .put("retain_completed", retainCompleted)
                 .put("envelope", new JSONObject(envelope.toJson()));
         storage.put(PENDING, payload.toString());
     }
@@ -98,10 +101,11 @@ public final class AnywhereStateStore {
         if (payload == null || payload.isBlank()) return null;
         try {
             JSONObject root = new JSONObject(payload);
-            if (root.length() != 4
+            if (root.length() != 5
                     || !safe.commandChannelId().equals(root.getString("channel"))) return null;
             String requestId = root.getString("request_id");
             String bodyDigest = root.getString("body_digest");
+            boolean retainCompleted = root.getBoolean("retain_completed");
             JSONObject raw = root.getJSONObject("envelope");
             if (!requestId.matches("[a-f0-9]{32}")
                     || !bodyDigest.matches("[a-f0-9]{64}")
@@ -114,7 +118,7 @@ public final class AnywhereStateStore {
             if (envelope.version() != 1 || envelope.sequence() != nextUplinkSequence(safe)) {
                 return null;
             }
-            return new Pending(requestId, bodyDigest, envelope);
+            return new Pending(requestId, bodyDigest, envelope, retainCompleted);
         } catch (JSONException | IllegalArgumentException error) {
             return null;
         }
@@ -132,16 +136,21 @@ public final class AnywhereStateStore {
     }
 
     public synchronized JSONObject completedResponse(
-            Models.WakeRelayConfig relay, String bodyDigest) {
+            Models.WakeRelayConfig relay, String bodyDigest, long nowSeconds) {
         Models.WakeRelayConfig safe = requireV2(relay);
         String payload = storage.get(COMPLETED);
         if (payload == null || payload.isBlank()) return null;
         try {
             JSONObject root = new JSONObject(payload);
-            if (root.length() != 4
+            if (root.length() != 5
                     || !safe.commandChannelId().equals(root.getString("channel"))
                     || !bodyDigest.equals(root.getString("body_digest"))
                     || !root.getString("request_id").matches("[a-f0-9]{32}")) return null;
+            long expiresAt = root.getLong("expires_at");
+            if (expiresAt <= nowSeconds) {
+                storage.remove(COMPLETED);
+                return null;
+            }
             return root.getJSONObject("body");
         } catch (JSONException error) {
             storage.remove(COMPLETED);
@@ -166,7 +175,7 @@ public final class AnywhereStateStore {
     }
 
     public synchronized JSONObject finalizePendingResponse(
-            Models.WakeRelayConfig relay, String requestId, boolean retainCompleted)
+            Models.WakeRelayConfig relay, String requestId, long nowSeconds)
             throws JSONException {
         synchronized (PROCESS_LOCK) {
             Models.WakeRelayConfig safe = requireV2(relay);
@@ -195,11 +204,12 @@ public final class AnywhereStateStore {
                     .put("channel", safe.channelId())
                     .put("responses", remaining)
                     .toString());
-            if (retainCompleted) {
+            if (pending.retainCompleted()) {
                 puts.put(COMPLETED, new JSONObject()
                         .put("channel", safe.commandChannelId())
                         .put("request_id", requestId)
                         .put("body_digest", pending.bodyDigest())
+                        .put("expires_at", nowSeconds + COMPLETED_TTL_SECONDS)
                         .put("body", new JSONObject(found.toString()))
                         .toString());
             } else {
@@ -336,16 +346,23 @@ public final class AnywhereStateStore {
         private final String requestId;
         private final String bodyDigest;
         private final AnywhereEnvelope envelope;
+        private final boolean retainCompleted;
 
-        Pending(String requestId, String bodyDigest, AnywhereEnvelope envelope) {
+        Pending(
+                String requestId,
+                String bodyDigest,
+                AnywhereEnvelope envelope,
+                boolean retainCompleted) {
             this.requestId = requestId;
             this.bodyDigest = bodyDigest;
             this.envelope = envelope;
+            this.retainCompleted = retainCompleted;
         }
 
         public String requestId() { return requestId; }
         public String bodyDigest() { return bodyDigest; }
         public AnywhereEnvelope envelope() { return envelope; }
+        public boolean retainCompleted() { return retainCompleted; }
     }
 
     private static final class PreferencesStore implements KeyValueStore {
