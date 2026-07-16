@@ -93,6 +93,30 @@ public class AnywhereStateStoreTest {
         assertEquals(body.toString(), restored.takeResponse(relay, "77".repeat(16)).toString());
     }
 
+    @Test
+    public void writeResponseFinalizationSurvivesRestartAsOneCompletedResult() throws Exception {
+        MemoryStore memory = new MemoryStore();
+        AnywhereStateStore store = new AnywhereStateStore(memory);
+        Models.WakeRelayConfig relay = relay();
+        String requestId = "77".repeat(16);
+        String bodyDigest = "88".repeat(32);
+        JSONObject body = new JSONObject().put("ok", true).put(
+                "data", new JSONObject().put("status", "delivered"));
+        store.savePending(relay, requestId, bodyDigest,
+                new AnywhereEnvelope(1, 1, "AAECAwQFBgcICQoL", "AQIDBA"));
+        store.saveResponseAndAdvance(relay, 4, requestId, body);
+
+        assertEquals(body.toString(), store.finalizePendingResponse(
+                relay, requestId, true).toString());
+
+        AnywhereStateStore restored = new AnywhereStateStore(memory);
+        assertNull(restored.pending(relay));
+        assertEquals(2, restored.nextUplinkSequence(relay));
+        assertEquals(body.toString(), restored.completedResponse(relay, bodyDigest).toString());
+        restored.clearCompletedIfDifferent(relay, "99".repeat(32));
+        assertNull(restored.completedResponse(relay, bodyDigest));
+    }
+
     private static Models.WakeRelayConfig relay() {
         return new Models.WakeRelayConfig(
                 "https://relay.example.com",
@@ -109,6 +133,10 @@ public class AnywhereStateStoreTest {
                 String firstKey, String firstValue, String secondKey, String secondValue) {
             values.put(firstKey, firstValue);
             values.put(secondKey, secondValue);
+        }
+        @Override public void edit(Map<String, String> puts, java.util.Set<String> removals) {
+            for (String key : removals) values.remove(key);
+            values.putAll(puts);
         }
         @Override public void remove(String key) { values.remove(key); }
         @Override public void clear() { values.clear(); }

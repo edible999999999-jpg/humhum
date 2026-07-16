@@ -130,6 +130,11 @@ public class AnywhereGatewayTest {
             values.put(firstKey, firstValue);
             values.put(secondKey, secondValue);
         }
+        @Override public void edit(
+                java.util.Map<String, String> puts, java.util.Set<String> removals) {
+            for (String key : removals) values.remove(key);
+            values.putAll(puts);
+        }
         @Override public void remove(String key) { values.remove(key); }
         @Override public void clear() { values.clear(); }
     }

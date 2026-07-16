@@ -1,6 +1,10 @@
 package com.humhum.mobile;
 
 import android.content.SharedPreferences;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -10,6 +14,7 @@ public final class AnywhereStateStore {
     private static final String UPLINK = "uplink";
     private static final String PENDING = "pending";
     private static final String RESPONSE = "response";
+    private static final String COMPLETED = "completed";
     private static final int MAX_RESPONSES = 16;
     private static final Object PROCESS_LOCK = new Object();
 
@@ -17,6 +22,7 @@ public final class AnywhereStateStore {
         String get(String key);
         void put(String key, String value);
         void putPair(String firstKey, String firstValue, String secondKey, String secondValue);
+        void edit(Map<String, String> puts, Set<String> removals);
         void remove(String key);
         void clear();
     }
@@ -117,8 +123,91 @@ public final class AnywhereStateStore {
     public synchronized void completePending(Models.WakeRelayConfig relay) {
         Pending pending = pending(relay);
         if (pending == null) throw new IllegalStateException("Anywhere request is not pending");
-        completeUplink(relay, pending.envelope().sequence());
-        storage.remove(PENDING);
+        Models.WakeRelayConfig safe = requireV2(relay);
+        Map<String, String> puts = new HashMap<>();
+        puts.put(UPLINK, encodedSequence(safe.commandChannelId(), pending.envelope().sequence()));
+        Set<String> removals = new HashSet<>();
+        removals.add(PENDING);
+        storage.edit(puts, removals);
+    }
+
+    public synchronized JSONObject completedResponse(
+            Models.WakeRelayConfig relay, String bodyDigest) {
+        Models.WakeRelayConfig safe = requireV2(relay);
+        String payload = storage.get(COMPLETED);
+        if (payload == null || payload.isBlank()) return null;
+        try {
+            JSONObject root = new JSONObject(payload);
+            if (root.length() != 4
+                    || !safe.commandChannelId().equals(root.getString("channel"))
+                    || !bodyDigest.equals(root.getString("body_digest"))
+                    || !root.getString("request_id").matches("[a-f0-9]{32}")) return null;
+            return root.getJSONObject("body");
+        } catch (JSONException error) {
+            storage.remove(COMPLETED);
+            return null;
+        }
+    }
+
+    public synchronized void clearCompletedIfDifferent(
+            Models.WakeRelayConfig relay, String bodyDigest) {
+        Models.WakeRelayConfig safe = requireV2(relay);
+        String payload = storage.get(COMPLETED);
+        if (payload == null || payload.isBlank()) return;
+        try {
+            JSONObject root = new JSONObject(payload);
+            if (!safe.commandChannelId().equals(root.optString("channel"))
+                    || !bodyDigest.equals(root.optString("body_digest"))) {
+                storage.remove(COMPLETED);
+            }
+        } catch (JSONException error) {
+            storage.remove(COMPLETED);
+        }
+    }
+
+    public synchronized JSONObject finalizePendingResponse(
+            Models.WakeRelayConfig relay, String requestId, boolean retainCompleted)
+            throws JSONException {
+        synchronized (PROCESS_LOCK) {
+            Models.WakeRelayConfig safe = requireV2(relay);
+            Pending pending = pending(safe);
+            if (pending == null || !pending.requestId().equals(requestId)) return null;
+            JSONArray responses = responseArray(safe.channelId());
+            JSONArray remaining = new JSONArray();
+            JSONObject found = null;
+            for (int index = 0; index < responses.length(); index++) {
+                JSONObject item = responses.optJSONObject(index);
+                if (item == null) continue;
+                if (found == null && requestId.equals(item.optString("request_id"))) {
+                    found = item.optJSONObject("body");
+                } else {
+                    remaining.put(item);
+                }
+            }
+            if (found == null) return null;
+            Map<String, String> puts = new HashMap<>();
+            Set<String> removals = new HashSet<>();
+            puts.put(UPLINK, encodedSequence(
+                    safe.commandChannelId(), pending.envelope().sequence()));
+            removals.add(PENDING);
+            if (remaining.length() == 0) removals.add(RESPONSE);
+            else puts.put(RESPONSE, new JSONObject()
+                    .put("channel", safe.channelId())
+                    .put("responses", remaining)
+                    .toString());
+            if (retainCompleted) {
+                puts.put(COMPLETED, new JSONObject()
+                        .put("channel", safe.commandChannelId())
+                        .put("request_id", requestId)
+                        .put("body_digest", pending.bodyDigest())
+                        .put("body", new JSONObject(found.toString()))
+                        .toString());
+            } else {
+                removals.add(COMPLETED);
+            }
+            storage.edit(puts, removals);
+            return found;
+        }
     }
 
     public synchronized void saveResponse(
@@ -278,6 +367,16 @@ public final class AnywhereStateStore {
                     .putString(firstKey, firstValue)
                     .putString(secondKey, secondValue)
                     .commit()) {
+                throw new IllegalStateException("Could not persist Anywhere state");
+            }
+        }
+        @Override public void edit(Map<String, String> puts, Set<String> removals) {
+            SharedPreferences.Editor editor = preferences.edit();
+            for (Map.Entry<String, String> entry : puts.entrySet()) {
+                editor.putString(entry.getKey(), entry.getValue());
+            }
+            for (String key : removals) editor.remove(key);
+            if (!editor.commit()) {
                 throw new IllegalStateException("Could not persist Anywhere state");
             }
         }

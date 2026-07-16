@@ -84,6 +84,11 @@ public final class AnywhereGateway {
             throw new IOException("Anywhere remote access is unavailable");
         }
         String digest = sha256(body.toString());
+        boolean retainCompleted = "approval".equals(body.optString("action"))
+                || "message".equals(body.optString("action"));
+        JSONObject completed = state.completedResponse(relay, digest);
+        if (completed != null) return responseData(completed);
+        state.clearCompletedIfDifferent(relay, digest);
         AnywhereStateStore.Pending pending = state.pending(relay);
         if (pending != null && !pending.bodyDigest().equals(digest)) {
             throw new IOException("A previous remote action is still being delivered");
@@ -109,9 +114,9 @@ public final class AnywhereGateway {
         client.publish(relay, pending.envelope());
         String requestId = pending.requestId();
         for (int attempt = 0; attempt < RESPONSE_POLLS; attempt++) {
-            JSONObject cached = state.takeResponse(relay, requestId);
+            JSONObject cached = state.finalizePendingResponse(
+                    relay, requestId, retainCompleted);
             if (cached != null) {
-                state.completePending(relay);
                 return responseData(cached);
             }
             long after = state.downlinkSequence(relay);
@@ -122,9 +127,9 @@ public final class AnywhereGateway {
                     state.saveResponseAndAdvance(
                             relay, message.sequence(), message.requestId(), message.body());
                     if (requestId.equals(message.requestId())) {
-                        JSONObject response = state.takeResponse(relay, requestId);
+                        JSONObject response = state.finalizePendingResponse(
+                                relay, requestId, retainCompleted);
                         if (response == null) throw new IOException("Remote response was not saved");
-                        state.completePending(relay);
                         return responseData(response);
                     }
                 } else {

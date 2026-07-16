@@ -443,6 +443,34 @@ test("expired ciphertext disappears and either credential can delete the channel
   assert.equal(gone.status, 401);
 });
 
+test("exact latest retry restores ciphertext after retention without accepting a rewrite", async () => {
+  let now = 1_800_000_000_000;
+  const { baseUrl } = await relay({ clock: () => now });
+  const channel = await createChannel(baseUrl);
+  const first = envelope(1);
+  assert.equal((await publish(
+    baseUrl, channel.channel_id, channel.publisher_token, first,
+  )).status, 201);
+  now += 24 * 60 * 60 * 1_000 + 1;
+  const expired = await fetch(
+    `${baseUrl}/v1/channels/${channel.channel_id}/messages?after=0&wait=0`,
+    { headers: { authorization: `Bearer ${channel.subscriber_token}` } },
+  );
+  assert.deepEqual((await expired.json()).messages, []);
+
+  assert.equal((await publish(
+    baseUrl, channel.channel_id, channel.publisher_token, first,
+  )).status, 201);
+  assert.equal((await publish(
+    baseUrl, channel.channel_id, channel.publisher_token, envelope(1, "DIFFERENT"),
+  )).status, 409);
+  const restored = await fetch(
+    `${baseUrl}/v1/channels/${channel.channel_id}/messages?after=0&wait=0`,
+    { headers: { authorization: `Bearer ${channel.subscriber_token}` } },
+  );
+  assert.deepEqual((await restored.json()).messages, [first]);
+});
+
 test("strict query, JSON shape, and rate bounds fail closed", async () => {
   const { baseUrl } = await relay();
   const channel = await createChannel(baseUrl);
