@@ -601,6 +601,212 @@ fn wake_envelope_for_secret(
     .map_err(|_| "Could not encrypt wake signal".to_string())
 }
 
+#[cfg(test)]
+fn anywhere_snapshot_envelope(
+    secret: &crate::mobile_relay::RelayDeviceSecret,
+    page: &serde_json::Value,
+    issued_at: i64,
+    nonce_hex: &str,
+    request_id: &str,
+) -> Result<crate::anywhere_crypto::AnywhereEnvelope, String> {
+    if secret.command.is_none() || !page.is_object() {
+        return Err("Anywhere snapshot is unavailable".into());
+    }
+    crate::anywhere_crypto::encrypt_anywhere(
+        &secret.wake_key,
+        &secret.channel_id,
+        crate::anywhere_crypto::AnywhereDirection::Downlink,
+        secret.next_sequence,
+        "snapshot",
+        request_id,
+        issued_at,
+        issued_at.saturating_add(86_400),
+        page,
+        nonce_hex,
+    )
+    .map_err(|_| "Could not encrypt Anywhere snapshot".to_string())
+}
+
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+#[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
+enum AnywhereRequest {
+    Conversation {
+        session_id: String,
+    },
+    Approval {
+        provider: String,
+        id: String,
+        decision: String,
+    },
+    Message {
+        session_id: String,
+        provider: String,
+        message: String,
+    },
+    Refresh,
+}
+
+fn valid_anywhere_identifier(value: &str) -> bool {
+    !value.trim().is_empty() && value.chars().count() <= 256
+}
+
+fn parse_anywhere_request(
+    scope: MobileDeviceScope,
+    body: &serde_json::Value,
+) -> Result<AnywhereRequest, String> {
+    let request: AnywhereRequest =
+        serde_json::from_value(body.clone()).map_err(|_| "Invalid Anywhere request".to_string())?;
+    match &request {
+        AnywhereRequest::Conversation { session_id } => {
+            if !valid_anywhere_identifier(session_id) {
+                return Err("Invalid Anywhere conversation request".into());
+            }
+        }
+        AnywhereRequest::Approval {
+            provider,
+            id,
+            decision,
+        } => {
+            if !scope.allows_control()
+                || !matches!(provider.as_str(), "codex" | "claude" | "claude-code")
+                || !valid_anywhere_identifier(id)
+                || !matches!(decision.as_str(), "allow_once" | "deny")
+            {
+                return Err("Anywhere approval is not allowed".into());
+            }
+        }
+        AnywhereRequest::Message {
+            session_id,
+            provider,
+            message,
+        } => {
+            let message_chars = message.chars().count();
+            if !scope.allows_control()
+                || !valid_anywhere_identifier(session_id)
+                || !matches!(
+                    provider.as_str(),
+                    "codex" | "claude" | "claude-code" | "opencode"
+                )
+                || message.trim().is_empty()
+                || message_chars > 20_000
+            {
+                return Err("Anywhere follow-up is not allowed".into());
+            }
+        }
+        AnywhereRequest::Refresh => {}
+    }
+    Ok(request)
+}
+
+async fn execute_anywhere_request(
+    app: &tauri::AppHandle,
+    scope: MobileDeviceScope,
+    request: AnywhereRequest,
+) -> Result<serde_json::Value, String> {
+    match request {
+        AnywhereRequest::Refresh => Ok(with_mobile_cursor(mobile_session_page(app, scope).await)),
+        AnywhereRequest::Conversation { session_id } => {
+            let home_dir = dirs::home_dir().ok_or("Conversation unavailable")?;
+            let store = app.state::<Arc<std::sync::Mutex<crate::session_store::SessionStore>>>();
+            let body = serde_json::to_vec(&serde_json::json!({"session_id": session_id}))
+                .map_err(|_| "Invalid conversation request".to_string())?;
+            let response = {
+                let store = store.lock().unwrap_or_else(|error| error.into_inner());
+                mobile_conversation_from_request(Some(scope), &body, &store, &home_dir)
+            }
+            .map_err(|error| match error {
+                MobileConversationError::Unauthorized => "Pair this device first".to_string(),
+                MobileConversationError::BadRequest => "Invalid conversation request".to_string(),
+                MobileConversationError::Unavailable => "Conversation unavailable".to_string(),
+            })?;
+            serde_json::to_value(response).map_err(|_| "Conversation unavailable".to_string())
+        }
+        AnywhereRequest::Approval {
+            provider,
+            id,
+            decision,
+        } => {
+            if provider == "codex" {
+                let decision = match decision.as_str() {
+                    "allow_once" => crate::codex_bridge::ApprovalDecision::AllowOnce,
+                    "deny" => crate::codex_bridge::ApprovalDecision::Deny,
+                    _ => return Err("Unsupported approval decision".into()),
+                };
+                let codex = app
+                    .state::<Arc<crate::codex_bridge::CodexBridgeState>>()
+                    .inner()
+                    .clone();
+                codex
+                    .resolve_approval(&id, decision)
+                    .await
+                    .map_err(|error| error.to_string())?;
+            } else {
+                let behavior = match decision.as_str() {
+                    "allow_once" => "allow",
+                    "deny" => "deny",
+                    _ => return Err("Unsupported permission decision".into()),
+                };
+                let pending = app
+                    .try_state::<crate::hook_server::PendingMap>()
+                    .ok_or("Claude permission bridge is starting")?;
+                crate::commands::resolve_hook_permission(
+                    pending.inner(),
+                    &id,
+                    behavior,
+                    None,
+                    None,
+                )
+                .await?;
+            }
+            Ok(serde_json::json!({"status": "resolved"}))
+        }
+        AnywhereRequest::Message {
+            session_id,
+            provider,
+            message,
+        } => {
+            let queue = app
+                .state::<Arc<std::sync::Mutex<crate::intervention_queue::InterventionQueue>>>()
+                .inner()
+                .clone();
+            let receipt = if provider == "codex" {
+                let codex = app
+                    .state::<Arc<crate::codex_bridge::CodexBridgeState>>()
+                    .inner()
+                    .clone();
+                crate::commands::enqueue_and_deliver_codex_message(
+                    &codex,
+                    &queue,
+                    &session_id,
+                    &message,
+                )
+                .await?
+            } else {
+                let provider = match provider.as_str() {
+                    "claude" | "claude-code" => {
+                        crate::intervention_queue::InterventionProvider::Claude
+                    }
+                    "opencode" => crate::intervention_queue::InterventionProvider::OpenCode,
+                    _ => return Err("Unsupported Agent provider".into()),
+                };
+                let store = app
+                    .state::<Arc<std::sync::Mutex<crate::session_store::SessionStore>>>()
+                    .inner()
+                    .clone();
+                crate::commands::enqueue_and_deliver_cli_message(
+                    &store,
+                    &queue,
+                    provider,
+                    &session_id,
+                    &message,
+                )
+                .await?
+            };
+            serde_json::to_value(receipt).map_err(|_| "Could not send follow-up".to_string())
+        }
+    }
+}
+
 fn spawn_wake_observer(
     bridge: Arc<MobileBridgeState>,
     app: tauri::AppHandle,
@@ -620,6 +826,7 @@ async fn run_wake_observer(
     generation: u64,
     mut shutdown: oneshot::Receiver<()>,
 ) {
+    let mut anywhere_states = HashMap::<String, AnywhereDeviceState>::new();
     let changes = Arc::clone(&bridge.relay_changes);
     let event_changes = Arc::clone(&changes);
     let listener = app.listen("humhum://hook-event", move |_| event_changes.notify_one());
@@ -661,17 +868,209 @@ async fn run_wake_observer(
             .iter()
             .map(|device| (device.id.clone(), device.scope))
             .collect::<HashMap<_, _>>();
+        let active_device_ids = secrets
+            .iter()
+            .map(|secret| secret.device_id.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        anywhere_states.retain(|device_id, _| active_device_ids.contains(device_id.as_str()));
         for secret in &secrets {
             let Some(scope) = scopes.get(&secret.device_id).copied() else {
                 continue;
             };
             let page = with_mobile_cursor(mobile_session_page(&app, scope).await);
             if let Some(cursor) = page["cursor"].as_str() {
-                publisher.observe(&secret.device_id, cursor);
+                if secret.command.is_some() {
+                    let state = anywhere_states.entry(secret.device_id.clone()).or_default();
+                    sync_anywhere_device(&bridge, &app, secret, scope, &page, cursor, state).await;
+                } else {
+                    publisher.observe(&secret.device_id, cursor);
+                }
             }
         }
     }
     app.unlisten(listener);
+}
+
+#[derive(Default)]
+struct AnywhereDeviceState {
+    published_cursor: Option<String>,
+    pending: Option<PendingAnywhereDownlink>,
+}
+
+struct PendingAnywhereDownlink {
+    envelope: crate::anywhere_crypto::AnywhereEnvelope,
+    snapshot_cursor: Option<String>,
+}
+
+async fn sync_anywhere_device(
+    bridge: &MobileBridgeState,
+    app: &tauri::AppHandle,
+    secret: &crate::mobile_relay::RelayDeviceSecret,
+    scope: MobileDeviceScope,
+    page: &serde_json::Value,
+    cursor: &str,
+    state: &mut AnywhereDeviceState,
+) {
+    if state.pending.is_some()
+        && flush_anywhere_downlink(bridge, secret, state)
+            .await
+            .is_err()
+    {
+        return;
+    }
+    let current = bridge
+        .relay_secrets
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .get(&secret.device_id)
+        .cloned();
+    let Some(current) = current else {
+        return;
+    };
+    let Some(command) = current.command.as_ref() else {
+        return;
+    };
+    let client = match crate::mobile_relay::RelayBaseUrl::parse(&current.base_url)
+        .and_then(crate::mobile_relay::RelayClient::new)
+    {
+        Ok(client) => client,
+        Err(_) => return,
+    };
+    if let Ok(commands) = client.poll_commands(&current, 0).await {
+        if let Some(envelope) = commands.first() {
+            let message = crate::anywhere_crypto::decrypt_anywhere(
+                &command.key,
+                &command.channel_id,
+                crate::anywhere_crypto::AnywhereDirection::Uplink,
+                envelope,
+                chrono::Utc::now().timestamp(),
+                command.last_sequence,
+            );
+            if bridge
+                .relay_secrets
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .advance_command_sequence(&current.device_id, envelope.sequence)
+                .is_err()
+            {
+                return;
+            }
+            if let Ok(message) = message {
+                let response = match parse_anywhere_request(scope, &message.body) {
+                    Ok(request) => execute_anywhere_request(app, scope, request)
+                        .await
+                        .map(|data| serde_json::json!({"ok": true, "data": data})),
+                    Err(error) => Err(error),
+                }
+                .unwrap_or_else(|error| {
+                    let safe = crate::user_safe_text::project_user_safe_text(&error);
+                    serde_json::json!({
+                        "ok": false,
+                        "error": truncate_scalar_value(&safe, 200)
+                    })
+                });
+                let latest = {
+                    bridge
+                        .relay_secrets
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner())
+                        .get(&current.device_id)
+                        .cloned()
+                };
+                if let Some(latest) = latest {
+                    if let Ok(envelope) = anywhere_downlink_envelope(
+                        &latest,
+                        "response",
+                        &message.request_id,
+                        &response,
+                        300,
+                    ) {
+                        state.pending = Some(PendingAnywhereDownlink {
+                            envelope,
+                            snapshot_cursor: None,
+                        });
+                        let _ = flush_anywhere_downlink(bridge, &latest, state).await;
+                    }
+                }
+            }
+            return;
+        }
+    }
+    if state.published_cursor.as_deref() == Some(cursor) {
+        return;
+    }
+    if let Ok(envelope) = anywhere_downlink_envelope(
+        &current,
+        "snapshot",
+        &random_anywhere_hex::<16>(),
+        page,
+        86_400,
+    ) {
+        state.pending = Some(PendingAnywhereDownlink {
+            envelope,
+            snapshot_cursor: Some(cursor.to_string()),
+        });
+        let _ = flush_anywhere_downlink(bridge, &current, state).await;
+    }
+}
+
+async fn flush_anywhere_downlink(
+    bridge: &MobileBridgeState,
+    secret: &crate::mobile_relay::RelayDeviceSecret,
+    state: &mut AnywhereDeviceState,
+) -> Result<(), String> {
+    let pending = state
+        .pending
+        .as_ref()
+        .ok_or_else(|| "Anywhere downlink is empty".to_string())?;
+    if pending.envelope.sequence != secret.next_sequence {
+        return Err("Anywhere downlink sequence changed".into());
+    }
+    let client = crate::mobile_relay::RelayClient::new(crate::mobile_relay::RelayBaseUrl::parse(
+        &secret.base_url,
+    )?)?;
+    client.publish_anywhere(secret, &pending.envelope).await?;
+    bridge
+        .relay_secrets
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .advance_sequence(&secret.device_id, secret.next_sequence)?;
+    if let Some(cursor) = pending.snapshot_cursor.clone() {
+        state.published_cursor = Some(cursor);
+    }
+    state.pending = None;
+    Ok(())
+}
+
+fn random_anywhere_hex<const N: usize>() -> String {
+    let mut bytes = [0_u8; N];
+    if getrandom::fill(&mut bytes).is_err() {
+        return String::new();
+    }
+    hex::encode(bytes)
+}
+
+fn anywhere_downlink_envelope(
+    secret: &crate::mobile_relay::RelayDeviceSecret,
+    kind: &str,
+    request_id: &str,
+    body: &serde_json::Value,
+    lifetime_seconds: i64,
+) -> Result<crate::anywhere_crypto::AnywhereEnvelope, String> {
+    let now = chrono::Utc::now().timestamp();
+    crate::anywhere_crypto::encrypt_anywhere(
+        &secret.wake_key,
+        &secret.channel_id,
+        crate::anywhere_crypto::AnywhereDirection::Downlink,
+        secret.next_sequence,
+        kind,
+        request_id,
+        now,
+        now.saturating_add(lifetime_seconds),
+        body,
+        &random_anywhere_hex::<12>(),
+    )
+    .map_err(|_| "Could not encrypt Anywhere downlink".to_string())
 }
 
 fn select_mobile_url<'a>(
@@ -2709,6 +3108,106 @@ mod tests {
         ] {
             assert!(!serialized.contains(forbidden));
         }
+    }
+
+    #[test]
+    fn anywhere_snapshot_encrypts_only_the_scoped_mobile_page() {
+        let secret = crate::mobile_relay::RelayDeviceSecret {
+            device_id: "device-phone".into(),
+            base_url: "https://relay.example.com".into(),
+            channel_id: "11".repeat(32),
+            wake_key: "22".repeat(32),
+            publisher_token: "33".repeat(32),
+            next_sequence: 7,
+            command: Some(crate::mobile_relay::RelayCommandSubscriberSecret {
+                channel_id: "44".repeat(32),
+                subscriber_token: "55".repeat(32),
+                key: "66".repeat(32),
+                last_sequence: 0,
+            }),
+        };
+        let page = serde_json::json!({
+            "scope": "read",
+            "cursor": "77".repeat(32),
+            "sessions": [{
+                "id": "session-1",
+                "agent": "codex",
+                "project": "HUMHUM",
+                "status": "active",
+                "last_activity_at": "2026-07-16T08:00:00Z",
+                "needs_attention": false,
+                "pending_actions": [],
+                "can_message": false,
+                "can_read_conversation": true
+            }]
+        });
+        let envelope = anywhere_snapshot_envelope(
+            &secret,
+            &page,
+            1_783_836_000,
+            "000102030405060708090a0b",
+            &"88".repeat(16),
+        )
+        .unwrap();
+        let message = crate::anywhere_crypto::decrypt_anywhere(
+            &secret.wake_key,
+            &secret.channel_id,
+            crate::anywhere_crypto::AnywhereDirection::Downlink,
+            &envelope,
+            1_783_836_001,
+            0,
+        )
+        .unwrap();
+
+        assert_eq!(message.kind, "snapshot");
+        assert_eq!(message.body, page);
+        let serialized = serde_json::to_string(&envelope).unwrap();
+        assert!(!serialized.contains("session-1"));
+        assert!(!serialized.contains("HUMHUM"));
+    }
+
+    #[test]
+    fn anywhere_request_parser_enforces_scope_and_strict_action_bounds() {
+        assert!(matches!(
+            parse_anywhere_request(
+                MobileDeviceScope::Read,
+                &serde_json::json!({"action": "conversation", "session_id": "session-1"}),
+            )
+            .unwrap(),
+            AnywhereRequest::Conversation { .. }
+        ));
+        for body in [
+            serde_json::json!({
+                "action": "approval",
+                "provider": "codex",
+                "id": "approval-1",
+                "decision": "allow_once"
+            }),
+            serde_json::json!({
+                "action": "message",
+                "session_id": "session-1",
+                "provider": "codex",
+                "message": "continue"
+            }),
+        ] {
+            assert!(parse_anywhere_request(MobileDeviceScope::Read, &body).is_err());
+            assert!(parse_anywhere_request(MobileDeviceScope::Control, &body).is_ok());
+        }
+        assert!(parse_anywhere_request(
+            MobileDeviceScope::Control,
+            &serde_json::json!({"action": "shell", "command": "rm -rf /"}),
+        )
+        .is_err());
+        assert!(parse_anywhere_request(
+            MobileDeviceScope::Control,
+            &serde_json::json!({
+                "action": "message",
+                "session_id": "session-1",
+                "provider": "codex",
+                "message": "x".repeat(20_001)
+            }),
+        )
+        .is_err());
     }
 
     #[test]

@@ -679,6 +679,57 @@ impl RelayClient {
             .map_err(|_| "Could not build relay publication".into())
     }
 
+    fn anywhere_publication_request(
+        &self,
+        secret: &RelayDeviceSecret,
+        envelope: &crate::anywhere_crypto::AnywhereEnvelope,
+    ) -> Result<reqwest::Request, String> {
+        secret.validate()?;
+        if secret.base_url != self.base_url.as_str()
+            || envelope.sequence != secret.next_sequence
+            || envelope.sequence >= MAX_RELAY_SEQUENCE
+        {
+            return Err("Anywhere publication is invalid".into());
+        }
+        self.client
+            .post(self.endpoint(&format!("/v1/channels/{}/messages", secret.channel_id))?)
+            .header(
+                reqwest::header::AUTHORIZATION,
+                format!("Bearer {}", secret.publisher_token),
+            )
+            .header(reqwest::header::ACCEPT, "application/json")
+            .json(envelope)
+            .build()
+            .map_err(|_| "Could not build Anywhere publication".into())
+    }
+
+    fn command_poll_request(
+        &self,
+        secret: &RelayDeviceSecret,
+        wait_seconds: u8,
+    ) -> Result<reqwest::Request, String> {
+        secret.validate()?;
+        let command = secret
+            .command
+            .as_ref()
+            .ok_or_else(|| "Anywhere command channel is unavailable".to_string())?;
+        if secret.base_url != self.base_url.as_str() || wait_seconds > 20 {
+            return Err("Anywhere command poll is invalid".into());
+        }
+        self.client
+            .get(self.endpoint(&format!(
+                "/v1/channels/{}/messages?after={}&wait={wait_seconds}",
+                command.channel_id, command.last_sequence
+            ))?)
+            .header(
+                reqwest::header::AUTHORIZATION,
+                format!("Bearer {}", command.subscriber_token),
+            )
+            .header(reqwest::header::ACCEPT, "application/json")
+            .build()
+            .map_err(|_| "Could not build Anywhere command poll".into())
+    }
+
     pub async fn health(&self) -> Result<(), String> {
         let response = self
             .client
@@ -806,6 +857,73 @@ impl RelayClient {
             return Err("Wake relay returned invalid publication data".into());
         }
         Ok(())
+    }
+
+    pub async fn publish_anywhere(
+        &self,
+        secret: &RelayDeviceSecret,
+        envelope: &crate::anywhere_crypto::AnywhereEnvelope,
+    ) -> Result<(), String> {
+        let response = self
+            .client
+            .execute(self.anywhere_publication_request(secret, envelope)?)
+            .await
+            .map_err(|_| "Could not publish Anywhere message".to_string())?;
+        if response.status() != reqwest::StatusCode::CREATED {
+            return Err("Relay rejected Anywhere publication".into());
+        }
+        let bytes = bounded_response(response, 128).await?;
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct PublicationResponse {
+            sequence: u64,
+        }
+        let result: PublicationResponse = serde_json::from_slice(&bytes)
+            .map_err(|_| "Relay returned invalid Anywhere publication data".to_string())?;
+        if result.sequence != envelope.sequence {
+            return Err("Relay returned invalid Anywhere publication data".into());
+        }
+        Ok(())
+    }
+
+    pub async fn poll_commands(
+        &self,
+        secret: &RelayDeviceSecret,
+        wait_seconds: u8,
+    ) -> Result<Vec<crate::anywhere_crypto::AnywhereEnvelope>, String> {
+        let response = self
+            .client
+            .execute(self.command_poll_request(secret, wait_seconds)?)
+            .await
+            .map_err(|_| "Could not poll Anywhere commands".to_string())?;
+        if response.status() != reqwest::StatusCode::OK {
+            return Err("Relay rejected Anywhere command poll".into());
+        }
+        let bytes = bounded_response(response, 1_048_576).await?;
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct CommandResponse {
+            messages: Vec<crate::anywhere_crypto::AnywhereEnvelope>,
+        }
+        let result: CommandResponse = serde_json::from_slice(&bytes)
+            .map_err(|_| "Relay returned invalid Anywhere command data".to_string())?;
+        if result.messages.len() > 128 {
+            return Err("Relay returned too many Anywhere commands".into());
+        }
+        let command = secret
+            .command
+            .as_ref()
+            .ok_or_else(|| "Anywhere command channel is unavailable".to_string())?;
+        let mut expected = command.last_sequence;
+        for envelope in &result.messages {
+            expected = expected
+                .checked_add(1)
+                .ok_or_else(|| "Anywhere command sequence is exhausted".to_string())?;
+            if envelope.sequence != expected {
+                return Err("Relay returned non-contiguous Anywhere commands".into());
+            }
+        }
+        Ok(result.messages)
     }
 }
 
@@ -1046,6 +1164,34 @@ impl MobileRelaySecretStore {
             .get_mut(device_id)
             .expect("relay secret checked above")
             .next_sequence = next_sequence;
+        if let Err(error) = self.persist() {
+            self.devices.insert(device_id.to_string(), previous);
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn advance_command_sequence(
+        &mut self,
+        device_id: &str,
+        consumed_sequence: u64,
+    ) -> Result<(), String> {
+        let previous = self
+            .devices
+            .get(device_id)
+            .cloned()
+            .ok_or_else(|| "Relay device secret is unavailable".to_string())?;
+        let command = self
+            .devices
+            .get_mut(device_id)
+            .and_then(|secret| secret.command.as_mut())
+            .ok_or_else(|| "Anywhere command channel is unavailable".to_string())?;
+        if command.last_sequence.checked_add(1) != Some(consumed_sequence)
+            || consumed_sequence > MAX_RELAY_SEQUENCE
+        {
+            return Err("Anywhere command sequence changed during consumption".into());
+        }
+        command.last_sequence = consumed_sequence;
         if let Err(error) = self.persist() {
             self.devices.insert(device_id.to_string(), previous);
             return Err(error);
@@ -1470,6 +1616,85 @@ mod tests {
             deletion.headers()[reqwest::header::AUTHORIZATION],
             format!("Bearer {}", secret.publisher_token)
         );
+    }
+
+    #[test]
+    fn anywhere_requests_keep_uplink_and_downlink_credentials_separate() {
+        let client =
+            RelayClient::new(RelayBaseUrl::parse("https://relay.example.com").unwrap()).unwrap();
+        let secret = RelayDeviceSecret {
+            device_id: "device-phone".into(),
+            base_url: "https://relay.example.com".into(),
+            channel_id: "11".repeat(32),
+            wake_key: "22".repeat(32),
+            publisher_token: "33".repeat(32),
+            next_sequence: 4,
+            command: Some(RelayCommandSubscriberSecret {
+                channel_id: "44".repeat(32),
+                subscriber_token: "55".repeat(32),
+                key: "66".repeat(32),
+                last_sequence: 9,
+            }),
+        };
+        let envelope = crate::anywhere_crypto::encrypt_anywhere(
+            &secret.wake_key,
+            &secret.channel_id,
+            crate::anywhere_crypto::AnywhereDirection::Downlink,
+            secret.next_sequence,
+            "snapshot",
+            &"77".repeat(16),
+            1_783_836_000,
+            1_783_922_400,
+            &serde_json::json!({"scope": "read", "sessions": []}),
+            "000102030405060708090a0b",
+        )
+        .unwrap();
+
+        let publication = client
+            .anywhere_publication_request(&secret, &envelope)
+            .unwrap();
+        assert_eq!(
+            publication.headers()[reqwest::header::AUTHORIZATION],
+            format!("Bearer {}", secret.publisher_token)
+        );
+        assert!(publication.url().path().contains(&secret.channel_id));
+
+        let poll = client.command_poll_request(&secret, 20).unwrap();
+        let command = secret.command.as_ref().unwrap();
+        assert_eq!(
+            poll.headers()[reqwest::header::AUTHORIZATION],
+            format!("Bearer {}", command.subscriber_token)
+        );
+        assert!(poll.url().path().contains(&command.channel_id));
+        assert_eq!(poll.url().query(), Some("after=9&wait=20"));
+    }
+
+    #[test]
+    fn command_sequence_advances_monotonically_before_execution() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut store = MobileRelaySecretStore::load_or_create(temp.path()).unwrap();
+        let mut secret = relay_secret("https://relay.example.com");
+        secret.command = Some(RelayCommandSubscriberSecret {
+            channel_id: "44".repeat(32),
+            subscriber_token: "55".repeat(32),
+            key: "66".repeat(32),
+            last_sequence: 0,
+        });
+        store.put(secret).unwrap();
+
+        store.advance_command_sequence("device-phone", 1).unwrap();
+        assert_eq!(
+            store
+                .get("device-phone")
+                .unwrap()
+                .command
+                .as_ref()
+                .unwrap()
+                .last_sequence,
+            1
+        );
+        assert!(store.advance_command_sequence("device-phone", 1).is_err());
+        assert!(store.advance_command_sequence("device-phone", 3).is_err());
     }
 
     #[tokio::test]
