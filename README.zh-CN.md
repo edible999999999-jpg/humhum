@@ -10,7 +10,7 @@
 <p align="center">
   <a href="https://github.com/edible999999999-jpg/humhum/releases/download/v0.3.11/HumHum_0.3.11_aarch64.dmg"><strong>下载 macOS 版</strong></a>
   ·
-  <a href="https://github.com/edible999999999-jpg/humhum/releases/download/v0.3.10/HUMHUM-Android-0.3.8.apk"><strong>下载 Android 版</strong></a>
+  <a href="https://github.com/edible999999999-jpg/humhum/releases/download/v0.3.10/HUMHUM-Android-0.3.8-Xiaomi.zip"><strong>下载 Android / 小米版</strong></a>
   ·
   <a href="https://yuxilab.cn/intro"><strong>访问官网</strong></a>
   ·
