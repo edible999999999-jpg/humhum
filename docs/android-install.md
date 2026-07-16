@@ -9,8 +9,9 @@ HUMHUM Android is a native private-network client for the desktop Mobile Bridge.
 - Play-compatible bundle: `build/releases/HUMHUM-Android-0.3.9.aab`
 - Package: `com.humhum.mobile`
 - Version: `0.3.9` (`versionCode 12`)
-- APK SHA-256: `68eb43b6be0a7006bd33aca1a8ef55c0b653847a71069aa2a99ca046f0a1c9a6`
-- AAB SHA-256: `11a246a8b2b9485b164ec4f22757bbce41c024c8acb691b3a78523474e815a35`
+- APK SHA-256: `e4b063aa5c3cf28f3b5386a6e7f291a962018cbe6dc75a199662e3dbd76dd6ca`
+- AAB SHA-256: `a4b5128bdad62b2dac96e12593e1b83226ca1c2ef209d93eb14fb6395a0c854e`
+- Xiaomi ZIP SHA-256: `b50a936324324131643b70a59409f557bc472cfd001b66b4229e49da29c2ef3c`
 - Release certificate SHA-256: `C2:8C:FF:BE:03:98:B2:DB:58:DB:B7:14:DD:39:4F:06:36:CB:55:A6:90:EE:FE:6F:DA:20:2A:78:ED:4E:12:F8`
 
 The APK and AAB use HUMHUM's durable local release certificate. They are installable and update-compatible with later builds signed by the same key, but they have not been published to Xiaomi GetApps or Google Play.
@@ -74,7 +75,7 @@ Background monitoring is visible and user-controlled. It uses Android's `remoteM
 
 For the invite-only Anywhere beta, Hexa can connect each newly paired phone to a self-hosted encrypted relay. Pairing creates independent Mac-to-phone and phone-to-Mac channels. The relay receives only AES-256-GCM ciphertext, opaque channel IDs, sequence numbers, timestamps and credential digests; it never receives readable session names, conversations, approvals, follow-ups, device names or encryption keys. Public relay URLs must use HTTPS, while loopback HTTP is accepted only for local development.
 
-Android always tries the certificate-pinned LAN or Tailnet bridge first. Only DNS, route, connection or socket timeout failures activate Anywhere; certificate failures, rejected credentials and malformed responses fail closed. In remote mode the same redacted session list, bounded recent conversation, allow-once/deny and short follow-up controls travel end-to-end encrypted. The header says **远程连接** so the route is visible without exposing server settings. Read-only pairings remain read-only, every remote action has a five-minute expiry and opaque request ID, and the Mac persists command consumption before execution to prevent network retries from running an action twice.
+Android always tries the certificate-pinned LAN or Tailnet bridge first. Reads may recover through Anywhere after DNS, route, connection, socket or timeout failures. Writes switch to Anywhere only when DNS, route or connection setup proves the direct request could not have reached the Mac; a socket or response timeout fails closed instead of risking a duplicate approval or message. Certificate failures, rejected credentials and malformed responses always fail closed. In remote mode the same redacted session list, bounded recent conversation, allow-once/deny and short follow-up controls travel end-to-end encrypted. The header says **远程连接** so the route is visible without exposing server settings. Read-only pairings remain read-only, every remote action has a five-minute expiry and opaque request ID, and the Mac persists command consumption before execution to prevent network retries from running an action twice.
 
 The optional background monitor can decrypt scoped snapshots into the same Android-Keystore-protected local cache. If it receives a foreground action response first, it hands that response to the Activity instead of discarding it. Android force-stop and aggressive Xiaomi process killing remain operating-system boundaries; production FCM or Xiaomi Push is still needed to wake a fully reclaimed process reliably.
 
