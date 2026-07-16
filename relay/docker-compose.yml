@@ -1,0 +1,42 @@
+services:
+  relay:
+    build: .
+    restart: unless-stopped
+    environment:
+      HUMHUM_RELAY_DB: /data/humhum-relay.sqlite
+      HUMHUM_RELAY_INVITE_SECRET: ${HUMHUM_RELAY_INVITE_SECRET:?set in relay/.env}
+      HUMHUM_RELAY_ADMIN_SECRET: ${HUMHUM_RELAY_ADMIN_SECRET:?set in relay/.env}
+    volumes:
+      - relay-data:/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3005/health').then(r=>{if(!r.ok)process.exit(1)})"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+
+  caddy:
+    image: caddy:2.10.2-alpine
+    restart: unless-stopped
+    depends_on:
+      relay:
+        condition: service_healthy
+    environment:
+      HUMHUM_RELAY_DOMAIN: ${HUMHUM_RELAY_DOMAIN:?set in relay/.env}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  relay-data:
+  caddy-data:
+  caddy-config:

@@ -1,15 +1,16 @@
-# HUMHUM Android 0.3.7
+# HUMHUM Android 0.3.9
 
 HUMHUM Android is a native private-network client for the desktop Mobile Bridge. It supports Android 8.0 and newer, including current Xiaomi and Redmi phones. Pair on the same LAN by default, or use an optional Tailscale tailnet when the Mac and phone are on different networks.
 
 ## Installable APK
 
-- Release APK: `build/releases/HUMHUM-Android-0.3.7.apk`
-- Play-compatible bundle: `build/releases/HUMHUM-Android-0.3.7.aab`
+- Release APK: `build/releases/HUMHUM-Android-0.3.9.apk`
+- Xiaomi transfer ZIP: `build/releases/HUMHUM-Android-0.3.9-Xiaomi.zip`
+- Play-compatible bundle: `build/releases/HUMHUM-Android-0.3.9.aab`
 - Package: `com.humhum.mobile`
-- Version: `0.3.7` (`versionCode 10`)
-- APK SHA-256: `543b8df39271dc34f0a50b359b406e346ac25bbedc95ba99b02e0596e0c3fea9`
-- AAB SHA-256: `2b13e0ebf555c4fd652c6fec9fae80c8fd9d07e45cc5f9466884222b2b807118`
+- Version: `0.3.9` (`versionCode 12`)
+- APK SHA-256: `32908d9beb2c20efc5fa4d7251b1c0b9ff6daaff17dd7bbedb53337de0ff56cc`
+- AAB SHA-256: `c2812adad4109fbac0a4a2348d021cfade0d8c6a01adf9a25a525594ba235010`
 - Release certificate SHA-256: `C2:8C:FF:BE:03:98:B2:DB:58:DB:B7:14:DD:39:4F:06:36:CB:55:A6:90:EE:FE:6F:DA:20:2A:78:ED:4E:12:F8`
 
 The APK and AAB use HUMHUM's durable local release certificate. They are installable and update-compatible with later builds signed by the same key, but they have not been published to Xiaomi GetApps or Google Play.
@@ -30,7 +31,7 @@ Connect an authorized phone, then run:
 
 ```bash
 ~/Library/Android/sdk/platform-tools/adb install -r \
-  build/releases/HUMHUM-Android-0.3.7.apk
+  build/releases/HUMHUM-Android-0.3.9.apk
 ```
 
 ## Pair With The Mac
@@ -69,7 +70,11 @@ The paired screen now includes **后台可靠性** controls. **电池设置** op
 
 Background monitoring is visible and user-controlled. It uses Android's `remoteMessaging` foreground-service type and, with the current desktop, holds an authenticated 20-second HTTPS event wait protected by the same pinned certificate. A scope-specific SHA-256 cursor wakes a full redacted refresh when visible state changes; the wake response contains only cursor, change flag and retry metadata. Older desktops automatically use 15-second polling, and network failures back off to at most 60 seconds. HUMHUM does not hold its own continuous wake lock; the bundled Firebase Messaging SDK declares `WAKE_LOCK` for bounded Google Play delivery work. The app does not request location or bypass Android/Xiaomi power controls. Xiaomi may still stop it under aggressive battery policy; physical-device behavior has not yet been verified on this Mac.
 
-For cross-network wakeups, Hexa can optionally connect each newly paired phone to a self-hosted encrypted wake relay. The relay receives only AES-256-GCM ciphertext, opaque channel IDs, sequence numbers and credential digests; it never receives session names, messages, approvals, device names or encryption keys. Public relay URLs must use HTTPS, while loopback HTTP is accepted only for local development. A wake tells Android to refresh through the existing certificate-pinned LAN or Tailnet Mobile Bridge, so session reading, approvals and follow-ups are never sent through the relay. If the relay is unavailable, the private-network event wait remains the fallback.
+For the invite-only Anywhere beta, Hexa can connect each newly paired phone to a self-hosted encrypted relay. Pairing creates independent Mac-to-phone and phone-to-Mac channels. The relay receives only AES-256-GCM ciphertext, opaque channel IDs, sequence numbers, timestamps and credential digests; it never receives readable session names, conversations, approvals, follow-ups, device names or encryption keys. Public relay URLs must use HTTPS, while loopback HTTP is accepted only for local development.
+
+Android always tries the certificate-pinned LAN or Tailnet bridge first. Only DNS, route, connection or socket timeout failures activate Anywhere; certificate failures, rejected credentials and malformed responses fail closed. In remote mode the same redacted session list, bounded recent conversation, allow-once/deny and short follow-up controls travel end-to-end encrypted. The header says **远程连接** so the route is visible without exposing server settings. Read-only pairings remain read-only, every remote action has a five-minute expiry and opaque request ID, and the Mac persists command consumption before execution to prevent network retries from running an action twice.
+
+The optional background monitor can decrypt scoped snapshots into the same Android-Keystore-protected local cache. If it receives a foreground action response first, it hands that response to the Activity instead of discarding it. Android force-stop and aggressive Xiaomi process killing remain operating-system boundaries; production FCM or Xiaomi Push is still needed to wake a fully reclaimed process reliably.
 
 Version 0.3.4 contains an optional FCM transport for system-reclaimed Android processes. The relay encrypts one opaque FCM token per channel at rest and sends an exact high-priority data payload containing only `kind`, opaque channel ID and sequence. Android accepts it only when the channel matches, the sequence is valid, FCM retained high priority and the user previously enabled monitoring. Normal-priority, malformed, wrong-channel and disabled-monitor messages cannot start the service. User-initiated **Force stop** remains an Android hard boundary until the app is opened again.
 
@@ -115,7 +120,7 @@ This proves Android platform lifecycle behavior, not Xiaomi-specific battery-man
 - Explicit, Activity-only disclosure of up to 12 bounded recent user/Agent messages for supported Codex, Claude and OpenClaw transcripts.
 - Foreground session refresh every 10 seconds.
 - Optional background monitoring with a persistent notification, authenticated realtime private-network wake, legacy 15-second polling fallback, bounded retry, approval deduplication, and opt-in reboot restoration.
-- Optional self-hosted encrypted cross-network wake signals with strict HTTPS, per-device credentials, replay protection, bounded retention and private-network refresh fallback.
+- Invite-only self-hosted Anywhere access with strict HTTPS, per-device bidirectional credentials, end-to-end encrypted session snapshots and scoped controls, replay protection, bounded retention and direct-first routing.
 - Optional FCM registration and high-priority generic wake handling when both Android client and relay server configuration are supplied.
 - Immediate monitoring recovery when Android reports that the default network has returned.
 - Volatile per-device foreground/background presence with a 90-second fail-closed offline transition.
@@ -125,7 +130,7 @@ This proves Android platform lifecycle behavior, not Xiaomi-specific battery-man
 
 The APK requests network state, internet, foreground remote messaging, notification, opt-in boot restoration, and camera permissions. Camera access is requested only after the user opens the QR scanner, camera hardware is optional, and paste/manual pairing remains available. Firebase Messaging adds bounded wake-lock and C2DM receive permissions plus one package-scoped AndroidX receiver permission. HUMHUM does not request direct battery exemption, all-package visibility, location, nearby-device, contacts, files, microphone, overlay, or accessibility access.
 
-Not yet verified or shipped: production-configured FCM delivery, Xiaomi Push, physical HyperOS process-reclaim survival, a HUMHUM-hosted relay service, full encrypted transcript history, attachments, iOS packaging, store distribution, or automatic updates. Xiaomi Push additionally requires an approved Xiaomi developer account, a registered package with AppID/AppKey, server-side AppSecret, and the region-appropriate Xiaomi SDK; none of those credentials are present on this machine, so the release does not pretend to initialize that provider. See Xiaomi's official [enablement guide](https://dev.mi.com/xiaomihyperos/documentation/detail?pId=1691) and [Android AAR integration guide](https://dev.mi.com/xiaomihyperos/documentation/detail?pId=1544).
+Not yet verified or shipped: a public HUMHUM-hosted Anywhere endpoint, physical 5G end-to-end evidence, production-configured FCM delivery, Xiaomi Push, physical HyperOS process-reclaim survival, full encrypted transcript history, attachments, iOS packaging, store distribution, or automatic updates. Xiaomi Push additionally requires an approved Xiaomi developer account, a registered package with AppID/AppKey, server-side AppSecret, and the region-appropriate Xiaomi SDK; none of those credentials are present on this machine, so the release does not pretend to initialize that provider. See Xiaomi's official [enablement guide](https://dev.mi.com/xiaomihyperos/documentation/detail?pId=1691) and [Android AAR integration guide](https://dev.mi.com/xiaomihyperos/documentation/detail?pId=1544).
 
 ## Build With FCM
 
