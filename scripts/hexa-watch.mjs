@@ -2,6 +2,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { homedir } from "node:os";
+import { resolveAgentSessionId } from "./hexa-session-context.mjs";
 
 const API_URL = process.env.HUMHUM_HEXA_URL ?? "http://127.0.0.1:31275";
 const STATE_DIR = join(process.cwd(), ".humhum");
@@ -56,7 +57,7 @@ async function main() {
   const agent = readArg("agent", process.env.HUMHUM_AGENT ?? "codex");
   const name = readArg("name", goal || basename(workspace) || "Hexa watched session");
   const provider = readArg("provider", agent);
-  const sessionId = readArg("session-id", null);
+  const sessionId = resolveAgentSessionId(readArg("session-id", null));
   const currentStep = readArg("step", "Agent 已主动加入 Hexa 托管，等待第一轮进展更新。");
 
   if (!goal.trim()) {

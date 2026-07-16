@@ -1798,6 +1798,7 @@ option {
 .hexa-session-status.waiting { background: #f59e0b; }
 .hexa-session-status.blocked { background: #f87171; }
 .hexa-session-status.starting { background: #38bdf8; }
+.hexa-session-status.expired { background: #f59e0b; }
 
 .hexa-session-nav-copy {
   min-width: 0;
@@ -1925,6 +1926,25 @@ option {
   display: grid;
   gap: 3px;
   padding: 12px 8px;
+}
+
+button.hexa-report-metric {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+button.hexa-report-metric.clickable {
+  cursor: pointer;
+}
+
+button.hexa-report-metric.clickable:hover,
+button.hexa-report-metric.clickable:focus-visible {
+  background: rgba(56, 189, 248, 0.08);
+  outline: none;
 }
 
 .hexa-report-metric + .hexa-report-metric {

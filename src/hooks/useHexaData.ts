@@ -264,6 +264,7 @@ export interface HexaWatchedSession {
   audit: HexaSessionAudit;
   planning_capability?: HexaPlanningCapability;
   plan_revision?: string | null;
+  previous_session_ids?: string[];
 }
 
 export interface HexaWatchedAgent {

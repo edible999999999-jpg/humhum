@@ -305,6 +305,8 @@ pub struct HexaWatchedSession {
     #[serde(default = "default_planning_capability")]
     pub planning_capability: HexaPlanningCapability,
     pub plan_revision: Option<String>,
+    #[serde(default)]
+    pub previous_session_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -401,7 +403,7 @@ impl HexaWatchStore {
             watched_agent
                 .runs
                 .iter()
-                .position(|session| session.session_id == session_id)
+                .position(|session| session_matches_id(session, &session_id))
                 .map(|index| (key.clone(), index))
         });
 
@@ -451,6 +453,7 @@ impl HexaWatchStore {
                     audit: HexaSessionAudit::default(),
                     planning_capability: HexaPlanningCapability::Inferred,
                     plan_revision: None,
+                    previous_session_ids: Vec::new(),
                 };
                 if let Some(title) = session.goal.clone() {
                     session.audit.work_items.push(HexaWorkItem {
@@ -513,7 +516,7 @@ impl HexaWatchStore {
             let Some(session) = watched_agent
                 .runs
                 .iter_mut()
-                .find(|session| session.session_id == request.session_id)
+                .find(|session| session_matches_id(session, &request.session_id))
             else {
                 continue;
             };
@@ -578,7 +581,7 @@ impl HexaWatchStore {
             let Some(session) = watched_agent
                 .runs
                 .iter_mut()
-                .find(|session| session.session_id == session_id)
+                .find(|session| session_matches_id(session, &session_id))
             else {
                 continue;
             };
@@ -610,7 +613,7 @@ impl HexaWatchStore {
             let Some(session) = watched_agent
                 .runs
                 .iter_mut()
-                .find(|session| session.session_id == request.session_id)
+                .find(|session| session_matches_id(session, &request.session_id))
             else {
                 continue;
             };
@@ -633,6 +636,19 @@ impl HexaWatchStore {
                 session.audit.work_items.push(item);
             }
             validate_workflow(&session.audit.work_items)?;
+            session.current_step = session
+                .audit
+                .work_items
+                .iter()
+                .find(|item| item.status == HexaWorkItemStatus::InProgress)
+                .or_else(|| {
+                    session
+                        .audit
+                        .work_items
+                        .iter()
+                        .find(|item| item.status == HexaWorkItemStatus::Pending)
+                })
+                .map(|item| item.title.clone());
             session.planning_capability = request.capability.clone();
             session.plan_revision = request.revision.clone();
             session.updated_at = now.clone();
@@ -647,6 +663,64 @@ impl HexaWatchStore {
         Ok(updated)
     }
 
+    pub fn bind_provider_thread(
+        &mut self,
+        provider: &str,
+        workspace: Option<&str>,
+        thread_id: &str,
+    ) -> Result<Option<HexaWatchedSession>, String> {
+        self.reload_from_disk()?;
+        if let Some(existing) = self
+            .agents
+            .values()
+            .flat_map(|agent| &agent.runs)
+            .find(|session| session_matches_id(session, thread_id))
+        {
+            return Ok(Some(existing.clone()));
+        }
+
+        let candidates = self
+            .agents
+            .iter()
+            .flat_map(|(key, agent)| {
+                agent
+                    .runs
+                    .iter()
+                    .enumerate()
+                    .filter_map(move |(index, session)| {
+                        let provider_matches =
+                            agent.provider == provider || session.agent == provider;
+                        let workspace_matches =
+                            workspace.is_some() && session.workspace.as_deref() == workspace;
+                        (provider_matches
+                            && workspace_matches
+                            && session.status != HexaWatchStatus::Completed)
+                            .then(|| (key.clone(), index))
+                    })
+            })
+            .collect::<Vec<_>>();
+        if candidates.len() != 1 {
+            return Ok(None);
+        }
+
+        let (agent_key, index) = &candidates[0];
+        let mut agents = self.agents.clone();
+        let agent = agents
+            .get_mut(agent_key)
+            .expect("matched watched agent must exist");
+        let session = &mut agent.runs[*index];
+        let previous = std::mem::replace(&mut session.session_id, thread_id.to_string());
+        if previous != thread_id && !session.previous_session_ids.contains(&previous) {
+            session.previous_session_ids.push(previous);
+        }
+        session.updated_at = chrono::Utc::now().to_rfc3339();
+        agent.updated_at = session.updated_at.clone();
+        let bound = session.clone();
+        self.persist_agents(&agents)?;
+        self.agents = agents;
+        Ok(Some(bound))
+    }
+
     pub fn delete(&mut self, session_id: &str) -> Result<Option<HexaWatchedSession>, String> {
         self.reload_from_disk()?;
         let mut agents = self.agents.clone();
@@ -654,7 +728,7 @@ impl HexaWatchStore {
             watched_agent
                 .runs
                 .iter()
-                .position(|session| session.session_id == session_id)
+                .position(|session| session_matches_id(session, session_id))
                 .map(|index| (key.clone(), index))
         });
 
@@ -1180,6 +1254,14 @@ fn clean_text(value: String) -> Option<String> {
     (!item.is_empty()).then_some(item)
 }
 
+fn session_matches_id(session: &HexaWatchedSession, session_id: &str) -> bool {
+    session.session_id == session_id
+        || session
+            .previous_session_ids
+            .iter()
+            .any(|previous| previous == session_id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1244,6 +1326,24 @@ mod tests {
 
         assert!(error.contains("cannot be a symbolic link"));
         assert_eq!(fs::read_to_string(target).unwrap(), r#"{"agents":{}}"#);
+    }
+
+    #[test]
+    fn binds_a_unique_watched_workspace_to_the_real_provider_thread() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut store = HexaWatchStore::load_or_create(directory.path()).unwrap();
+        store.register(register_request()).unwrap();
+
+        let bound = store
+            .bind_provider_thread("openai", Some("/workspace/humhum"), "thread-real")
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(bound.session_id, "thread-real");
+        assert!(store
+            .sessions()
+            .iter()
+            .all(|session| session.session_id != "run-1"));
     }
 
     #[test]

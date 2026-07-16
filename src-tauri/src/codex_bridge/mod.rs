@@ -2,12 +2,16 @@ use crate::hexa_protocol::{
     scope_provider_item, HexaEvent, HexaEventKind, HexaProjectionStore, HexaSensitivity,
     HexaSessionProjection,
 };
+use crate::hexa_watch_store::{
+    HexaPlanSyncRequest, HexaPlanningCapability, HexaWatchStore, HexaWorkItemInput,
+    HexaWorkItemStatus,
+};
 use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::fmt;
 use std::path::Path;
 use std::sync::{Arc, Mutex, RwLock};
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 use tokio::sync::{Mutex as AsyncMutex, RwLock as AsyncRwLock};
 
 use transport::{IncomingMessage, JsonRpcTransport};
@@ -639,12 +643,35 @@ impl CodexBridgeState {
     }
 
     fn apply_event(&self, app: &tauri::AppHandle, event: HexaEvent) {
+        let plan_request = codex_plan_sync_request(&event);
         let projection = self.projections.lock().ok().and_then(|mut store| {
             store.apply(&event);
             store.session(&event.session_id).cloned()
         });
-        if let Some(projection) = projection {
+        if let Some(projection) = projection.as_ref() {
             let _ = app.emit("humhum://hexa-session-changed", projection);
+        }
+        if let (Some(request), Some(projection), Some(watch_store)) = (
+            plan_request,
+            projection,
+            app.try_state::<Arc<Mutex<HexaWatchStore>>>(),
+        ) {
+            if let Ok(mut store) = watch_store.lock() {
+                match store.bind_provider_thread(
+                    "codex",
+                    projection.workspace.as_deref(),
+                    &event.session_id,
+                ) {
+                    Ok(Some(_)) => match store.sync_plan(request) {
+                        Ok(watched) => {
+                            let _ = app.emit("humhum://hexa-session-changed", watched);
+                        }
+                        Err(error) => log::warn!("Could not sync Codex plan into Hexa: {error}"),
+                    },
+                    Ok(None) => {}
+                    Err(error) => log::warn!("Could not bind Codex thread to Hexa: {error}"),
+                }
+            }
         }
     }
 
@@ -825,6 +852,13 @@ pub(crate) fn normalize_codex_message(method: &str, params: Value) -> Option<Hex
             };
             (kind, json!({"turn_id": turn_id, "status": status}))
         }
+        "turn/plan/updated" => (
+            HexaEventKind::PlanUpdated,
+            json!({
+                "explanation": params.get("explanation").cloned().unwrap_or(Value::Null),
+                "plan": params.get("plan").cloned().unwrap_or_else(|| Value::Array(Vec::new())),
+            }),
+        ),
         "item/started" => normalize_item(item?, thread_id, true)?,
         "item/completed" => normalize_item(item?, thread_id, false)?,
         "item/agentMessage/delta" => (
@@ -879,6 +913,53 @@ pub(crate) fn normalize_codex_message(method: &str, params: Value) -> Option<Hex
         kind,
         payload,
         sensitivity: HexaSensitivity::Private,
+    })
+}
+
+fn codex_plan_sync_request(event: &HexaEvent) -> Option<HexaPlanSyncRequest> {
+    if event.kind != HexaEventKind::PlanUpdated {
+        return None;
+    }
+    let explanation = event
+        .payload
+        .get("explanation")
+        .and_then(Value::as_str)
+        .map(String::from);
+    let plan = event.payload.get("plan")?.as_array()?;
+    let items = plan
+        .iter()
+        .enumerate()
+        .filter_map(|(index, step)| {
+            let title = string_at(step, "step")?.trim();
+            if title.is_empty() {
+                return None;
+            }
+            let status = match string_at(step, "status")? {
+                "completed" => HexaWorkItemStatus::Completed,
+                "inProgress" => HexaWorkItemStatus::InProgress,
+                _ => HexaWorkItemStatus::Pending,
+            };
+            let id = format!("codex-plan-{}", index + 1);
+            Some(HexaWorkItemInput {
+                id,
+                title: title.to_string(),
+                description: explanation.clone(),
+                acceptance_criteria: None,
+                status,
+                depends_on: (index > 0)
+                    .then(|| format!("codex-plan-{index}"))
+                    .into_iter()
+                    .collect(),
+                evidence: Vec::new(),
+            })
+        })
+        .collect();
+    Some(HexaPlanSyncRequest {
+        session_id: event.session_id.clone(),
+        capability: HexaPlanningCapability::Native,
+        source_provider: "codex".to_string(),
+        revision: event.turn_id.clone(),
+        items,
     })
 }
 
@@ -1060,6 +1141,32 @@ if ($second.Contains('"method":"turn/start"')) {
         )
         .unwrap();
         assert_eq!(failed.kind, crate::hexa_protocol::HexaEventKind::TurnFailed);
+    }
+
+    #[test]
+    fn maps_native_plan_updates_with_the_real_thread_id() {
+        let event = normalize_codex_message(
+            "turn/plan/updated",
+            json!({
+                "threadId": "thread-real",
+                "turnId": "turn-2",
+                "explanation": "Implement in four steps",
+                "plan": [
+                    {"step": "Inspect the bug", "status": "completed"},
+                    {"step": "Implement the fix", "status": "inProgress"},
+                    {"step": "Run tests", "status": "pending"}
+                ]
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(event.session_id, "thread-real");
+        assert_eq!(event.kind, HexaEventKind::PlanUpdated);
+        assert_eq!(event.payload["plan"][1]["status"], "inProgress");
+        let request = codex_plan_sync_request(&event).unwrap();
+        assert_eq!(request.items.len(), 3);
+        assert_eq!(request.items[1].status, HexaWorkItemStatus::InProgress);
+        assert_eq!(request.items[2].depends_on, ["codex-plan-2"]);
     }
 
     #[test]

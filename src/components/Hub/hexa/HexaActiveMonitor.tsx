@@ -7,6 +7,7 @@ import type {
   HexaSupervisorSession,
   HexaWatchedSession,
 } from "../../../hooks/useHexaData";
+import { watchedSessionIsExpired } from "../../../hooks/hexaPlanningCapability";
 import { HexaSessionReportView } from "./HexaSessionReport";
 
 function timeAgo(value: string): string {
@@ -114,6 +115,7 @@ export function HexaActiveMonitor({
                   </button>
                   {!collapsed && group.sessions.map((session) => {
                     const selected = session.session_id === selectedSessionId;
+                    const expired = watchedSessionIsExpired(session.status, session.updated_at);
                     const revisions = session.audit.goal_revisions;
                     const problem = revisions[revisions.length - 1]?.goal ?? session.goal ?? session.name;
                     return (
@@ -123,7 +125,7 @@ export function HexaActiveMonitor({
                         className={`hexa-session-nav-item ${selected ? "selected" : ""}`}
                         onClick={() => setSelectedSessionId(session.session_id)}
                       >
-                        <span className={`hexa-session-status ${session.status}`} />
+                        <span className={`hexa-session-status ${expired ? "expired" : session.status}`} title={expired ? "会话已过期" : undefined} />
                         <span className="hexa-session-nav-copy">
                           <strong>{session.name}</strong>
                           <span>{problem}</span>

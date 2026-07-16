@@ -23,3 +23,15 @@ export function workItemSourceLabel(source: HexaWorkItemSource = "agent_report")
     legacy_migration: "历史迁移",
   }[source];
 }
+
+const WATCHED_SESSION_EXPIRY_MS = 30 * 60 * 1000;
+
+export function watchedSessionIsExpired(
+  status: string,
+  updatedAt: string,
+  now = Date.now(),
+): boolean {
+  if (!new Set(["starting", "working", "waiting", "blocked"]).has(status)) return false;
+  const updated = new Date(updatedAt).getTime();
+  return Number.isFinite(updated) && now - updated > WATCHED_SESSION_EXPIRY_MS;
+}

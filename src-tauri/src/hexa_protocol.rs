@@ -15,6 +15,7 @@ pub enum HexaEventKind {
     AssistantTextDelta,
     AssistantTextCompleted,
     ReasoningSummary,
+    PlanUpdated,
     ToolStarted,
     ToolUpdated,
     ToolCompleted,
@@ -202,6 +203,10 @@ impl HexaProjectionStore {
                 if session.status != HexaSessionStatus::Waiting {
                     session.status = HexaSessionStatus::Working;
                 }
+            }
+            HexaEventKind::PlanUpdated => {
+                session.current_activity = Some("Codex updated its work plan".to_string());
+                session.status = HexaSessionStatus::Working;
             }
             HexaEventKind::ErrorReported => session.status = HexaSessionStatus::Failed,
             _ => {}

@@ -121,6 +121,19 @@ describe("Hexa session report", () => {
     expect(report.progress).toEqual({ completed: 2, total: 4, percent: 50 });
   });
 
+  it("does not count inferred or migrated summaries as real work items", () => {
+    const session = run("fallback");
+    session.audit.work_items = [
+      { ...item("legacy", "in_progress"), source: "legacy_migration" },
+      { ...item("inferred", "in_progress"), source: "hexa_inferred" },
+    ];
+
+    const report = buildHexaSessionReport(session);
+
+    expect(report.metrics.total).toBe(0);
+    expect(report.progress).toBeNull();
+  });
+
   it("uses the latest goal revision as the problem being solved", () => {
     const session = run("goal");
     session.audit.goal_revisions = [
