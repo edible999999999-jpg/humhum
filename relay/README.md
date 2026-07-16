@@ -1,4 +1,4 @@
-# HUMHUM Wake Relay
+# HUMHUM Anywhere Relay
 
 This service is a deliberately opaque mailbox for encrypted Android wake envelopes. It stores channel identifiers, SHA-256 credential digests, sequence numbers, timestamps, nonces and ciphertext. Encryption keys and HUMHUM session data never reach the relay.
 
@@ -8,7 +8,10 @@ Node 22.13 or newer is required.
 
 ```bash
 cd relay
-HUMHUM_RELAY_DB="$HOME/.humhum/relay.sqlite" PORT=3005 node src/server.mjs
+HUMHUM_RELAY_DB="$HOME/.humhum/relay.sqlite" \
+HUMHUM_RELAY_INVITE_SECRET="$(openssl rand -hex 24)" \
+HUMHUM_RELAY_ADMIN_SECRET="$(openssl rand -hex 24)" \
+PORT=3005 node src/server.mjs
 ```
 
 Check it without creating a channel:
@@ -30,14 +33,14 @@ For network use, place the container behind a TLS reverse proxy such as Caddy or
 
 ## Limits
 
-- 4,096-character ciphertext field per envelope.
+- 65,536-character ciphertext field per envelope.
 - 128 newest envelopes per channel.
 - 24-hour envelope retention.
 - 20-second maximum long poll.
 - 300 requests per minute per source IP and channel.
 - No browser CORS access.
 
-The relay cannot decrypt, forge or execute a HUMHUM command. Android still uses the separately authenticated, certificate-pinned Mobile Bridge after receiving a wake.
+Creating a channel requires the beta invite secret. Capacity statistics require the separate admin secret at `GET /v1/admin/stats`; neither secret is stored in SQLite. The relay cannot decrypt, forge or execute a HUMHUM command.
 
 ## Optional FCM Wake
 

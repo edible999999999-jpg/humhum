@@ -116,6 +116,12 @@ export class RelayStore {
     this.deletePushStatement = this.database.prepare(
       "DELETE FROM push_subscriptions WHERE channel_id = ?",
     );
+    this.selectStats = this.database.prepare(`
+      SELECT
+        (SELECT count(*) FROM channels) AS channels,
+        (SELECT count(*) FROM messages) AS messages,
+        (SELECT count(*) FROM push_subscriptions) AS push_subscriptions
+    `);
   }
 
   createChannel() {
@@ -233,6 +239,10 @@ export class RelayStore {
     if (!authorized) return false;
     this.deleteChannel.run(channelId);
     return true;
+  }
+
+  stats() {
+    return this.selectStats.get();
   }
 
   close() {
