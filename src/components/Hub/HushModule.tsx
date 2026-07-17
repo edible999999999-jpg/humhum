@@ -73,8 +73,7 @@ type HushHealthMetric = Pick<HushHealthSignal, "value" | "unit" | "captured_at" 
 export interface HushHealthSourceSummary {
   state: "empty" | "partial" | "stale" | "ready";
   deviceCount: number;
-  deviceLabel: "paired_phone" | "paired_phones";
-  latestDate: string | null;
+  localDate: string | null;
   lastSync: string | null;
   metrics: {
     steps: HushHealthMetric | null;
@@ -88,6 +87,16 @@ const HEALTH_METRIC_KEYS = {
   "health.resting_heart_rate.daily": "restingHeartRate",
   "health.sleep.daily": "sleep",
 } as const;
+
+export type HushHealthAvailability = "loading" | "ready" | "unavailable";
+
+interface HushHealthDayGroup {
+  deviceId: string;
+  localDate: string;
+  latestEndedAt: number;
+  lastSyncAt: number;
+  metrics: HushHealthSourceSummary["metrics"];
+}
 
 function parseHealthDate(value: string): number | null {
   const timestamp = Date.parse(value);
@@ -106,36 +115,50 @@ function newerHealthMetric(current: HushHealthMetric | null, candidate: HushHeal
     : current;
 }
 
+function canonicalHealthDay(startedAt: string): string | null {
+  const day = startedAt.slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(day) && parseHealthDate(startedAt) !== null ? day : null;
+}
+
 export function deriveHushHealthSource(
   signals: HushHealthSignal[],
   now: Date = new Date(),
 ): HushHealthSourceSummary {
-  const metrics: HushHealthSourceSummary["metrics"] = {
-    steps: null,
-    restingHeartRate: null,
-    sleep: null,
-  };
+  const groups = new Map<string, HushHealthDayGroup>();
   const deviceIds = new Set<string>();
-  let newestEnd: number | null = null;
-  let newestCaptured: number | null = null;
 
   for (const signal of signals) {
     const metricKey = HEALTH_METRIC_KEYS[signal.kind as keyof typeof HEALTH_METRIC_KEYS];
-    if (!metricKey || !Number.isFinite(signal.value)) continue;
-    deviceIds.add(signal.device_id);
-    metrics[metricKey] = newerHealthMetric(metrics[metricKey], signal);
+    const localDate = canonicalHealthDay(signal.started_at);
     const endedAt = parseHealthDate(signal.ended_at);
     const capturedAt = parseHealthDate(signal.captured_at);
-    newestEnd = endedAt !== null && (newestEnd === null || endedAt > newestEnd) ? endedAt : newestEnd;
-    newestCaptured = capturedAt !== null && (newestCaptured === null || capturedAt > newestCaptured)
-      ? capturedAt
-      : newestCaptured;
+    if (!metricKey || !localDate || endedAt === null || capturedAt === null || !Number.isFinite(signal.value)) continue;
+    deviceIds.add(signal.device_id);
+    const groupKey = `${signal.device_id}\u0000${localDate}`;
+    const group = groups.get(groupKey) ?? {
+      deviceId: signal.device_id,
+      localDate,
+      latestEndedAt: endedAt,
+      lastSyncAt: capturedAt,
+      metrics: { steps: null, restingHeartRate: null, sleep: null },
+    };
+    group.latestEndedAt = Math.max(group.latestEndedAt, endedAt);
+    group.lastSyncAt = Math.max(group.lastSyncAt, capturedAt);
+    group.metrics[metricKey] = newerHealthMetric(group.metrics[metricKey], signal);
+    groups.set(groupKey, group);
   }
 
-  const hasSignals = Object.values(metrics).some(Boolean);
-  const isStale = newestEnd !== null && now.getTime() - newestEnd > 48 * 60 * 60 * 1000;
+  const selected = Array.from(groups.values()).sort((a, b) =>
+    b.latestEndedAt - a.latestEndedAt ||
+    b.lastSyncAt - a.lastSyncAt ||
+    a.deviceId.localeCompare(b.deviceId) ||
+    a.localDate.localeCompare(b.localDate),
+  )[0];
+
+  const metrics = selected?.metrics ?? { steps: null, restingHeartRate: null, sleep: null };
+  const isStale = selected !== undefined && now.getTime() - selected.latestEndedAt > 48 * 60 * 60 * 1000;
   const isPartial = Object.values(metrics).some((metric) => metric === null);
-  const state: HushHealthSourceSummary["state"] = !hasSignals
+  const state: HushHealthSourceSummary["state"] = !selected
     ? "empty"
     : isStale
       ? "stale"
@@ -146,9 +169,8 @@ export function deriveHushHealthSource(
   return {
     state,
     deviceCount: deviceIds.size,
-    deviceLabel: deviceIds.size === 1 ? "paired_phone" : "paired_phones",
-    latestDate: newestEnd === null ? null : new Date(newestEnd).toISOString(),
-    lastSync: newestCaptured === null ? null : new Date(newestCaptured).toISOString(),
+    localDate: selected?.localDate ?? null,
+    lastSync: selected ? new Date(selected.lastSyncAt).toISOString() : null,
     metrics,
   };
 }
@@ -232,6 +254,7 @@ export function HushModule() {
   const [connectors, setConnectors] = useState<HushConnectorStatus[]>([]);
   const [inbox, setInbox] = useState<HushInboxSummary | null>(null);
   const [healthSignals, setHealthSignals] = useState<HushHealthSignal[]>([]);
+  const [healthAvailability, setHealthAvailability] = useState<HushHealthAvailability>("loading");
   const [notificationBridge, setNotificationBridge] = useState<NotificationBridgeStatus | null>(null);
   const [dwsStatus, setDwsStatus] = useState<DwsHushStatus | null>(null);
   const [dwsReport, setDwsReport] = useState<DwsSyncReport | null>(null);
@@ -239,10 +262,12 @@ export function HushModule() {
   const [dingTalkLoggingIn, setDingTalkLoggingIn] = useState(false);
   const [dingTalkAutoUpdating, setDingTalkAutoUpdating] = useState(false);
   const [connectorError, setConnectorError] = useState<string | null>(null);
-  const [healthError, setHealthError] = useState<string | null>(null);
+  const [healthClearFailed, setHealthClearFailed] = useState(false);
   const [openingConnector, setOpeningConnector] = useState<string | null>(null);
   const [confirmingHealthClear, setConfirmingHealthClear] = useState(false);
   const [clearingHealth, setClearingHealth] = useState(false);
+  const [pendingHealthClearCount, setPendingHealthClearCount] = useState(0);
+  const [lastHealthClearCount, setLastHealthClearCount] = useState<number | null>(null);
 
   const fetchConnectors = useCallback(async () => {
     try {
@@ -277,9 +302,13 @@ export function HushModule() {
     try {
       const data = await invoke<HushHealthSignal[]>("get_hush_health_signals");
       setHealthSignals(data);
-      setHealthError(null);
+      setHealthAvailability("ready");
+      setLastHealthClearCount(null);
     } catch (error) {
-      setHealthError(String(error));
+      setHealthSignals([]);
+      setHealthAvailability("unavailable");
+      setConfirmingHealthClear(false);
+      setLastHealthClearCount(null);
     }
   }, []);
 
@@ -377,17 +406,19 @@ export function HushModule() {
 
   const clearHealthSignals = useCallback(async () => {
     setClearingHealth(true);
-    setHealthError(null);
+    setHealthClearFailed(false);
     try {
-      await invoke("clear_hush_health_signals");
+      const clearedCount = await invoke<number>("clear_hush_health_signals");
+      setHealthSignals([]);
+      setHealthAvailability("ready");
+      setLastHealthClearCount(clearedCount);
       setConfirmingHealthClear(false);
-      await fetchHealthSignals();
     } catch (error) {
-      setHealthError(String(error));
+      setHealthClearFailed(true);
     } finally {
       setClearingHealth(false);
     }
-  }, [fetchHealthSignals]);
+  }, []);
 
   const syncDingTalk = useCallback(async () => {
     setDingTalkSyncing(true);
@@ -521,11 +552,21 @@ export function HushModule() {
 
       <HushHealthSourcePanel
         summary={healthSource}
+        availability={healthAvailability}
         confirmingClear={confirmingHealthClear}
+        clearCount={pendingHealthClearCount}
+        lastClearCount={lastHealthClearCount}
         clearing={clearingHealth}
-        error={healthError}
-        onRequestClear={() => setConfirmingHealthClear(true)}
-        onCancelClear={() => setConfirmingHealthClear(false)}
+        clearFailed={healthClearFailed}
+        onRequestClear={() => {
+          setPendingHealthClearCount(healthSignals.length);
+          setHealthClearFailed(false);
+          setConfirmingHealthClear(true);
+        }}
+        onCancelClear={() => {
+          setConfirmingHealthClear(false);
+          setHealthClearFailed(false);
+        }}
         onConfirmClear={clearHealthSignals}
       />
 
@@ -835,7 +876,7 @@ function HushTruthPanel({
 
 function formatHealthDate(value: string | null, includeTime = false): string {
   if (!value) return "";
-  const date = new Date(value);
+  const date = new Date(/^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T12:00:00` : value);
   if (Number.isNaN(date.getTime())) return "";
   return includeTime
     ? date.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
@@ -853,30 +894,40 @@ function formatHealthMetric(metric: HushHealthMetric | null): string | null {
 
 export function HushHealthSourcePanel({
   summary,
+  availability,
   confirmingClear,
+  clearCount,
+  lastClearCount,
   clearing,
-  error,
+  clearFailed,
   onRequestClear,
   onCancelClear,
   onConfirmClear,
 }: {
   summary: HushHealthSourceSummary;
+  availability: HushHealthAvailability;
   confirmingClear: boolean;
+  clearCount: number;
+  lastClearCount: number | null;
   clearing: boolean;
-  error?: string | null;
+  clearFailed?: boolean;
   onRequestClear: () => void;
   onCancelClear: () => void;
   onConfirmClear: () => void;
 }) {
   const { t } = useTranslation();
-  const statusColor = summary.state === "ready"
+  const displayState = availability === "ready" ? summary.state : availability;
+  const statusColor = displayState === "ready"
     ? "#15803d"
-    : summary.state === "empty"
+    : displayState === "empty" || displayState === "loading"
       ? "#64748b"
-      : summary.state === "stale"
+      : displayState === "stale"
         ? "#b45309"
-        : "#0f766e";
-  const stateLabel = t(`hub.hush.health.state.${summary.state}`);
+        : displayState === "unavailable"
+          ? "#b91c1c"
+          : "#0f766e";
+  const stateLabel = t(`hub.hush.health.state.${displayState}`);
+  const hasReadableHealth = availability === "ready" && summary.state !== "empty";
   const metrics = [
     { key: "steps", label: t("hub.hush.health.steps"), metric: summary.metrics.steps },
     { key: "heart", label: t("hub.hush.health.restingHeartRate"), metric: summary.metrics.restingHeartRate },
@@ -918,12 +969,20 @@ export function HushHealthSourcePanel({
             </span>
           </div>
           <p style={{ margin: "4px 0 0", fontSize: 11, color: "#52716c", lineHeight: 1.5 }}>
-            {t(`hub.hush.health.desc.${summary.state}`)}
+            {t(`hub.hush.health.desc.${displayState}`)}
           </p>
         </div>
       </div>
 
-      {summary.state === "empty" ? (
+      {availability === "unavailable" ? (
+        <div style={{ marginTop: 12, fontSize: 11, color: "#9a3412", lineHeight: 1.5 }}>
+          {t("hub.hush.health.unavailableHint")}
+        </div>
+      ) : availability === "loading" ? (
+        <div style={{ marginTop: 12, fontSize: 11, color: "#52716c", lineHeight: 1.5 }}>
+          {t("hub.hush.health.loadingHint")}
+        </div>
+      ) : summary.state === "empty" ? (
         <div style={{ marginTop: 12, fontSize: 11, color: "#52716c", lineHeight: 1.5 }}>
           {t("hub.hush.health.emptyHint")}
         </div>
@@ -957,32 +1016,39 @@ export function HushHealthSourcePanel({
             })}
           </div>
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 10, fontSize: 10, color: "#52716c" }}>
-            <span>{t("hub.hush.health.latestDate", { date: formatHealthDate(summary.latestDate) })}</span>
-            <span>{t(summary.deviceCount === 1 ? "hub.hush.health.deviceOne" : "hub.hush.health.deviceMany", { count: summary.deviceCount })}</span>
+            <span>{t("hub.hush.health.latestDate", { date: formatHealthDate(summary.localDate) })}</span>
+            <span>{t("hub.hush.health.sourceDevice")}</span>
+            <span>{t("hub.hush.health.recordedDevices", { count: summary.deviceCount })}</span>
             <span>{t("hub.hush.health.lastSync", { time: formatHealthDate(summary.lastSync, true) })}</span>
           </div>
         </>
       )}
 
-      {error && (
+      {clearFailed && (
         <div role="status" style={{ marginTop: 10, fontSize: 10, color: "#b45309" }}>
-          {t("hub.hush.health.loadError")}
+          {t("hub.hush.health.clearError")}
         </div>
       )}
 
-      {summary.state !== "empty" && (
+      {lastClearCount !== null && (
+        <div role="status" style={{ marginTop: 10, fontSize: 10, color: "#15803d", fontWeight: 750 }}>
+          {t("hub.hush.health.clearSuccess", { count: lastClearCount })}
+        </div>
+      )}
+
+      {hasReadableHealth && (
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
           {confirmingClear ? (
             <>
               <span style={{ fontSize: 11, color: "#7c2d12", fontWeight: 750 }}>
-                {t("hub.hush.health.clearConfirm")}
+                {t("hub.hush.health.clearConfirm", { count: clearCount })}
               </span>
               <div style={{ display: "flex", gap: 7 }}>
                 <button className="kawaii-tab" type="button" disabled={clearing} onClick={onCancelClear} style={{ fontSize: 10, padding: "5px 9px" }}>
                   {t("hub.common.cancel")}
                 </button>
                 <button className="kawaii-tab" type="button" disabled={clearing} onClick={onConfirmClear} style={{ fontSize: 10, padding: "5px 9px", color: "#b91c1c" }}>
-                  {clearing ? t("hub.hush.health.clearing") : t("hub.hush.health.clearConfirmAction")}
+                  {clearing ? t("hub.hush.health.clearing") : t("hub.hush.health.clearConfirmAction", { count: clearCount })}
                 </button>
               </div>
             </>
