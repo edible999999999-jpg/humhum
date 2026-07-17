@@ -156,6 +156,10 @@ public final class MobileProtocol {
         }
     }
 
+    public void uploadSignals(JSONArray signals) throws IOException, JSONException {
+        execute(signalUploadRequest(signals));
+    }
+
     static RequestSpec pairRequest(BridgeConfig config) throws JSONException {
         JSONObject body = new JSONObject()
                 .put("code", config.pairingCode())
@@ -178,6 +182,17 @@ public final class MobileProtocol {
 
     static boolean isPresenceUnsupported(int status) {
         return status == 404;
+    }
+
+    static RequestSpec signalUploadRequest(JSONArray signals) throws JSONException {
+        if (signals == null || signals.length() > 31) {
+            throw new IllegalArgumentException("Health signal batch must contain at most 31 records");
+        }
+        return new RequestSpec(
+                "POST",
+                "/api/hush/signals",
+                new JSONObject().put("signals", signals).toString(),
+                true);
     }
 
     static RequestSpec eventRequest(String cursor) {

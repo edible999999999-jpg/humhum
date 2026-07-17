@@ -29,6 +29,8 @@ const MAX_CONVERSATION_REQUEST_BYTES: usize = 4 * 1024;
 const MAX_CONVERSATION_ID_CHARS: usize = 256;
 const MAX_CONVERSATION_TEXT_CHARS: usize = 500;
 const MAX_CONVERSATION_RESPONSE_BYTES: usize = 40 * 1024;
+const MAX_HUSH_SIGNAL_REQUEST_BYTES: usize = 64 * 1024;
+const MAX_HUSH_SIGNAL_BATCH: usize = 31;
 
 type HttpBody = Full<Bytes>;
 
@@ -727,7 +729,7 @@ fn anywhere_snapshot_envelope(
     .map_err(|_| "Could not encrypt Anywhere snapshot".to_string())
 }
 
-#[derive(Debug, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 enum AnywhereRequest {
     Conversation {
@@ -742,6 +744,10 @@ enum AnywhereRequest {
         session_id: String,
         provider: String,
         message: String,
+    },
+    SignalsUpload {
+        #[serde(flatten)]
+        batch: crate::hush_signal_store::HushSignalBatch,
     },
     Refresh,
 }
@@ -793,6 +799,11 @@ fn parse_anywhere_request(
                 return Err("Anywhere follow-up is not allowed".into());
             }
         }
+        AnywhereRequest::SignalsUpload { batch } => {
+            if batch.signals.len() > MAX_HUSH_SIGNAL_BATCH {
+                return Err("Anywhere health signal batch is too large".into());
+            }
+        }
         AnywhereRequest::Refresh => {}
     }
     Ok(request)
@@ -800,6 +811,7 @@ fn parse_anywhere_request(
 
 async fn execute_anywhere_request(
     app: &tauri::AppHandle,
+    device_id: &str,
     scope: MobileDeviceScope,
     request: AnywhereRequest,
 ) -> Result<serde_json::Value, String> {
@@ -903,6 +915,12 @@ async fn execute_anywhere_request(
                 .await?
             };
             serde_json::to_value(receipt).map_err(|_| "Could not send follow-up".to_string())
+        }
+        AnywhereRequest::SignalsUpload { batch } => {
+            let store =
+                app.state::<Arc<std::sync::Mutex<crate::hush_signal_store::HushSignalStore>>>();
+            let mut store = store.lock().unwrap_or_else(|error| error.into_inner());
+            ingest_hush_signal_batch(device_id, batch, &mut store)
         }
     }
 }
@@ -1100,9 +1118,11 @@ async fn sync_anywhere_device(
                         Err("This remote action expired before the Mac received it".to_string())
                     } else {
                         match parse_anywhere_request(scope, &message.body) {
-                            Ok(request) => execute_anywhere_request(app, scope, request)
-                                .await
-                                .map(|data| serde_json::json!({"ok": true, "data": data})),
+                            Ok(request) => {
+                                execute_anywhere_request(app, &current.device_id, scope, request)
+                                    .await
+                                    .map(|data| serde_json::json!({"ok": true, "data": data}))
+                            }
                             Err(error) => Err(error),
                         }
                     }
@@ -2145,6 +2165,9 @@ async fn handle_mobile_request(
         (&Method::POST, "/api/pair") => pair_device(request, &bridge).await,
         (&Method::DELETE, "/api/device") => revoke_mobile_device(&request, &bridge),
         (&Method::POST, "/api/presence") => report_mobile_presence(request, &bridge).await,
+        (&Method::POST, "/api/hush/signals") => {
+            ingest_mobile_hush_signals(request, &app, &bridge).await
+        }
         (&Method::GET, "/api/events") => wait_for_mobile_event(&request, &app, &bridge).await,
         (&Method::GET, "/api/sessions") => {
             if let Some(scope) = request_scope(&request, &bridge) {
@@ -2429,6 +2452,51 @@ async fn report_mobile_presence(
     }
 }
 
+async fn ingest_mobile_hush_signals(
+    request: Request<hyper::body::Incoming>,
+    app: &tauri::AppHandle,
+    bridge: &MobileBridgeState,
+) -> Response<HttpBody> {
+    let token = request_token(&request).map(str::to_owned);
+    let body = match collect_bounded_body(request.into_body(), MAX_HUSH_SIGNAL_REQUEST_BYTES).await
+    {
+        Ok(body) => body,
+        Err(_) => return json_error(StatusCode::BAD_REQUEST, "Invalid Hush health signal batch"),
+    };
+    let store = app.state::<Arc<std::sync::Mutex<crate::hush_signal_store::HushSignalStore>>>();
+    let mut store = store.lock().unwrap_or_else(|error| error.into_inner());
+    match ingest_mobile_hush_signal_body(token.as_deref(), &body, bridge, &mut store) {
+        Ok(report) => json_response(StatusCode::OK, &report),
+        Err(StatusCode::UNAUTHORIZED) => {
+            json_error(StatusCode::UNAUTHORIZED, "Pair this device first")
+        }
+        Err(_) => json_error(StatusCode::BAD_REQUEST, "Invalid Hush health signal batch"),
+    }
+}
+
+fn ingest_mobile_hush_signal_body(
+    token: Option<&str>,
+    body: &[u8],
+    bridge: &MobileBridgeState,
+    store: &mut crate::hush_signal_store::HushSignalStore,
+) -> Result<serde_json::Value, StatusCode> {
+    let device = token
+        .and_then(|token| token_device_auth(token, bridge))
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+    let batch: crate::hush_signal_store::HushSignalBatch =
+        serde_json::from_slice(body).map_err(|_| StatusCode::BAD_REQUEST)?;
+    ingest_hush_signal_batch(&device.id, batch, store).map_err(|_| StatusCode::BAD_REQUEST)
+}
+
+fn ingest_hush_signal_batch(
+    device_id: &str,
+    batch: crate::hush_signal_store::HushSignalBatch,
+    store: &mut crate::hush_signal_store::HushSignalStore,
+) -> Result<serde_json::Value, String> {
+    let report = store.ingest(device_id, batch)?;
+    serde_json::to_value(report).map_err(|_| "Could not encode Hush health signal report".into())
+}
+
 fn record_mobile_presence(
     token: Option<&str>,
     body: &[u8],
@@ -2604,15 +2672,26 @@ fn request_scope(
     request: &Request<hyper::body::Incoming>,
     bridge: &MobileBridgeState,
 ) -> Option<MobileDeviceScope> {
-    request_token(request).and_then(|token| token_scope(token, bridge))
+    request_device_auth(request, bridge).map(|device| device.scope)
+}
+
+fn request_device_auth(
+    request: &Request<hyper::body::Incoming>,
+    bridge: &MobileBridgeState,
+) -> Option<MobileDeviceAuth> {
+    request_token(request).and_then(|token| token_device_auth(token, bridge))
 }
 
 fn token_scope(token: &str, bridge: &MobileBridgeState) -> Option<MobileDeviceScope> {
+    token_device_auth(token, bridge).map(|device| device.scope)
+}
+
+fn token_device_auth(token: &str, bridge: &MobileBridgeState) -> Option<MobileDeviceAuth> {
     bridge
         .devices
         .lock()
         .unwrap_or_else(|error| error.into_inner())
-        .authorize(token)
+        .authorize_device(token)
 }
 
 fn request_token(request: &Request<hyper::body::Incoming>) -> Option<&str> {
@@ -3238,6 +3317,7 @@ impl MobileDeviceStore {
         Ok(device)
     }
 
+    #[cfg(test)]
     fn authorize(&self, raw_token: &str) -> Option<MobileDeviceScope> {
         self.authorize_device(raw_token).map(|device| device.scope)
     }
@@ -4490,6 +4570,109 @@ mod tests {
             }),
         )
         .is_err());
+    }
+
+    fn valid_daily_steps(source_id: &str) -> crate::hush_signal_store::HushSignalInput {
+        let ended_at = chrono::Utc::now() - chrono::Duration::minutes(1);
+        let started_at = ended_at - chrono::Duration::hours(24);
+        crate::hush_signal_store::HushSignalInput {
+            source_id: source_id.into(),
+            kind: "health.steps.daily".into(),
+            started_at: started_at.to_rfc3339(),
+            ended_at: ended_at.to_rfc3339(),
+            value: 6_420.0,
+            unit: "count".into(),
+            source: "health_connect".into(),
+            captured_at: ended_at.to_rfc3339(),
+            quality: "trusted".into(),
+        }
+    }
+
+    #[test]
+    fn signal_parser_accepts_read_devices_and_rejects_oversized_batches() {
+        let request = parse_anywhere_request(
+            MobileDeviceScope::Read,
+            &json!({"action": "signals_upload", "signals": [valid_daily_steps("steps-1")] }),
+        )
+        .unwrap();
+        assert!(matches!(request, AnywhereRequest::SignalsUpload { .. }));
+
+        assert!(parse_anywhere_request(
+            MobileDeviceScope::Control,
+            &json!({
+                "action": "signals_upload",
+                "signals": (0..32).map(|index| valid_daily_steps(&format!("steps-{index}"))).collect::<Vec<_>>()
+            }),
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn signal_ingest_is_device_bound_idempotent_and_returns_a_stable_report() {
+        let temp = tempfile::tempdir().unwrap();
+        let bridge = MobileBridgeState::load_or_create(temp.path()).unwrap();
+        let device = bridge
+            .devices
+            .lock()
+            .unwrap()
+            .add_device("Read phone", "read-token", MobileDeviceScope::Read)
+            .unwrap();
+        let batch = crate::hush_signal_store::HushSignalBatch {
+            signals: vec![valid_daily_steps("steps-1")],
+        };
+        let body = serde_json::to_vec(&batch).unwrap();
+        let mut direct_store =
+            crate::hush_signal_store::HushSignalStore::load_or_create(temp.path()).unwrap();
+        let direct =
+            ingest_mobile_hush_signal_body(Some("read-token"), &body, &bridge, &mut direct_store)
+                .unwrap();
+        assert_eq!(direct, json!({"imported": 1, "duplicates": 0}));
+
+        let relay_temp = tempfile::tempdir().unwrap();
+        let mut relay_store =
+            crate::hush_signal_store::HushSignalStore::load_or_create(relay_temp.path()).unwrap();
+        let relay = ingest_hush_signal_batch(&device.id, batch.clone(), &mut relay_store).unwrap();
+        assert_eq!(relay, direct);
+        let duplicate = ingest_hush_signal_batch(&device.id, batch, &mut relay_store).unwrap();
+        assert_eq!(duplicate, json!({"imported": 0, "duplicates": 1}));
+    }
+
+    #[test]
+    fn signal_upload_rejects_unknown_oversized_and_revoked_devices() {
+        let temp = tempfile::tempdir().unwrap();
+        let bridge = MobileBridgeState::load_or_create(temp.path()).unwrap();
+        let mut devices = bridge.devices.lock().unwrap();
+        let device = devices
+            .add_device("Phone", "phone-token", MobileDeviceScope::Read)
+            .unwrap();
+        drop(devices);
+        let mut store =
+            crate::hush_signal_store::HushSignalStore::load_or_create(temp.path()).unwrap();
+        let body = serde_json::to_vec(&crate::hush_signal_store::HushSignalBatch {
+            signals: vec![valid_daily_steps("steps-1")],
+        })
+        .unwrap();
+        assert_eq!(
+            ingest_mobile_hush_signal_body(Some("unknown"), &body, &bridge, &mut store),
+            Err(StatusCode::UNAUTHORIZED)
+        );
+        let oversized = serde_json::to_vec(&crate::hush_signal_store::HushSignalBatch {
+            signals: (0..32)
+                .map(|index| valid_daily_steps(&format!("steps-{index}")))
+                .collect(),
+        })
+        .unwrap();
+        assert_eq!(
+            ingest_mobile_hush_signal_body(Some("phone-token"), &oversized, &bridge, &mut store),
+            Err(StatusCode::BAD_REQUEST)
+        );
+        let mut devices = bridge.devices.lock().unwrap();
+        devices.revoke_device(&device.id).unwrap();
+        drop(devices);
+        assert_eq!(
+            ingest_mobile_hush_signal_body(Some("phone-token"), &body, &bridge, &mut store),
+            Err(StatusCode::UNAUTHORIZED)
+        );
     }
 
     #[test]

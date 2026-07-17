@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.function.LongSupplier;
 import org.json.JSONException;
 import org.json.JSONObject;
+import org.json.JSONArray;
 
 public final class AnywhereGateway {
     private static final int RESPONSE_POLLS = 4;
@@ -76,6 +77,14 @@ public final class AnywhereGateway {
                 .put("message", directBody.getString("message")));
         String status = data.optString("status", "queued");
         return status.length() > 32 ? status.substring(0, 32) : status;
+    }
+
+    public void uploadSignals(Models.WakeRelayConfig relay, JSONArray signals)
+            throws IOException, JSONException, GeneralSecurityException {
+        MobileProtocol.signalUploadRequest(signals);
+        request(relay, new JSONObject()
+                .put("action", "signals_upload")
+                .put("signals", signals));
     }
 
     private JSONObject request(Models.WakeRelayConfig relay, JSONObject body)

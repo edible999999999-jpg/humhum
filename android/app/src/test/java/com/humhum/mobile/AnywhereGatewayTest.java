@@ -15,6 +15,32 @@ import org.junit.Test;
 
 public class AnywhereGatewayTest {
     @Test
+    public void healthSignalsUseTheExactEncryptedRelayActionWithoutRetention() throws Exception {
+        Models.WakeRelayConfig relay = relay();
+        MemoryStore memory = new MemoryStore();
+        AnywhereStateStore state = new AnywhereStateStore(memory);
+        List<String> publications = new ArrayList<>();
+        byte[] accepted = new JSONObject().put("sequence", 1).toString()
+                .getBytes(StandardCharsets.UTF_8);
+        AnywhereRelayClient client = new AnywhereRelayClient(request -> {
+            if ("POST".equals(request.method())) {
+                publications.add(request.body());
+                return new AnywhereRelayClient.TransportResponse(201, accepted);
+            }
+            return signalUploadResponse(relay, publications.get(0));
+        });
+
+        new AnywhereGateway(client, state, () -> 1_783_836_000L).uploadSignals(
+                relay, new JSONArray().put(new JSONObject().put("source_id", "steps-1")));
+
+        AnywhereEnvelopeCipher.Message uplink = AnywhereEnvelopeCipher.decrypt(
+                relay.commandKey(), relay.commandChannelId(),
+                AnywhereEnvelopeCipher.Direction.UPLINK, 0, publications.get(0), 1_783_836_001);
+        assertEquals("signals_upload", uplink.body().getString("action"));
+        assertEquals(1, uplink.body().getJSONArray("signals").length());
+        assertNull(state.completedResponse(relay, "missing", 1_783_836_001L));
+    }
+    @Test
     public void lostPublicationResponseRetriesTheExactCiphertextAndReturnsRemotePage()
             throws Exception {
         Models.WakeRelayConfig relay = relay();
@@ -146,6 +172,30 @@ public class AnywhereGatewayTest {
                             .toString().getBytes(StandardCharsets.UTF_8));
         } catch (Exception error) {
             throw new IOException("Could not build relay fixture", error);
+        }
+    }
+
+    private static AnywhereRelayClient.TransportResponse signalUploadResponse(
+            Models.WakeRelayConfig relay, String publication) throws IOException {
+        try {
+            AnywhereEnvelopeCipher.Message uplink = AnywhereEnvelopeCipher.decrypt(
+                    relay.commandKey(), relay.commandChannelId(),
+                    AnywhereEnvelopeCipher.Direction.UPLINK, 0,
+                    publication, 1_783_836_001);
+            AnywhereEnvelope response = AnywhereEnvelopeCipher.encrypt(
+                    relay.wakeKey(), relay.channelId(),
+                    AnywhereEnvelopeCipher.Direction.DOWNLINK, 1, "response",
+                    uplink.requestId(), 1_783_836_001, 1_783_836_301,
+                    new JSONObject().put("ok", true).put("data", new JSONObject()
+                            .put("imported", 1).put("duplicates", 0)),
+                    "000102030405060708090a0b");
+            return new AnywhereRelayClient.TransportResponse(
+                    200,
+                    new JSONObject().put("messages", new JSONArray().put(
+                                    new JSONObject(response.toJson())))
+                            .toString().getBytes(StandardCharsets.UTF_8));
+        } catch (Exception error) {
+            throw new IOException("Could not build signal relay fixture", error);
         }
     }
 

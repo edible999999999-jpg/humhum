@@ -206,6 +206,25 @@ public class MobileProtocolTest {
     }
 
     @Test
+    public void healthSignalsUseTheExactAuthenticatedHushRouteAndBoundedBody() throws Exception {
+        JSONArray signals = new JSONArray().put(new JSONObject()
+                .put("source_id", "steps-2026-07-17")
+                .put("kind", "health.steps.daily"));
+
+        MobileProtocol.RequestSpec request = MobileProtocol.signalUploadRequest(signals);
+
+        assertEquals("POST", request.method());
+        assertEquals("/api/hush/signals", request.path());
+        assertTrue(request.requiresToken());
+        assertEquals(signals.toString(), new JSONObject(request.body()).getJSONArray("signals").toString());
+
+        JSONArray oversized = new JSONArray();
+        for (int index = 0; index < 32; index++) oversized.put(new JSONObject());
+        assertThrows(IllegalArgumentException.class,
+                () -> MobileProtocol.signalUploadRequest(oversized));
+    }
+
+    @Test
     public void onlyLegacyNotFoundDisablesPresenceReporting() {
         assertTrue(MobileProtocol.isPresenceUnsupported(404));
         assertFalse(MobileProtocol.isPresenceUnsupported(400));
