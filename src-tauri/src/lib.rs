@@ -14,6 +14,8 @@ mod hexa_connector;
 mod hexa_protocol;
 mod hexa_watch_store;
 mod hook_server;
+#[allow(dead_code)]
+mod hush_signal_store;
 mod hush_store;
 mod intervention_queue;
 mod knowledge_store;
@@ -140,6 +142,11 @@ pub fn run() {
                     intervention_queue::InterventionQueue::load_or_create(&home.join(".humhum"))
                         .map_err(std::io::Error::other)?;
                 app.manage(Arc::new(std::sync::Mutex::new(intervention_queue)));
+                let hush_signal_store = hush_signal_store::HushSignalStore::load_or_create(
+                    &home.join(".humhum"),
+                )
+                .map_err(std::io::Error::other)?;
+                app.manage(Arc::new(std::sync::Mutex::new(hush_signal_store)));
                 let mobile_bridge =
                     mobile_bridge::MobileBridgeState::load_or_create(&home.join(".humhum"))
                         .map_err(std::io::Error::other)?;
