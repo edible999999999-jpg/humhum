@@ -39,6 +39,7 @@ export class RelayStore {
         publisher_digest TEXT NOT NULL,
         subscriber_digest TEXT NOT NULL,
         last_sequence INTEGER NOT NULL DEFAULT 0,
+        last_envelope_digest TEXT,
         created_at INTEGER NOT NULL
       ) STRICT;
       CREATE TABLE IF NOT EXISTS messages (
@@ -60,13 +61,40 @@ export class RelayStore {
         updated_at INTEGER NOT NULL
       ) STRICT;
     `);
+    const channelColumns = this.database.prepare("PRAGMA table_info(channels)").all();
+    if (!channelColumns.some((column) => column.name === "last_envelope_digest")) {
+      this.database.exec("ALTER TABLE channels ADD COLUMN last_envelope_digest TEXT");
+    }
+    const legacyLatest = this.database.prepare(`
+      SELECT c.id, m.version, m.sequence, m.nonce, m.ciphertext
+      FROM channels c JOIN messages m
+        ON m.channel_id = c.id AND m.sequence = c.last_sequence
+      WHERE c.last_envelope_digest IS NULL
+    `).all();
+    const backfillDigest = this.database.prepare(
+      "UPDATE channels SET last_envelope_digest = ? WHERE id = ?",
+    );
+    if (legacyLatest.length) {
+      this.database.exec("BEGIN IMMEDIATE");
+      try {
+        for (const row of legacyLatest) {
+          backfillDigest.run(digest(JSON.stringify([
+            row.version, row.sequence, row.nonce, row.ciphertext,
+          ])), row.id);
+        }
+        this.database.exec("COMMIT");
+      } catch (error) {
+        this.database.exec("ROLLBACK");
+        throw error;
+      }
+    }
     this.insertChannel = this.database.prepare(`
       INSERT INTO channels
         (id, publisher_digest, subscriber_digest, last_sequence, created_at)
       VALUES (?, ?, ?, 0, ?)
     `);
     this.selectChannel = this.database.prepare(`
-      SELECT publisher_digest, subscriber_digest, last_sequence
+      SELECT publisher_digest, subscriber_digest, last_sequence, last_envelope_digest
       FROM channels WHERE id = ?
     `);
     this.insertMessage = this.database.prepare(`
@@ -75,7 +103,10 @@ export class RelayStore {
       VALUES (?, ?, ?, ?, ?, ?)
     `);
     this.updateSequence = this.database.prepare(
-      "UPDATE channels SET last_sequence = ? WHERE id = ?",
+      "UPDATE channels SET last_sequence = ?, last_envelope_digest = ? WHERE id = ?",
+    );
+    this.updateEnvelopeDigest = this.database.prepare(
+      "UPDATE channels SET last_envelope_digest = ? WHERE id = ?",
     );
     this.selectMessages = this.database.prepare(`
       SELECT sequence, version, nonce, ciphertext
@@ -116,6 +147,12 @@ export class RelayStore {
     this.deletePushStatement = this.database.prepare(
       "DELETE FROM push_subscriptions WHERE channel_id = ?",
     );
+    this.selectStats = this.database.prepare(`
+      SELECT
+        (SELECT count(*) FROM channels) AS channels,
+        (SELECT count(*) FROM messages) AS messages,
+        (SELECT count(*) FROM push_subscriptions) AS push_subscriptions
+    `);
   }
 
   createChannel() {
@@ -147,12 +184,46 @@ export class RelayStore {
   publish(channelId, token, envelope) {
     if (!this.authorize(channelId, token, "publisher")) return "unauthorized";
     const channel = this.selectChannel.get(channelId);
+    const envelopeDigest = digest(JSON.stringify([
+      envelope.version,
+      envelope.sequence,
+      envelope.nonce,
+      envelope.ciphertext,
+    ]));
     if (envelope.sequence !== channel.last_sequence + 1) {
       const existing = this.selectMessage.get(channelId, envelope.sequence);
       if (existing
           && existing.version === envelope.version
           && existing.nonce === envelope.nonce
-          && existing.ciphertext === envelope.ciphertext) return "duplicate";
+          && existing.ciphertext === envelope.ciphertext) {
+        if (!channel.last_envelope_digest) {
+          this.updateEnvelopeDigest.run(envelopeDigest, channelId);
+        }
+        return "duplicate";
+      }
+      if (envelope.sequence === channel.last_sequence
+          && channel.last_envelope_digest
+          && sameDigest(channel.last_envelope_digest, envelopeDigest)) {
+        const now = this.clock();
+        this.database.exec("BEGIN IMMEDIATE");
+        try {
+          this.insertMessage.run(
+            channelId,
+            envelope.sequence,
+            now,
+            envelope.version,
+            envelope.nonce,
+            envelope.ciphertext,
+          );
+          this.deleteExpired.run(channelId, now - RETENTION_MS);
+          this.trimMessages.run(channelId, channelId);
+          this.database.exec("COMMIT");
+          return "duplicate";
+        } catch (error) {
+          this.database.exec("ROLLBACK");
+          throw error;
+        }
+      }
       return "sequence";
     }
     const now = this.clock();
@@ -166,7 +237,7 @@ export class RelayStore {
         envelope.nonce,
         envelope.ciphertext,
       );
-      this.updateSequence.run(envelope.sequence, channelId);
+      this.updateSequence.run(envelope.sequence, envelopeDigest, channelId);
       this.deleteExpired.run(channelId, now - RETENTION_MS);
       this.trimMessages.run(channelId, channelId);
       this.database.exec("COMMIT");
@@ -233,6 +304,10 @@ export class RelayStore {
     if (!authorized) return false;
     this.deleteChannel.run(channelId);
     return true;
+  }
+
+  stats() {
+    return this.selectStats.get();
   }
 
   close() {

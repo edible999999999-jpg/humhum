@@ -276,7 +276,10 @@ pub async fn start_mobile_pairing(
     scope: MobileDeviceScope,
     network: Option<MobileNetwork>,
 ) -> Result<MobilePairingInfo, String> {
-    state.create_pairing_on(scope, network.unwrap_or_default())
+    state
+        .inner()
+        .create_pairing_for_android(scope, network.unwrap_or_default())
+        .await
 }
 
 #[tauri::command]

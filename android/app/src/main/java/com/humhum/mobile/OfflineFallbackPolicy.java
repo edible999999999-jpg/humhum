@@ -41,6 +41,27 @@ final class OfflineFallbackPolicy {
         return false;
     }
 
+    static boolean canRetryWriteThroughRelay(Throwable error) {
+        Set<Throwable> visited = Collections.newSetFromMap(new IdentityHashMap<>());
+        Throwable current = error;
+        for (int depth = 0; depth < MAX_CAUSE_DEPTH; depth++) {
+            if (current == null) return false;
+            if (!visited.add(current) || isExplicitlyDenied(current)) return false;
+            if (current instanceof ConnectException
+                    || current instanceof UnknownHostException
+                    || current instanceof NoRouteToHostException) return true;
+            if (current instanceof SocketTimeoutException || current instanceof SocketException) {
+                return false;
+            }
+            try {
+                current = current.getCause();
+            } catch (RuntimeException ignored) {
+                return false;
+            }
+        }
+        return false;
+    }
+
     private static boolean isExplicitlyDenied(Throwable error) {
         return error instanceof MobileProtocol.HttpStatusException
                 || error instanceof JSONException

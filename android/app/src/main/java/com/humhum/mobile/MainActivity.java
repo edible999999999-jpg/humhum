@@ -67,8 +67,11 @@ public final class MainActivity extends Activity {
     private EncryptedSessionSnapshotStore snapshotStore;
     private SessionSnapshotGenerationGate snapshotGenerationGate;
     private MonitorStore monitorStore;
+    private AnywhereStateStore anywhereStateStore;
     private ConnectionStore.Connection connection;
     private MobileProtocol protocol;
+    private AnywhereRelayClient anywhereRelayClient;
+    private AnywhereGateway anywhereGateway;
     private boolean refreshInFlight;
     private MobileRoleDashboard.Role selectedRole = MobileRoleDashboard.Role.HUMI;
     private final Map<MobileRoleDashboard.Role, LinearLayout> roleTabs =
@@ -76,6 +79,7 @@ public final class MainActivity extends Activity {
     private final Map<MobileRoleDashboard.Role, TextView> roleTabLabels =
             new EnumMap<>(MobileRoleDashboard.Role.class);
     private LinearLayout connectPanel;
+    private LinearLayout manualPairingPanel;
     private LinearLayout sessionPanel;
     private LinearLayout roleNavigation;
     private LinearLayout roleHero;
@@ -89,11 +93,14 @@ public final class MainActivity extends Activity {
     private TextView statusText;
     private TextView scopeText;
     private TextView connectError;
+    private TextView scanPairingStatus;
     private EditText urlInput;
     private EditText codeInput;
     private EditText fingerprintInput;
     private EditText deviceNameInput;
     private Button connectButton;
+    private Button scanSetupButton;
+    private Button manualPairingToggle;
     private Button refreshButton;
     private Button disconnectButton;
     private Switch monitorSwitch;
@@ -104,6 +111,7 @@ public final class MainActivity extends Activity {
     private Button autostartSettingsButton;
     private boolean updatingMonitorSwitch;
     private boolean pendingMonitorEnable;
+    private boolean scannedPairing;
     private List<Models.Session> renderedSessions = List.of();
     private String expandedConversationSessionId;
     private String loadingConversationSessionId;
@@ -128,9 +136,14 @@ public final class MainActivity extends Activity {
         snapshotStore = new EncryptedSessionSnapshotStore(this);
         snapshotGenerationGate = SessionSnapshotGenerationGate.open();
         monitorStore = AgentMonitorService.monitorStore(this);
+        anywhereStateStore = new AnywhereStateStore(
+                getSharedPreferences("humhum_anywhere", MODE_PRIVATE));
         pushPreferences = getSharedPreferences("humhum_push", MODE_PRIVATE);
         connectButton.setOnClickListener(view -> pair());
-        findViewById(R.id.scanSetupButton).setOnClickListener(view -> scanSetup());
+        scanSetupButton.setOnClickListener(view -> scanSetup());
+        manualPairingToggle.setOnClickListener(
+                view -> setManualPairingVisible(
+                        manualPairingPanel.getVisibility() != View.VISIBLE));
         findViewById(R.id.pasteSetupButton).setOnClickListener(view -> pasteSetup());
         refreshButton.setOnClickListener(view -> refreshSessions(true));
         disconnectButton.setOnClickListener(view -> disconnect());
@@ -139,6 +152,7 @@ public final class MainActivity extends Activity {
         autostartSettingsButton.setOnClickListener(view -> openAutostartSettings());
         autostartSettingsButton.setVisibility(
                 DeviceCarePlan.isXiaomiFamily(Build.MANUFACTURER) ? View.VISIBLE : View.GONE);
+        deviceNameInput.setText(defaultDeviceName());
 
         connection = connectionStore.load();
         if (connection == null) {
@@ -219,6 +233,7 @@ public final class MainActivity extends Activity {
         sendingSessionIds.clear();
         collapseConversationDisclosure();
         renderedSessions = List.of();
+        if (anywhereRelayClient != null) anywhereRelayClient.cancel();
         snapshotGenerationGate.close();
         network.shutdownNow();
         super.onDestroy();
@@ -226,6 +241,7 @@ public final class MainActivity extends Activity {
 
     private void bindViews() {
         connectPanel = findViewById(R.id.connectPanel);
+        manualPairingPanel = findViewById(R.id.manualPairingPanel);
         sessionPanel = findViewById(R.id.sessionPanel);
         roleNavigation = findViewById(R.id.roleNavigation);
         roleHero = findViewById(R.id.roleHero);
@@ -239,11 +255,14 @@ public final class MainActivity extends Activity {
         statusText = findViewById(R.id.statusText);
         scopeText = findViewById(R.id.scopeText);
         connectError = findViewById(R.id.connectError);
+        scanPairingStatus = findViewById(R.id.scanPairingStatus);
         urlInput = findViewById(R.id.urlInput);
         codeInput = findViewById(R.id.codeInput);
         fingerprintInput = findViewById(R.id.fingerprintInput);
         deviceNameInput = findViewById(R.id.deviceNameInput);
         connectButton = findViewById(R.id.connectButton);
+        scanSetupButton = findViewById(R.id.scanSetupButton);
+        manualPairingToggle = findViewById(R.id.manualPairingToggle);
         refreshButton = findViewById(R.id.refreshButton);
         disconnectButton = findViewById(R.id.disconnectButton);
         monitorSwitch = findViewById(R.id.monitorSwitch);
@@ -552,6 +571,42 @@ public final class MainActivity extends Activity {
         setPairing(true);
     }
 
+    private void pair(PairingSetup setup) {
+        connectError.setText("");
+        clearConversationState();
+        final BridgeConfig config;
+        try {
+            config = BridgeConfig.parse(
+                    setup.url(),
+                    setup.code(),
+                    setup.fingerprint(),
+                    defaultDeviceName(),
+                    host -> true);
+        } catch (IllegalArgumentException error) {
+            setScannedPairingState(false);
+            connectError.setText(error.getMessage());
+            return;
+        }
+        boolean started = TRANSITIONS.begin(
+                DurableConnectionTransitionCoordinator.State.PAIRING,
+                () -> {
+                    Models.PairResult result =
+                            new RelayPairingClient(new AnywhereRelayClient())
+                                    .pair(setup, config.deviceName());
+                    SessionSnapshotGenerationGate.callExclusiveTransition(() -> {
+                        clearSnapshotSafely();
+                        connectionStore.save(config, result, true);
+                        return null;
+                    });
+                    return "";
+                });
+        if (!started) {
+            adoptTransitionState();
+            return;
+        }
+        setPairing(true);
+    }
+
     private void pasteSetup() {
         ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
         ClipData data = clipboard.getPrimaryClip();
@@ -587,17 +642,25 @@ public final class MainActivity extends Activity {
         try {
             PairingSetup setup = PairingSetup.parse(
                     source, host -> WifiOnLinkPolicy.isHostOnCurrentWifi(this, host));
+            if (setup.canPairRemotely()) {
+                setScannedPairingState(true);
+                pair(setup);
+                return;
+            }
             urlInput.setText(setup.url());
             codeInput.setText(setup.code());
             fingerprintInput.setText(setup.fingerprint());
             if (connectImmediately) {
+                setScannedPairingState(true);
                 pair();
             } else {
+                setManualPairingVisible(true);
                 connectError.setText(setup.scope() == Models.Scope.CONTROL
                         ? "已填入可控制配对资料，请点击安全配对"
                         : "已填入只读配对资料，请点击安全配对");
             }
         } catch (IllegalArgumentException error) {
+            setScannedPairingState(false);
             connectError.setText(error.getMessage());
         }
     }
@@ -614,6 +677,14 @@ public final class MainActivity extends Activity {
         renderedSessions = List.of();
         connection = saved;
         protocol = new MobileProtocol(saved.config(), saved.token(), saved.scope());
+        if (anywhereRelayClient != null) anywhereRelayClient.cancel();
+        if (saved.wakeRelay() != null && saved.wakeRelay().version() == 2) {
+            anywhereRelayClient = new AnywhereRelayClient();
+            anywhereGateway = new AnywhereGateway(anywhereRelayClient, anywhereStateStore);
+        } else {
+            anywhereRelayClient = null;
+            anywhereGateway = null;
+        }
         connectPanel.setVisibility(View.GONE);
         sessionPanel.setVisibility(View.VISIBLE);
         roleNavigation.setVisibility(View.VISIBLE);
@@ -648,8 +719,12 @@ public final class MainActivity extends Activity {
         sendingSessionIds.clear();
         collapseConversationDisclosure();
         renderedSessions = List.of();
+        if (anywhereRelayClient != null) anywhereRelayClient.cancel();
+        anywhereRelayClient = null;
+        anywhereGateway = null;
         protocol = null;
         connection = null;
+        setScannedPairingState(false);
         connectPanel.setVisibility(View.VISIBLE);
         sessionPanel.setVisibility(View.GONE);
         roleNavigation.setVisibility(View.GONE);
@@ -677,6 +752,7 @@ public final class MainActivity extends Activity {
                     }
                     SessionSnapshotGenerationGate.runExclusiveTransition(() -> {
                         clearSnapshotSafely();
+                        anywhereStateStore.clear();
                         connectionStore.clear();
                     });
                     return warning;
@@ -799,32 +875,47 @@ public final class MainActivity extends Activity {
         if (userInitiated) statusText.setText("正在刷新");
         MobileProtocol current = protocol;
         ConnectionStore.Connection currentConnection = connection;
+        AnywhereGateway currentAnywhere = anywhereGateway;
+        boolean relayFirst =
+                ConnectionRoutePolicy.useRelayFirst(currentConnection, currentAnywhere != null);
         long refreshGeneration = snapshotGenerationGate.capture();
         network.execute(() -> {
             try {
-                Models.SessionPage page = current.sessions();
-                long savedAtMillis = System.currentTimeMillis();
-                boolean written = snapshotGenerationGate.callIfCurrent(refreshGeneration, () -> {
-                    if (!isCurrentConnection(current, currentConnection)) return false;
-                    writeSnapshotSafely(currentConnection, page.sessions(), savedAtMillis);
-                    return true;
-                }, false);
-                if (!written) {
-                    postStaleRefreshReset(
-                            refreshGeneration, current, currentConnection);
-                    return;
-                }
-                postRefreshIfCurrent(refreshGeneration, current, currentConnection, () -> {
-                    refreshInFlight = false;
-                    refreshButton.setEnabled(true);
-                    statusText.setText("刚刚同步");
-                    renderSessions(page.sessions());
-                });
+                Models.SessionPage page = relayFirst
+                        ? currentAnywhere.sessions(currentConnection.wakeRelay())
+                        : current.sessions();
+                commitSessionPage(
+                        refreshGeneration, current, currentConnection, page, relayFirst);
             } catch (Exception error) {
                 if (OfflineFallbackPolicy.isAuthorizationRevoked(error)) {
                     clearRevokedConnection(
                             refreshGeneration, current, currentConnection);
                     return;
+                }
+                if (relayFirst) {
+                    try {
+                        Models.SessionPage page = current.sessions();
+                        commitSessionPage(
+                                refreshGeneration, current, currentConnection, page, false);
+                        return;
+                    } catch (Exception directError) {
+                        if (OfflineFallbackPolicy.isAuthorizationRevoked(directError)) {
+                            clearRevokedConnection(
+                                    refreshGeneration, current, currentConnection);
+                            return;
+                        }
+                        error = directError;
+                    }
+                } else if (canUseAnywhere(error, currentConnection, currentAnywhere)) {
+                    try {
+                        Models.SessionPage page = currentAnywhere.sessions(
+                                currentConnection.wakeRelay());
+                        commitSessionPage(
+                                refreshGeneration, current, currentConnection, page, true);
+                        return;
+                    } catch (Exception ignored) {
+                        // The encrypted local snapshot remains the last bounded fallback.
+                    }
                 }
                 long nowMillis = System.currentTimeMillis();
                 SessionSnapshot snapshot = OfflineFallbackPolicy.canUseSnapshot(error)
@@ -852,6 +943,30 @@ public final class MainActivity extends Activity {
         });
     }
 
+    private void commitSessionPage(
+            long generation,
+            MobileProtocol expectedProtocol,
+            ConnectionStore.Connection expectedConnection,
+            Models.SessionPage page,
+            boolean remote) {
+        long savedAtMillis = System.currentTimeMillis();
+        boolean written = snapshotGenerationGate.callIfCurrent(generation, () -> {
+            if (!isCurrentConnection(expectedProtocol, expectedConnection)) return false;
+            writeSnapshotSafely(expectedConnection, page.sessions(), savedAtMillis);
+            return true;
+        }, false);
+        if (!written) {
+            postStaleRefreshReset(generation, expectedProtocol, expectedConnection);
+            return;
+        }
+        postRefreshIfCurrent(generation, expectedProtocol, expectedConnection, () -> {
+            refreshInFlight = false;
+            refreshButton.setEnabled(true);
+            statusText.setText(remote ? "远程连接 · 刚刚同步" : "刚刚同步");
+            renderSessions(page.sessions());
+        });
+    }
+
     private void clearRevokedConnection(
             long generation,
             MobileProtocol expectedProtocol,
@@ -859,6 +974,7 @@ public final class MainActivity extends Activity {
         boolean cleared = snapshotGenerationGate.callIfCurrent(generation, () -> {
             if (!isCurrentConnection(expectedProtocol, expectedConnection)) return false;
             clearSnapshotSafely();
+            anywhereStateStore.clear();
             connectionStore.clear();
             return true;
         }, false);
@@ -976,6 +1092,7 @@ public final class MainActivity extends Activity {
         }
         reconcileDurableConnection(null);
         if (completion.state() == DurableConnectionTransitionCoordinator.State.PAIRING) {
+            setScannedPairingState(false);
             setPairing(false);
             connectError.setText(safeError(completion.failure()));
         } else {
@@ -1056,6 +1173,7 @@ public final class MainActivity extends Activity {
                 && Objects.equals(firstConfig.deviceName(), secondConfig.deviceName())
                 && Objects.equals(first.token(), second.token())
                 && first.scope() == second.scope()
+                && first.prefersRelay() == second.prefersRelay()
                 && sameWakeRelay(first.wakeRelay(), second.wakeRelay());
     }
 
@@ -1066,7 +1184,33 @@ public final class MainActivity extends Activity {
         return Objects.equals(first.baseUrl(), second.baseUrl())
                 && Objects.equals(first.channelId(), second.channelId())
                 && Objects.equals(first.subscriberToken(), second.subscriberToken())
-                && Objects.equals(first.wakeKey(), second.wakeKey());
+                && Objects.equals(first.wakeKey(), second.wakeKey())
+                && Objects.equals(first.commandChannelId(), second.commandChannelId())
+                && Objects.equals(
+                        first.commandPublisherToken(), second.commandPublisherToken())
+                && Objects.equals(first.commandKey(), second.commandKey());
+    }
+
+    private static boolean canUseAnywhere(
+            Throwable directError,
+            ConnectionStore.Connection activeConnection,
+            AnywhereGateway gateway) {
+        return gateway != null
+                && activeConnection != null
+                && activeConnection.wakeRelay() != null
+                && activeConnection.wakeRelay().version() == 2
+                && OfflineFallbackPolicy.canUseSnapshot(directError);
+    }
+
+    private static boolean canUseAnywhereForWrite(
+            Throwable directError,
+            ConnectionStore.Connection activeConnection,
+            AnywhereGateway gateway) {
+        return gateway != null
+                && activeConnection != null
+                && activeConnection.wakeRelay() != null
+                && activeConnection.wakeRelay().version() == 2
+                && OfflineFallbackPolicy.canRetryWriteThroughRelay(directError);
     }
 
     private void writeSnapshotSafely(
@@ -1359,29 +1503,63 @@ public final class MainActivity extends Activity {
     private void loadConversation(Models.Session session) {
         MobileProtocol current = protocol;
         ConnectionStore.Connection currentConnection = connection;
+        AnywhereGateway currentAnywhere = anywhereGateway;
         if (current == null || currentConnection == null) return;
+        boolean relayFirst =
+                ConnectionRoutePolicy.useRelayFirst(currentConnection, currentAnywhere != null);
         String sessionId = session.id();
         long generation = snapshotGenerationGate.capture();
         network.execute(() -> {
+            if (relayFirst) {
+                try {
+                    List<Models.ConversationMessage> messages = currentAnywhere.conversation(
+                            currentConnection.wakeRelay(), session);
+                    commitConversation(
+                            generation,
+                            current,
+                            currentConnection,
+                            sessionId,
+                            messages,
+                            true);
+                    return;
+                } catch (Exception remoteError) {
+                    if (OfflineFallbackPolicy.isAuthorizationRevoked(remoteError)) {
+                        clearRevokedConnection(generation, current, currentConnection);
+                        return;
+                    }
+                }
+            }
             try {
                 List<Models.ConversationMessage> messages = current.conversation(session);
-                postConversationIfCurrent(
+                commitConversation(
                         generation,
                         current,
                         currentConnection,
                         sessionId,
-                        () -> {
-                            recentConversationBySessionId.put(sessionId, List.copyOf(messages));
-                            loadingConversationSessionId = null;
-                            conversationErrorSessionId = null;
-                            conversationErrorText = "";
-                            renderSessions(renderedSessions);
-                        });
+                        messages,
+                        false);
             } catch (Exception error) {
                 if (OfflineFallbackPolicy.isAuthorizationRevoked(error)) {
                     clearRevokedConnection(generation, current, currentConnection);
                     return;
                 }
+                if (!relayFirst && canUseAnywhere(error, currentConnection, currentAnywhere)) {
+                    try {
+                        List<Models.ConversationMessage> messages = currentAnywhere.conversation(
+                                currentConnection.wakeRelay(), session);
+                        commitConversation(
+                                generation,
+                                current,
+                                currentConnection,
+                                sessionId,
+                                messages,
+                                true);
+                        return;
+                    } catch (Exception remoteError) {
+                        error = remoteError;
+                    }
+                }
+                String visibleError = safeError(error);
                 postConversationIfCurrent(
                         generation,
                         current,
@@ -1390,11 +1568,33 @@ public final class MainActivity extends Activity {
                         () -> {
                             loadingConversationSessionId = null;
                             conversationErrorSessionId = sessionId;
-                            conversationErrorText = safeError(error);
+                            conversationErrorText = visibleError;
                             renderSessions(renderedSessions);
                         });
             }
         });
+    }
+
+    private void commitConversation(
+            long generation,
+            MobileProtocol expectedProtocol,
+            ConnectionStore.Connection expectedConnection,
+            String sessionId,
+            List<Models.ConversationMessage> messages,
+            boolean remote) {
+        postConversationIfCurrent(
+                generation,
+                expectedProtocol,
+                expectedConnection,
+                sessionId,
+                () -> {
+                    recentConversationBySessionId.put(sessionId, List.copyOf(messages));
+                    loadingConversationSessionId = null;
+                    conversationErrorSessionId = null;
+                    conversationErrorText = "";
+                    if (remote) statusText.setText("远程连接");
+                    renderSessions(renderedSessions);
+                });
     }
 
     private void postConversationIfCurrent(
@@ -1418,8 +1618,30 @@ public final class MainActivity extends Activity {
         second.setEnabled(false);
         MobileProtocol current = protocol;
         ConnectionStore.Connection currentConnection = connection;
+        AnywhereGateway currentAnywhere = anywhereGateway;
+        boolean relayFirst =
+                ConnectionRoutePolicy.useRelayFirst(currentConnection, currentAnywhere != null);
         long generation = snapshotGenerationGate.capture();
         network.execute(() -> {
+            if (relayFirst) {
+                try {
+                    currentAnywhere.resolveApproval(
+                            currentConnection.wakeRelay(),
+                            currentConnection.scope(),
+                            action,
+                            decision);
+                    postIfCurrent(generation, current, currentConnection, () -> {
+                        statusText.setText("远程连接 · 已处理");
+                        refreshSessions(true);
+                    });
+                    return;
+                } catch (Exception remoteError) {
+                    if (OfflineFallbackPolicy.isAuthorizationRevoked(remoteError)) {
+                        clearRevokedConnection(generation, current, currentConnection);
+                        return;
+                    }
+                }
+            }
             try {
                 current.resolveApproval(action, decision);
                 postIfCurrent(generation, current, currentConnection, () -> refreshSessions(true));
@@ -1428,10 +1650,28 @@ public final class MainActivity extends Activity {
                     clearRevokedConnection(generation, current, currentConnection);
                     return;
                 }
+                if (!relayFirst
+                        && canUseAnywhereForWrite(error, currentConnection, currentAnywhere)) {
+                    try {
+                        currentAnywhere.resolveApproval(
+                                currentConnection.wakeRelay(),
+                                currentConnection.scope(),
+                                action,
+                                decision);
+                        postIfCurrent(generation, current, currentConnection, () -> {
+                            statusText.setText("远程连接 · 已处理");
+                            refreshSessions(true);
+                        });
+                        return;
+                    } catch (Exception remoteError) {
+                        error = remoteError;
+                    }
+                }
+                String visibleError = safeError(error);
                 postIfCurrent(generation, current, currentConnection, () -> {
                     first.setEnabled(true);
                     second.setEnabled(true);
-                    statusText.setText(safeError(error));
+                    statusText.setText(visibleError);
                 });
             }
         });
@@ -1445,8 +1685,35 @@ public final class MainActivity extends Activity {
         send.setEnabled(false);
         MobileProtocol current = protocol;
         ConnectionStore.Connection currentConnection = connection;
+        AnywhereGateway currentAnywhere = anywhereGateway;
+        boolean relayFirst =
+                ConnectionRoutePolicy.useRelayFirst(currentConnection, currentAnywhere != null);
         long generation = snapshotGenerationGate.capture();
         network.execute(() -> {
+            if (relayFirst) {
+                try {
+                    String state = currentAnywhere.sendMessage(
+                            currentConnection.wakeRelay(),
+                            currentConnection.scope(),
+                            session,
+                            message);
+                    postIfCurrent(generation, current, currentConnection, () -> {
+                        sendingSessionIds.remove(session.id());
+                        messageDraftBySessionId.remove(session.id());
+                        statusText.setText("delivered".equals(state)
+                                ? "远程连接 · 跟进已送达"
+                                : "远程连接 · 跟进已进入队列");
+                        renderSessions(renderedSessions);
+                        refreshSessions(false);
+                    });
+                    return;
+                } catch (Exception remoteError) {
+                    if (OfflineFallbackPolicy.isAuthorizationRevoked(remoteError)) {
+                        clearRevokedConnection(generation, current, currentConnection);
+                        return;
+                    }
+                }
+            }
             try {
                 String state = current.sendMessage(session, message);
                 postIfCurrent(generation, current, currentConnection, () -> {
@@ -1461,9 +1728,32 @@ public final class MainActivity extends Activity {
                     clearRevokedConnection(generation, current, currentConnection);
                     return;
                 }
+                if (!relayFirst
+                        && canUseAnywhereForWrite(error, currentConnection, currentAnywhere)) {
+                    try {
+                        String state = currentAnywhere.sendMessage(
+                                currentConnection.wakeRelay(),
+                                currentConnection.scope(),
+                                session,
+                                message);
+                        postIfCurrent(generation, current, currentConnection, () -> {
+                            sendingSessionIds.remove(session.id());
+                            messageDraftBySessionId.remove(session.id());
+                            statusText.setText("delivered".equals(state)
+                                    ? "远程连接 · 跟进已送达"
+                                    : "远程连接 · 跟进已进入队列");
+                            renderSessions(renderedSessions);
+                            refreshSessions(false);
+                        });
+                        return;
+                    } catch (Exception remoteError) {
+                        error = remoteError;
+                    }
+                }
+                String visibleError = safeError(error);
                 postIfCurrent(generation, current, currentConnection, () -> {
                     sendingSessionIds.remove(session.id());
-                    statusText.setText(safeError(error));
+                    statusText.setText(visibleError);
                     renderSessions(renderedSessions);
                 });
             }
@@ -1473,7 +1763,37 @@ public final class MainActivity extends Activity {
     private void setPairing(boolean pairing) {
         connectButton.setEnabled(!pairing);
         connectButton.setText(pairing ? "正在安全配对" : "安全配对");
-        statusText.setText(pairing ? "正在验证证书" : "等待连接");
+        statusText.setText(pairing
+                ? (scannedPairing ? "正在加密配对" : "正在验证证书")
+                : "等待连接");
+        if (pairing && scannedPairing) {
+            scanPairingStatus.setText("二维码已识别\n正在通过加密中继连接这台电脑");
+        }
+    }
+
+    private void setScannedPairingState(boolean active) {
+        scannedPairing = active;
+        scanPairingStatus.setVisibility(active ? View.VISIBLE : View.GONE);
+        scanSetupButton.setVisibility(active ? View.GONE : View.VISIBLE);
+        manualPairingToggle.setVisibility(active ? View.GONE : View.VISIBLE);
+        manualPairingPanel.setVisibility(View.GONE);
+        if (!active) {
+            scanSetupButton.setText("扫描电脑配对二维码");
+            manualPairingToggle.setText("使用手动配对");
+        }
+    }
+
+    private void setManualPairingVisible(boolean visible) {
+        if (scannedPairing) return;
+        manualPairingPanel.setVisibility(visible ? View.VISIBLE : View.GONE);
+        manualPairingToggle.setText(visible ? "收起手动配对" : "使用手动配对");
+    }
+
+    private static String defaultDeviceName() {
+        String manufacturer = Build.MANUFACTURER == null ? "" : Build.MANUFACTURER.trim();
+        String model = Build.MODEL == null ? "" : Build.MODEL.trim();
+        String value = (manufacturer + " " + model).trim();
+        return value.isEmpty() ? "Android phone" : value;
     }
 
     private void hideKeyboard() {

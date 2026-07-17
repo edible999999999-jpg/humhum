@@ -269,10 +269,14 @@ async fn handle_mobile_pairing(
     app_handle: tauri::AppHandle,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     let state = app_handle.state::<Arc<MobileBridgeState>>();
-    match state.create_pairing_on(
-        mobile_pairing_scope(req.uri().query()),
-        mobile_pairing_network(req.uri().query()),
-    ) {
+    match state
+        .inner()
+        .create_pairing_for_android(
+            mobile_pairing_scope(req.uri().query()),
+            mobile_pairing_network(req.uri().query()),
+        )
+        .await
+    {
         Ok(pairing) => Ok(json_response(
             StatusCode::OK,
             &serde_json::to_value(pairing).unwrap_or_default(),

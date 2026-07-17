@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import test from "node:test";
 import { tmpdir } from "node:os";
 import { mkdtemp } from "node:fs/promises";
@@ -49,24 +49,25 @@ test("resolves a real provider session before using the fallback", () => {
 });
 
 test("keeps real session state outside the project and uses an opaque filename", () => {
+  const home = "/Users/example";
   const file = stateFileFor({
-    home: "/Users/example",
+    home,
     cwd: "/work/repo",
     provider: "codex",
     sessionId: "../unsafe/session",
   });
-  assert.match(file, /^\/Users\/example\/\.humhum\/hexa\/sessions\/codex-[a-f0-9]{32}\.json$/);
+  assert.equal(dirname(file), join(home, ".humhum", "hexa", "sessions"));
+  assert.match(basename(file), /^codex-[a-f0-9]{32}\.json$/);
   assert.equal(file.includes("unsafe"), false);
 
-  assert.match(
-    stateFileFor({
-      home: "/Users/example",
-      cwd: "/work/repo",
-      provider: "agent",
-      sessionId: null,
-    }),
-    /^\/Users\/example\/\.humhum\/hexa\/workspaces\/agent-[a-f0-9]{32}\.json$/,
-  );
+  const fallback = stateFileFor({
+    home,
+    cwd: "/work/repo",
+    provider: "agent",
+    sessionId: null,
+  });
+  assert.equal(dirname(fallback), join(home, ".humhum", "hexa", "workspaces"));
+  assert.match(basename(fallback), /^agent-[a-f0-9]{32}\.json$/);
 });
 
 test("runs every command from a non-HUMHUM project with per-session state", async () => {

@@ -830,6 +830,14 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
+    fn fixture_dws_name() -> &'static str {
+        if cfg!(target_os = "windows") {
+            "dws.exe"
+        } else {
+            "dws"
+        }
+    }
+
     #[test]
     fn standalone_dws_takes_precedence_over_wukong_bundle() {
         let temp = tempfile::tempdir().unwrap();
@@ -849,7 +857,10 @@ mod tests {
     #[test]
     fn wukong_bundle_is_used_when_standalone_dws_is_missing() {
         let temp = tempfile::tempdir().unwrap();
-        let bundled = temp.path().join(".real/.bin/dws/bin/dws");
+        let bundled = temp
+            .path()
+            .join(".real/.bin/dws/bin")
+            .join(fixture_dws_name());
         std::fs::create_dir_all(bundled.parent().unwrap()).unwrap();
         std::fs::write(&bundled, "").unwrap();
 
@@ -868,7 +879,7 @@ mod tests {
     #[test]
     fn discovers_qoder_installed_dws_without_gui_path_inheritance() {
         let temp = tempfile::tempdir().unwrap();
-        let qoder_dws = temp.path().join(".qoderwork/bin/dws");
+        let qoder_dws = temp.path().join(".qoderwork/bin").join(fixture_dws_name());
         std::fs::create_dir_all(qoder_dws.parent().unwrap()).unwrap();
         std::fs::write(&qoder_dws, "").unwrap();
 

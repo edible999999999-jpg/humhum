@@ -1,4 +1,5 @@
 mod agent_kernel;
+mod anywhere_crypto;
 mod claude_followup;
 mod client_registry;
 pub mod codex_bridge;

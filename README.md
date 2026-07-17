@@ -8,11 +8,11 @@
 [中文文档](./README.zh-CN.md)
 
 <p align="center">
-  <a href="https://github.com/edible999999999-jpg/humhum/releases/latest/download/HumHum_0.3.12_aarch64.dmg"><strong>Download for macOS</strong></a>
+  <a href="https://github.com/edible999999999-jpg/humhum/releases/download/v0.3.14-beta.1/HumHum_0.3.14_aarch64.dmg"><strong>Download for macOS</strong></a>
   ·
   <a href="https://github.com/edible999999999-jpg/humhum/releases/latest/download/HumHum_0.3.12_x64-setup.exe"><strong>Download Windows Preview</strong></a>
   ·
-  <a href="https://github.com/edible999999999-jpg/humhum/releases/latest/download/HUMHUM-Android-0.3.8-Xiaomi.zip"><strong>Download for Android / Xiaomi</strong></a>
+  <a href="https://github.com/edible999999999-jpg/humhum/releases/download/v0.3.14-beta.1/HUMHUM-Android-0.3.14.apk"><strong>Download for Android / Xiaomi</strong></a>
   ·
   <a href="https://yuxilab.cn/intro"><strong>Visit the website</strong></a>
   ·
@@ -130,6 +130,12 @@ After launch, open the **Hub** from the system tray menu or by right-clicking th
 - **Codex / Qwen Code / Gemini CLI / Kimi K1** — configured via a unified client registry (JSON / TOML)
 - **QoderWork** — watches `~/.qoderwork/logs/sessions/` session logs
 
+### Phone access
+
+The native Android client pairs by scanning the short-lived QR code in Hexa. On the same network it uses certificate-pinned HTTPS directly to the Mac. The invite-only **HUMHUM Anywhere** beta can automatically fall back to a self-hosted opaque relay when the phone is on 5G or another network: session summaries, bounded recent conversation, approvals and short follow-ups stay AES-256-GCM encrypted between the Mac and phone, while the relay stores only bounded ciphertext and credential digests. Read-only/control scope and per-device revocation still apply.
+
+Anywhere requires a deployed HTTPS relay and an invite code configured in Hexa. See [Android setup](./docs/android-install.md) and [relay deployment](./relay/README.md). It is currently a self-hosted beta, not a promise that a public HUMHUM endpoint is already online.
+
 ## Data & privacy
 
 HUMHUM is local-first — the data on your own machine is its advantage. All durable data is persisted under `~/.humhum/`:
@@ -175,7 +181,8 @@ scripts/                # Edge TTS bridge, etc.
 
 ## Roadmap
 
-- [ ] Remote approval and status from your phone (scan to connect, no app to install)
+- [x] Native Android status, conversation, approval and follow-up access with QR pairing
+- [ ] Public hosted HUMHUM Anywhere endpoint and iOS client
 - [ ] Cross-device preference and context sync
 - [x] Read-only macOS notification bridge for new WeChat and DingTalk messages
 - [ ] Rich Hush history bridges for user-approved chat exports

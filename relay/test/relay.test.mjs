@@ -5,10 +5,12 @@ import { join } from "node:path";
 import { connect } from "node:net";
 import { afterEach, test } from "node:test";
 import { DatabaseSync } from "node:sqlite";
-import { createRelayServer } from "../src/server.mjs";
+import { createRateLimiter, createRelayServer, rateLimitIdentity } from "../src/server.mjs";
 
 const cleanups = [];
 const PUSH_TOKEN_KEY = "11".repeat(32);
+const INVITE_SECRET = "humhum-beta-invite-2026";
+const ADMIN_SECRET = "humhum-beta-admin-2026";
 const NOOP_PUSH_PROVIDER = { async sendWake() {} };
 afterEach(async () => {
   while (cleanups.length) await cleanups.pop()();
@@ -17,7 +19,12 @@ afterEach(async () => {
 async function relay(options = {}) {
   const directory = await mkdtemp(join(tmpdir(), "humhum-relay-"));
   const databasePath = join(directory, "relay.sqlite");
-  const server = createRelayServer({ databasePath, ...options });
+  const server = createRelayServer({
+    databasePath,
+    inviteSecret: INVITE_SECRET,
+    adminSecret: ADMIN_SECRET,
+    ...options,
+  });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   const baseUrl = `http://127.0.0.1:${address.port}`;
@@ -28,10 +35,13 @@ async function relay(options = {}) {
   return { baseUrl, databasePath };
 }
 
-async function createChannel(baseUrl) {
+async function createChannel(baseUrl, inviteSecret = INVITE_SECRET) {
   const response = await fetch(`${baseUrl}/v1/channels`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      "x-humhum-invite": inviteSecret,
+    },
     body: "{}",
   });
   assert.equal(response.status, 201);
@@ -107,7 +117,7 @@ async function waitForSequence(databasePath, channelId, sequence) {
 test("health and channel creation expose no secrets through headers or storage", async () => {
   const { baseUrl, databasePath } = await relay();
   const health = await fetch(`${baseUrl}/health`);
-  assert.deepEqual(await health.json(), { status: "ok", name: "HUMHUM Wake Relay" });
+  assert.deepEqual(await health.json(), { status: "ok", name: "HUMHUM Anywhere Relay" });
   assert.equal(health.headers.get("access-control-allow-origin"), null);
   assert.equal(health.headers.get("cache-control"), "no-store");
 
@@ -129,6 +139,36 @@ test("health and channel creation expose no secrets through headers or storage",
   const bytes = await readFile(databasePath);
   assert.equal(bytes.includes(Buffer.from(channel.publisher_token)), false);
   assert.equal(bytes.includes(Buffer.from(channel.subscriber_token)), false);
+});
+
+test("channel creation is invite-only and admin capacity stays private", async () => {
+  const { baseUrl } = await relay();
+  for (const inviteSecret of ["", "wrong-invite-secret"]) {
+    const response = await fetch(`${baseUrl}/v1/channels`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(inviteSecret ? { "x-humhum-invite": inviteSecret } : {}),
+      },
+      body: "{}",
+    });
+    assert.equal(response.status, 401);
+    assert.deepEqual(await response.json(), { error: "Unauthorized" });
+  }
+
+  await createChannel(baseUrl);
+  const hidden = await fetch(`${baseUrl}/v1/admin/stats`);
+  assert.equal(hidden.status, 401);
+  assert.deepEqual(await hidden.json(), { error: "Unauthorized" });
+  const stats = await fetch(`${baseUrl}/v1/admin/stats`, {
+    headers: { "x-humhum-admin": ADMIN_SECRET },
+  });
+  assert.equal(stats.status, 200);
+  assert.deepEqual(await stats.json(), {
+    channels: 1,
+    messages: 0,
+    push_subscriptions: 0,
+  });
 });
 
 test("publisher and subscriber credentials are separated with generic failures", async () => {
@@ -353,12 +393,16 @@ test("push delivery retries the same durable envelope after provider failure", a
 test("mailboxes retain only 128 bounded envelopes", async () => {
   const { baseUrl } = await relay();
   const channel = await createChannel(baseUrl);
-  const oversized = envelope(1, "A".repeat(4_097));
+  const largest = envelope(1, "A".repeat(65_536));
+  assert.equal((await publish(
+    baseUrl, channel.channel_id, channel.publisher_token, largest,
+  )).status, 201);
+  const oversized = envelope(2, "A".repeat(65_537));
   assert.equal((await publish(
     baseUrl, channel.channel_id, channel.publisher_token, oversized,
   )).status, 413);
 
-  for (let sequence = 1; sequence <= 129; sequence += 1) {
+  for (let sequence = 2; sequence <= 129; sequence += 1) {
     assert.equal((await publish(
       baseUrl, channel.channel_id, channel.publisher_token, envelope(sequence),
     )).status, 201);
@@ -399,6 +443,42 @@ test("expired ciphertext disappears and either credential can delete the channel
   assert.equal(gone.status, 401);
 });
 
+test("exact latest retry restores ciphertext after retention without accepting a rewrite", async () => {
+  let now = 1_800_000_000_000;
+  const { baseUrl, databasePath } = await relay({ clock: () => now });
+  const channel = await createChannel(baseUrl);
+  const first = envelope(1);
+  assert.equal((await publish(
+    baseUrl, channel.channel_id, channel.publisher_token, first,
+  )).status, 201);
+  const database = new DatabaseSync(databasePath);
+  database.prepare(
+    "UPDATE channels SET last_envelope_digest = NULL WHERE id = ?",
+  ).run(channel.channel_id);
+  database.close();
+  assert.equal((await publish(
+    baseUrl, channel.channel_id, channel.publisher_token, first,
+  )).status, 201);
+  now += 24 * 60 * 60 * 1_000 + 1;
+  const expired = await fetch(
+    `${baseUrl}/v1/channels/${channel.channel_id}/messages?after=0&wait=0`,
+    { headers: { authorization: `Bearer ${channel.subscriber_token}` } },
+  );
+  assert.deepEqual((await expired.json()).messages, []);
+
+  assert.equal((await publish(
+    baseUrl, channel.channel_id, channel.publisher_token, first,
+  )).status, 201);
+  assert.equal((await publish(
+    baseUrl, channel.channel_id, channel.publisher_token, envelope(1, "DIFFERENT"),
+  )).status, 409);
+  const restored = await fetch(
+    `${baseUrl}/v1/channels/${channel.channel_id}/messages?after=0&wait=0`,
+    { headers: { authorization: `Bearer ${channel.subscriber_token}` } },
+  );
+  assert.deepEqual((await restored.json()).messages, [first]);
+});
+
 test("strict query, JSON shape, and rate bounds fail closed", async () => {
   const { baseUrl } = await relay();
   const channel = await createChannel(baseUrl);
@@ -420,4 +500,23 @@ test("strict query, JSON shape, and rate bounds fail closed", async () => {
     finalStatus = (await fetch(`${baseUrl}/health`)).status;
   }
   assert.equal(finalStatus, 429);
+});
+
+test("rate limiter expires old unauthenticated buckets", () => {
+  let now = 0;
+  const limiter = createRateLimiter(() => now);
+  for (let index = 0; index < 300; index += 1) {
+    assert.equal(limiter.allow(`random:${index}`), true);
+  }
+  assert.equal(limiter.size(), 300);
+
+  now = 3 * 60_000;
+  assert.equal(limiter.allow("current"), true);
+  assert.equal(limiter.size(), 1);
+});
+
+test("proxy rate identity is explicit and rejects spoofed lists", () => {
+  assert.equal(rateLimitIdentity("203.0.113.4", "172.18.0.2", true), "203.0.113.4");
+  assert.equal(rateLimitIdentity("1.1.1.1, 2.2.2.2", "172.18.0.2", true), "invalid-proxy");
+  assert.equal(rateLimitIdentity("203.0.113.4", "127.0.0.1", false), "127.0.0.1");
 });

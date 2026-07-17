@@ -58,6 +58,33 @@ public class MobileProtocolTest {
     }
 
     @Test
+    public void pairingParsesV2AnywhereWithoutDesktopOnlyCredentials() throws Exception {
+        JSONObject relay = new JSONObject()
+                .put("version", 2)
+                .put("base_url", "https://relay.example.com")
+                .put("channel_id", "11".repeat(32))
+                .put("subscriber_token", "22".repeat(32))
+                .put("wake_key", "33".repeat(32))
+                .put("command", new JSONObject()
+                        .put("channel_id", "44".repeat(32))
+                        .put("publisher_token", "55".repeat(32))
+                        .put("key", "66".repeat(32)));
+        JSONObject payload = new JSONObject()
+                .put("token", "ab".repeat(32))
+                .put("scope", "control")
+                .put("wake_relay", relay);
+
+        Models.WakeRelayConfig result = MobileProtocol.parsePairResult(payload.toString()).wakeRelay();
+
+        assertEquals(2, result.version());
+        assertEquals("44".repeat(32), result.commandChannelId());
+        assertEquals("55".repeat(32), result.commandPublisherToken());
+        assertEquals("66".repeat(32), result.commandKey());
+        assertFalse(relay.has("publisher_token"));
+        assertFalse(relay.getJSONObject("command").has("subscriber_token"));
+    }
+
+    @Test
     public void legacyPairResponseHasNoWakeRelay() throws Exception {
         Models.PairResult result = MobileProtocol.parsePairResult(new JSONObject()
                 .put("token", "ab".repeat(32))

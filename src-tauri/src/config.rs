@@ -36,6 +36,7 @@ pub struct AppConfig {
 pub struct MobileRelayConfig {
     pub enabled: bool,
     pub base_url: Option<String>,
+    pub invite_code: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

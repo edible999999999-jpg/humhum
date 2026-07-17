@@ -1,4 +1,6 @@
 import { createServer } from "node:http";
+import { createHash, timingSafeEqual } from "node:crypto";
+import { isIP } from "node:net";
 import { pathToFileURL } from "node:url";
 import { loadFcmProviderFromEnvironment } from "./fcm.mjs";
 import { RelayStore } from "./store.mjs";
@@ -8,6 +10,8 @@ const MESSAGES_PATH = /^\/v1\/channels\/([a-f0-9]{64})\/messages$/;
 const PUSH_PATH = /^\/v1\/channels\/([a-f0-9]{64})\/push$/;
 const TOKEN = /^[a-f0-9]{64}$/;
 const BASE64URL = /^[A-Za-z0-9_-]+$/;
+const MAX_CIPHERTEXT_CHARS = 65_536;
+const MAX_ENVELOPE_BYTES = 66_000;
 
 function send(response, status, value = null) {
   response.setHeader("cache-control", "no-store");
@@ -30,6 +34,20 @@ function bearer(request) {
   if (typeof value !== "string" || !value.startsWith("Bearer ")) return null;
   const token = value.slice(7);
   return TOKEN.test(token) ? token : null;
+}
+
+function validServerSecret(value) {
+  return typeof value === "string"
+    && value.length >= 16
+    && value.length <= 256
+    && /^[\x21-\x7e]+$/.test(value);
+}
+
+function secretMatches(actual, expected) {
+  if (typeof actual !== "string") return false;
+  const left = createHash("sha256").update(actual, "utf8").digest();
+  const right = createHash("sha256").update(expected, "utf8").digest();
+  return timingSafeEqual(left, right);
 }
 
 async function readJson(request, maxBytes) {
@@ -66,7 +84,7 @@ function validEnvelope(value) {
     && Buffer.from(value.nonce, "base64url").length === 12
     && typeof value.ciphertext === "string"
     && value.ciphertext.length > 0
-    && value.ciphertext.length <= 4_096
+    && value.ciphertext.length <= MAX_CIPHERTEXT_CHARS
     && BASE64URL.test(value.ciphertext);
 }
 
@@ -87,44 +105,81 @@ function query(url) {
   return { after, wait };
 }
 
-function limiter(clock) {
+export function createRateLimiter(clock) {
   const buckets = new Map();
-  return (key) => {
+  let lastSweepMinute = -1;
+  return {
+    allow(key) {
     const minute = Math.floor(clock() / 60_000);
+    if (minute !== lastSweepMinute) {
+      for (const [bucketKey, bucket] of buckets) {
+        if (bucket.minute < minute - 1) buckets.delete(bucketKey);
+      }
+      lastSweepMinute = minute;
+    }
     const current = buckets.get(key);
     const count = current?.minute === minute ? current.count + 1 : 1;
     buckets.set(key, { minute, count });
     return count <= 300;
+    },
+    size() {
+      return buckets.size;
+    },
   };
+}
+
+export function rateLimitIdentity(forwarded, remote, trustProxy) {
+  if (!trustProxy) return remote || "unknown";
+  return typeof forwarded === "string" && isIP(forwarded) ? forwarded : "invalid-proxy";
 }
 
 export function createRelayServer({
   databasePath,
   clock = Date.now,
+  inviteSecret,
+  adminSecret,
   pushTokenKey = null,
   pushProvider = null,
+  trustProxy = false,
 }) {
   if (!databasePath) throw new Error("databasePath is required");
+  if (!validServerSecret(inviteSecret)) {
+    throw new Error("inviteSecret must contain 16 to 256 printable characters");
+  }
+  if (!validServerSecret(adminSecret)) {
+    throw new Error("adminSecret must contain 16 to 256 printable characters");
+  }
   const store = new RelayStore(databasePath, clock, pushTokenKey);
-  const allow = limiter(clock);
+  const limiter = createRateLimiter(clock);
   const server = createServer(async (request, response) => {
     try {
       const host = request.headers.host || "localhost";
       const url = new URL(request.url, `http://${host}`);
-      const remote = request.socket.remoteAddress || "unknown";
-      if (!allow(`ip:${remote}`)) return send(response, 429, { error: "Rate limited" });
+      const remote = rateLimitIdentity(
+        request.headers["x-forwarded-for"], request.socket.remoteAddress, trustProxy,
+      );
+      if (!limiter.allow(`ip:${remote}`)) return send(response, 429, { error: "Rate limited" });
 
       if (request.method === "GET" && url.pathname === "/health" && !url.search) {
-        return send(response, 200, { status: "ok", name: "HUMHUM Wake Relay" });
+        return send(response, 200, { status: "ok", name: "HUMHUM Anywhere Relay" });
+      }
+      if (request.method === "GET" && url.pathname === "/v1/admin/stats" && !url.search) {
+        if (!secretMatches(request.headers["x-humhum-admin"], adminSecret)) {
+          return unauthorized(response);
+        }
+        return send(response, 200, store.stats());
       }
       if (request.method === "POST" && url.pathname === "/v1/channels" && !url.search) {
+        if (!secretMatches(request.headers["x-humhum-invite"], inviteSecret)) {
+          return unauthorized(response);
+        }
         const body = await readJson(request, 64);
         if (!exactObject(body, [])) return send(response, 400, { error: "Invalid request" });
         return send(response, 201, store.createChannel());
       }
 
       const messageMatch = MESSAGES_PATH.exec(url.pathname);
-      if (messageMatch && !allow(`channel:${messageMatch[1]}`)) {
+      if (messageMatch && !limiter.allow(`channel:${messageMatch[1]}`)) {
         return send(response, 429, { error: "Rate limited" });
       }
       if (request.method === "POST" && messageMatch && !url.search) {
@@ -132,12 +187,16 @@ export function createRelayServer({
         if (!token) return unauthorized(response);
         let body;
         try {
-          body = await readJson(request, 4_608);
+          body = await readJson(request, MAX_ENVELOPE_BYTES);
         } catch (error) {
           return send(response, error.tooLarge ? 413 : 400, { error: "Invalid envelope" });
         }
         if (!validEnvelope(body)) {
-          return send(response, body?.ciphertext?.length > 4_096 ? 413 : 400, { error: "Invalid envelope" });
+          return send(
+            response,
+            body?.ciphertext?.length > MAX_CIPHERTEXT_CHARS ? 413 : 400,
+            { error: "Invalid envelope" },
+          );
         }
         const result = store.publish(messageMatch[1], token, body);
         if (result === "unauthorized") return unauthorized(response);
@@ -225,6 +284,8 @@ export function createRelayServer({
 if (import.meta.url === pathToFileURL(process.argv[1] || "").href) {
   const databasePath = process.env.HUMHUM_RELAY_DB || "./humhum-relay.sqlite";
   const port = Number(process.env.PORT || 3005);
+  const inviteSecret = process.env.HUMHUM_RELAY_INVITE_SECRET;
+  const adminSecret = process.env.HUMHUM_RELAY_ADMIN_SECRET;
   let pushProvider = null;
   try {
     pushProvider = loadFcmProviderFromEnvironment(process.env);
@@ -234,8 +295,11 @@ if (import.meta.url === pathToFileURL(process.argv[1] || "").href) {
   }
   const server = createRelayServer({
     databasePath,
+    inviteSecret,
+    adminSecret,
     pushProvider,
     pushTokenKey: pushProvider ? process.env.HUMHUM_PUSH_TOKEN_KEY : null,
+    trustProxy: process.env.HUMHUM_TRUST_PROXY === "1",
   });
   server.listen(port, "0.0.0.0", () => {
     process.stdout.write(`HUMHUM Wake Relay listening on ${port}\n`);

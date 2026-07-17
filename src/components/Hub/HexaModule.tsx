@@ -1053,7 +1053,11 @@ function HumHumMobilePanel({
   onPair: (scope?: "read" | "control", network?: "lan" | "tailnet") => Promise<MobilePairingInfo>;
   onRevoke: () => Promise<MobileBridgeStatus>;
   onRevokeDevice: (deviceId: string) => Promise<MobileBridgeStatus>;
-  onConfigureRelay: (enabled: boolean, baseUrl: string) => Promise<MobileRelayConfig>;
+  onConfigureRelay: (
+    enabled: boolean,
+    baseUrl: string,
+    inviteCode: string,
+  ) => Promise<MobileRelayConfig>;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1062,12 +1066,14 @@ function HumHumMobilePanel({
   const [nowMs, setNowMs] = useState(Date.now());
   const [relayEnabled, setRelayEnabled] = useState(relayConfig.enabled);
   const [relayUrl, setRelayUrl] = useState(relayConfig.base_url ?? "");
+  const [relayInvite, setRelayInvite] = useState(relayConfig.invite_code ?? "");
   useEffect(() => {
     if (!state.tailnet_url) setNetwork("lan");
   }, [state.tailnet_url]);
   useEffect(() => {
     setRelayEnabled(relayConfig.enabled);
     setRelayUrl(relayConfig.base_url ?? "");
+    setRelayInvite(relayConfig.invite_code ?? "");
   }, [relayConfig]);
   useEffect(() => {
     if (!pairing) return;
@@ -1125,30 +1131,46 @@ function HumHumMobilePanel({
           </div>
         )}
         {!state.enabled && (
-          <div style={{ display: "grid", gridTemplateColumns: "auto minmax(120px, 1fr) auto", alignItems: "center", gap: 6, marginTop: 7 }}>
-            <label title="让手机跨网络收到加密的变化提醒" style={{ display: "inline-flex", alignItems: "center", gap: 5, color: "rgba(255,255,255,0.45)", fontSize: 9, whiteSpace: "nowrap" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "auto minmax(140px, 1fr) auto", alignItems: "center", gap: 6, marginTop: 7 }}>
+            <label title="让手机在 5G 或其他 Wi-Fi 安全连接这台 Mac" style={{ display: "inline-flex", alignItems: "center", gap: 5, color: "rgba(255,255,255,0.45)", fontSize: 9, whiteSpace: "nowrap" }}>
               <input
                 type="checkbox"
                 checked={relayEnabled}
                 onChange={(event) => setRelayEnabled(event.target.checked)}
               />
-              加密唤醒
+              Anywhere 内测
             </label>
-            <input
-              aria-label="加密唤醒中继 URL"
-              type="url"
-              value={relayUrl}
-              disabled={!relayEnabled || busy}
-              placeholder="https://relay.example.com"
-              onChange={(event) => setRelayUrl(event.target.value)}
-              style={{ minWidth: 0, height: 28, borderRadius: 6, border: "1px solid rgba(255,255,255,0.1)", background: "rgba(0,0,0,0.16)", color: "rgba(255,255,255,0.72)", padding: "0 8px", fontSize: 9 }}
-            />
+            <div style={{ display: "grid", gap: 5, minWidth: 0 }}>
+              <input
+                aria-label="Anywhere 中继 URL"
+                type="url"
+                value={relayUrl}
+                disabled={!relayEnabled || busy}
+                placeholder="https://relay.example.com"
+                onChange={(event) => setRelayUrl(event.target.value)}
+                style={{ minWidth: 0, height: 28, borderRadius: 6, border: "1px solid rgba(255,255,255,0.1)", background: "rgba(0,0,0,0.16)", color: "rgba(255,255,255,0.72)", padding: "0 8px", fontSize: 9 }}
+              />
+              <input
+                aria-label="Anywhere 内测邀请码"
+                type="password"
+                value={relayInvite}
+                disabled={!relayEnabled || busy}
+                placeholder="内测邀请码"
+                autoComplete="off"
+                onChange={(event) => setRelayInvite(event.target.value)}
+                style={{ minWidth: 0, height: 28, borderRadius: 6, border: "1px solid rgba(255,255,255,0.1)", background: "rgba(0,0,0,0.16)", color: "rgba(255,255,255,0.72)", padding: "0 8px", fontSize: 9 }}
+              />
+            </div>
             <button
               type="button"
-              title="保存加密唤醒设置"
-              aria-label="保存加密唤醒设置"
+              title="保存 Anywhere 设置"
+              aria-label="保存 Anywhere 设置"
               disabled={busy}
-              onClick={() => run(() => onConfigureRelay(relayEnabled, relayUrl))}
+              onClick={() => run(() => onConfigureRelay(
+                relayEnabled,
+                relayUrl,
+                relayInvite,
+              ))}
               className="kawaii-icon-btn"
               style={{ width: 28, height: 28, minWidth: 28 }}
             ><Save size={13} /></button>

@@ -173,6 +173,7 @@ export interface AppConfig {
   mobile_relay: {
     enabled: boolean;
     base_url: string | null;
+    invite_code: string | null;
   };
   ui: {
     position: "bottom-right" | "bottom-left" | "top-right" | "top-left";
