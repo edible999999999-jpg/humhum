@@ -55,6 +55,104 @@ interface HushInboxSummary {
   messages: HushInboxMessage[];
 }
 
+export interface HushHealthSignal {
+  device_id: string;
+  source_id: string;
+  kind: "health.steps.daily" | "health.resting_heart_rate.daily" | "health.sleep.daily" | string;
+  started_at: string;
+  ended_at: string;
+  value: number;
+  unit: "count" | "bpm" | "minutes" | string;
+  source: "health_connect" | "phone_step_counter" | string;
+  captured_at: string;
+  quality: "trusted" | "device_estimate" | string;
+}
+
+type HushHealthMetric = Pick<HushHealthSignal, "value" | "unit" | "captured_at" | "ended_at" | "quality">;
+
+export interface HushHealthSourceSummary {
+  state: "empty" | "partial" | "stale" | "ready";
+  deviceCount: number;
+  deviceLabel: "paired_phone" | "paired_phones";
+  latestDate: string | null;
+  lastSync: string | null;
+  metrics: {
+    steps: HushHealthMetric | null;
+    restingHeartRate: HushHealthMetric | null;
+    sleep: HushHealthMetric | null;
+  };
+}
+
+const HEALTH_METRIC_KEYS = {
+  "health.steps.daily": "steps",
+  "health.resting_heart_rate.daily": "restingHeartRate",
+  "health.sleep.daily": "sleep",
+} as const;
+
+function parseHealthDate(value: string): number | null {
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function newerHealthMetric(current: HushHealthMetric | null, candidate: HushHealthSignal): HushHealthMetric {
+  if (!current) return candidate;
+  const currentTime = parseHealthDate(current.ended_at) ?? Number.NEGATIVE_INFINITY;
+  const candidateTime = parseHealthDate(candidate.ended_at) ?? Number.NEGATIVE_INFINITY;
+  if (candidateTime > currentTime) return candidate;
+  if (candidateTime < currentTime) return current;
+  return (parseHealthDate(candidate.captured_at) ?? Number.NEGATIVE_INFINITY) >
+    (parseHealthDate(current.captured_at) ?? Number.NEGATIVE_INFINITY)
+    ? candidate
+    : current;
+}
+
+export function deriveHushHealthSource(
+  signals: HushHealthSignal[],
+  now: Date = new Date(),
+): HushHealthSourceSummary {
+  const metrics: HushHealthSourceSummary["metrics"] = {
+    steps: null,
+    restingHeartRate: null,
+    sleep: null,
+  };
+  const deviceIds = new Set<string>();
+  let newestEnd: number | null = null;
+  let newestCaptured: number | null = null;
+
+  for (const signal of signals) {
+    const metricKey = HEALTH_METRIC_KEYS[signal.kind as keyof typeof HEALTH_METRIC_KEYS];
+    if (!metricKey || !Number.isFinite(signal.value)) continue;
+    deviceIds.add(signal.device_id);
+    metrics[metricKey] = newerHealthMetric(metrics[metricKey], signal);
+    const endedAt = parseHealthDate(signal.ended_at);
+    const capturedAt = parseHealthDate(signal.captured_at);
+    newestEnd = endedAt !== null && (newestEnd === null || endedAt > newestEnd) ? endedAt : newestEnd;
+    newestCaptured = capturedAt !== null && (newestCaptured === null || capturedAt > newestCaptured)
+      ? capturedAt
+      : newestCaptured;
+  }
+
+  const hasSignals = Object.values(metrics).some(Boolean);
+  const isStale = newestEnd !== null && now.getTime() - newestEnd > 48 * 60 * 60 * 1000;
+  const isPartial = Object.values(metrics).some((metric) => metric === null);
+  const state: HushHealthSourceSummary["state"] = !hasSignals
+    ? "empty"
+    : isStale
+      ? "stale"
+      : isPartial
+        ? "partial"
+        : "ready";
+
+  return {
+    state,
+    deviceCount: deviceIds.size,
+    deviceLabel: deviceIds.size === 1 ? "paired_phone" : "paired_phones",
+    latestDate: newestEnd === null ? null : new Date(newestEnd).toISOString(),
+    lastSync: newestCaptured === null ? null : new Date(newestCaptured).toISOString(),
+    metrics,
+  };
+}
+
 interface DerivedContact {
   id: string;
   name: string;
@@ -133,6 +231,7 @@ export function HushModule() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [connectors, setConnectors] = useState<HushConnectorStatus[]>([]);
   const [inbox, setInbox] = useState<HushInboxSummary | null>(null);
+  const [healthSignals, setHealthSignals] = useState<HushHealthSignal[]>([]);
   const [notificationBridge, setNotificationBridge] = useState<NotificationBridgeStatus | null>(null);
   const [dwsStatus, setDwsStatus] = useState<DwsHushStatus | null>(null);
   const [dwsReport, setDwsReport] = useState<DwsSyncReport | null>(null);
@@ -140,7 +239,10 @@ export function HushModule() {
   const [dingTalkLoggingIn, setDingTalkLoggingIn] = useState(false);
   const [dingTalkAutoUpdating, setDingTalkAutoUpdating] = useState(false);
   const [connectorError, setConnectorError] = useState<string | null>(null);
+  const [healthError, setHealthError] = useState<string | null>(null);
   const [openingConnector, setOpeningConnector] = useState<string | null>(null);
+  const [confirmingHealthClear, setConfirmingHealthClear] = useState(false);
+  const [clearingHealth, setClearingHealth] = useState(false);
 
   const fetchConnectors = useCallback(async () => {
     try {
@@ -170,6 +272,22 @@ export function HushModule() {
     const interval = setInterval(fetchInbox, 4000);
     return () => clearInterval(interval);
   }, [fetchInbox]);
+
+  const fetchHealthSignals = useCallback(async () => {
+    try {
+      const data = await invoke<HushHealthSignal[]>("get_hush_health_signals");
+      setHealthSignals(data);
+      setHealthError(null);
+    } catch (error) {
+      setHealthError(String(error));
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchHealthSignals();
+    const interval = setInterval(fetchHealthSignals, 30_000);
+    return () => clearInterval(interval);
+  }, [fetchHealthSignals]);
 
   useEffect(() => {
     let disposed = false;
@@ -257,6 +375,20 @@ export function HushModule() {
     await fetchInbox();
   }, [fetchInbox]);
 
+  const clearHealthSignals = useCallback(async () => {
+    setClearingHealth(true);
+    setHealthError(null);
+    try {
+      await invoke("clear_hush_health_signals");
+      setConfirmingHealthClear(false);
+      await fetchHealthSignals();
+    } catch (error) {
+      setHealthError(String(error));
+    } finally {
+      setClearingHealth(false);
+    }
+  }, [fetchHealthSignals]);
+
   const syncDingTalk = useCallback(async () => {
     setDingTalkSyncing(true);
     setConnectorError(null);
@@ -333,6 +465,7 @@ export function HushModule() {
   const selectedContact = selectedId
     ? contacts.find((c) => c.id === selectedId) ?? null
     : null;
+  const healthSource = useMemo(() => deriveHushHealthSource(healthSignals), [healthSignals]);
 
   return (
     <div className="hub-module">
@@ -385,6 +518,16 @@ export function HushModule() {
       )}
       <NotificationBridgePanel status={notificationBridge} onOpenSettings={openFullDiskAccess} />
       <HushTruthPanel inbox={inbox} bridge={notificationBridge} dwsStatus={dwsStatus} />
+
+      <HushHealthSourcePanel
+        summary={healthSource}
+        confirmingClear={confirmingHealthClear}
+        clearing={clearingHealth}
+        error={healthError}
+        onRequestClear={() => setConfirmingHealthClear(true)}
+        onCancelClear={() => setConfirmingHealthClear(false)}
+        onConfirmClear={clearHealthSignals}
+      />
 
       <DingTalkDwsPanel
         status={dwsStatus}
@@ -690,6 +833,173 @@ function HushTruthPanel({
   );
 }
 
+function formatHealthDate(value: string | null, includeTime = false): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return includeTime
+    ? date.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
+    : date.toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+function formatHealthMetric(metric: HushHealthMetric | null): string | null {
+  if (!metric) return null;
+  const value = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(metric.value);
+  if (metric.unit === "count") return value;
+  if (metric.unit === "bpm") return `${value} bpm`;
+  if (metric.unit === "minutes") return `${value} min`;
+  return value;
+}
+
+export function HushHealthSourcePanel({
+  summary,
+  confirmingClear,
+  clearing,
+  error,
+  onRequestClear,
+  onCancelClear,
+  onConfirmClear,
+}: {
+  summary: HushHealthSourceSummary;
+  confirmingClear: boolean;
+  clearing: boolean;
+  error?: string | null;
+  onRequestClear: () => void;
+  onCancelClear: () => void;
+  onConfirmClear: () => void;
+}) {
+  const { t } = useTranslation();
+  const statusColor = summary.state === "ready"
+    ? "#15803d"
+    : summary.state === "empty"
+      ? "#64748b"
+      : summary.state === "stale"
+        ? "#b45309"
+        : "#0f766e";
+  const stateLabel = t(`hub.hush.health.state.${summary.state}`);
+  const metrics = [
+    { key: "steps", label: t("hub.hush.health.steps"), metric: summary.metrics.steps },
+    { key: "heart", label: t("hub.hush.health.restingHeartRate"), metric: summary.metrics.restingHeartRate },
+    { key: "sleep", label: t("hub.hush.health.sleep"), metric: summary.metrics.sleep },
+  ];
+
+  return (
+    <section
+      aria-label={t("hub.hush.health.title")}
+      style={{
+        marginBottom: 14,
+        padding: 14,
+        borderRadius: 8,
+        background: "rgba(236,253,245,0.76)",
+        border: "1px solid rgba(45, 212, 191, 0.28)",
+        color: "#1f3d3a",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+        <span
+          aria-hidden="true"
+          style={{
+            width: 8,
+            height: 8,
+            marginTop: 5,
+            flex: "0 0 auto",
+            borderRadius: "50%",
+            background: statusColor,
+            boxShadow: `0 0 0 3px ${statusColor}1c`,
+          }}
+        />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <h3 style={{ margin: 0, fontSize: 13, fontWeight: 850, color: "#1f3d3a" }}>
+              {t("hub.hush.health.title")}
+            </h3>
+            <span style={{ fontSize: 10, fontWeight: 800, color: statusColor }}>
+              {stateLabel}
+            </span>
+          </div>
+          <p style={{ margin: "4px 0 0", fontSize: 11, color: "#52716c", lineHeight: 1.5 }}>
+            {t(`hub.hush.health.desc.${summary.state}`)}
+          </p>
+        </div>
+      </div>
+
+      {summary.state === "empty" ? (
+        <div style={{ marginTop: 12, fontSize: 11, color: "#52716c", lineHeight: 1.5 }}>
+          {t("hub.hush.health.emptyHint")}
+        </div>
+      ) : (
+        <>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+              gap: 8,
+              marginTop: 12,
+            }}
+          >
+            {metrics.map(({ key, label, metric }) => {
+              const value = formatHealthMetric(metric);
+              return (
+                <div
+                  key={key}
+                  style={{
+                    minWidth: 0,
+                    padding: "2px 0 2px 9px",
+                    borderLeft: "2px solid rgba(45, 212, 191, 0.38)",
+                  }}
+                >
+                  <div style={{ fontSize: 10, color: "#5d7c76", fontWeight: 750 }}>{label}</div>
+                  <div style={{ marginTop: 3, fontSize: 15, color: value ? "#1f3d3a" : "#7b928e", fontWeight: 850 }}>
+                    {value ?? t("hub.hush.health.unavailable")}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 10, fontSize: 10, color: "#52716c" }}>
+            <span>{t("hub.hush.health.latestDate", { date: formatHealthDate(summary.latestDate) })}</span>
+            <span>{t(summary.deviceCount === 1 ? "hub.hush.health.deviceOne" : "hub.hush.health.deviceMany", { count: summary.deviceCount })}</span>
+            <span>{t("hub.hush.health.lastSync", { time: formatHealthDate(summary.lastSync, true) })}</span>
+          </div>
+        </>
+      )}
+
+      {error && (
+        <div role="status" style={{ marginTop: 10, fontSize: 10, color: "#b45309" }}>
+          {t("hub.hush.health.loadError")}
+        </div>
+      )}
+
+      {summary.state !== "empty" && (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
+          {confirmingClear ? (
+            <>
+              <span style={{ fontSize: 11, color: "#7c2d12", fontWeight: 750 }}>
+                {t("hub.hush.health.clearConfirm")}
+              </span>
+              <div style={{ display: "flex", gap: 7 }}>
+                <button className="kawaii-tab" type="button" disabled={clearing} onClick={onCancelClear} style={{ fontSize: 10, padding: "5px 9px" }}>
+                  {t("hub.common.cancel")}
+                </button>
+                <button className="kawaii-tab" type="button" disabled={clearing} onClick={onConfirmClear} style={{ fontSize: 10, padding: "5px 9px", color: "#b91c1c" }}>
+                  {clearing ? t("hub.hush.health.clearing") : t("hub.hush.health.clearConfirmAction")}
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <span style={{ fontSize: 10, color: "#52716c" }}>{t("hub.hush.health.localOnly")}</span>
+              <button className="kawaii-tab" type="button" onClick={onRequestClear} style={{ fontSize: 10, padding: "5px 9px", color: "#b45309" }}>
+                {t("hub.hush.health.clear")}
+              </button>
+            </>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function DingTalkDwsPanel({
   status,
   report,
@@ -776,11 +1086,6 @@ function DingTalkDwsPanel({
           <div style={{ marginTop: 4, fontSize: 11, color: "#64748b", lineHeight: 1.5 }}>
             {status?.message ?? "正在检查本机钉钉 DWS"}
           </div>
-          {status?.executable_path && (
-            <div style={{ marginTop: 3, fontSize: 9, color: "#94a3b8", fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {status.executable_path}
-            </div>
-          )}
           <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
             <span style={{ fontSize: 10, color: "#64748b" }}>上次成功：{lastSuccess}</span>
             <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 10, color: "#475569", cursor: status?.authenticated ? "pointer" : "not-allowed" }}>
@@ -869,7 +1174,7 @@ function LiveInboxPanel({
             Live message inbox
           </div>
           <div style={{ marginTop: 2, fontSize: 10, color: "rgba(255,255,255,0.38)" }}>
-            Authenticated local endpoint: <span style={{ color: "#94eff4" }}>http://127.0.0.1:31275/hush/inbox</span>
+            {t("hub.hush.inbox.approvedOnly")}
           </div>
         </div>
         <button className="kawaii-tab" onClick={onRefresh} style={{ fontSize: 10, padding: "5px 9px" }}>
@@ -888,11 +1193,8 @@ function LiveInboxPanel({
       </div>
 
       {messages.length === 0 ? (
-        <div style={{ padding: 14, borderRadius: 12, background: "rgba(255,255,255,0.018)", color: "rgba(255,255,255,0.34)", fontSize: 11, lineHeight: 1.55 }}>
-          No live messages yet. Try:
-          <div style={{ marginTop: 6, fontFamily: "monospace", color: "rgba(255,255,255,0.5)" }}>
-            curl -X POST http://127.0.0.1:31275/hush/inbox -H 'X-HumHum-Token: &lt;token&gt;' -H 'content-type: application/json' -d '&#123;"platform":"dingtalk","sender":"PM","chat":"Project A","text":"需求文档已更新，今天需要确认"&#125;'
-          </div>
+        <div style={{ padding: 14, borderRadius: 8, background: "rgba(255,255,255,0.018)", color: "rgba(255,255,255,0.34)", fontSize: 11, lineHeight: 1.55 }}>
+          {t("hub.hush.inbox.emptyLive")}
         </div>
       ) : (
         <div style={{ display: "grid", gap: 8, maxHeight: 220, overflowY: "auto" }} className="scrollbar-thin">
@@ -1010,11 +1312,6 @@ function HushConnectorCard({
       <div style={{ marginTop: 6, fontSize: 9, color: "rgba(255,255,255,0.24)", lineHeight: 1.4 }}>
         {connector.next_step}
       </div>
-      {connector.app_path && (
-        <div style={{ marginTop: 6, fontSize: 9, color: "rgba(255,255,255,0.22)", fontFamily: "monospace" }}>
-          {connector.app_path}
-        </div>
-      )}
     </div>
   );
 }

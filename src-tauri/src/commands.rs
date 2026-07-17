@@ -14,6 +14,7 @@ use crate::hexa_watch_store::{
     HexaWatchedSession,
 };
 use crate::hook_server::PendingMap;
+use crate::hush_signal_store::{HushSignalStore, HushSignalSummary};
 use crate::hush_store::{HushInboxSummary, HushStore};
 use crate::intervention_queue::{InterventionProvider, InterventionQueue, QueuedIntervention};
 use crate::knowledge_store::{
@@ -1214,6 +1215,26 @@ pub async fn clear_hush_inbox(
 ) -> Result<(), String> {
     let mut store = store.lock().map_err(|e| format!("Lock error: {}", e))?;
     store.clear()
+}
+
+/// Return decrypted, daily health summaries owned by Hush. The desktop UI is
+/// responsible for reducing these to privacy-safe, interpreted source cards.
+#[tauri::command]
+pub async fn get_hush_health_signals(
+    store: State<'_, Arc<std::sync::Mutex<HushSignalStore>>>,
+) -> Result<Vec<HushSignalSummary>, String> {
+    let store = store.lock().map_err(|e| format!("Lock error: {}", e))?;
+    store.latest_health()
+}
+
+/// Delete every locally stored phone health summary while leaving Hush's
+/// relationship and message inbox intact.
+#[tauri::command]
+pub async fn clear_hush_health_signals(
+    store: State<'_, Arc<std::sync::Mutex<HushSignalStore>>>,
+) -> Result<usize, String> {
+    let mut store = store.lock().map_err(|e| format!("Lock error: {}", e))?;
+    store.clear_health()
 }
 
 #[tauri::command]

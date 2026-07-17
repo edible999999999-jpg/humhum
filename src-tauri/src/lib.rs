@@ -353,6 +353,8 @@ pub fn run() {
             commands::open_hush_connector,
             commands::get_hush_inbox,
             commands::clear_hush_inbox,
+            commands::get_hush_health_signals,
+            commands::clear_hush_health_signals,
             commands::get_hush_dws_status,
             commands::sync_hush_dws,
             commands::set_hush_dws_auto_sync,
