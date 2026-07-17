@@ -426,16 +426,17 @@ public class ManifestContractTest {
                 Path.of("src/main/java/com/humhum/mobile/MainActivity.java")),
                 StandardCharsets.UTF_8);
 
-        assertTrue(source.contains(
-                "MobileRoleDashboard.Role selectedRole = MobileRoleDashboard.Role.HUMI"));
-
         String create = methodSource(source, "protected void onCreate(", "protected void onStart()");
+        assertTrue(create.contains(
+                "MobileRoleDashboard.Role restoredRole = MobileRoleDashboard.Role.HUMI"));
         assertTrue(create.contains("MobileRoleDashboard.Role.fromId("));
+        assertTrue(create.contains("new HumHumViewModel(companionRepository, restoredRole)"));
         assertTrue(create.contains("bindRoleTabs();"));
 
         String save = methodSource(
                 source, "protected void onSaveInstanceState(", "protected void onStart()");
-        assertTrue(save.contains("outState.putString(SELECTED_ROLE_STATE, selectedRole.id())"));
+        assertTrue(save.contains(
+                "currentUiState().getSelectedRole().id()"));
 
         String tabs = methodSource(
                 source, "private void bindRoleTabs()", "private void renderSelectedRole()");
@@ -542,7 +543,7 @@ public class ManifestContractTest {
                 source, "private void disconnect()", "private void onMonitorChanged(boolean checked)");
         assertOrdered(
                 disconnect,
-                "List<Models.Session> sessions = renderedSessions;",
+                "List<Models.Session> sessions = currentUiState().getSessions();",
                 "clearConversationState();",
                 "renderSessions(sessions);",
                 "TRANSITIONS.begin(");
@@ -579,7 +580,7 @@ public class ManifestContractTest {
                 Path.of("src/main/java/com/humhum/mobile/MainActivity.java")),
                 StandardCharsets.UTF_8);
         assertTrue(source.contains("Map<String, String> messageDraftBySessionId"));
-        assertTrue(source.contains("Set<String> sendingSessionIds"));
+        assertFalse(source.contains("Set<String> sendingSessionIds"));
 
         String panel = methodSource(
                 source, "private View messagePanel(", "private void loadConversation(");
@@ -588,19 +589,20 @@ public class ManifestContractTest {
                 "messageDraftBySessionId.getOrDefault(session.id(), \"\")",
                 "draft.addTextChangedListener(",
                 "messageDraftBySessionId.put(session.id(), value.toString())",
-                "boolean sending = sendingSessionIds.contains(session.id());",
-                "draft.setEnabled(!sending)",
-                "send.setEnabled(!sending)");
+                "boolean sending = isPendingAction(",
+                "boolean enabled = currentUiState().getCanControl() && !sending",
+                "draft.setEnabled(enabled)",
+                "send.setEnabled(enabled)");
 
         String send = methodSource(source, "private void send(", "private void setPairing(");
         assertOrdered(
                 send,
-                "sendingSessionIds.add(session.id());",
+                "new HumHumAction.FollowUpStarted(session.id())",
                 "draft.setEnabled(false);",
                 "current.sendMessage(session, message)",
-                "sendingSessionIds.remove(session.id());",
+                "new HumHumAction.FollowUpFinished(session.id())",
                 "messageDraftBySessionId.remove(session.id());",
-                "renderSessions(renderedSessions)");
+                "renderSessions(currentUiState().getSessions())");
     }
 
     @Test
@@ -734,7 +736,7 @@ public class ManifestContractTest {
                 source, "private void disconnect()", "private void onMonitorChanged(boolean checked)");
         assertOrdered(
                 disconnect,
-                "List<Models.Session> sessions = renderedSessions;",
+                "List<Models.Session> sessions = currentUiState().getSessions();",
                 "clearConversationState();",
                 "renderSessions(sessions);",
                 "TRANSITIONS.begin(",
@@ -773,7 +775,7 @@ public class ManifestContractTest {
                 "isCurrentConnection(current, currentConnection)",
                 "readSnapshotSafely(currentConnection, nowMillis)",
                 "postRefreshIfCurrent(refreshGeneration, current, currentConnection");
-        assertTrue(refresh.contains("statusText.setText(\"电脑离线\")"));
+        assertTrue(refresh.contains("new HumHumAction.RefreshFailed(visibleError)"));
         assertFalse(refresh.contains("statusText.setText(safeError(error))"));
         assertTrue(refresh.contains("postStaleRefreshReset("));
         assertFalse(refresh.contains("postIfCurrent("));

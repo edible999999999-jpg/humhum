@@ -7,11 +7,17 @@ import com.humhum.mobile.health.HealthUiState
 sealed interface HumHumAction {
     data object ScanStarted : HumHumAction
     data object ScanCancelled : HumHumAction
+    data class PairingInputRejected(val message: String) : HumHumAction
     data object PairingStarted : HumHumAction
     data class PairingFailed(val message: String) : HumHumAction
     data class Connected(val scope: Models.Scope) : HumHumAction
+    data class ConnectionRestored(
+        val scope: Models.Scope,
+        val message: String,
+    ) : HumHumAction
     data class SelectRole(val role: MobileRoleDashboard.Role) : HumHumAction
     data class RefreshRequested(val userInitiated: Boolean) : HumHumAction
+    data object RefreshCancelled : HumHumAction
     data class SessionsLoaded(
         val sessions: List<Models.Session>,
         val viaRelay: Boolean,
@@ -47,6 +53,7 @@ sealed interface HumHumAction {
         val backgroundGranted: Boolean,
     ) : HumHumAction
     data class HealthUpdated(val health: HealthUiState) : HumHumAction
+    data class StatusChanged(val message: String) : HumHumAction
     data object OpenSettings : HumHumAction
     data object CloseSettings : HumHumAction
     data object DisconnectStarted : HumHumAction

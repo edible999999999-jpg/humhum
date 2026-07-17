@@ -30,18 +30,18 @@ import android.widget.Switch;
 import android.widget.TextView;
 import java.util.EnumMap;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
 import com.google.zxing.integration.android.IntentIntegrator;
 import com.google.zxing.integration.android.IntentResult;
 import com.humhum.mobile.app.HumHumAction;
 import com.humhum.mobile.app.HumHumUiState;
 import com.humhum.mobile.app.HumHumViewModel;
 import com.humhum.mobile.app.MobileCompanionRepository;
+import com.humhum.mobile.app.PendingAction;
+import com.humhum.mobile.app.PendingActionKind;
 
 public final class MainActivity extends Activity {
     private static final int NOTIFICATION_PERMISSION_REQUEST = 4103;
@@ -55,8 +55,13 @@ public final class MainActivity extends Activity {
     private final Map<String, List<Models.ConversationMessage>> recentConversationBySessionId =
             new HashMap<>();
     private final Map<String, String> messageDraftBySessionId = new HashMap<>();
-    private final Set<String> sendingSessionIds = new HashSet<>();
     private final Handler main = new Handler(Looper.getMainLooper());
+    private HumHumViewModel viewModel;
+    private boolean companionPollingActive;
+    private final Runnable pollRefresh = () -> {
+        if (!companionPollingActive || viewModel == null) return;
+        refreshSessions(false);
+    };
     private ConnectionStore connectionStore;
     private EncryptedSessionSnapshotStore snapshotStore;
     private SessionSnapshotGenerationGate snapshotGenerationGate;
@@ -67,9 +72,9 @@ public final class MainActivity extends Activity {
     private AnywhereRelayClient anywhereRelayClient;
     private AnywhereGateway anywhereGateway;
     private MobileCompanionRepository companionRepository;
-    private HumHumViewModel viewModel;
+    private boolean renderingUiState;
+    private HumHumUiState lastRenderedUiState;
     private boolean refreshInFlight;
-    private MobileRoleDashboard.Role selectedRole = MobileRoleDashboard.Role.HUMI;
     private final Map<MobileRoleDashboard.Role, LinearLayout> roleTabs =
             new EnumMap<>(MobileRoleDashboard.Role.class);
     private final Map<MobileRoleDashboard.Role, TextView> roleTabLabels =
@@ -108,7 +113,6 @@ public final class MainActivity extends Activity {
     private boolean updatingMonitorSwitch;
     private boolean pendingMonitorEnable;
     private boolean scannedPairing;
-    private List<Models.Session> renderedSessions = List.of();
     private String expandedConversationSessionId;
     private String loadingConversationSessionId;
     private String conversationErrorSessionId;
@@ -120,8 +124,9 @@ public final class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
+        MobileRoleDashboard.Role restoredRole = MobileRoleDashboard.Role.HUMI;
         if (state != null) {
-            selectedRole = MobileRoleDashboard.Role.fromId(
+            restoredRole = MobileRoleDashboard.Role.fromId(
                     state.getString(SELECTED_ROLE_STATE, MobileRoleDashboard.Role.HUMI.id()));
         }
         setContentView(R.layout.activity_main);
@@ -138,7 +143,7 @@ public final class MainActivity extends Activity {
         companionRepository = new MobileCompanionRepository();
         companionRepository.bindConnectionStore(connectionStore);
         companionRepository.bindMonitorStore(monitorStore);
-        viewModel = new HumHumViewModel(companionRepository, selectedRole);
+        viewModel = new HumHumViewModel(companionRepository, restoredRole);
         connectButton.setOnClickListener(view -> pair());
         scanSetupButton.setOnClickListener(view -> scanSetup());
         manualPairingToggle.setOnClickListener(
@@ -164,7 +169,7 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onSaveInstanceState(Bundle outState) {
-        outState.putString(SELECTED_ROLE_STATE, selectedRole.id());
+        outState.putString(SELECTED_ROLE_STATE, currentUiState().getSelectedRole().id());
         super.onSaveInstanceState(outState);
     }
 
@@ -214,9 +219,7 @@ public final class MainActivity extends Activity {
             reportForegroundPresence();
         }
         updateDeviceCareStatus();
-        viewModel.startPolling(
-                10_000L,
-                (Runnable) () -> main.post(() -> refreshSessions(false)));
+        startCompanionPolling();
     }
 
     @Override
@@ -224,7 +227,9 @@ public final class MainActivity extends Activity {
         MainActivity fallback = STARTED_ACTIVITIES.stop(this);
         if (fallback != null) notifyPreviousStartedActivity(fallback);
         pushPreferences.unregisterOnSharedPreferenceChangeListener(pushStateListener);
+        companionPollingActive = false;
         viewModel.stopPolling();
+        main.removeCallbacks(pollRefresh);
         super.onStop();
     }
 
@@ -232,11 +237,11 @@ public final class MainActivity extends Activity {
     protected void onDestroy() {
         recentConversationBySessionId.clear();
         messageDraftBySessionId.clear();
-        sendingSessionIds.clear();
         collapseConversationDisclosure();
-        renderedSessions = List.of();
         if (anywhereRelayClient != null) anywhereRelayClient.cancel();
         snapshotGenerationGate.close();
+        companionPollingActive = false;
+        main.removeCallbacks(pollRefresh);
         viewModel.close();
         super.onDestroy();
     }
@@ -296,13 +301,12 @@ public final class MainActivity extends Activity {
     }
 
     private void selectRole(MobileRoleDashboard.Role role) {
-        if (role == null || role == selectedRole) return;
+        if (role == null || role == currentUiState().getSelectedRole()) return;
         if (role != MobileRoleDashboard.Role.HEXA && expandedConversationSessionId != null) {
             collapseConversationDisclosure();
-            renderSessions(renderedSessions);
+            renderSessions(currentUiState().getSessions());
         }
         dispatchState(new HumHumAction.SelectRole(role));
-        renderSelectedRole();
         ScrollView scroll = findViewById(R.id.rootScroll);
         scroll.smoothScrollTo(0, 0);
     }
@@ -311,12 +315,67 @@ public final class MainActivity extends Activity {
         if (viewModel == null) return null;
         viewModel.dispatch(action);
         HumHumUiState state = viewModel.getState().getValue();
-        selectedRole = state.getSelectedRole();
+        renderUiState(state);
         return state;
+    }
+
+    private HumHumUiState currentUiState() {
+        return viewModel.getState().getValue();
+    }
+
+    private void renderUiState(HumHumUiState state) {
+        if (renderingUiState || state == null) return;
+        renderingUiState = true;
+        HumHumUiState previous = lastRenderedUiState;
+        try {
+            MobileRoleDashboard.Role selectedRole = state.getSelectedRole();
+            List<Models.Session> sessions = state.getSessions();
+            String status = state.getStatusMessage();
+            boolean canControl = state.getCanControl();
+            java.util.Set<PendingAction> pendingActions = state.getPendingActions();
+            statusText.setText(status);
+            refreshButton.setEnabled(
+                    !state.getRefreshInFlight()
+                            && state.getConnection()
+                                    != com.humhum.mobile.app.ConnectionStatus.DISCONNECTING);
+            disconnectButton.setEnabled(
+                    state.getConnection()
+                            != com.humhum.mobile.app.ConnectionStatus.DISCONNECTING);
+            boolean roleChanged = previous == null
+                    || previous.getSelectedRole() != selectedRole
+                    || !previous.getSessions().equals(sessions);
+            boolean sessionCardsChanged = previous == null
+                    || !previous.getSessions().equals(sessions)
+                    || previous.getCanControl() != canControl
+                    || !previous.getPendingActions().equals(pendingActions)
+                    || !previous.getConversation().equals(state.getConversation())
+                    || previous.getConnection() != state.getConnection();
+            if (roleChanged) renderSelectedRole();
+            if (sessionCardsChanged && sessionPanel.getVisibility() == View.VISIBLE) {
+                renderSessions(sessions);
+            }
+            lastRenderedUiState = state;
+        } finally {
+            renderingUiState = false;
+        }
+        HumHumUiState latest = currentUiState();
+        if (!latest.equals(state)) renderUiState(latest);
+    }
+
+    private void startCompanionPolling() {
+        companionPollingActive = true;
+        viewModel.startPolling(
+                10_000L,
+                (Runnable) () -> {
+                    if (companionPollingActive) main.post(pollRefresh);
+                });
     }
 
     private void renderSelectedRole() {
         if (roleContent == null) return;
+        HumHumUiState state = currentUiState();
+        MobileRoleDashboard.Role selectedRole = state.getSelectedRole();
+        List<Models.Session> sessions = state.getSessions();
         int accent = color(roleAccent(selectedRole));
         int soft = color(roleSoft(selectedRole));
         for (MobileRoleDashboard.Role role : MobileRoleDashboard.roles()) {
@@ -349,7 +408,7 @@ public final class MainActivity extends Activity {
                 selectedRole == MobileRoleDashboard.Role.HEXA ? View.VISIBLE : View.GONE);
 
         switch (selectedRole) {
-            case HUMI -> renderHumiRole(accent, soft);
+            case HUMI -> renderHumiRole(sessions, accent, soft);
             case HYPE -> renderCapabilityRole(
                     "你的知识仍安静地留在电脑上",
                     "这台手机还没有获得个人知识摘要权限。Hype 不会把本地记忆、技能文件或路径偷偷同步过来。",
@@ -362,12 +421,12 @@ public final class MainActivity extends Activity {
                     "未来的移动摘要会继续保持只读，并由你主动决定是否查看具体消息。",
                     accent,
                     soft);
-            case HEXA -> renderHexaRole(accent, soft);
+            case HEXA -> renderHexaRole(sessions, accent, soft);
         }
     }
 
-    private void renderHumiRole(int accent, int soft) {
-        MobileRoleDashboard.Summary summary = MobileRoleDashboard.summarize(renderedSessions);
+    private void renderHumiRole(List<Models.Session> sessions, int accent, int soft) {
+        MobileRoleDashboard.Summary summary = MobileRoleDashboard.summarize(sessions);
         roleContent.addView(roleInfoCard(summary.title(), summary.detail(), accent, soft));
         if (summary.hasAttention()) {
             Button action = roleAction("去 Hexa 查看并决定", accent);
@@ -377,18 +436,18 @@ public final class MainActivity extends Activity {
             roleContent.addView(action, actionParams);
         }
 
-        if (renderedSessions.isEmpty()) return;
+        if (sessions.isEmpty()) return;
         roleContent.addView(roleSectionLabel("最近在做什么", accent));
-        int visibleCount = Math.min(3, renderedSessions.size());
+        int visibleCount = Math.min(3, sessions.size());
         for (int index = 0; index < visibleCount; index++) {
-            Models.Session session = renderedSessions.get(index);
+            Models.Session session = sessions.get(index);
             int cardAccent = session.needsAttention() ? color(R.color.attention) : accent;
             String detail = session.agent() + " · " + session.status() + " · " + session.lastActivityAt();
             roleContent.addView(roleInfoCard(session.project(), detail, cardAccent, color(R.color.surface)));
         }
-        if (renderedSessions.size() > visibleCount) {
+        if (sessions.size() > visibleCount) {
             TextView remaining = text(
-                    "另外 " + (renderedSessions.size() - visibleCount) + " 个会话可在 Hexa 查看",
+                    "另外 " + (sessions.size() - visibleCount) + " 个会话可在 Hexa 查看",
                     11,
                     color(R.color.muted));
             remaining.setPadding(dp(2), dp(2), 0, dp(8));
@@ -407,8 +466,8 @@ public final class MainActivity extends Activity {
         roleContent.addView(roleInfoCard("保持真实和可控", nextStep, accent, color(R.color.surface)));
     }
 
-    private void renderHexaRole(int accent, int soft) {
-        MobileRoleDashboard.Summary summary = MobileRoleDashboard.summarize(renderedSessions);
+    private void renderHexaRole(List<Models.Session> sessions, int accent, int soft) {
+        MobileRoleDashboard.Summary summary = MobileRoleDashboard.summarize(sessions);
         String title = summary.sessionCount() == 0
                 ? "暂时没有 Agent 会话"
                 : summary.sessionCount() + " 个 Agent 会话在视野中";
@@ -567,6 +626,7 @@ public final class MainActivity extends Activity {
                     deviceNameInput.getText().toString(),
                     host -> WifiOnLinkPolicy.isHostOnCurrentWifi(this, host));
         } catch (IllegalArgumentException error) {
+            dispatchState(new HumHumAction.PairingInputRejected(error.getMessage()));
             connectError.setText(error.getMessage());
             return;
         }
@@ -602,6 +662,7 @@ public final class MainActivity extends Activity {
                     defaultDeviceName(),
                     host -> true);
         } catch (IllegalArgumentException error) {
+            dispatchState(new HumHumAction.PairingInputRejected(error.getMessage()));
             setScannedPairingState(false);
             connectError.setText(error.getMessage());
             return;
@@ -681,6 +742,7 @@ public final class MainActivity extends Activity {
                         : "已填入只读配对资料，请点击安全配对");
             }
         } catch (IllegalArgumentException error) {
+            dispatchState(new HumHumAction.PairingInputRejected(error.getMessage()));
             setScannedPairingState(false);
             connectError.setText(error.getMessage());
         }
@@ -693,9 +755,7 @@ public final class MainActivity extends Activity {
         }
         recentConversationBySessionId.clear();
         messageDraftBySessionId.clear();
-        sendingSessionIds.clear();
         collapseConversationDisclosure();
-        renderedSessions = List.of();
         connection = saved;
         protocol = new MobileProtocol(saved.config(), saved.token(), saved.scope());
         if (anywhereRelayClient != null) anywhereRelayClient.cancel();
@@ -715,12 +775,10 @@ public final class MainActivity extends Activity {
         scopeText.setText(saved.scope() == Models.Scope.CONTROL
                 ? route + "可控制"
                 : route + "只读");
-        statusText.setText("正在同步");
         syncMonitorState();
         reportForegroundPresence();
         PushRegistration.refresh(this);
         updatePushStatus();
-        renderSelectedRole();
         refreshSessions(true);
     }
 
@@ -739,9 +797,7 @@ public final class MainActivity extends Activity {
     private void showConnect() {
         recentConversationBySessionId.clear();
         messageDraftBySessionId.clear();
-        sendingSessionIds.clear();
         collapseConversationDisclosure();
-        renderedSessions = List.of();
         if (anywhereRelayClient != null) anywhereRelayClient.cancel();
         anywhereRelayClient = null;
         anywhereGateway = null;
@@ -753,7 +809,6 @@ public final class MainActivity extends Activity {
         connectPanel.setVisibility(View.VISIBLE);
         sessionPanel.setVisibility(View.GONE);
         roleNavigation.setVisibility(View.GONE);
-        statusText.setText("等待连接");
         sessionsContainer.removeAllViews();
         if (monitorStore != null && monitorStore.isEnabled()) disableMonitor();
     }
@@ -761,9 +816,8 @@ public final class MainActivity extends Activity {
     private void disconnect() {
         MobileProtocol current = protocol;
         if (current == null || connection == null) return;
-        List<Models.Session> sessions = renderedSessions;
+        List<Models.Session> sessions = currentUiState().getSessions();
         messageDraftBySessionId.clear();
-        sendingSessionIds.clear();
         clearConversationState();
         renderSessions(sessions);
         boolean started = TRANSITIONS.begin(
@@ -914,14 +968,13 @@ public final class MainActivity extends Activity {
         refreshInFlight = true;
         dispatchState(new HumHumAction.RefreshRequested(userInitiated));
         refreshButton.setEnabled(false);
-        if (userInitiated) statusText.setText("正在刷新");
         MobileProtocol current = protocol;
         ConnectionStore.Connection currentConnection = connection;
         AnywhereGateway currentAnywhere = anywhereGateway;
         boolean relayFirst =
                 ConnectionRoutePolicy.useRelayFirst(currentConnection, currentAnywhere != null);
         long refreshGeneration = snapshotGenerationGate.capture();
-        companionRepository.executeNetwork(() -> {
+        boolean accepted = companionRepository.executeNetwork(() -> {
             try {
                 Models.SessionPage page = relayFirst
                         ? currentAnywhere.sessions(currentConnection.wakeRelay())
@@ -975,7 +1028,6 @@ public final class MainActivity extends Activity {
                     refreshButton.setEnabled(true);
                     if (snapshot == null) {
                         dispatchState(new HumHumAction.RefreshFailed(visibleError));
-                        statusText.setText("电脑离线");
                         renderUnavailableSessions();
                         return;
                     }
@@ -983,11 +1035,15 @@ public final class MainActivity extends Activity {
                             SessionSnapshotCodec.ageCopy(snapshot.savedAtMillis(), nowMillis);
                     HumHumUiState state = dispatchState(
                             new HumHumAction.OfflineSnapshotLoaded(snapshot.sessions(), ageCopy));
-                    statusText.setText(ageCopy);
                     renderSessions(state.getSessions());
                 });
             }
         });
+        if (!accepted) {
+            refreshInFlight = false;
+            dispatchState(HumHumAction.RefreshCancelled.INSTANCE);
+            refreshButton.setEnabled(true);
+        }
     }
 
     private void commitSessionPage(
@@ -1009,9 +1065,9 @@ public final class MainActivity extends Activity {
         postRefreshIfCurrent(generation, expectedProtocol, expectedConnection, () -> {
             refreshInFlight = false;
             refreshButton.setEnabled(true);
-            HumHumUiState state = dispatchState(
-                    new HumHumAction.SessionsLoaded(page.sessions(), remote));
-            statusText.setText(state.getStatusMessage());
+            HumHumUiState state = remote
+                    ? dispatchState(new HumHumAction.RelayRecovered(page.sessions()))
+                    : dispatchState(new HumHumAction.SessionsLoaded(page.sessions(), false));
             renderSessions(state.getSessions());
         });
     }
@@ -1146,9 +1202,17 @@ public final class MainActivity extends Activity {
             String message = safeError(completion.failure());
             dispatchState(new HumHumAction.PairingFailed(message));
             connectError.setText(message);
-        } else {
+        } else if (completion.state()
+                == DurableConnectionTransitionCoordinator.State.DISCONNECTING) {
+            String message = safeError(completion.failure());
+            ConnectionStore.Connection restored = connectionStore.load();
+            if (restored == null) {
+                dispatchState(HumHumAction.Disconnected.INSTANCE);
+            } else {
+                dispatchState(new HumHumAction.ConnectionRestored(restored.scope(), message));
+                startCompanionPolling();
+            }
             setDisconnecting(false);
-            statusText.setText(safeError(completion.failure()));
         }
     }
 
@@ -1188,10 +1252,12 @@ public final class MainActivity extends Activity {
     private void adoptTransitionState() {
         DurableConnectionTransitionCoordinator.State state = TRANSITIONS.state();
         if (state == DurableConnectionTransitionCoordinator.State.PAIRING) {
+            dispatchState(HumHumAction.PairingStarted.INSTANCE);
             setPairing(true);
             return;
         }
         if (state == DurableConnectionTransitionCoordinator.State.DISCONNECTING) {
+            dispatchState(HumHumAction.DisconnectStarted.INSTANCE);
             setDisconnecting(true);
             return;
         }
@@ -1203,7 +1269,6 @@ public final class MainActivity extends Activity {
     private void setDisconnecting(boolean disconnecting) {
         disconnectButton.setEnabled(!disconnecting);
         refreshButton.setEnabled(!disconnecting);
-        if (disconnecting) statusText.setText("正在安全断开");
     }
 
     private void ensureCurrentSnapshotGeneration() {
@@ -1295,7 +1360,6 @@ public final class MainActivity extends Activity {
     private void clearConversationState() {
         recentConversationBySessionId.clear();
         collapseConversationDisclosure();
-        renderedSessions = List.of();
     }
 
     private void collapseConversationDisclosure() {
@@ -1319,9 +1383,8 @@ public final class MainActivity extends Activity {
     }
 
     private void syncConversationDisclosureWithSessions(List<Models.Session> sessions) {
-        renderedSessions = List.copyOf(sessions);
         if (expandedConversationSessionId == null) return;
-        for (Models.Session session : renderedSessions) {
+        for (Models.Session session : sessions) {
             if (session.canReadConversation() && expandedConversationSessionId.equals(session.id())) {
                 return;
             }
@@ -1347,7 +1410,6 @@ public final class MainActivity extends Activity {
     }
 
     private void renderUnavailableSessions() {
-        renderedSessions = List.of();
         collapseConversationDisclosure();
         sessionsContainer.removeAllViews();
         TextView unavailable = text("无法确认当前会话状态，请恢复连接后重试", 14, color(R.color.muted));
@@ -1447,7 +1509,7 @@ public final class MainActivity extends Activity {
         String sessionId = session.id();
         if (sessionId.equals(expandedConversationSessionId)) {
             collapseConversationDisclosure();
-            renderSessions(renderedSessions);
+            renderSessions(currentUiState().getSessions());
             return;
         }
         expandedConversationSessionId = sessionId;
@@ -1459,11 +1521,11 @@ public final class MainActivity extends Activity {
             loadingConversationSessionId = null;
             dispatchState(new HumHumAction.ConversationLoaded(
                     sessionId, recentConversationBySessionId.get(sessionId)));
-            renderSessions(renderedSessions);
+            renderSessions(currentUiState().getSessions());
             return;
         }
         loadingConversationSessionId = sessionId;
-        renderSessions(renderedSessions);
+        renderSessions(currentUiState().getSessions());
         loadConversation(session);
     }
 
@@ -1473,7 +1535,7 @@ public final class MainActivity extends Activity {
         loadingConversationSessionId = session.id();
         conversationErrorSessionId = null;
         conversationErrorText = "";
-        renderSessions(renderedSessions);
+        renderSessions(currentUiState().getSessions());
         loadConversation(session);
     }
 
@@ -1515,6 +1577,11 @@ public final class MainActivity extends Activity {
         buttons.setPadding(0, dp(8), 0, 0);
         Button deny = button("拒绝", false);
         Button allow = button("允许一次", true);
+        boolean pending = isPendingAction(
+                PendingActionKind.APPROVAL, sessionId, action.id());
+        boolean enabled = currentUiState().getCanControl() && !pending;
+        deny.setEnabled(enabled);
+        allow.setEnabled(enabled);
         deny.setOnClickListener(
                 view -> resolve(sessionId, action, "deny", deny, allow));
         allow.setOnClickListener(
@@ -1551,9 +1618,11 @@ public final class MainActivity extends Activity {
         });
         panel.addView(draft, matchWidthWrap());
         Button send = button("发送跟进", true);
-        boolean sending = sendingSessionIds.contains(session.id());
-        draft.setEnabled(!sending);
-        send.setEnabled(!sending);
+        boolean sending = isPendingAction(
+                PendingActionKind.FOLLOW_UP, session.id(), "");
+        boolean enabled = currentUiState().getCanControl() && !sending;
+        draft.setEnabled(enabled);
+        send.setEnabled(enabled);
         LinearLayout.LayoutParams sendParams = matchWidthWrap();
         sendParams.topMargin = dp(8);
         panel.addView(send, sendParams);
@@ -1632,7 +1701,7 @@ public final class MainActivity extends Activity {
                             conversationErrorText = visibleError;
                             dispatchState(new HumHumAction.ConversationFailed(
                                     sessionId, visibleError));
-                            renderSessions(renderedSessions);
+                            renderSessions(currentUiState().getSessions());
                         });
             }
         });
@@ -1656,8 +1725,8 @@ public final class MainActivity extends Activity {
                     conversationErrorSessionId = null;
                     conversationErrorText = "";
                     dispatchState(new HumHumAction.ConversationLoaded(sessionId, messages));
-                    if (remote) statusText.setText("远程连接");
-                    renderSessions(renderedSessions);
+                    if (remote) setStatusMessage("远程连接");
+                    renderSessions(currentUiState().getSessions());
                 });
     }
 
@@ -1703,7 +1772,7 @@ public final class MainActivity extends Activity {
                             decision);
                     postIfCurrent(generation, current, currentConnection, () -> {
                         dispatchState(new HumHumAction.ApprovalFinished(sessionId, action.id()));
-                        statusText.setText("远程连接 · 已处理");
+                        setStatusMessage("远程连接 · 已处理");
                         refreshSessions(true);
                     });
                     return;
@@ -1736,7 +1805,7 @@ public final class MainActivity extends Activity {
                         postIfCurrent(generation, current, currentConnection, () -> {
                             dispatchState(new HumHumAction.ApprovalFinished(
                                     sessionId, action.id()));
-                            statusText.setText("远程连接 · 已处理");
+                            setStatusMessage("远程连接 · 已处理");
                             refreshSessions(true);
                         });
                         return;
@@ -1749,7 +1818,7 @@ public final class MainActivity extends Activity {
                     dispatchState(new HumHumAction.ApprovalFinished(sessionId, action.id()));
                     first.setEnabled(true);
                     second.setEnabled(true);
-                    statusText.setText(visibleError);
+                    setStatusMessage(visibleError);
                 });
             }
         });
@@ -1757,10 +1826,10 @@ public final class MainActivity extends Activity {
 
     private void send(Models.Session session, EditText draft, Button send) {
         String message = draft.getText().toString().trim();
-        if (message.isEmpty() || sendingSessionIds.contains(session.id())) return;
-        if (viewModel != null && !viewModel.getState().getValue().getCanControl()) return;
+        if (message.isEmpty()
+                || isPendingAction(PendingActionKind.FOLLOW_UP, session.id(), "")) return;
+        if (!currentUiState().getCanControl()) return;
         dispatchState(new HumHumAction.FollowUpStarted(session.id()));
-        sendingSessionIds.add(session.id());
         draft.setEnabled(false);
         send.setEnabled(false);
         MobileProtocol current = protocol;
@@ -1779,12 +1848,11 @@ public final class MainActivity extends Activity {
                             message);
                     postIfCurrent(generation, current, currentConnection, () -> {
                         dispatchState(new HumHumAction.FollowUpFinished(session.id()));
-                        sendingSessionIds.remove(session.id());
                         messageDraftBySessionId.remove(session.id());
-                        statusText.setText("delivered".equals(state)
+                        setStatusMessage("delivered".equals(state)
                                 ? "远程连接 · 跟进已送达"
                                 : "远程连接 · 跟进已进入队列");
-                        renderSessions(renderedSessions);
+                        renderSessions(currentUiState().getSessions());
                         refreshSessions(false);
                     });
                     return;
@@ -1799,10 +1867,10 @@ public final class MainActivity extends Activity {
                 String state = current.sendMessage(session, message);
                 postIfCurrent(generation, current, currentConnection, () -> {
                     dispatchState(new HumHumAction.FollowUpFinished(session.id()));
-                    sendingSessionIds.remove(session.id());
                     messageDraftBySessionId.remove(session.id());
-                    statusText.setText("delivered".equals(state) ? "跟进已送达" : "跟进已进入队列");
-                    renderSessions(renderedSessions);
+                    setStatusMessage(
+                            "delivered".equals(state) ? "跟进已送达" : "跟进已进入队列");
+                    renderSessions(currentUiState().getSessions());
                     refreshSessions(false);
                 });
             } catch (Exception error) {
@@ -1820,12 +1888,11 @@ public final class MainActivity extends Activity {
                                 message);
                         postIfCurrent(generation, current, currentConnection, () -> {
                             dispatchState(new HumHumAction.FollowUpFinished(session.id()));
-                            sendingSessionIds.remove(session.id());
                             messageDraftBySessionId.remove(session.id());
-                            statusText.setText("delivered".equals(state)
+                            setStatusMessage("delivered".equals(state)
                                     ? "远程连接 · 跟进已送达"
                                     : "远程连接 · 跟进已进入队列");
-                            renderSessions(renderedSessions);
+                            renderSessions(currentUiState().getSessions());
                             refreshSessions(false);
                         });
                         return;
@@ -1836,9 +1903,8 @@ public final class MainActivity extends Activity {
                 String visibleError = safeError(error);
                 postIfCurrent(generation, current, currentConnection, () -> {
                     dispatchState(new HumHumAction.FollowUpFinished(session.id()));
-                    sendingSessionIds.remove(session.id());
-                    statusText.setText(visibleError);
-                    renderSessions(renderedSessions);
+                    setStatusMessage(visibleError);
+                    renderSessions(currentUiState().getSessions());
                 });
             }
         });
@@ -1847,12 +1913,28 @@ public final class MainActivity extends Activity {
     private void setPairing(boolean pairing) {
         connectButton.setEnabled(!pairing);
         connectButton.setText(pairing ? "正在安全配对" : "安全配对");
-        statusText.setText(pairing
+        setStatusMessage(pairing
                 ? (scannedPairing ? "正在加密配对" : "正在验证证书")
                 : "等待连接");
         if (pairing && scannedPairing) {
             scanPairingStatus.setText("二维码已识别\n正在通过加密中继连接这台电脑");
         }
+    }
+
+    private boolean isPendingAction(
+            PendingActionKind kind, String sessionId, String actionId) {
+        for (PendingAction pending : currentUiState().getPendingActions()) {
+            if (pending.getKind() == kind
+                    && pending.getSessionId().equals(sessionId)
+                    && pending.getActionId().equals(actionId)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void setStatusMessage(String message) {
+        dispatchState(new HumHumAction.StatusChanged(message));
     }
 
     private void setScannedPairingState(boolean active) {

@@ -3,6 +3,7 @@ package com.humhum.mobile.app
 import com.humhum.mobile.MobileRoleDashboard
 import com.humhum.mobile.Models
 import java.io.Closeable
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -22,6 +23,7 @@ class HumHumViewModel @JvmOverloads constructor(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val mutableState = MutableStateFlow(HumHumUiState(selectedRole = initialRole))
     private var pollingJob: Job? = null
+    private val pollingGeneration = AtomicLong()
 
     val state: StateFlow<HumHumUiState> = mutableState.asStateFlow()
 
@@ -34,10 +36,12 @@ class HumHumViewModel @JvmOverloads constructor(
     fun startPolling(intervalMillis: Long = 10_000L, requestRefresh: () -> Unit) {
         require(intervalMillis > 0) { "Polling interval must be positive" }
         stopPolling()
+        val generation = pollingGeneration.incrementAndGet()
         pollingJob = scope.launch {
             while (isActive) {
                 delay(intervalMillis)
-                if (state.value.scope != null &&
+                if (generation == pollingGeneration.get() &&
+                    state.value.scope != null &&
                     state.value.connection != ConnectionStatus.DISCONNECTING
                 ) {
                     requestRefresh()
@@ -51,6 +55,7 @@ class HumHumViewModel @JvmOverloads constructor(
     }
 
     fun stopPolling() {
+        pollingGeneration.incrementAndGet()
         pollingJob?.cancel()
         pollingJob = null
     }
@@ -65,11 +70,25 @@ class HumHumViewModel @JvmOverloads constructor(
         return when (action) {
             HumHumAction.ScanStarted -> state.copy(
                 connection = ConnectionStatus.SCANNING,
+                connectionBeforeScan = if (state.connection == ConnectionStatus.SCANNING) {
+                    state.connectionBeforeScan
+                } else {
+                    state.connection
+                },
                 errorMessage = null,
             )
             HumHumAction.ScanCancelled -> state.copy(
-                connection = ConnectionStatus.UNPAIRED,
+                connection = state.connectionBeforeScan ?: ConnectionStatus.UNPAIRED,
+                connectionBeforeScan = null,
                 errorMessage = null,
+            )
+            is HumHumAction.PairingInputRejected -> state.copy(
+                connection = state.connectionBeforeScan ?: when (state.connection) {
+                    ConnectionStatus.SCANNING -> ConnectionStatus.UNPAIRED
+                    else -> state.connection
+                },
+                connectionBeforeScan = null,
+                errorMessage = action.message,
             )
             HumHumAction.PairingStarted -> state.copy(
                 connection = ConnectionStatus.PAIRING,
@@ -78,13 +97,15 @@ class HumHumViewModel @JvmOverloads constructor(
                 statusMessage = "正在安全配对",
             )
             is HumHumAction.PairingFailed -> state.copy(
-                connection = ConnectionStatus.UNPAIRED,
+                connection = state.connectionBeforeScan ?: ConnectionStatus.UNPAIRED,
+                connectionBeforeScan = null,
                 refreshInFlight = false,
                 errorMessage = action.message,
                 statusMessage = "等待连接",
             )
             is HumHumAction.Connected -> state.copy(
                 connection = ConnectionStatus.CONNECTED,
+                connectionBeforeScan = null,
                 scope = action.scope,
                 sessions = sanitizeSessions(state.sessions, action.scope),
                 refreshInFlight = false,
@@ -92,6 +113,16 @@ class HumHumViewModel @JvmOverloads constructor(
                 relayRecovered = false,
                 errorMessage = null,
                 statusMessage = "正在同步",
+            )
+            is HumHumAction.ConnectionRestored -> state.copy(
+                connection = ConnectionStatus.CONNECTED,
+                connectionBeforeScan = null,
+                scope = action.scope,
+                sessions = sanitizeSessions(state.sessions, action.scope),
+                refreshInFlight = false,
+                offlineSnapshot = false,
+                errorMessage = action.message,
+                statusMessage = action.message,
             )
             is HumHumAction.SelectRole -> state.copy(
                 selectedRole = action.role,
@@ -109,6 +140,14 @@ class HumHumViewModel @JvmOverloads constructor(
                     statusMessage = if (action.userInitiated) "正在刷新" else state.statusMessage,
                 )
             }
+            HumHumAction.RefreshCancelled -> state.copy(
+                refreshInFlight = false,
+                statusMessage = if (state.connection == ConnectionStatus.CONNECTED) {
+                    "已连接"
+                } else {
+                    state.statusMessage
+                },
+            )
             is HumHumAction.SessionsLoaded -> state.copy(
                 connection = ConnectionStatus.CONNECTED,
                 sessions = sanitizeSessions(action.sessions, state.scope),
@@ -229,6 +268,7 @@ class HumHumViewModel @JvmOverloads constructor(
                 ),
             )
             is HumHumAction.HealthUpdated -> state.copy(health = action.health)
+            is HumHumAction.StatusChanged -> state.copy(statusMessage = action.message)
             HumHumAction.OpenSettings -> state.copy(settingsVisible = true)
             HumHumAction.CloseSettings -> state.copy(settingsVisible = false)
             HumHumAction.DisconnectStarted -> state.copy(

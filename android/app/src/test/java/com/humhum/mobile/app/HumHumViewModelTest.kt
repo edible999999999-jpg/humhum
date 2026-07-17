@@ -10,6 +10,7 @@ import java.time.Instant
 import java.util.Collections
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -49,7 +50,7 @@ class HumHumViewModelTest {
     }
 
     @Test
-    fun roleSelectionAndSettingsAreStateOwned() {
+    fun roleSelectionWorksAndSettingsStateIsReservedForTaskSix() {
         viewModel.dispatch(HumHumAction.SelectRole(MobileRoleDashboard.Role.HUSH))
         viewModel.dispatch(HumHumAction.OpenSettings)
 
@@ -205,6 +206,68 @@ class HumHumViewModelTest {
         assertTrue(state.sessions.isEmpty())
         assertNull(state.conversation.sessionId)
         assertTrue(state.pendingActions.isEmpty())
+    }
+
+    @Test
+    fun failedDisconnectRestoresConnectedControlStateAndSessions() {
+        viewModel.dispatch(HumHumAction.Connected(Models.Scope.CONTROL))
+        viewModel.dispatch(HumHumAction.SessionsLoaded(listOf(session("one")), viaRelay = false))
+        viewModel.dispatch(HumHumAction.DisconnectStarted)
+
+        viewModel.dispatch(
+            HumHumAction.ConnectionRestored(
+                scope = Models.Scope.CONTROL,
+                message = "桌面端未确认断开",
+            ),
+        )
+
+        val state = viewModel.state.value
+        assertEquals(ConnectionStatus.CONNECTED, state.connection)
+        assertEquals(Models.Scope.CONTROL, state.scope)
+        assertTrue(state.canControl)
+        assertEquals("one", state.sessions.single().id())
+        assertEquals("桌面端未确认断开", state.statusMessage)
+    }
+
+    @Test
+    fun rejectedQrRestoresTheConnectionStateThatExistedBeforeScanning() {
+        viewModel.dispatch(HumHumAction.ScanStarted)
+        viewModel.dispatch(HumHumAction.PairingInputRejected("二维码无效"))
+        assertEquals(ConnectionStatus.UNPAIRED, viewModel.state.value.connection)
+        assertEquals("二维码无效", viewModel.state.value.errorMessage)
+
+        viewModel.dispatch(HumHumAction.Connected(Models.Scope.CONTROL))
+        viewModel.dispatch(HumHumAction.ScanStarted)
+        viewModel.dispatch(HumHumAction.PairingInputRejected("二维码已过期"))
+        assertEquals(ConnectionStatus.CONNECTED, viewModel.state.value.connection)
+        assertTrue(viewModel.state.value.canControl)
+    }
+
+    @Test
+    fun rejectedNetworkSubmissionClearsRefreshPendingState() {
+        viewModel.dispatch(HumHumAction.Connected(Models.Scope.READ))
+        viewModel.dispatch(HumHumAction.RefreshRequested(userInitiated = true))
+        assertTrue(viewModel.state.value.refreshInFlight)
+
+        viewModel.dispatch(HumHumAction.RefreshCancelled)
+        assertFalse(viewModel.state.value.refreshInFlight)
+        assertEquals(ConnectionStatus.CONNECTED, viewModel.state.value.connection)
+    }
+
+    @Test
+    fun visibleStatusCopyLivesInUiState() {
+        viewModel.dispatch(HumHumAction.StatusChanged("远程连接 · 已处理"))
+        assertEquals("远程连接 · 已处理", viewModel.state.value.statusMessage)
+    }
+
+    @Test
+    fun stoppedPollingCannotInvokeRefreshLater() {
+        val callbacks = AtomicInteger()
+        viewModel.startPolling(100L) { callbacks.incrementAndGet() }
+        viewModel.stopPolling()
+
+        Thread.sleep(180)
+        assertEquals(0, callbacks.get())
     }
 
     @Test

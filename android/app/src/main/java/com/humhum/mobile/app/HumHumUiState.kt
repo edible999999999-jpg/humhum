@@ -56,6 +56,7 @@ data class HealthPermissionState(
 
 data class HumHumUiState(
     val connection: ConnectionStatus = ConnectionStatus.UNPAIRED,
+    val connectionBeforeScan: ConnectionStatus? = null,
     val scope: Models.Scope? = null,
     val selectedRole: MobileRoleDashboard.Role = MobileRoleDashboard.Role.HUMI,
     val sessions: List<Models.Session> = emptyList(),
