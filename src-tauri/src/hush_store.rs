@@ -4,7 +4,8 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use uuid::Uuid;
 
-const MAX_HUSH_MESSAGES: usize = 500;
+const MAX_HUSH_MESSAGES: usize = 2_000;
+const DWS_RETENTION_DAYS: i64 = 7;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HushInboxMessage {
@@ -31,6 +32,12 @@ pub struct HushInboxSummary {
     pub by_tier: BTreeMap<String, usize>,
     pub by_platform: BTreeMap<String, usize>,
     pub messages: Vec<HushInboxMessage>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HushBatchImportResult {
+    pub imported: usize,
+    pub duplicates: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -83,6 +90,52 @@ impl HushStore {
     }
 
     pub fn add_from_value(&mut self, raw: Value) -> Result<HushInboxMessage, String> {
+        let message = self.build_message(raw)?;
+        let previous = self.messages.clone();
+        self.messages.push(message.clone());
+        self.sort_and_limit();
+        if let Err(error) = self.save() {
+            self.messages = previous;
+            return Err(error);
+        }
+        Ok(message)
+    }
+
+    pub fn add_many_from_values(
+        &mut self,
+        values: Vec<Value>,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<HushBatchImportResult, String> {
+        let previous = self.messages.clone();
+        let mut imported = 0;
+        let mut duplicates = 0;
+        for raw in values {
+            let source_id = raw
+                .get("source_id")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            if source_id
+                .as_deref()
+                .is_some_and(|source_id| self.contains_source_id(source_id))
+            {
+                duplicates += 1;
+                continue;
+            }
+            let message = self.build_message(raw)?;
+            self.messages.push(message);
+            imported += 1;
+        }
+        if let Err(error) = self.prune_and_save(now) {
+            self.messages = previous;
+            return Err(error);
+        }
+        Ok(HushBatchImportResult {
+            imported,
+            duplicates,
+        })
+    }
+
+    fn build_message(&self, raw: Value) -> Result<HushInboxMessage, String> {
         let parsed: HushInboundPayload =
             serde_json::from_value(raw.clone()).unwrap_or_else(|_| HushInboundPayload {
                 platform: None,
@@ -181,15 +234,6 @@ impl HushStore {
             raw,
         };
 
-        let previous = self.messages.clone();
-        self.messages.insert(0, message.clone());
-        if self.messages.len() > MAX_HUSH_MESSAGES {
-            self.messages.truncate(MAX_HUSH_MESSAGES);
-        }
-        if let Err(error) = self.save() {
-            self.messages = previous;
-            return Err(error);
-        }
         Ok(message)
     }
 
@@ -229,6 +273,34 @@ impl HushStore {
         Ok(())
     }
 
+    pub fn prune_and_save(&mut self, now: chrono::DateTime<chrono::Utc>) -> Result<(), String> {
+        let previous = self.messages.clone();
+        let cutoff = now - chrono::Duration::days(DWS_RETENTION_DAYS);
+        self.messages.retain(|message| {
+            if !is_dws_message(message) {
+                return true;
+            }
+            parse_received_at(&message.received_at)
+                .map(|received_at| received_at >= cutoff)
+                .unwrap_or(true)
+        });
+        self.sort_and_limit();
+        if let Err(error) = self.save() {
+            self.messages = previous;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    fn sort_and_limit(&mut self) {
+        self.messages.sort_by(|left, right| {
+            parse_received_at(&right.received_at)
+                .cmp(&parse_received_at(&left.received_at))
+                .then_with(|| right.received_at.cmp(&left.received_at))
+        });
+        self.messages.truncate(MAX_HUSH_MESSAGES);
+    }
+
     fn save(&self) -> Result<(), String> {
         if let Some(parent) = self.file_path.parent() {
             std::fs::create_dir_all(parent)
@@ -241,12 +313,26 @@ impl HushStore {
     }
 
     #[cfg(test)]
-    fn with_file_path(file_path: PathBuf) -> Self {
+    pub(crate) fn with_file_path(file_path: PathBuf) -> Self {
         Self {
             messages: Vec::new(),
             file_path,
         }
     }
+}
+
+fn parse_received_at(value: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    chrono::DateTime::parse_from_rfc3339(value)
+        .ok()
+        .map(|timestamp| timestamp.with_timezone(&chrono::Utc))
+}
+
+fn is_dws_message(message: &HushInboxMessage) -> bool {
+    message
+        .source_id
+        .as_deref()
+        .is_some_and(|source_id| source_id.starts_with("dws:"))
+        || message.raw.get("source").and_then(Value::as_str) == Some("dws")
 }
 
 fn extract_text_from_dingtalk(raw: &Value) -> Option<String> {
@@ -399,5 +485,83 @@ mod tests {
 
         assert!(error.contains("Hush"));
         assert_eq!(store.summary().total, 0);
+    }
+
+    #[test]
+    fn prunes_expired_dws_messages_without_removing_other_sources() {
+        let path = temp_file("retention");
+        let mut store = HushStore::with_file_path(path.clone());
+        let now = chrono::DateTime::parse_from_rfc3339("2026-07-17T12:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+
+        for (source_id, platform, received_at) in [
+            ("dws:expired", "dingtalk", "2026-07-09T11:59:59Z"),
+            ("dws:recent", "dingtalk", "2026-07-17T11:00:00Z"),
+            ("wechat:old", "wechat", "2026-06-01T00:00:00Z"),
+        ] {
+            store
+                .add_from_value(json!({
+                    "platform": platform,
+                    "sender": "sender",
+                    "text": source_id,
+                    "source_id": source_id,
+                    "received_at": received_at,
+                    "source": if source_id.starts_with("dws:") { "dws" } else { "notification" }
+                }))
+                .unwrap();
+        }
+
+        store.prune_and_save(now).unwrap();
+
+        let source_ids: Vec<_> = store
+            .summary()
+            .messages
+            .into_iter()
+            .filter_map(|message| message.source_id)
+            .collect();
+        assert_eq!(source_ids, vec!["dws:recent", "wechat:old"]);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn dws_sync_capacity_is_two_thousand_messages() {
+        assert_eq!(MAX_HUSH_MESSAGES, 2_000);
+    }
+
+    #[test]
+    fn batch_import_counts_duplicates_without_failing_the_page() {
+        let path = temp_file("batch");
+        let mut store = HushStore::with_file_path(path.clone());
+        let now = chrono::DateTime::parse_from_rfc3339("2026-07-17T12:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let payload = |source_id: &str, text: &str| {
+            json!({
+                "platform": "dingtalk",
+                "sender": "sender",
+                "text": text,
+                "source_id": source_id,
+                "received_at": "2026-07-17T11:00:00Z",
+                "source": "dws"
+            })
+        };
+
+        let first = store
+            .add_many_from_values(vec![payload("dws:1", "one"), payload("dws:2", "two")], now)
+            .unwrap();
+        let second = store
+            .add_many_from_values(
+                vec![payload("dws:2", "two again"), payload("dws:3", "three")],
+                now,
+            )
+            .unwrap();
+
+        assert_eq!(first.imported, 2);
+        assert_eq!(first.duplicates, 0);
+        assert_eq!(second.imported, 1);
+        assert_eq!(second.duplicates, 1);
+        assert_eq!(store.summary().total, 3);
+        let _ = std::fs::remove_file(path);
     }
 }

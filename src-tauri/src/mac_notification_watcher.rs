@@ -134,7 +134,7 @@ fn status_from_source_error(error: SourceError) -> MacNotificationBridgeStatus {
 }
 
 fn supported_apps() -> Vec<String> {
-    vec!["WeChat".to_string(), "DingTalk".to_string()]
+    vec!["微信".to_string(), "钉钉".to_string()]
 }
 
 fn default_database_path() -> PathBuf {
@@ -206,13 +206,13 @@ fn watch_notifications(app: AppHandle) {
                     }
                     let message = if batch.skipped_records > 0 {
                         format!(
-                            "Watching WeChat and DingTalk. Imported {imported}; skipped {} unreadable notification record(s).",
+                            "正在监听微信和钉钉通知。已导入 {imported} 条，跳过 {} 条无法读取的记录。",
                             batch.skipped_records
                         )
                     } else if imported > 0 {
-                        format!("Watching WeChat and DingTalk. Imported {imported} new notification(s).")
+                        format!("正在监听微信和钉钉通知。已导入 {imported} 条新通知。")
                     } else {
-                        "Watching new WeChat and DingTalk notifications.".to_string()
+                        "正在监听新的微信和钉钉通知。".to_string()
                     };
                     replace_status(
                         &app,
@@ -346,7 +346,7 @@ fn decode_payload(
     let bundle_id = bundle_id.to_lowercase();
     let (platform, app_name) = match bundle_id.as_str() {
         "com.tencent.xinwechat" => ("wechat", "WeChat"),
-        "com.alibaba.dingtalkmac" => ("dingtalk", "DingTalk"),
+        "com.alibaba.dingtalkmac" => ("dingtalk", "钉钉"),
         _ => return Err(format!("Unsupported notification app: {bundle_id}")),
     };
     let title = string_for_keys(request, &["titl", "title"]);
@@ -629,6 +629,6 @@ mod tests {
 
         assert_eq!(status.state, "permission_required");
         assert!(status.message.contains("Full Disk Access"));
-        assert_eq!(status.supported_apps, vec!["WeChat", "DingTalk"]);
+        assert_eq!(status.supported_apps, vec!["微信", "钉钉"]);
     }
 }

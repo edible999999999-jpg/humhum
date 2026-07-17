@@ -71,33 +71,28 @@ interface DerivedContact {
   messages: HushInboxMessage[];
 }
 
-interface LocalSourceCandidate {
-  path: string;
-  exists: boolean;
-  kind: string;
-  readable: boolean;
-  file_count: number;
-  sample_files: string[];
+interface DwsHushStatus {
+  state: "not_installed" | "authentication_required" | "ready" | "syncing" | "error";
+  message: string;
+  executable_source: "standalone" | "wukong" | null;
+  executable_path: string | null;
+  authenticated: boolean;
+  auto_sync_enabled: boolean;
+  sync_interval_minutes: number;
+  last_success_at: string | null;
+  last_attempt_at: string | null;
+  syncing: boolean;
+  pending_sync: boolean;
 }
 
-interface DingTalkLocalSourceReport {
-  app_detected: boolean;
-  app_path?: string | null;
-  source_count: number;
-  readable_count: number;
-  candidates: LocalSourceCandidate[];
-  summary: string;
-  next_step: string;
-}
-
-interface DingTalkImportReport {
-  source_path: string;
-  scanned_files: number;
+interface DwsSyncReport {
+  conversations: number;
+  examined_messages: number;
   imported_messages: number;
-  skipped_binary_sources: number;
-  skipped_files: number;
-  errors: string[];
-  summary: string;
+  duplicate_messages: number;
+  pages: number;
+  partial: boolean;
+  next_cursor: string | null;
 }
 
 export function HushModule() {
@@ -107,11 +102,11 @@ export function HushModule() {
   const [connectors, setConnectors] = useState<HushConnectorStatus[]>([]);
   const [inbox, setInbox] = useState<HushInboxSummary | null>(null);
   const [notificationBridge, setNotificationBridge] = useState<NotificationBridgeStatus | null>(null);
-  const [dingTalkReport, setDingTalkReport] = useState<DingTalkLocalSourceReport | null>(null);
-  const [dingTalkImportReport, setDingTalkImportReport] = useState<DingTalkImportReport | null>(null);
-  const [dingTalkImportPath, setDingTalkImportPath] = useState("");
-  const [dingTalkLoading, setDingTalkLoading] = useState(false);
-  const [dingTalkImporting, setDingTalkImporting] = useState(false);
+  const [dwsStatus, setDwsStatus] = useState<DwsHushStatus | null>(null);
+  const [dwsReport, setDwsReport] = useState<DwsSyncReport | null>(null);
+  const [dingTalkSyncing, setDingTalkSyncing] = useState(false);
+  const [dingTalkLoggingIn, setDingTalkLoggingIn] = useState(false);
+  const [dingTalkAutoUpdating, setDingTalkAutoUpdating] = useState(false);
   const [connectorError, setConnectorError] = useState<string | null>(null);
   const [openingConnector, setOpeningConnector] = useState<string | null>(null);
 
@@ -166,7 +161,7 @@ export function HushModule() {
         state: "error",
         message: String(error),
         last_scan_at: null,
-        supported_apps: ["WeChat", "DingTalk"],
+        supported_apps: ["WeChat", "钉钉"],
       });
     }
   }, []);
@@ -176,6 +171,33 @@ export function HushModule() {
     const interval = setInterval(fetchNotificationBridge, 5000);
     return () => clearInterval(interval);
   }, [fetchNotificationBridge]);
+
+  const fetchDwsStatus = useCallback(async () => {
+    try {
+      const status = await invoke<DwsHushStatus>("get_hush_dws_status");
+      setDwsStatus(status);
+    } catch (error) {
+      setDwsStatus((current) => ({
+        state: "error",
+        message: String(error),
+        executable_source: current?.executable_source ?? null,
+        executable_path: current?.executable_path ?? null,
+        authenticated: current?.authenticated ?? false,
+        auto_sync_enabled: current?.auto_sync_enabled ?? false,
+        sync_interval_minutes: current?.sync_interval_minutes ?? 5,
+        last_success_at: current?.last_success_at ?? null,
+        last_attempt_at: current?.last_attempt_at ?? null,
+        syncing: false,
+        pending_sync: current?.pending_sync ?? false,
+      }));
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchDwsStatus();
+    const interval = setInterval(fetchDwsStatus, 10000);
+    return () => clearInterval(interval);
+  }, [fetchDwsStatus]);
 
   const openFullDiskAccess = useCallback(async () => {
     try {
@@ -203,34 +225,46 @@ export function HushModule() {
     await fetchInbox();
   }, [fetchInbox]);
 
-  const diagnoseDingTalk = useCallback(async () => {
-    setDingTalkLoading(true);
+  const syncDingTalk = useCallback(async () => {
+    setDingTalkSyncing(true);
     setConnectorError(null);
     try {
-      const report = await invoke<DingTalkLocalSourceReport>("diagnose_dingtalk_local_sources");
-      setDingTalkReport(report);
+      const report = await invoke<DwsSyncReport>("sync_hush_dws");
+      setDwsReport(report);
+      await Promise.all([fetchDwsStatus(), fetchInbox()]);
+    } catch (error) {
+      setConnectorError(String(error));
+      await fetchDwsStatus();
+    } finally {
+      setDingTalkSyncing(false);
+    }
+  }, [fetchDwsStatus, fetchInbox]);
+
+  const loginDingTalk = useCallback(async () => {
+    setDingTalkLoggingIn(true);
+    setConnectorError(null);
+    try {
+      await invoke("open_hush_dws_login");
+      await fetchDwsStatus();
     } catch (error) {
       setConnectorError(String(error));
     } finally {
-      setDingTalkLoading(false);
+      setDingTalkLoggingIn(false);
+    }
+  }, [fetchDwsStatus]);
+
+  const setDingTalkAutoSync = useCallback(async (enabled: boolean) => {
+    setDingTalkAutoUpdating(true);
+    setConnectorError(null);
+    try {
+      const status = await invoke<DwsHushStatus>("set_hush_dws_auto_sync", { enabled });
+      setDwsStatus(status);
+    } catch (error) {
+      setConnectorError(String(error));
+    } finally {
+      setDingTalkAutoUpdating(false);
     }
   }, []);
-
-  const importDingTalk = useCallback(async () => {
-    setDingTalkImporting(true);
-    setConnectorError(null);
-    try {
-      const report = await invoke<DingTalkImportReport>("import_dingtalk_local_source", {
-        path: dingTalkImportPath,
-      });
-      setDingTalkImportReport(report);
-      await fetchInbox();
-    } catch (error) {
-      setConnectorError(String(error));
-    } finally {
-      setDingTalkImporting(false);
-    }
-  }, [dingTalkImportPath, fetchInbox]);
 
   const contacts = useMemo<DerivedContact[]>(() => {
     const messages = inbox?.messages ?? [];
@@ -317,6 +351,7 @@ export function HushModule() {
             key={connector.id}
             connector={connector}
             notificationActive={notificationBridge?.state === "running"}
+            dwsActive={connector.id === "dingtalk" && Boolean(dwsStatus?.authenticated)}
             busy={openingConnector === connector.id}
             onOpen={() => openConnector(connector.id)}
           />
@@ -328,17 +363,17 @@ export function HushModule() {
         </div>
       )}
       <NotificationBridgePanel status={notificationBridge} onOpenSettings={openFullDiskAccess} />
-      <HushTruthPanel connectors={connectors} inbox={inbox} bridge={notificationBridge} />
+      <HushTruthPanel inbox={inbox} bridge={notificationBridge} dwsStatus={dwsStatus} />
 
-      <DingTalkSourcePanel
-        report={dingTalkReport}
-        importReport={dingTalkImportReport}
-        importPath={dingTalkImportPath}
-        loading={dingTalkLoading}
-        importing={dingTalkImporting}
-        onDiagnose={diagnoseDingTalk}
-        onImportPathChange={setDingTalkImportPath}
-        onImport={importDingTalk}
+      <DingTalkDwsPanel
+        status={dwsStatus}
+        report={dwsReport}
+        syncing={dingTalkSyncing}
+        loggingIn={dingTalkLoggingIn}
+        autoUpdating={dingTalkAutoUpdating}
+        onSync={syncDingTalk}
+        onLogin={loginDingTalk}
+        onAutoSyncChange={setDingTalkAutoSync}
       />
 
       <LiveInboxPanel inbox={inbox} onRefresh={fetchInbox} onClear={clearInbox} />
@@ -474,6 +509,11 @@ export function HushModule() {
                             {PLATFORM_ICONS[msg.platform] || msg.platform}
                             {msg.chat ? ` · ${msg.chat}` : ""}
                           </span>
+                          {msg.source_id?.startsWith("dws:") && (
+                            <span style={{ fontSize: 8, fontWeight: 800, color: "#0f6d78", border: "1px solid rgba(15,109,120,0.2)", borderRadius: 4, padding: "1px 4px" }}>
+                              DWS
+                            </span>
+                          )}
                         </div>
                         <div style={{ fontSize: 12, color: "#334155", lineHeight: 1.5 }}>
                           {msg.text}
@@ -578,8 +618,10 @@ function NotificationBridgePanel({
           <span style={{ fontSize: 10, fontWeight: 800, color: stateColor }}>
             {t(`hub.hush.bridge.${state}`)}
           </span>
-          {(status?.supported_apps ?? ["WeChat", "DingTalk"]).map((app) => (
-            <span key={app} style={{ fontSize: 9, color: "#64748b" }}>{app}</span>
+          {(status?.supported_apps ?? ["WeChat", "钉钉"]).map((app) => (
+            <span key={app} style={{ fontSize: 9, color: "#64748b" }}>
+              {app === "DingTalk" ? "钉钉" : app}
+            </span>
           ))}
         </div>
         <div style={{ marginTop: 3, fontSize: 10, color: "#64748b", lineHeight: 1.4 }}>
@@ -597,30 +639,26 @@ function NotificationBridgePanel({
 }
 
 function HushTruthPanel({
-  connectors,
   inbox,
   bridge,
+  dwsStatus,
 }: {
-  connectors: HushConnectorStatus[];
   inbox: HushInboxSummary | null;
   bridge: NotificationBridgeStatus | null;
+  dwsStatus: DwsHushStatus | null;
 }) {
-  const dingTalk = connectors.find((connector) => connector.id === "dingtalk");
+  const dwsActive = dwsStatus?.authenticated && ["ready", "syncing", "error"].includes(dwsStatus.state);
   const notificationActive = bridge?.state === "running";
-  const state = notificationActive
-    ? "Local notifications connected"
-    : dingTalk?.bridge_ready
-    ? "Connected"
-    : dingTalk?.installed
-      ? "App found, messages not indexed"
-      : "Not connected";
-  const detail = notificationActive
-    ? "Hush is reading new WeChat and DingTalk notifications delivered by macOS. Private chat databases remain untouched."
-    : dingTalk?.bridge_ready
-    ? "Hush can summarize approved local messages."
-    : dingTalk?.installed
-      ? "Opening DingTalk is not enough. Scan local sources, then choose a read-only export/log path for HUMHUM to index."
-      : "Install or log into Ali Ding first, then let Hush search for local storage candidates.";
+  const state = dwsActive
+    ? "钉钉消息已连接"
+    : notificationActive
+      ? "本地通知已连接"
+      : "消息源尚未连接";
+  const detail = dwsActive
+    ? "Hush 通过本机 DWS 只读同步钉钉群聊和私聊，不发送或回复消息。"
+    : notificationActive
+      ? "Hush 正在读取 macOS 投递的微信和钉钉通知预览，不访问私有聊天数据库。"
+      : "登录钉钉 DWS 后即可同步最近 24 小时的群聊和私聊。";
 
   return (
     <div
@@ -667,165 +705,154 @@ function HushTruthPanel({
   );
 }
 
-function DingTalkSourcePanel({
+function DingTalkDwsPanel({
+  status,
   report,
-  importReport,
-  importPath,
-  loading,
-  importing,
-  onDiagnose,
-  onImportPathChange,
-  onImport,
+  syncing,
+  loggingIn,
+  autoUpdating,
+  onSync,
+  onLogin,
+  onAutoSyncChange,
 }: {
-  report: DingTalkLocalSourceReport | null;
-  importReport: DingTalkImportReport | null;
-  importPath: string;
-  loading: boolean;
-  importing: boolean;
-  onDiagnose: () => void;
-  onImportPathChange: (path: string) => void;
-  onImport: () => void;
+  status: DwsHushStatus | null;
+  report: DwsSyncReport | null;
+  syncing: boolean;
+  loggingIn: boolean;
+  autoUpdating: boolean;
+  onSync: () => void;
+  onLogin: () => void;
+  onAutoSyncChange: (enabled: boolean) => void;
 }) {
-  const visibleCandidates = report?.candidates.filter((candidate) => candidate.exists || candidate.file_count > 0).slice(0, 5) ?? [];
+  const state = status?.state ?? "syncing";
+  const isSyncing = syncing || status?.syncing || state === "syncing";
+  const stateLabel: Record<DwsHushStatus["state"], string> = {
+    not_installed: "未安装",
+    authentication_required: "待登录",
+    ready: "已就绪",
+    syncing: "同步中",
+    error: "需要处理",
+  };
+  const stateColor = state === "ready"
+    ? "#15803d"
+    : state === "syncing"
+      ? "#2563eb"
+      : state === "not_installed" || state === "authentication_required"
+        ? "#b45309"
+        : "#be123c";
+  const sourceLabel = status?.executable_source === "standalone"
+    ? "独立 DWS"
+    : status?.executable_source === "wukong"
+      ? "悟空内置 DWS"
+      : "尚未发现 DWS";
+  const canSync = Boolean(status?.authenticated) && !isSyncing;
+  const syncLabel = status?.pending_sync
+    ? "继续同步"
+    : status?.last_success_at
+      ? "同步新消息"
+      : "同步最近 24 小时";
+  const lastSuccess = status?.last_success_at
+    ? new Date(status.last_success_at).toLocaleString()
+    : "尚未同步";
+
   return (
     <div
       style={{
         marginBottom: 14,
         padding: 14,
-        borderRadius: 16,
-        background: "linear-gradient(135deg, rgba(99,102,241,0.06), rgba(148,239,244,0.035))",
-        border: "1px solid rgba(148,239,244,0.14)",
+        borderRadius: 8,
+        background: "rgba(255,255,255,0.64)",
+        border: "1px solid rgba(116,143,165,0.16)",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-        <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 13, fontWeight: 850, color: "rgba(255,255,255,0.86)" }}>
-            Ali Ding local bridge
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+        <span
+          aria-hidden="true"
+          style={{
+            width: 8,
+            height: 8,
+            marginTop: 5,
+            flex: "0 0 auto",
+            borderRadius: "50%",
+            background: stateColor,
+            boxShadow: `0 0 0 3px ${stateColor}20`,
+          }}
+        />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 13, fontWeight: 850, color: "#263241" }}>
+              钉钉消息同步
+            </span>
+            <span style={{ fontSize: 10, fontWeight: 800, color: stateColor }}>
+              {stateLabel[state]}
+            </span>
+            <span style={{ fontSize: 9, color: "#64748b" }}>{sourceLabel}</span>
           </div>
-          <div style={{ marginTop: 2, fontSize: 10, color: "rgba(255,255,255,0.38)", lineHeight: 1.45 }}>
-            Find local DingTalk storage first. Hush can only summarize after you choose what it may index.
+          <div style={{ marginTop: 4, fontSize: 11, color: "#64748b", lineHeight: 1.5 }}>
+            {status?.message ?? "正在检查本机钉钉 DWS"}
           </div>
-        </div>
-        <button className="kawaii-tab" onClick={onDiagnose} disabled={loading} style={{ fontSize: 10, padding: "5px 9px" }}>
-          {loading ? "Scanning..." : "Scan Ali Ding"}
-        </button>
-      </div>
-
-      {report ? (
-        <>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8, marginBottom: 10 }}>
-            <MiniInboxStat label="app" value={report.app_detected ? 1 : 0} />
-            <MiniInboxStat label="sources" value={report.source_count} />
-            <MiniInboxStat label="readable" value={report.readable_count} />
-          </div>
-          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.62)", lineHeight: 1.55, marginBottom: 8 }}>
-            {report.summary}
-          </div>
-          {visibleCandidates.length > 0 ? (
-            <div style={{ display: "grid", gap: 7, maxHeight: 190, overflowY: "auto" }} className="scrollbar-thin">
-              {visibleCandidates.map((candidate) => (
-                <div
-                  key={candidate.path}
-                  onClick={() => onImportPathChange(candidate.path)}
-                  style={{
-                    padding: 9,
-                    borderRadius: 11,
-                    background: "rgba(0,0,0,0.16)",
-                    border: `1px solid ${candidate.readable ? "rgba(52,211,153,0.12)" : "rgba(251,191,36,0.12)"}`,
-                    cursor: candidate.readable ? "pointer" : "default",
-                  }}
-                >
-                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                    <span style={{ fontSize: 10, color: candidate.readable ? "#6ee7b7" : "#fbbf24", fontWeight: 850 }}>
-                      {candidate.readable ? "readable" : candidate.kind}
-                    </span>
-                    <span style={{ marginLeft: "auto", fontSize: 10, color: "rgba(255,255,255,0.36)" }}>
-                      {candidate.file_count} possible files
-                    </span>
-                  </div>
-                  <div style={{ marginTop: 4, fontSize: 9, color: "rgba(255,255,255,0.34)", fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {candidate.path}
-                  </div>
-                  {candidate.sample_files[0] && (
-                    <div style={{ marginTop: 3, fontSize: 9, color: "rgba(148,239,244,0.42)", fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      sample: {candidate.sample_files[0]}
-                    </div>
-                  )}
-                  {candidate.readable && (
-                    <div style={{ marginTop: 5, fontSize: 9, color: "rgba(255,255,255,0.34)" }}>
-                      Click to use this source for a read-only import.
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div style={{ padding: 10, borderRadius: 11, background: "rgba(255,255,255,0.018)", color: "rgba(255,255,255,0.34)", fontSize: 11 }}>
-              No local DingTalk source has been found yet.
+          {status?.executable_path && (
+            <div style={{ marginTop: 3, fontSize: 9, color: "#94a3b8", fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {status.executable_path}
             </div>
           )}
-          <div style={{ marginTop: 8, fontSize: 10, color: "rgba(255,255,255,0.35)", lineHeight: 1.5 }}>
-            {report.next_step}
+          <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 10, color: "#64748b" }}>上次成功：{lastSuccess}</span>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 10, color: "#475569", cursor: status?.authenticated ? "pointer" : "not-allowed" }}>
+              <input
+                type="checkbox"
+                checked={status?.auto_sync_enabled ?? false}
+                disabled={!status?.authenticated || autoUpdating}
+                onChange={(event) => onAutoSyncChange(event.target.checked)}
+              />
+              每 {status?.sync_interval_minutes ?? 5} 分钟自动同步
+            </label>
           </div>
-        </>
-      ) : (
-        <div style={{ padding: 12, borderRadius: 12, background: "rgba(255,255,255,0.018)", color: "rgba(255,255,255,0.36)", fontSize: 11, lineHeight: 1.5 }}>
-          DingTalk is not connected by opening the app. Click scan to find Ali Ding local storage candidates on this computer.
         </div>
-      )}
-
-      <div style={{ marginTop: 10, padding: 10, borderRadius: 12, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)" }}>
-        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.72)", fontWeight: 850, marginBottom: 6 }}>
-          Read-only DingTalk import
-        </div>
-        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.38)", lineHeight: 1.45, marginBottom: 8 }}>
-          Paste a DingTalk export/log/text path, or click a scanned candidate above. Hush reads text-like exports only and skips database/cache files.
-        </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <input
-            value={importPath}
-            onChange={(event) => onImportPathChange(event.target.value)}
-            placeholder="Choose a DingTalk export file or folder"
-            style={{
-              flex: 1,
-              minWidth: 0,
-              border: "1px solid rgba(255,255,255,0.08)",
-              borderRadius: 999,
-              background: "rgba(0,0,0,0.18)",
-              color: "rgba(255,255,255,0.78)",
-              fontSize: 10,
-              padding: "7px 10px",
-              outline: "none",
-            }}
-          />
+        <div style={{ display: "flex", gap: 7, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          {state === "authentication_required" && (
+            <button
+              className="kawaii-tab"
+              onClick={onLogin}
+              disabled={loggingIn}
+              style={{ fontSize: 10, padding: "6px 10px" }}
+            >
+              {loggingIn ? "等待登录..." : "登录钉钉"}
+            </button>
+          )}
           <button
             className="kawaii-tab"
-            onClick={onImport}
-            disabled={importing || !importPath.trim()}
-            style={{ fontSize: 10, padding: "6px 10px", opacity: importing || !importPath.trim() ? 0.45 : 1 }}
+            onClick={onSync}
+            disabled={!canSync}
+            style={{ fontSize: 10, padding: "6px 10px", opacity: canSync ? 1 : 0.5 }}
           >
-            {importing ? "Importing..." : "Import"}
+            {isSyncing ? "同步中..." : syncLabel}
           </button>
         </div>
-        {importReport && (
-          <div style={{ marginTop: 8, padding: 9, borderRadius: 10, background: "rgba(148,239,244,0.035)", border: "1px solid rgba(148,239,244,0.1)" }}>
-            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.68)", lineHeight: 1.5 }}>
-              {importReport.summary}
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 6, marginTop: 8 }}>
-              <MiniInboxStat label="files" value={importReport.scanned_files} />
-              <MiniInboxStat label="imported" value={importReport.imported_messages} />
-              <MiniInboxStat label="db skipped" value={importReport.skipped_binary_sources} />
-              <MiniInboxStat label="errors" value={importReport.errors.length} />
-            </div>
-            {importReport.errors[0] && (
-              <div style={{ marginTop: 7, fontSize: 9, color: "rgba(251,113,133,0.82)", lineHeight: 1.45 }}>
-                {importReport.errors.slice(0, 2).join(" · ")}
-              </div>
-            )}
-          </div>
-        )}
       </div>
+
+      {report && (
+        <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid rgba(116,143,165,0.12)" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10 }}>
+            {[
+              ["会话", report.conversations],
+              ["已检查", report.examined_messages],
+              ["新增", report.imported_messages],
+              ["重复", report.duplicate_messages],
+            ].map(([label, value]) => (
+              <div key={label} style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 16, fontWeight: 850, color: "#334155" }}>{value}</div>
+                <div style={{ fontSize: 9, color: "#94a3b8" }}>{label}</div>
+              </div>
+            ))}
+          </div>
+          {report.partial && (
+            <div style={{ marginTop: 8, fontSize: 10, color: "#b45309", lineHeight: 1.45 }}>
+              本轮已到安全上限，进度已保存；点击“继续同步”会从当前游标接着读取。
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -896,6 +923,11 @@ function LiveInboxPanel({
             >
               <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 4 }}>
                 <span style={{ fontSize: 10, color: "#94eff4", fontWeight: 850 }}>{message.platform}</span>
+                {message.source_id?.startsWith("dws:") && (
+                  <span style={{ fontSize: 8, fontWeight: 800, color: "#94eff4", border: "1px solid rgba(148,239,244,0.24)", borderRadius: 4, padding: "1px 4px" }}>
+                    DWS
+                  </span>
+                )}
                 <span style={{ fontSize: 12, color: "rgba(255,255,255,0.78)", fontWeight: 780 }}>{message.sender}</span>
                 {message.chat && <span style={{ fontSize: 10, color: "rgba(255,255,255,0.34)" }}>{message.chat}</span>}
                 <span style={{ marginLeft: "auto", fontSize: 10, color: "rgba(255,255,255,0.32)" }}>
@@ -933,17 +965,20 @@ function MiniInboxStat({ label, value }: { label: string; value: number }) {
 function HushConnectorCard({
   connector,
   notificationActive,
+  dwsActive,
   busy,
   onOpen,
 }: {
   connector: HushConnectorStatus;
   notificationActive: boolean;
+  dwsActive: boolean;
   busy: boolean;
   onOpen: () => void;
 }) {
   const icon = connector.id === "dingtalk" ? "🔷" : "💬";
-  const statusColor = notificationActive ? "#34d399" : connector.bridge_ready ? "#34d399" : connector.installed ? "#fbbf24" : "#fb7185";
-  const statusLabel = notificationActive ? "Notification bridge active" : connector.bridge_ready ? "Message bridge ready" : connector.installed ? "App launch ready" : "Not installed";
+  const sourceActive = dwsActive || notificationActive;
+  const statusColor = sourceActive ? "#34d399" : connector.bridge_ready ? "#34d399" : connector.installed ? "#fbbf24" : "#fb7185";
+  const statusLabel = dwsActive ? "DWS 已连接" : notificationActive ? "Notification bridge active" : connector.bridge_ready ? "Message bridge ready" : connector.installed ? "App launch ready" : "Not installed";
 
   return (
     <div

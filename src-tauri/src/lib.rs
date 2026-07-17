@@ -5,6 +5,7 @@ pub mod codex_bridge;
 mod commands;
 mod config;
 mod cursor_focus_extension;
+mod dws_hush_bridge;
 mod event_bus;
 mod git_changes;
 mod hermes_plugin;
@@ -40,9 +41,7 @@ mod window_focus;
 mod wukong_watcher;
 
 use std::sync::Arc;
-#[cfg(target_os = "macos")]
-use tauri::Emitter;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 pub fn run() {
     env_logger::init();
@@ -218,8 +217,38 @@ pub fn run() {
             app.manage(Arc::new(std::sync::Mutex::new(knowledge_store)));
 
             // Hush inbox store (persistent)
-            let hush_store = hush_store::HushStore::new();
-            app.manage(Arc::new(std::sync::Mutex::new(hush_store)));
+            let hush_store = Arc::new(std::sync::Mutex::new(hush_store::HushStore::new()));
+            app.manage(hush_store.clone());
+
+            // DingTalk DWS is a read-only, local-first Hush source.
+            let dws_home = dirs::home_dir()
+                .ok_or_else(|| std::io::Error::other("Could not determine home directory"))?;
+            let dws_bridge = Arc::new(
+                dws_hush_bridge::DwsHushBridge::load_or_create(&dws_home)
+                    .map_err(std::io::Error::other)?,
+            );
+            app.manage(dws_bridge.clone());
+            let dws_app = app_handle.clone();
+            let dws_hush_store = hush_store.clone();
+            tauri::async_runtime::spawn(async move {
+                let mut interval =
+                    tokio::time::interval(std::time::Duration::from_secs(5 * 60));
+                interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                interval.tick().await;
+                loop {
+                    interval.tick().await;
+                    let config = dws_bridge.config_snapshot().await;
+                    if !config.auto_sync_enabled || dws_bridge.is_syncing() {
+                        continue;
+                    }
+                    match dws_bridge.sync(dws_hush_store.clone()).await {
+                        Ok(report) => {
+                            let _ = dws_app.emit("humhum://hush-message", &report);
+                        }
+                        Err(error) => log::warn!("DingTalk DWS background sync failed: {error}"),
+                    }
+                }
+            });
 
             #[cfg(target_os = "macos")]
             app.manage(Arc::new(std::sync::Mutex::new(
@@ -316,6 +345,10 @@ pub fn run() {
             commands::open_hush_connector,
             commands::get_hush_inbox,
             commands::clear_hush_inbox,
+            commands::get_hush_dws_status,
+            commands::sync_hush_dws,
+            commands::set_hush_dws_auto_sync,
+            commands::open_hush_dws_login,
             commands::get_hush_notification_bridge_status,
             commands::open_full_disk_access_settings,
             commands::diagnose_dingtalk_local_sources,

@@ -5,6 +5,7 @@ use crate::codex_bridge::{
     CodexRemotePairing,
 };
 use crate::config::AppConfig;
+use crate::dws_hush_bridge::{DwsHushBridge, DwsHushStatus, DwsSyncReport};
 use crate::event_bus::{self, HookEvent, PermissionDecision};
 use crate::git_changes::GitChangeSummary;
 use crate::hexa_protocol::HexaSessionProjection;
@@ -1133,17 +1134,28 @@ pub async fn get_agent_kernel_status(
 
 /// Return local social/work message connectors that Hush can prepare.
 #[tauri::command]
-pub async fn get_hush_connectors() -> Result<Vec<HushConnectorStatus>, String> {
+pub async fn get_hush_connectors(
+    bridge: State<'_, Arc<DwsHushBridge>>,
+) -> Result<Vec<HushConnectorStatus>, String> {
     let dingtalk_candidates = hush_application_candidates("dingtalk");
     let wechat_candidates = hush_application_candidates("wechat");
+    let dws_status = bridge.status().await;
+    let mut dingtalk = build_hush_connector(
+        "dingtalk",
+        "钉钉",
+        &dingtalk_candidates,
+        &["DingTalk", "钉钉"],
+        "使用本机 DWS 只读同步钉钉群聊和私聊。",
+    );
+    dingtalk.bridge_ready = dws_status.authenticated;
+    dingtalk.status = dws_status.message;
+    dingtalk.bridge_mode = if dws_status.authenticated {
+        "dws-read-only".to_string()
+    } else {
+        "not-connected".to_string()
+    };
     Ok(vec![
-        build_hush_connector(
-            "dingtalk",
-            "DingTalk",
-            &dingtalk_candidates,
-            &["DingTalk", "钉钉"],
-            "Next: choose a real bridge: DingTalk bot webhook for groups, notification capture, or manual export import.",
-        ),
+        dingtalk,
         build_hush_connector(
             "wechat",
             "WeChat",
@@ -1163,10 +1175,10 @@ pub async fn open_hush_connector(connector_id: String) -> Result<(), String> {
             let candidates = hush_application_candidates("dingtalk");
             build_hush_connector(
                 "dingtalk",
-                "DingTalk",
+                "钉钉",
                 &candidates,
                 &["DingTalk", "钉钉"],
-                "Next: choose a real bridge: DingTalk bot webhook for groups, notification capture, or manual export import.",
+                "使用本机 DWS 只读同步钉钉群聊和私聊。",
             )
         }
         "wechat" => {
@@ -1199,6 +1211,37 @@ pub async fn clear_hush_inbox(
 ) -> Result<(), String> {
     let mut store = store.lock().map_err(|e| format!("Lock error: {}", e))?;
     store.clear()
+}
+
+#[tauri::command]
+pub async fn get_hush_dws_status(
+    bridge: State<'_, Arc<DwsHushBridge>>,
+) -> Result<DwsHushStatus, String> {
+    Ok(bridge.status().await)
+}
+
+#[tauri::command]
+pub async fn sync_hush_dws(
+    app: AppHandle,
+    bridge: State<'_, Arc<DwsHushBridge>>,
+    store: State<'_, Arc<std::sync::Mutex<HushStore>>>,
+) -> Result<DwsSyncReport, String> {
+    let report = bridge.sync(store.inner().clone()).await?;
+    let _ = app.emit("humhum://hush-message", &report);
+    Ok(report)
+}
+
+#[tauri::command]
+pub async fn set_hush_dws_auto_sync(
+    bridge: State<'_, Arc<DwsHushBridge>>,
+    enabled: bool,
+) -> Result<DwsHushStatus, String> {
+    bridge.set_auto_sync(enabled).await
+}
+
+#[tauri::command]
+pub async fn open_hush_dws_login(bridge: State<'_, Arc<DwsHushBridge>>) -> Result<(), String> {
+    bridge.open_login().await
 }
 
 #[tauri::command]
@@ -1254,13 +1297,10 @@ pub async fn import_dingtalk_local_source(
 ) -> Result<DingTalkImportReport, String> {
     let source = expand_home_path(path.trim());
     if source.as_os_str().is_empty() {
-        return Err("Choose a DingTalk export file or folder first.".to_string());
+        return Err("请先选择钉钉导出文件或文件夹。".to_string());
     }
     if !source.exists() {
-        return Err(format!(
-            "DingTalk source does not exist: {}",
-            source.display()
-        ));
+        return Err(format!("钉钉来源不存在：{}", source.display()));
     }
 
     let files = collect_dingtalk_import_files(&source);
@@ -1311,13 +1351,14 @@ pub async fn import_dingtalk_local_source(
 
     let summary = if imported_messages > 0 {
         format!(
-            "Hush imported {} DingTalk messages from {} text/export files. Binary database-like files were detected but not read.",
-            imported_messages, scanned_files
+            "Hush 从 {} 个文本或导出文件中导入了 {} 条钉钉消息，未读取数据库或缓存文件。",
+            scanned_files, imported_messages
         )
     } else if skipped_binary_sources > 0 {
-        "Hush found DingTalk database/cache files, but did not read them. Choose an exported JSON/text/log file, or build a dedicated user-approved database parser next.".to_string()
+        "Hush 找到了钉钉数据库或缓存文件，但没有读取它们。请选择导出的 JSON、文本或日志文件。"
+            .to_string()
     } else {
-        "Hush did not find readable DingTalk message exports in this source yet.".to_string()
+        "Hush 尚未在此来源中找到可读取的钉钉消息导出文件。".to_string()
     };
 
     Ok(DingTalkImportReport {
@@ -1337,10 +1378,10 @@ pub async fn diagnose_dingtalk_local_sources() -> Result<DingTalkLocalSourceRepo
     let app_candidates = hush_application_candidates("dingtalk");
     let connector = build_hush_connector(
         "dingtalk",
-        "DingTalk",
+        "钉钉",
         &app_candidates,
         &["DingTalk", "钉钉"],
-        "Next: inspect local storage shape, then add an explicit user-approved import bridge.",
+        "检查本地存储结构，并仅在用户明确允许后导入。",
     );
 
     let mut candidates = dingtalk_local_source_candidates(&home);
@@ -1363,12 +1404,12 @@ pub async fn diagnose_dingtalk_local_sources() -> Result<DingTalkLocalSourceRepo
     let readable_count = reports.iter().filter(|item| item.readable).count();
     let summary = if source_count == 0 {
         format!(
-            "Hush did not find a local Ali Ding storage folder yet. DingTalk may be installed in a sandboxed path, not logged in, or named differently on {}.",
+            "Hush 尚未找到本机钉钉存储目录。钉钉可能位于沙盒路径、尚未登录，或在 {} 上使用了其他目录名。",
             std::env::consts::OS
         )
     } else {
         format!(
-            "Hush found {} possible Ali Ding local storage locations, {} readable. This is the real starting point for a local message understanding bridge.",
+            "Hush 找到 {} 个可能的钉钉本地存储位置，其中 {} 个可读取。",
             source_count, readable_count
         )
     };
@@ -1380,7 +1421,7 @@ pub async fn diagnose_dingtalk_local_sources() -> Result<DingTalkLocalSourceRepo
         readable_count,
         candidates: reports,
         summary,
-        next_step: "Next we should inspect only metadata and supported export files first, then let the user approve which DingTalk source HUMHUM may index. Hush should summarize relationships and tasks, not secretly reply or scrape without consent.".to_string(),
+        next_step: "仅检查元数据和支持的导出文件，并由用户决定允许 HUMHUM 索引哪些钉钉来源；Hush 不会擅自回复消息。".to_string(),
     })
 }
 
@@ -1422,7 +1463,7 @@ fn hush_application_candidates(connector_id: &str) -> Vec<PathBuf> {
     #[cfg(target_os = "macos")]
     {
         let names: &[&str] = match connector_id {
-            "dingtalk" => &["DingTalk.app", "钉钉.app"],
+            "dingtalk" => &["iDingTalk.app", "DingTalk.app", "钉钉.app"],
             "wechat" => &["WeChat.app", "微信.app"],
             _ => &[],
         };
@@ -2008,7 +2049,7 @@ fn parse_dingtalk_text_source(path: &Path) -> Result<Vec<Value>, String> {
     let source_name = path
         .file_name()
         .and_then(|name| name.to_str())
-        .unwrap_or("DingTalk export");
+        .unwrap_or("钉钉导出");
     let chat = infer_chat_from_filename(source_name);
 
     if let Ok(value) = serde_json::from_str::<Value>(&content) {
@@ -5476,10 +5517,10 @@ fn build_humi_context_packet(
                 "本地优先是 HUMHUM 的核心优势：先理解用户主机上的上下文。",
             );
         }
-        if text.contains("dingtalk") || text.contains("钉钉") || text.contains("阿里钉") {
+        if text.contains("dingtalk") || text.contains("钉钉") {
             push_unique(
                 &mut risk_notes,
-                "阿里钉不能只做打开 App；需要用户确认后的本地只读索引。",
+                "钉钉不能只做打开 App；需要用户确认后的本地只读索引。",
             );
         }
         if text.contains("dashboard") || text.contains("看板") {
