@@ -7,15 +7,12 @@ import type {
   HexaSupervisorSession,
   HexaWatchedSession,
 } from "../../../hooks/useHexaData";
+import {
+  watchedSessionAge,
+  watchedSessionConnectionLabel,
+  watchedSessionIsExpired,
+} from "../../../hooks/hexaPlanningCapability";
 import { HexaSessionReportView } from "./HexaSessionReport";
-
-function timeAgo(value: string): string {
-  const minutes = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 60_000));
-  if (minutes < 1) return "刚刚";
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  return hours < 48 ? `${hours}h` : `${Math.floor(hours / 24)}d`;
-}
 
 export function HexaActiveMonitor({
   sessions,
@@ -114,6 +111,8 @@ export function HexaActiveMonitor({
                   </button>
                   {!collapsed && group.sessions.map((session) => {
                     const selected = session.session_id === selectedSessionId;
+                    const expired = watchedSessionIsExpired(session.status, session.updated_at);
+                    const connectionLabel = watchedSessionConnectionLabel(session.status, session.updated_at);
                     const revisions = session.audit.goal_revisions;
                     const problem = revisions[revisions.length - 1]?.goal ?? session.goal ?? session.name;
                     return (
@@ -123,12 +122,15 @@ export function HexaActiveMonitor({
                         className={`hexa-session-nav-item ${selected ? "selected" : ""}`}
                         onClick={() => setSelectedSessionId(session.session_id)}
                       >
-                        <span className={`hexa-session-status ${session.status}`} />
+                        <span
+                          className={`hexa-session-status ${expired ? "expired" : session.status}`}
+                          title={expired ? "超过 30 分钟没有收到 Agent 更新，已停止实时刷新" : undefined}
+                        />
                         <span className="hexa-session-nav-copy">
                           <strong>{session.name}</strong>
                           <span>{problem}</span>
                         </span>
-                        <small>{timeAgo(session.updated_at)}</small>
+                        <small>{connectionLabel ? `${connectionLabel} · ${watchedSessionAge(session.updated_at)}` : watchedSessionAge(session.updated_at)}</small>
                       </button>
                     );
                   })}

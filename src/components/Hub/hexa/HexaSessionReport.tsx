@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -20,6 +20,7 @@ import type {
 } from "../../../hooks/useHexaData";
 import { HexaUserReview } from "./HexaUserReview";
 import { HexaWorkflowEditor } from "./HexaWorkflowEditor";
+import { planningCapabilityCopy, watchedSessionIsExpired } from "../../../hooks/hexaPlanningCapability";
 
 const ALIGNMENT: Record<HexaAlignment, { label: string; color: string }> = {
   on_track: { label: "方向一致", color: "#22c55e" },
@@ -48,13 +49,16 @@ function timeAgo(value: string): string {
   return `${Math.floor(hours / 24)} 天前`;
 }
 
-function Metric({ label, value, tone }: { label: string; value: number; tone?: string }) {
-  return (
-    <div className="hexa-report-metric">
+function Metric({ label, value, tone, onClick }: { label: string; value: number; tone?: string; onClick?: () => void }) {
+  const content = (
+    <>
       <strong style={{ color: tone ?? "#263241" }}>{value}</strong>
       <span>{label}</span>
-    </div>
+    </>
   );
+  return onClick
+    ? <button type="button" className="hexa-report-metric clickable" onClick={onClick} title={`查看${label}`}>{content}</button>
+    : <div className="hexa-report-metric">{content}</div>;
 }
 
 export function HexaSessionReportView({
@@ -74,10 +78,14 @@ export function HexaSessionReportView({
 }) {
   const [focusState, setFocusState] = useState<"idle" | "busy" | "done" | "error">("idle");
   const [deleting, setDeleting] = useState(false);
+  const workflowRef = useRef<HTMLDivElement>(null);
   const pendingConfirmations = supervisor?.pending_confirmations ?? 0;
   const report = buildHexaSessionReport(session, pendingConfirmations);
   const alignment = ALIGNMENT[report.alignment];
-  const status = STATUS[session.status];
+  const status = watchedSessionIsExpired(session.status, session.updated_at)
+    ? { label: "已断开", color: "#94a3b8" }
+    : STATUS[session.status];
+  const planning = planningCapabilityCopy(session.planning_capability);
   const evidence = [
     ...report.outputs,
     ...report.milestones.flatMap((milestone) => milestone.evidence),
@@ -136,8 +144,13 @@ export function HexaSessionReportView({
         <small>最近更新 {timeAgo(session.updated_at)}</small>
       </div>
 
+      <section className="hexa-report-section" data-tone={planning.tone}>
+        <div className="hexa-report-section-title"><span><ShieldQuestion size={15} /> {planning.label}</span></div>
+        <p className="hexa-report-empty">{planning.detail}</p>
+      </section>
+
       <div className="hexa-report-metrics">
-        <Metric label="工作项" value={report.metrics.total} />
+        <Metric label="工作项" value={report.metrics.total} onClick={() => workflowRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })} />
         <Metric label="已完成" value={report.metrics.completed} tone="#16a34a" />
         <Metric label="失败" value={report.metrics.failed} tone={report.metrics.failed ? "#ef4444" : undefined} />
         <Metric label="人工介入" value={report.metrics.interventions} tone="#7c3aed" />
@@ -196,7 +209,9 @@ export function HexaSessionReportView({
         ) : <p className="hexa-report-empty">等待 Agent 上报第一个关键节点</p>}
       </section>
 
-      <HexaWorkflowEditor session={session} onMutate={onMutate} />
+      <div ref={workflowRef}>
+        <HexaWorkflowEditor session={session} onMutate={onMutate} />
+      </div>
 
       <section className="hexa-report-verdicts">
         <div>

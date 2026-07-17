@@ -1,10 +1,16 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { AgentStats, AppConfig } from "@/types";
 import type { GitChangeSummary } from "./sessionChangesState";
 import { sortHexaSessions } from "./hexaPriority";
 import { normalizeMobileRelayConfig, type MobileRelayConfigValue } from "./mobileRelayConfig";
+import type { HexaPlanningCapability, HexaWorkItemSource } from "./hexaPlanningCapability";
+import {
+  WATCHED_REFRESH_INTERVAL_MS,
+  createCoalescedRefresh,
+  watchedRefreshAction,
+} from "./hexaRefreshPolicy";
 import {
   applyWatchedLifecycle,
   partitionSupervisorSessions,
@@ -156,6 +162,10 @@ export interface HexaWorkItem {
   started_at: string | null;
   updated_at: string;
   completed_at: string | null;
+  source?: HexaWorkItemSource;
+  source_provider?: string | null;
+  source_item_id?: string | null;
+  confidence?: "authoritative" | "reported" | "inferred";
 }
 
 export interface HexaWorkItemInput {
@@ -252,6 +262,9 @@ export interface HexaWatchedSession {
   started_at: string;
   updated_at: string;
   audit: HexaSessionAudit;
+  planning_capability?: HexaPlanningCapability;
+  plan_revision?: string | null;
+  previous_session_ids?: string[];
 }
 
 export interface HexaWatchedAgent {
@@ -763,7 +776,8 @@ export function useHexaData() {
   });
   const [mobilePairing, setMobilePairing] = useState<MobilePairingInfo | null>(null);
   const [queuedInterventions, setQueuedInterventions] = useState<QueuedIntervention[]>([]);
-  const intervalRef = useRef<ReturnType<typeof setInterval>>();
+  const watchedAgentsRef = useRef<HexaWatchedAgent[]>([]);
+  const watchedExpiryRenderedRef = useRef(false);
   const sessionDataRef = useRef<HexaSession[]>([]);
   const statsDataRef = useRef<AgentStats[]>([]);
   const readoutDataRef = useRef<HexaReadout[]>([]);
@@ -777,7 +791,7 @@ export function useHexaData() {
   });
   const [watchDataState, setWatchDataState] = useState<WatchDataState>("loading");
 
-  const fetchSessions = useCallback(async () => {
+  const fetchSnapshot = useCallback(async () => {
     const requestGeneration = ++refreshGenerationRef.current;
 
     try {
@@ -813,6 +827,8 @@ export function useHexaData() {
       const readoutData = readoutDataRef.current;
       const bridgeData = bridgeDataRef.current;
       const watchedAgentData = watchRefresh.data ?? [];
+      watchedAgentsRef.current = watchedAgentData;
+      watchedExpiryRenderedRef.current = false;
       const watchedData = watchedAgentData.flatMap((agent) => agent.runs);
       const healthData = healthResult.status === "fulfilled" ? healthResult.value : null;
       const queueData = queueDataRef.current;
@@ -869,32 +885,83 @@ export function useHexaData() {
     }
   }, []);
 
+  const fetchSessions = useMemo(
+    () => createCoalescedRefresh(fetchSnapshot),
+    [fetchSnapshot],
+  );
+
+  const fetchLiveState = useMemo(
+    () => createCoalescedRefresh(async () => {
+      const [activeResult, watchedResult, healthResult, queueResult] = await Promise.allSettled([
+        invoke<HexaSession[]>("get_active_sessions"),
+        invoke<HexaWatchedAgent[]>("get_hexa_watched_agents"),
+        invoke<CodexBridgeHealth>("get_codex_bridge_health"),
+        invoke<QueuedIntervention[]>("get_intervention_queue"),
+      ]);
+
+      if (activeResult.status === "fulfilled") {
+        setSessions((current) => [
+          ...activeResult.value,
+          ...current.filter((session) => session.status === "completed"),
+        ]);
+      }
+      if (watchedResult.status === "fulfilled") {
+        watchedAgentsRef.current = watchedResult.value;
+        watchedExpiryRenderedRef.current = false;
+        setWatchedAgents(watchedResult.value);
+      }
+      if (healthResult.status === "fulfilled") setBridgeHealth(healthResult.value);
+      if (queueResult.status === "fulfilled") setQueuedInterventions(queueResult.value);
+    }),
+    [],
+  );
+
+  const fetchWatchedState = useMemo(
+    () => createCoalescedRefresh(async () => {
+      const action = watchedRefreshAction(
+        watchedAgentsRef.current,
+        watchedExpiryRenderedRef.current,
+      );
+      if (action === "idle") return;
+      if (action === "render_expired") {
+        watchedExpiryRenderedRef.current = true;
+        setWatchedAgents((current) => [...current]);
+        return;
+      }
+      const watched = await invoke<HexaWatchedAgent[]>("get_hexa_watched_agents");
+      watchedAgentsRef.current = watched;
+      watchedExpiryRenderedRef.current = false;
+      setWatchedAgents(watched);
+    }),
+    [],
+  );
+
   useEffect(() => {
     fetchSessions();
-    intervalRef.current = setInterval(fetchSessions, 3000);
+    const watchedTimer = window.setInterval(fetchWatchedState, WATCHED_REFRESH_INTERVAL_MS);
 
     const unlistenHook = listen("humhum://hook-event", () => {
-      fetchSessions();
+      fetchLiveState();
     });
     const unlistenTimeout = listen("humhum://permission-timeout", () => {
-      fetchSessions();
+      fetchLiveState();
     });
-    const unlistenBridgeSession = listen("humhum://hexa-session-changed", fetchSessions);
-    const unlistenBridgeHealth = listen("humhum://codex-bridge-health", fetchSessions);
+    const unlistenBridgeSession = listen("humhum://hexa-session-changed", fetchLiveState);
+    const unlistenBridgeHealth = listen("humhum://codex-bridge-health", fetchLiveState);
     const unlistenRemoteControl = listen<CodexRemoteControlState>(
       "humhum://codex-remote-control-changed",
       (event) => setRemoteControl(event.payload),
     );
 
     return () => {
-      clearInterval(intervalRef.current);
+      window.clearInterval(watchedTimer);
       unlistenHook.then((fn) => fn());
       unlistenTimeout.then((fn) => fn());
       unlistenBridgeSession.then((fn) => fn());
       unlistenBridgeHealth.then((fn) => fn());
       unlistenRemoteControl.then((fn) => fn());
     };
-  }, [fetchSessions]);
+  }, [fetchLiveState, fetchSessions, fetchWatchedState]);
 
   useEffect(() => {
     if (!mobilePairing) return;

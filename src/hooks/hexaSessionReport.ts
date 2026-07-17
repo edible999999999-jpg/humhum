@@ -197,8 +197,11 @@ export function buildHexaSessionReport(
   pendingConfirmations = 0,
 ): HexaSessionReport {
   const ordered = orderWorkflow(session.audit.work_items);
-  const completed = ordered.filter((item) => item.status === "completed").length;
-  const failed = ordered.filter((item) => item.status === "failed").length;
+  const tracked = ordered.filter((item) =>
+    item.source !== "hexa_inferred" && item.source !== "legacy_migration"
+  );
+  const completed = tracked.filter((item) => item.status === "completed").length;
+  const failed = tracked.filter((item) => item.status === "failed").length;
   const goal = latestGoal(session);
   const milestones = selectVisibleMilestones(session.audit.milestones);
 
@@ -206,18 +209,18 @@ export function buildHexaSessionReport(
     sessionId: session.session_id,
     problem: goal.goal,
     successCriteria: goal.criteria,
-    progress: ordered.length > 0
+    progress: tracked.length > 0
       ? {
           completed,
-          total: ordered.length,
-          percent: Math.round((completed / ordered.length) * 100),
+          total: tracked.length,
+          percent: Math.round((completed / tracked.length) * 100),
         }
       : null,
     currentItem: ordered.find((item) => item.status === "in_progress") ?? null,
     nextAction: nextAction(session, ordered),
     alignment: reportAlignment(session),
     metrics: {
-      total: ordered.length,
+      total: tracked.length,
       completed,
       failed,
       interventions: session.audit.interventions.length,

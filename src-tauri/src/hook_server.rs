@@ -1,7 +1,7 @@
 use crate::event_bus::{self, HookEvent, PermissionDecision};
 use crate::hexa_watch_store::{
-    HexaAuditMutation, HexaAuditMutationRequest, HexaWatchDeleteRequest, HexaWatchRegisterRequest,
-    HexaWatchStore, HexaWatchUpdateRequest,
+    HexaAuditMutation, HexaAuditMutationRequest, HexaPlanSyncRequest, HexaWatchDeleteRequest,
+    HexaWatchRegisterRequest, HexaWatchStore, HexaWatchUpdateRequest,
 };
 use crate::local_api_auth::{LocalApiAuth, TOKEN_HEADER};
 use crate::mobile_bridge::MobileBridgeState;
@@ -166,6 +166,7 @@ async fn handle_request(
         ("GET", "/knowledge") => handle_knowledge_query(req, app_handle).await,
         ("POST", "/hexa/register") => handle_hexa_register(req, app_handle).await,
         ("POST", "/hexa/update") => handle_hexa_update(req, app_handle).await,
+        ("POST", "/hexa/plan") => handle_hexa_plan(req, app_handle).await,
         ("POST", "/hexa/audit") => handle_hexa_audit(req, app_handle).await,
         ("POST", "/hexa/delete") => handle_hexa_delete(req, app_handle).await,
         ("GET", "/hush/inbox") => handle_hush_inbox_query(app_handle).await,
@@ -1118,6 +1119,58 @@ async fn handle_hexa_audit(
     app_handle
         .emit("humhum://hexa-session-changed", &session)
         .unwrap_or_else(|error| log::error!("Failed to emit Hexa audit update: {error}"));
+    Ok(json_response(
+        StatusCode::OK,
+        &serde_json::to_value(session).unwrap_or_default(),
+    ))
+}
+
+async fn handle_hexa_plan(
+    req: Request<hyper::body::Incoming>,
+    app_handle: tauri::AppHandle,
+) -> Result<Response<Full<Bytes>>, Infallible> {
+    let body = match req.collect().await {
+        Ok(collected) => collected.to_bytes(),
+        Err(error) => {
+            return Ok(json_response(
+                StatusCode::BAD_REQUEST,
+                &serde_json::json!({"error": format!("failed to read body: {error}")}),
+            ))
+        }
+    };
+    let request: HexaPlanSyncRequest = match serde_json::from_slice(&body) {
+        Ok(value) => value,
+        Err(error) => {
+            return Ok(json_response(
+                StatusCode::BAD_REQUEST,
+                &serde_json::json!({"error": format!("invalid JSON: {error}")}),
+            ))
+        }
+    };
+    let session = {
+        let store = app_handle.state::<Arc<std::sync::Mutex<HexaWatchStore>>>();
+        let mut store = match store.lock() {
+            Ok(store) => store,
+            Err(error) => {
+                return Ok(json_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &serde_json::json!({"error": format!("lock error: {error}")}),
+                ))
+            }
+        };
+        match store.sync_plan(request) {
+            Ok(session) => session,
+            Err(error) => {
+                return Ok(json_response(
+                    hexa_audit_error_status(&error),
+                    &serde_json::json!({"error": error}),
+                ))
+            }
+        }
+    };
+    app_handle
+        .emit("humhum://hexa-session-changed", &session)
+        .unwrap_or_else(|error| log::error!("Failed to emit Hexa plan update: {error}"));
     Ok(json_response(
         StatusCode::OK,
         &serde_json::to_value(session).unwrap_or_default(),

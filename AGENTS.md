@@ -80,22 +80,30 @@ When the user says a session should be "重点监控", "加入 Hexa", "让 Hexa 
 Use:
 
 ```bash
-npm run hexa:watch -- "<one-sentence goal for this session>"
+~/.humhum/bin/humhum-hexa watch "<one-sentence goal for this session>"
 ```
 
 Then keep Hexa updated at meaningful milestones:
 
 ```bash
-npm run hexa:update -- "<current progress, blocker, or next step>"
+~/.humhum/bin/humhum-hexa update "<current progress, blocker, or next step>"
 ```
+
+If the Agent has a structured plan or task list, publish it immediately after joining Hexa and whenever the plan changes. Keep item ids stable across updates:
+
+```bash
+~/.humhum/bin/humhum-hexa plan --json '{"items":[{"id":"step-1","title":"<work item>","status":"in_progress","depends_on":[]}]}'
+```
+
+Supported statuses are `pending`, `in_progress`, `completed`, and `failed`. If the Agent or integration cannot provide structured planning data, do not invent a task list. Report that limitation with `humhum-hexa plan --capability unavailable --json '{"items":[]}'` and tell the user plainly that this Agent cannot expose structured work items; this is not a Hexa failure.
 
 If the watched session should be removed:
 
 ```bash
-npm run hexa:unwatch
+~/.humhum/bin/humhum-hexa unwatch
 ```
 
-These commands read `~/.humhum/local-api-token`, call the local Hexa API, and store the current watched session id in `.humhum/hexa-watch-session.json`. Do not ask non-technical users to edit JSON or run the raw HTTP API unless debugging.
+These commands read `~/.humhum/local-api-token`, call the local Hexa API, and keep state per real Agent session under `~/.humhum/hexa/`. They work from any project. Do not ask non-technical users to edit JSON or run the raw HTTP API unless debugging.
 
 ## Design Direction
 
