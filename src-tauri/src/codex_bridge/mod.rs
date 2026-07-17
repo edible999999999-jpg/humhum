@@ -3,13 +3,13 @@ use crate::hexa_protocol::{
     HexaSessionProjection,
 };
 use crate::hexa_watch_store::{
-    HexaPlanSyncRequest, HexaPlanningCapability, HexaWatchStore, HexaWorkItemInput,
-    HexaWorkItemStatus,
+    HexaPlanSyncRequest, HexaPlanningCapability, HexaWatchStore, HexaWatchedSession,
+    HexaWorkItemInput, HexaWorkItemStatus,
 };
 use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
 use tauri::{Emitter, Manager};
 use tokio::sync::{Mutex as AsyncMutex, RwLock as AsyncRwLock};
@@ -577,8 +577,30 @@ impl CodexBridgeState {
             )
             .await
             .map_err(|error| error.to_string())?;
-        for event in thread_list_events(&listed) {
-            self.apply_event(app, event);
+        let home_dir = dirs::home_dir();
+        let mut attempted_watch_workspaces = HashSet::new();
+        for (event, transcript_path) in thread_list_entries(&listed) {
+            let thread_id = event.session_id.clone();
+            let sync_watch = should_sync_listed_watch(&mut attempted_watch_workspaces, &event);
+            let watched = self.apply_event_with_watch(app, event, sync_watch);
+            if !watched {
+                continue;
+            }
+            let Some(path) = transcript_path
+                .as_deref()
+                .and_then(|path| canonical_codex_transcript(path, home_dir.as_deref()?))
+            else {
+                continue;
+            };
+            match recovered_codex_plan_event(&thread_id, &path) {
+                Ok(Some(plan_event)) => {
+                    self.apply_event(app, plan_event);
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    log::warn!("Could not recover existing Codex plan for Hexa: {error}")
+                }
+            }
         }
 
         *self.transport.write().await = Some(transport.clone());
@@ -642,8 +664,16 @@ impl CodexBridgeState {
         Err("app-server stopped".to_string())
     }
 
-    fn apply_event(&self, app: &tauri::AppHandle, event: HexaEvent) {
-        let plan_request = codex_plan_sync_request(&event);
+    fn apply_event(&self, app: &tauri::AppHandle, event: HexaEvent) -> bool {
+        self.apply_event_with_watch(app, event, true)
+    }
+
+    fn apply_event_with_watch(
+        &self,
+        app: &tauri::AppHandle,
+        event: HexaEvent,
+        sync_watch: bool,
+    ) -> bool {
         let projection = self.projections.lock().ok().and_then(|mut store| {
             store.apply(&event);
             store.session(&event.session_id).cloned()
@@ -651,28 +681,27 @@ impl CodexBridgeState {
         if let Some(projection) = projection.as_ref() {
             let _ = app.emit("humhum://hexa-session-changed", projection);
         }
-        if let (Some(request), Some(projection), Some(watch_store)) = (
-            plan_request,
-            projection,
-            app.try_state::<Arc<Mutex<HexaWatchStore>>>(),
-        ) {
-            if let Ok(mut store) = watch_store.lock() {
-                match store.bind_provider_thread(
-                    "codex",
-                    projection.workspace.as_deref(),
-                    &event.session_id,
-                ) {
-                    Ok(Some(_)) => match store.sync_plan(request) {
-                        Ok(watched) => {
+        let mut watched = false;
+        if sync_watch {
+            if let (Some(projection), Some(watch_store)) =
+                (projection, app.try_state::<Arc<Mutex<HexaWatchStore>>>())
+            {
+                if let Ok(mut store) = watch_store.lock() {
+                    match sync_watched_codex_event(&mut store, &event, &projection) {
+                        Ok(Some(watched)) => {
                             let _ = app.emit("humhum://hexa-session-changed", watched);
                         }
-                        Err(error) => log::warn!("Could not sync Codex plan into Hexa: {error}"),
-                    },
-                    Ok(None) => {}
-                    Err(error) => log::warn!("Could not bind Codex thread to Hexa: {error}"),
+                        Ok(None) => {}
+                        Err(error) => log::warn!("Could not sync Codex event into Hexa: {error}"),
+                    }
+                    watched = store.sessions().iter().any(|session| {
+                        session.session_id == event.session_id
+                            && session.status != crate::hexa_watch_store::HexaWatchStatus::Completed
+                    });
                 }
             }
         }
+        watched
     }
 
     fn set_health(
@@ -756,14 +785,33 @@ fn parse_remote_pairing(value: &Value) -> Result<CodexRemotePairing, String> {
     Ok(pairing)
 }
 
-fn thread_list_events(response: &Value) -> Vec<HexaEvent> {
+fn thread_list_entries(response: &Value) -> Vec<(HexaEvent, Option<PathBuf>)> {
     response
         .get("data")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .filter_map(|thread| normalize_codex_message("thread/started", json!({"thread": thread})))
+        .filter_map(|thread| {
+            let event = normalize_codex_message("thread/started", json!({"thread": thread}))?;
+            let transcript_path = string_at(thread, "path").map(PathBuf::from);
+            Some((event, transcript_path))
+        })
         .collect()
+}
+
+#[cfg(test)]
+fn thread_list_events(response: &Value) -> Vec<HexaEvent> {
+    thread_list_entries(response)
+        .into_iter()
+        .map(|(event, _)| event)
+        .collect()
+}
+
+fn should_sync_listed_watch(attempted_workspaces: &mut HashSet<String>, event: &HexaEvent) -> bool {
+    let Some(workspace) = event.payload.get("workspace").and_then(Value::as_str) else {
+        return true;
+    };
+    attempted_workspaces.insert(format!("{}\0{workspace}", event.provider))
 }
 
 fn pending_key_for_event(event: &HexaEvent) -> Option<String> {
@@ -936,7 +984,8 @@ fn codex_plan_sync_request(event: &HexaEvent) -> Option<HexaPlanSyncRequest> {
             }
             let status = match string_at(step, "status")? {
                 "completed" => HexaWorkItemStatus::Completed,
-                "inProgress" => HexaWorkItemStatus::InProgress,
+                "inProgress" | "in_progress" => HexaWorkItemStatus::InProgress,
+                "failed" => HexaWorkItemStatus::Failed,
                 _ => HexaWorkItemStatus::Pending,
             };
             let id = format!("codex-plan-{}", index + 1);
@@ -961,6 +1010,73 @@ fn codex_plan_sync_request(event: &HexaEvent) -> Option<HexaPlanSyncRequest> {
         revision: event.turn_id.clone(),
         items,
     })
+}
+
+fn recovered_codex_plan_event(
+    thread_id: &str,
+    transcript_path: &Path,
+) -> Result<Option<HexaEvent>, String> {
+    let Some(plan) = crate::transcript_reader::parse_latest_codex_plan(transcript_path)? else {
+        return Ok(None);
+    };
+    let timestamp = plan
+        .timestamp
+        .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
+    let steps = plan
+        .steps
+        .into_iter()
+        .map(|step| json!({"step": step.title, "status": step.status}))
+        .collect::<Vec<_>>();
+    Ok(Some(HexaEvent {
+        event_id: uuid::Uuid::new_v4().to_string(),
+        session_id: thread_id.to_string(),
+        provider: "codex".to_string(),
+        provider_thread_id: Some(thread_id.to_string()),
+        turn_id: None,
+        timestamp,
+        kind: HexaEventKind::PlanUpdated,
+        payload: json!({
+            "explanation": plan.explanation,
+            "plan": steps,
+        }),
+        sensitivity: HexaSensitivity::Private,
+    }))
+}
+
+fn canonical_codex_transcript(path: &Path, home_dir: &Path) -> Option<PathBuf> {
+    if !path.is_absolute() || path.extension().and_then(|value| value.to_str()) != Some("jsonl") {
+        return None;
+    }
+    let root = std::fs::canonicalize(home_dir.join(".codex").join("sessions")).ok()?;
+    let transcript = std::fs::canonicalize(path).ok()?;
+    if !transcript.starts_with(root) {
+        return None;
+    }
+    std::fs::metadata(&transcript)
+        .ok()
+        .filter(|metadata| metadata.is_file())?;
+    Some(transcript)
+}
+
+fn sync_watched_codex_event(
+    store: &mut HexaWatchStore,
+    event: &HexaEvent,
+    projection: &HexaSessionProjection,
+) -> Result<Option<HexaWatchedSession>, String> {
+    let was_bound = store
+        .sessions()
+        .iter()
+        .any(|session| session.session_id == event.session_id);
+    let Some(bound) =
+        store.bind_provider_thread("codex", projection.workspace.as_deref(), &event.session_id)?
+    else {
+        return Ok(None);
+    };
+
+    if let Some(request) = codex_plan_sync_request(event) {
+        return store.sync_plan(request).map(Some);
+    }
+    Ok((!was_bound).then_some(bound))
 }
 
 fn normalize_item(item: &Value, thread_id: &str, started: bool) -> Option<(HexaEventKind, Value)> {
@@ -1033,6 +1149,7 @@ fn string_at<'a>(value: &'a Value, field: &str) -> Option<&'a str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hexa_watch_store::HexaWatchRegisterRequest;
     use serde_json::json;
 
     #[cfg(unix)]
@@ -1170,6 +1287,74 @@ if ($second.Contains('"method":"turn/start"')) {
     }
 
     #[test]
+    fn binds_a_watched_workspace_on_a_session_event_before_any_plan_update() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut watch_store = HexaWatchStore::load_or_create(directory.path()).unwrap();
+        watch_store
+            .register(HexaWatchRegisterRequest {
+                session_id: Some("temporary-watch-id".to_string()),
+                agent: "codex".to_string(),
+                name: Some("loop工程".to_string()),
+                provider: Some("codex".to_string()),
+                workspace: Some("/workspace/loop".to_string()),
+                goal: Some("盘清语义层".to_string()),
+            })
+            .unwrap();
+        let event = normalize_codex_message(
+            "thread/started",
+            json!({
+                "thread": {
+                    "id": "thread-real",
+                    "cwd": "/workspace/loop",
+                    "name": "loop工程",
+                    "preview": "继续实现"
+                }
+            }),
+        )
+        .unwrap();
+        let mut projections = HexaProjectionStore::default();
+        projections.apply(&event);
+        let projection = projections.session("thread-real").unwrap();
+
+        let synced = sync_watched_codex_event(&mut watch_store, &event, projection).unwrap();
+
+        assert!(synced.is_some());
+        assert_eq!(watch_store.sessions()[0].session_id, "thread-real");
+        assert_eq!(
+            watch_store.sessions()[0].previous_session_ids,
+            ["temporary-watch-id"]
+        );
+    }
+
+    #[test]
+    fn rebuilds_a_native_plan_event_from_the_existing_codex_transcript() {
+        let directory = tempfile::tempdir().unwrap();
+        let transcript = directory.path().join("rollout.jsonl");
+        std::fs::write(
+            &transcript,
+            concat!(
+                "{\"timestamp\":\"2026-07-17T06:59:22Z\",\"type\":\"response_item\",",
+                "\"payload\":{\"type\":\"function_call\",\"name\":\"update_plan\",",
+                "\"arguments\":\"{\\\"explanation\\\":\\\"latest\\\",\\\"plan\\\":[",
+                "{\\\"step\\\":\\\"Inspect\\\",\\\"status\\\":\\\"completed\\\"},",
+                "{\\\"step\\\":\\\"Fix\\\",\\\"status\\\":\\\"in_progress\\\"}] }\"}}\n"
+            ),
+        )
+        .unwrap();
+
+        let event = recovered_codex_plan_event("thread-real", &transcript)
+            .unwrap()
+            .unwrap();
+        let request = codex_plan_sync_request(&event).unwrap();
+
+        assert_eq!(event.session_id, "thread-real");
+        assert_eq!(request.capability, HexaPlanningCapability::Native);
+        assert_eq!(request.items.len(), 2);
+        assert_eq!(request.items[0].status, HexaWorkItemStatus::Completed);
+        assert_eq!(request.items[1].status, HexaWorkItemStatus::InProgress);
+    }
+
+    #[test]
     fn ignores_unknown_notifications() {
         assert!(normalize_codex_message("account/updated", json!({})).is_none());
     }
@@ -1197,6 +1382,31 @@ if ($second.Contains('"method":"turn/start"')) {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].session_id, "thread-1");
         assert_eq!(events[0].payload["project_name"], "Bridge work");
+    }
+
+    #[test]
+    fn only_the_newest_listed_thread_can_claim_a_watched_workspace() {
+        let response = json!({
+            "data": [
+                {
+                    "id": "thread-newest",
+                    "cwd": "/workspace/loop",
+                    "name": "loop工程",
+                    "preview": "latest"
+                },
+                {
+                    "id": "thread-older",
+                    "cwd": "/workspace/loop",
+                    "name": "old task",
+                    "preview": "older"
+                }
+            ]
+        });
+        let events = thread_list_events(&response);
+        let mut attempted = HashSet::new();
+
+        assert!(should_sync_listed_watch(&mut attempted, &events[0]));
+        assert!(!should_sync_listed_watch(&mut attempted, &events[1]));
     }
 
     #[tokio::test]

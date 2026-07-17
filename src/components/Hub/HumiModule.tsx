@@ -964,7 +964,7 @@ function describeNextStep(result: LocalAgentKernelResult): string {
   if (action?.toLowerCase().includes("memory")) {
     return "先把今天重复出现的偏好写进 memory，后面不用反复说明。";
   }
-  return "先继续完成阿里钉本地桥和 Hype 归档，把演示链路变顺。";
+  return "先继续完成钉钉本地桥和 Hype 归档，把演示链路变顺。";
 }
 
 function KernelStatusCard({
