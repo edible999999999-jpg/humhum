@@ -195,7 +195,6 @@ git commit -m "feat(mobile): ingest Hush signals over encrypted routes"
 ### Task 3: Android Health Domain, Queue, And Source Policy
 
 **Files:**
-- Modify: `android/build.gradle.kts`
 - Modify: `android/app/build.gradle.kts`
 - Create: `android/app/src/main/java/com/humhum/mobile/health/HealthSignal.kt`
 - Create: `android/app/src/main/java/com/humhum/mobile/health/HealthSummary.kt`
@@ -215,7 +214,8 @@ git commit -m "feat(mobile): ingest Hush signals over encrypted routes"
 
 - [ ] **Step 1: Add Kotlin test support and write failing domain tests**
 
-Add Kotlin Android plugin support and JUnit tests for:
+Use Android Gradle Plugin 9.2.1's built-in Kotlin support; do not apply the
+legacy `org.jetbrains.kotlin.android` plugin. Add Kotlin JUnit tests for:
 
 ```kotlin
 assertEquals(
@@ -264,7 +264,7 @@ survives process recreation and plaintext values are absent.
 - [ ] **Step 5: Commit the domain**
 
 ```bash
-git add android/build.gradle.kts android/app/build.gradle.kts android/app/src/main/java/com/humhum/mobile/health android/app/src/test/java/com/humhum/mobile/health android/app/src/androidTest/java/com/humhum/mobile/health
+git add android/app/build.gradle.kts android/app/src/main/java/com/humhum/mobile/health android/app/src/test/java/com/humhum/mobile/health android/app/src/androidTest/java/com/humhum/mobile/health
 git commit -m "feat(android): add private health signal domain"
 ```
 
@@ -616,4 +616,3 @@ fact that heart rate and sleep are unavailable without a trusted source.
 git add design-qa-android-living-signals.md docs/android-install.md README.md android src src-tauri package.json package-lock.json
 git commit -m "release: prepare Living Signals Android beta"
 ```
-
