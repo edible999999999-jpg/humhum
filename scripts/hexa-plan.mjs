@@ -3,6 +3,8 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
+import { parsePlanJson } from "./hexa-plan-input.mjs";
+
 const API_URL = process.env.HUMHUM_HEXA_URL ?? "http://127.0.0.1:31275";
 const STATE_FILE = join(process.cwd(), ".humhum", "hexa-watch-session.json");
 
@@ -16,20 +18,25 @@ function arg(name, fallback = null) {
 
 async function main() {
   const file = arg("file");
-  if (!file) throw new Error("Usage: npm run hexa:plan -- --file plan.json");
-  const [state, token, plan] = await Promise.all([
+  const directJson = arg("json");
+  if (!file && !directJson) {
+    throw new Error('Usage: npm run hexa:plan -- --json \'{"items":[...]}\' or --file plan.json');
+  }
+  if (file && directJson) {
+    throw new Error("Choose either --json or --file, not both");
+  }
+  const [state, token, planJson] = await Promise.all([
     readFile(STATE_FILE, "utf8").then(JSON.parse),
     readFile(join(homedir(), ".humhum", "local-api-token"), "utf8").then((value) => value.trim()),
-    readFile(file, "utf8").then(JSON.parse),
+    directJson ? Promise.resolve(directJson) : readFile(file, "utf8"),
   ]);
   const body = {
     session_id: arg("session-id", state.session_id),
     capability: arg("capability", "reported"),
     source_provider: arg("provider", state.provider ?? state.agent ?? "agent"),
     revision: arg("revision", null),
-    items: Array.isArray(plan) ? plan : plan.items,
+    items: parsePlanJson(planJson),
   };
-  if (!Array.isArray(body.items)) throw new Error("Plan JSON must be an array or contain an items array");
   const response = await fetch(`${API_URL}/hexa/plan`, {
     method: "POST",
     headers: { "content-type": "application/json", "x-humhum-token": token },

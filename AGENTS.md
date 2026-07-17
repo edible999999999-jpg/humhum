@@ -89,6 +89,14 @@ Then keep Hexa updated at meaningful milestones:
 npm run hexa:update -- "<current progress, blocker, or next step>"
 ```
 
+If the Agent has a structured plan or task list, publish it immediately after joining Hexa and whenever the plan changes. Keep item ids stable across updates:
+
+```bash
+npm run hexa:plan -- --json '{"items":[{"id":"step-1","title":"<work item>","status":"in_progress","depends_on":[]}]}'
+```
+
+Supported statuses are `pending`, `in_progress`, `completed`, and `failed`. If the Agent or integration cannot provide structured planning data, do not invent a task list. Continue sending milestone updates; Hexa will tell the user that the limitation belongs to the current Agent capability.
+
 If the watched session should be removed:
 
 ```bash
