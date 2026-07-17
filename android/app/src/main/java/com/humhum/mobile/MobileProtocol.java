@@ -156,8 +156,9 @@ public final class MobileProtocol {
         }
     }
 
-    public void uploadSignals(JSONArray signals) throws IOException, JSONException {
-        execute(signalUploadRequest(signals));
+    public Models.SignalUploadResult uploadSignals(JSONArray signals)
+            throws IOException, JSONException {
+        return parseSignalUploadResponse(execute(signalUploadRequest(signals)));
     }
 
     static RequestSpec pairRequest(BridgeConfig config) throws JSONException {
@@ -193,6 +194,26 @@ public final class MobileProtocol {
                 "/api/hush/signals",
                 new JSONObject().put("signals", signals).toString(),
                 true);
+    }
+
+    static Models.SignalUploadResult parseSignalUploadResponse(String payload)
+            throws JSONException {
+        JSONObject response = new JSONObject(payload);
+        if (response.length() != 2
+                || !response.has("imported")
+                || !response.has("duplicates")) {
+            throw new JSONException("Health signal acknowledgement shape is invalid");
+        }
+        int imported = strictInteger(response, "imported");
+        int duplicates = strictInteger(response, "duplicates");
+        try {
+            return new Models.SignalUploadResult(imported, duplicates);
+        } catch (IllegalArgumentException error) {
+            JSONException invalid =
+                    new JSONException("Health signal acknowledgement is invalid");
+            invalid.initCause(error);
+            throw invalid;
+        }
     }
 
     static RequestSpec eventRequest(String cursor) {

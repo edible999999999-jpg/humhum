@@ -4,12 +4,14 @@ import android.app.Application;
 import com.google.firebase.FirebaseApp;
 import com.google.firebase.FirebaseOptions;
 import com.google.firebase.messaging.FirebaseMessaging;
+import com.humhum.mobile.health.HealthForegroundRefresh;
 
 public final class HumHumApplication extends Application {
     private static volatile boolean fcmConfigured;
 
     @Override public void onCreate() {
         super.onCreate();
+        HealthForegroundRefresh.INSTANCE.register(this);
         PushConfig config;
         try {
             config = PushConfig.fromBuildValues(

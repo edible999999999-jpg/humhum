@@ -72,7 +72,14 @@ public class ManifestContractTest {
                 "android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING",
                 "android.permission.POST_NOTIFICATIONS",
                 "android.permission.RECEIVE_BOOT_COMPLETED",
-                "android.permission.CAMERA"), permissions);
+                "android.permission.CAMERA",
+                "android.permission.ACTIVITY_RECOGNITION",
+                "android.permission.health.READ_STEPS",
+                "android.permission.health.READ_RESTING_HEART_RATE",
+                "android.permission.health.READ_SLEEP",
+                "android.permission.health.READ_HEALTH_DATA_IN_BACKGROUND"), permissions);
+        assertFalse(permissions.stream().anyMatch(permission ->
+                permission.startsWith("android.permission.health.WRITE_")));
         assertFalse(permissions.contains("android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"));
         assertFalse(permissions.contains("android.permission.QUERY_ALL_PACKAGES"));
         assertFalse(permissions.contains("android.permission.READ_EXTERNAL_STORAGE"));
@@ -83,10 +90,14 @@ public class ManifestContractTest {
         assertFalse(permissions.contains("android.permission.READ_MEDIA_VIDEO"));
 
         NodeList visiblePackages = document.getElementsByTagName("package");
-        assertEquals(1, visiblePackages.getLength());
-        assertEquals(
+        Set<String> packageNames = new HashSet<>();
+        for (int index = 0; index < visiblePackages.getLength(); index++) {
+            packageNames.add(
+                    ((Element) visiblePackages.item(index)).getAttributeNS(ANDROID, "name"));
+        }
+        assertEquals(Set.of(
                 "com.miui.securitycenter",
-                ((Element) visiblePackages.item(0)).getAttributeNS(ANDROID, "name"));
+                "com.google.android.apps.healthdata"), packageNames);
 
         Element service = component(document, "service", ".AgentMonitorService");
         assertEquals("false", service.getAttributeNS(ANDROID, "exported"));
@@ -195,6 +206,11 @@ public class ManifestContractTest {
                 "android.permission.POST_NOTIFICATIONS",
                 "android.permission.RECEIVE_BOOT_COMPLETED",
                 "android.permission.CAMERA",
+                "android.permission.ACTIVITY_RECOGNITION",
+                "android.permission.health.READ_STEPS",
+                "android.permission.health.READ_RESTING_HEART_RATE",
+                "android.permission.health.READ_SLEEP",
+                "android.permission.health.READ_HEALTH_DATA_IN_BACKGROUND",
                 "android.permission.WAKE_LOCK",
                 "com.google.android.c2dm.permission.RECEIVE",
                 "com.humhum.mobile.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"), permissions);

@@ -30,7 +30,8 @@ public class AnywhereGatewayTest {
             return signalUploadResponse(relay, publications.get(0));
         });
 
-        new AnywhereGateway(client, state, () -> 1_783_836_000L).uploadSignals(
+        Models.SignalUploadResult result =
+                new AnywhereGateway(client, state, () -> 1_783_836_000L).uploadSignals(
                 relay, new JSONArray().put(new JSONObject().put("source_id", "steps-1")));
 
         AnywhereEnvelopeCipher.Message uplink = AnywhereEnvelopeCipher.decrypt(
@@ -38,6 +39,8 @@ public class AnywhereGatewayTest {
                 AnywhereEnvelopeCipher.Direction.UPLINK, 0, publications.get(0), 1_783_836_001);
         assertEquals("signals_upload", uplink.body().getString("action"));
         assertEquals(1, uplink.body().getJSONArray("signals").length());
+        assertEquals(1, result.imported());
+        assertEquals(0, result.duplicates());
         assertNull(state.completedResponse(relay, "missing", 1_783_836_001L));
     }
     @Test

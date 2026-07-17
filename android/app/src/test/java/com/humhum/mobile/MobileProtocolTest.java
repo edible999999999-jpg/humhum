@@ -225,6 +225,26 @@ public class MobileProtocolTest {
     }
 
     @Test
+    public void healthSignalAcknowledgementRequiresExactBoundedCounts() throws Exception {
+        Models.SignalUploadResult result = MobileProtocol.parseSignalUploadResponse(
+                new JSONObject().put("imported", 2).put("duplicates", 1).toString());
+
+        assertEquals(2, result.imported());
+        assertEquals(1, result.duplicates());
+        assertThrows(org.json.JSONException.class, () ->
+                MobileProtocol.parseSignalUploadResponse(new JSONObject()
+                        .put("imported", 1)
+                        .put("duplicates", 0)
+                        .put("private", "leak")
+                        .toString()));
+        assertThrows(org.json.JSONException.class, () ->
+                MobileProtocol.parseSignalUploadResponse(new JSONObject()
+                        .put("imported", -1)
+                        .put("duplicates", 0)
+                        .toString()));
+    }
+
+    @Test
     public void onlyLegacyNotFoundDisablesPresenceReporting() {
         assertTrue(MobileProtocol.isPresenceUnsupported(404));
         assertFalse(MobileProtocol.isPresenceUnsupported(400));

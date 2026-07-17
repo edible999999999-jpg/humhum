@@ -79,12 +79,14 @@ public final class AnywhereGateway {
         return status.length() > 32 ? status.substring(0, 32) : status;
     }
 
-    public void uploadSignals(Models.WakeRelayConfig relay, JSONArray signals)
+    public Models.SignalUploadResult uploadSignals(
+            Models.WakeRelayConfig relay, JSONArray signals)
             throws IOException, JSONException, GeneralSecurityException {
         MobileProtocol.signalUploadRequest(signals);
-        request(relay, new JSONObject()
+        JSONObject data = request(relay, new JSONObject()
                 .put("action", "signals_upload")
                 .put("signals", signals));
+        return MobileProtocol.parseSignalUploadResponse(data.toString());
     }
 
     private JSONObject request(Models.WakeRelayConfig relay, JSONObject body)

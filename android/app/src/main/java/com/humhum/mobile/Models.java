@@ -249,4 +249,20 @@ public final class Models {
         public String cursor() { return cursor; }
         public boolean changed() { return changed; }
     }
+
+    public static final class SignalUploadResult {
+        private final int imported;
+        private final int duplicates;
+
+        public SignalUploadResult(int imported, int duplicates) {
+            if (imported < 0 || duplicates < 0 || imported + duplicates > 31) {
+                throw new IllegalArgumentException("Signal upload result is invalid");
+            }
+            this.imported = imported;
+            this.duplicates = duplicates;
+        }
+
+        public int imported() { return imported; }
+        public int duplicates() { return duplicates; }
+    }
 }
