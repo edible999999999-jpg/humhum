@@ -116,6 +116,33 @@ public class ConnectionStoreTest {
     }
 
     @Test
+    public void remembersThatAConnectionWasEstablishedThroughTheRelay() {
+        MemoryStore memory = new MemoryStore();
+        ConnectionStore store = new ConnectionStore(memory);
+        BridgeConfig config = BridgeConfig.parse(
+                "https://192.168.1.20:31276",
+                "A1B2C3D4",
+                "AA".repeat(32),
+                "Xiaomi 14");
+        Models.WakeRelayConfig relay = new Models.WakeRelayConfig(
+                "https://relay.example.com",
+                "11".repeat(32),
+                "22".repeat(32),
+                "33".repeat(32),
+                "44".repeat(32),
+                "55".repeat(32),
+                "66".repeat(32));
+
+        store.save(
+                config,
+                new Models.PairResult("ab".repeat(32), Models.Scope.CONTROL, relay),
+                true);
+
+        assertTrue(store.load().prefersRelay());
+        assertEquals("true", memory.values.get("prefer_relay"));
+    }
+
+    @Test
     public void legacyAndPartiallyCorruptRelayDataKeepPrivateBridgePairingUsable() {
         MemoryStore memory = new MemoryStore();
         ConnectionStore store = new ConnectionStore(memory);

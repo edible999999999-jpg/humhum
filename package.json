@@ -1,7 +1,7 @@
 {
   "name": "humhum",
   "private": true,
-  "version": "0.3.13",
+  "version": "0.3.14",
   "type": "module",
   "packageManager": "npm@10.9.3",
   "description": "Desktop jellyfish companion that monitors AI coding assistants and narrates events as voice broadcasts",

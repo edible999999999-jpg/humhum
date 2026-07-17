@@ -528,6 +528,92 @@ impl MobileBridgeState {
         Ok(info)
     }
 
+    pub async fn create_pairing_for_android(
+        self: &Arc<Self>,
+        scope: MobileDeviceScope,
+        network: MobileNetwork,
+    ) -> Result<MobilePairingInfo, String> {
+        let relay = {
+            let runtime = self.runtime.lock().map_err(|error| error.to_string())?;
+            if !runtime.enabled {
+                return Err("Enable mobile access before pairing a device".into());
+            }
+            match (
+                runtime.relay_base_url.clone(),
+                runtime.relay_invite_code.clone(),
+            ) {
+                (Some(base_url), Some(invite_code)) => Some((base_url, invite_code)),
+                _ => None,
+            }
+        };
+        let Some((base_url, invite_code)) = relay else {
+            return self.create_pairing_on(scope, network);
+        };
+
+        let relay_id = format!("pairing-{}", uuid::Uuid::new_v4());
+        let client = crate::mobile_relay::RelayClient::new(base_url.clone())?;
+        let provision = client.register(&relay_id, &invite_code).await?;
+        let temporary_secret = provision.desktop;
+        let android_relay = provision.android;
+        let created = (|| -> Result<Option<MobilePairingInfo>, String> {
+            let mut runtime = self.runtime.lock().map_err(|error| error.to_string())?;
+            if !runtime.enabled
+                || runtime.relay_base_url.as_ref() != Some(&base_url)
+                || runtime.relay_invite_code.as_deref() != Some(invite_code.as_str())
+            {
+                Ok(None)
+            } else {
+                let now = chrono::Utc::now().timestamp();
+                let code = uuid::Uuid::new_v4().simple().to_string()[..8].to_ascii_uppercase();
+                let challenge = PairingChallenge::new(&code, now, scope)
+                    .for_relay(&relay_id, Some(temporary_secret.clone()));
+                let lan_url = runtime.url.as_deref().ok_or("Mobile URL is unavailable")?;
+                let url = select_mobile_url(lan_url, runtime.tailnet_url.as_deref(), network)?
+                    .to_string();
+                let fingerprint = runtime
+                    .certificate_fingerprint
+                    .clone()
+                    .ok_or("Mobile certificate fingerprint is unavailable")?;
+                let android_setup = android_setup_payload_with_relay(
+                    &url,
+                    &code,
+                    scope,
+                    &fingerprint,
+                    challenge.expires_at,
+                    &android_relay,
+                );
+                let info = MobilePairingInfo {
+                    code,
+                    expires_at: challenge.expires_at,
+                    url,
+                    certificate_fingerprint: fingerprint,
+                    scope,
+                    network,
+                    android_setup,
+                };
+                runtime.pairing = Some(challenge);
+                Ok(Some(info))
+            }
+        })();
+        let info = match created {
+            Ok(Some(info)) => info,
+            Ok(None) => {
+                let _ = client.delete(&temporary_secret).await;
+                return Err("Mobile pairing was cancelled".into());
+            }
+            Err(error) => {
+                let _ = client.delete(&temporary_secret).await;
+                return Err(error);
+            }
+        };
+        let bridge = Arc::clone(self);
+        let expires_at = info.expires_at;
+        tokio::spawn(async move {
+            run_temporary_relay_pairing(bridge, relay_id, temporary_secret, expires_at).await;
+        });
+        Ok(info)
+    }
+
     pub fn revoke_devices(&self) -> Result<MobileBridgeStatus, String> {
         let relay_secrets = {
             let mut relay_secrets = self
@@ -1232,6 +1318,294 @@ fn pair_success_value(
     value
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TemporaryPairRequestBody {
+    operation: String,
+    code: String,
+    device_name: String,
+    reply_key: String,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct TemporaryPairRequest {
+    request_id: String,
+    code: String,
+    device_name: String,
+    reply_key: String,
+    sequence: u64,
+}
+
+fn parse_temporary_pair_request(
+    secret: &crate::mobile_relay::RelayDeviceSecret,
+    envelope: &crate::anywhere_crypto::AnywhereEnvelope,
+    now: i64,
+) -> Result<TemporaryPairRequest, String> {
+    let command = secret
+        .command
+        .as_ref()
+        .ok_or_else(|| "Temporary pairing uplink is unavailable".to_string())?;
+    let message = crate::anywhere_crypto::decrypt_anywhere(
+        &command.key,
+        &command.channel_id,
+        crate::anywhere_crypto::AnywhereDirection::Uplink,
+        envelope,
+        now,
+        command.last_sequence,
+    )
+    .map_err(|_| "Temporary pairing request is invalid".to_string())?;
+    let body: TemporaryPairRequestBody = serde_json::from_value(message.body)
+        .map_err(|_| "Temporary pairing request is invalid".to_string())?;
+    let code = body.code.trim().to_ascii_uppercase();
+    let device_name = body.device_name.trim();
+    if body.operation != "pair"
+        || code.len() != 8
+        || !code.bytes().all(|byte| byte.is_ascii_alphanumeric())
+        || device_name.is_empty()
+        || device_name.chars().count() > 80
+        || device_name.chars().any(char::is_control)
+        || body.reply_key.len() != 64
+        || !body
+            .reply_key
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err("Temporary pairing request is invalid".into());
+    }
+    Ok(TemporaryPairRequest {
+        request_id: message.request_id,
+        code,
+        device_name: device_name.to_string(),
+        reply_key: body.reply_key,
+        sequence: message.sequence,
+    })
+}
+
+fn temporary_pair_response_channel(request_id: &str) -> String {
+    let material = format!("humhum-pairing-response-v1:{request_id}");
+    format!("{:x}", Sha256::digest(material.as_bytes()))
+}
+
+fn temporary_pairing_is_current(bridge: &MobileBridgeState, relay_id: &str, now: i64) -> bool {
+    bridge
+        .runtime
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .pairing
+        .as_ref()
+        .is_some_and(|pairing| {
+            pairing.relay_id.as_deref() == Some(relay_id)
+                && pairing
+                    .relay_secret
+                    .as_ref()
+                    .is_some_and(|secret| secret.device_id == relay_id)
+                && pairing.is_active(now)
+        })
+}
+
+struct CompletedTemporaryPairing {
+    value: serde_json::Value,
+    device_id: String,
+}
+
+async fn complete_temporary_pairing(
+    bridge: &MobileBridgeState,
+    name: &str,
+    scope: MobileDeviceScope,
+) -> Result<CompletedTemporaryPairing, String> {
+    let token = format!(
+        "{}{}",
+        uuid::Uuid::new_v4().simple(),
+        uuid::Uuid::new_v4().simple()
+    );
+    let device = bridge
+        .devices
+        .lock()
+        .map_err(|error| error.to_string())?
+        .add_device(name, &token, scope)?;
+    let relay = {
+        let runtime = bridge
+            .runtime
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        (
+            runtime.relay_base_url.clone(),
+            runtime.relay_invite_code.clone(),
+        )
+    };
+    let (Some(base_url), Some(invite_code)) = relay else {
+        let _ = rollback_paired_device(bridge, &device.id);
+        return Err("Anywhere relay is no longer available".into());
+    };
+    let client = crate::mobile_relay::RelayClient::new(base_url)?;
+    let provision = match client.register(&device.id, &invite_code).await {
+        Ok(provision) => provision,
+        Err(error) => {
+            let _ = rollback_paired_device(bridge, &device.id);
+            return Err(error);
+        }
+    };
+    let value = commit_pairing_value(
+        bridge,
+        &device.id,
+        &token,
+        scope,
+        Some(&provision.desktop),
+        Some(provision.android.clone()),
+    );
+    match value {
+        Ok(value) => {
+            bridge.relay_changes.notify_one();
+            Ok(CompletedTemporaryPairing {
+                value,
+                device_id: device.id,
+            })
+        }
+        Err(error) => {
+            let _ = rollback_paired_device(bridge, &device.id);
+            if client.delete(&provision.desktop).await.is_err() {
+                log::warn!("Could not delete a failed temporary pairing provision");
+            }
+            Err(match error {
+                PairingCommitError::Cancelled => "Pairing was cancelled".into(),
+                PairingCommitError::Store(error) => error,
+            })
+        }
+    }
+}
+
+fn sealed_temporary_pairing_body(
+    request: &TemporaryPairRequest,
+    pairing: serde_json::Value,
+    now: i64,
+) -> Result<serde_json::Value, String> {
+    let sealed = crate::anywhere_crypto::encrypt_anywhere(
+        &request.reply_key,
+        &temporary_pair_response_channel(&request.request_id),
+        crate::anywhere_crypto::AnywhereDirection::Downlink,
+        1,
+        "response",
+        &request.request_id,
+        now,
+        now.saturating_add(PAIRING_TTL_SECONDS),
+        &serde_json::json!({ "pairing": pairing }),
+        &random_anywhere_hex::<12>(),
+    )
+    .map_err(|_| "Could not seal temporary pairing response".to_string())?;
+    Ok(serde_json::json!({ "ok": true, "sealed": sealed }))
+}
+
+async fn publish_temporary_pairing_body(
+    client: &crate::mobile_relay::RelayClient,
+    secret: &mut crate::mobile_relay::RelayDeviceSecret,
+    request_id: &str,
+    body: &serde_json::Value,
+) -> Result<(), String> {
+    let envelope =
+        anywhere_downlink_envelope(secret, "response", request_id, body, PAIRING_TTL_SECONDS)?;
+    client.publish_anywhere(secret, &envelope).await?;
+    secret.next_sequence = secret.next_sequence.saturating_add(1);
+    Ok(())
+}
+
+async fn run_temporary_relay_pairing(
+    bridge: Arc<MobileBridgeState>,
+    relay_id: String,
+    mut secret: crate::mobile_relay::RelayDeviceSecret,
+    expires_at: i64,
+) {
+    let client = crate::mobile_relay::RelayBaseUrl::parse(&secret.base_url)
+        .and_then(crate::mobile_relay::RelayClient::new);
+    let Ok(client) = client else {
+        return;
+    };
+    let mut delivered = false;
+    'polling: loop {
+        let now = chrono::Utc::now().timestamp();
+        if now >= expires_at || !temporary_pairing_is_current(&bridge, &relay_id, now) {
+            break;
+        }
+        let wait_seconds = (expires_at - now).clamp(1, 20) as u8;
+        let envelopes = match client.poll_commands(&secret, wait_seconds).await {
+            Ok(envelopes) => envelopes,
+            Err(_) => {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                continue;
+            }
+        };
+        for envelope in envelopes {
+            let request = match parse_temporary_pair_request(&secret, &envelope, now) {
+                Ok(request) => request,
+                Err(_) => continue,
+            };
+            if let Some(command) = secret.command.as_mut() {
+                command.last_sequence = request.sequence;
+            }
+            let scope = match claim_temporary_pairing(&bridge, &relay_id, &request.code, now) {
+                Ok(scope) => scope,
+                Err(error) => {
+                    let body = serde_json::json!({
+                        "ok": false,
+                        "error": error
+                    });
+                    let _ = publish_temporary_pairing_body(
+                        &client,
+                        &mut secret,
+                        &request.request_id,
+                        &body,
+                    )
+                    .await;
+                    continue;
+                }
+            };
+            let completed = complete_temporary_pairing(&bridge, &request.device_name, scope).await;
+            let (body, paired_device_id) = match completed {
+                Ok(completed) => {
+                    let body = sealed_temporary_pairing_body(&request, completed.value, now);
+                    match body {
+                        Ok(body) => (body, Some(completed.device_id)),
+                        Err(error) => {
+                            if rollback_paired_device(&bridge, &completed.device_id).is_err() {
+                                log::error!("Could not roll back an unsealed temporary pairing");
+                            }
+                            (serde_json::json!({ "ok": false, "error": error }), None)
+                        }
+                    }
+                }
+                Err(_) => (
+                    serde_json::json!({
+                        "ok": false,
+                        "error": "Could not finish secure pairing"
+                    }),
+                    None,
+                ),
+            };
+            delivered =
+                publish_temporary_pairing_body(&client, &mut secret, &request.request_id, &body)
+                    .await
+                    .is_ok();
+            if !delivered {
+                if let Some(device_id) = paired_device_id {
+                    if rollback_paired_device(&bridge, &device_id).is_err() {
+                        log::error!("Could not roll back an undelivered temporary pairing");
+                    }
+                }
+            }
+            break 'polling;
+        }
+    }
+
+    if delivered {
+        let remaining = expires_at.saturating_sub(chrono::Utc::now().timestamp());
+        if remaining > 0 {
+            tokio::time::sleep(std::time::Duration::from_secs(remaining as u64)).await;
+        }
+    }
+    if client.delete(&secret).await.is_err() {
+        log::warn!("Could not delete an expired temporary pairing relay");
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 enum PairingCommitError {
     Cancelled,
@@ -1246,6 +1620,25 @@ fn commit_pairing_response(
     relay_secret: Option<&crate::mobile_relay::RelayDeviceSecret>,
     wake_relay: Option<crate::mobile_relay::WakeRelayBundle>,
 ) -> Result<Response<HttpBody>, PairingCommitError> {
+    commit_pairing_value(
+        bridge,
+        device_id,
+        raw_token,
+        scope,
+        relay_secret,
+        wake_relay,
+    )
+    .map(|value| json_response(StatusCode::OK, &value))
+}
+
+fn commit_pairing_value(
+    bridge: &MobileBridgeState,
+    device_id: &str,
+    raw_token: &str,
+    scope: MobileDeviceScope,
+    relay_secret: Option<&crate::mobile_relay::RelayDeviceSecret>,
+    wake_relay: Option<crate::mobile_relay::WakeRelayBundle>,
+) -> Result<serde_json::Value, PairingCommitError> {
     // Pairing performs the remote registration without local locks. Finalize
     // only after re-entering the same relay -> devices boundary used by every
     // revocation path, so a revoke completed during that await cannot be
@@ -1278,10 +1671,7 @@ fn commit_pairing_response(
     // Build the final response while revocation is still excluded from the
     // commit boundary. A revoke that starts afterwards is ordered after this
     // successful pairing instead of racing between validation and response.
-    Ok(json_response(
-        StatusCode::OK,
-        &pair_success_value(raw_token, scope, wake_relay),
-    ))
+    Ok(pair_success_value(raw_token, scope, wake_relay))
 }
 
 fn revoke_device_records(
@@ -1403,6 +1793,31 @@ fn android_setup_payload(
         "code": code,
         "scope": scope,
         "fingerprint": normalized_fingerprint,
+    })
+    .to_string()
+}
+
+fn android_setup_payload_with_relay(
+    url: &str,
+    code: &str,
+    scope: MobileDeviceScope,
+    fingerprint: &str,
+    expires_at: i64,
+    pairing_relay: &crate::mobile_relay::WakeRelayBundle,
+) -> String {
+    let normalized_fingerprint: String = fingerprint
+        .chars()
+        .filter(|character| character.is_ascii_hexdigit())
+        .flat_map(char::to_uppercase)
+        .collect();
+    serde_json::json!({
+        "version": 2,
+        "url": url,
+        "code": code,
+        "scope": scope,
+        "fingerprint": normalized_fingerprint,
+        "expires_at": expires_at,
+        "pairing_relay": pairing_relay,
     })
     .to_string()
 }
@@ -2693,6 +3108,8 @@ struct PairingChallenge {
     expires_at: i64,
     failed_attempts: u8,
     scope: MobileDeviceScope,
+    relay_id: Option<String>,
+    relay_secret: Option<crate::mobile_relay::RelayDeviceSecret>,
 }
 
 impl PairingChallenge {
@@ -2702,7 +3119,19 @@ impl PairingChallenge {
             expires_at: now + PAIRING_TTL_SECONDS,
             failed_attempts: 0,
             scope,
+            relay_id: None,
+            relay_secret: None,
         }
+    }
+
+    fn for_relay(
+        mut self,
+        relay_id: &str,
+        relay_secret: Option<crate::mobile_relay::RelayDeviceSecret>,
+    ) -> Self {
+        self.relay_id = Some(relay_id.to_string());
+        self.relay_secret = relay_secret;
+        self
     }
 
     fn verify(&mut self, candidate: &str, now: i64) -> Result<(), String> {
@@ -2725,6 +3154,26 @@ impl PairingChallenge {
     fn is_active(&self, now: i64) -> bool {
         now < self.expires_at && self.failed_attempts < MAX_PAIRING_ATTEMPTS
     }
+}
+
+fn claim_temporary_pairing(
+    bridge: &MobileBridgeState,
+    relay_id: &str,
+    code: &str,
+    now: i64,
+) -> Result<MobileDeviceScope, String> {
+    let mut runtime = bridge.runtime.lock().map_err(|error| error.to_string())?;
+    let challenge = runtime
+        .pairing
+        .as_mut()
+        .ok_or_else(|| "Pairing is no longer active".to_string())?;
+    if challenge.relay_id.as_deref() != Some(relay_id) {
+        return Err("Pairing belongs to another relay".into());
+    }
+    challenge.verify(code, now)?;
+    let scope = challenge.scope;
+    runtime.pairing = None;
+    Ok(scope)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -3273,6 +3722,132 @@ mod tests {
         assert_eq!(value["scope"], "control");
         assert_eq!(value["fingerprint"], "AABBCC");
         assert_eq!(value.as_object().unwrap().len(), 5);
+    }
+
+    #[test]
+    fn anywhere_android_setup_uses_only_temporary_relay_credentials() {
+        let relay = crate::mobile_relay::WakeRelayBundle {
+            version: 2,
+            base_url: "https://relay.example.com".into(),
+            channel_id: "11".repeat(32),
+            subscriber_token: "22".repeat(32),
+            wake_key: "33".repeat(32),
+            command: Some(crate::mobile_relay::RelayCommandPublisherBundle {
+                channel_id: "44".repeat(32),
+                publisher_token: "55".repeat(32),
+                key: "66".repeat(32),
+            }),
+        };
+        let setup = android_setup_payload_with_relay(
+            "https://192.168.1.20:31276",
+            "ABCD1234",
+            MobileDeviceScope::Control,
+            "AA:BB:CC",
+            1_800_000_300,
+            &relay,
+        );
+        let value: serde_json::Value = serde_json::from_str(&setup).unwrap();
+
+        assert_eq!(value["version"], 2);
+        assert_eq!(value["expires_at"], 1_800_000_300_i64);
+        assert_eq!(value["pairing_relay"]["version"], 2);
+        assert_eq!(
+            value["pairing_relay"]["command"]["channel_id"],
+            "44".repeat(32)
+        );
+        assert_eq!(value.as_object().unwrap().len(), 7);
+        assert!(!setup.contains("\"token\""));
+        assert!(!setup.contains("device_id"));
+    }
+
+    #[test]
+    fn temporary_relay_pair_request_is_authenticated_and_strict() {
+        let secret = crate::mobile_relay::RelayDeviceSecret {
+            device_id: "pairing-1".into(),
+            base_url: "https://relay.example.com".into(),
+            channel_id: "11".repeat(32),
+            wake_key: "22".repeat(32),
+            publisher_token: "33".repeat(32),
+            next_sequence: 1,
+            command: Some(crate::mobile_relay::RelayCommandSubscriberSecret {
+                channel_id: "44".repeat(32),
+                subscriber_token: "55".repeat(32),
+                key: "66".repeat(32),
+                last_sequence: 0,
+                pending_request_id: None,
+            }),
+            pending_downlink: None,
+        };
+        let envelope = crate::anywhere_crypto::encrypt_anywhere(
+            "66".repeat(32).as_str(),
+            "44".repeat(32).as_str(),
+            crate::anywhere_crypto::AnywhereDirection::Uplink,
+            1,
+            "request",
+            "77".repeat(16).as_str(),
+            1_800_000_000,
+            1_800_000_300,
+            &serde_json::json!({
+                "operation": "pair",
+                "code": "ABCD1234",
+                "device_name": "Xiaomi 14",
+                "reply_key": "99".repeat(32)
+            }),
+            "00".repeat(12).as_str(),
+        )
+        .unwrap();
+
+        let request = parse_temporary_pair_request(&secret, &envelope, 1_800_000_001).unwrap();
+
+        assert_eq!(request.request_id, "77".repeat(16));
+        assert_eq!(request.code, "ABCD1234");
+        assert_eq!(request.device_name, "Xiaomi 14");
+        assert_eq!(request.reply_key, "99".repeat(32));
+        assert_eq!(request.sequence, 1);
+        assert_eq!(
+            temporary_pair_response_channel(&request.request_id),
+            "37a5337f5150b1d1c80cca8a7a1988a68ba8c9bc57947064ce841358b466ea81"
+        );
+        assert!(parse_temporary_pair_request(&secret, &envelope, 1_800_000_301).is_err());
+
+        let unexpected = crate::anywhere_crypto::encrypt_anywhere(
+            "66".repeat(32).as_str(),
+            "44".repeat(32).as_str(),
+            crate::anywhere_crypto::AnywhereDirection::Uplink,
+            2,
+            "request",
+            "88".repeat(16).as_str(),
+            1_800_000_000,
+            1_800_000_300,
+            &serde_json::json!({
+                "operation": "pair",
+                "code": "ABCD1234",
+                "device_name": "Xiaomi 14",
+                "reply_key": "99".repeat(32),
+                "token": "must-not-be-accepted"
+            }),
+            "01".repeat(12).as_str(),
+        )
+        .unwrap();
+        assert!(parse_temporary_pair_request(&secret, &unexpected, 1_800_000_001).is_err());
+    }
+
+    #[test]
+    fn temporary_pairing_challenge_is_bound_to_one_relay_and_claimed_once() {
+        let temp = tempfile::tempdir().unwrap();
+        let bridge = MobileBridgeState::load_or_create(temp.path()).unwrap();
+        let now = 1_800_000_000;
+        bridge.runtime.lock().unwrap().pairing = Some(
+            PairingChallenge::new("ABCD1234", now, MobileDeviceScope::Control)
+                .for_relay("pairing-one", None),
+        );
+
+        assert!(claim_temporary_pairing(&bridge, "pairing-two", "ABCD1234", now + 1).is_err());
+        assert_eq!(
+            claim_temporary_pairing(&bridge, "pairing-one", "ABCD1234", now + 1).unwrap(),
+            MobileDeviceScope::Control
+        );
+        assert!(claim_temporary_pairing(&bridge, "pairing-one", "ABCD1234", now + 1).is_err());
     }
 
     #[test]

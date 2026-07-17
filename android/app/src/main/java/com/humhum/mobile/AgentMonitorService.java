@@ -89,7 +89,7 @@ public final class AgentMonitorService extends Service {
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
-        schedulePoll(0);
+        schedulePreferredRoute(0);
         return START_STICKY;
     }
 
@@ -107,6 +107,18 @@ public final class AgentMonitorService extends Service {
             network.shutdownNow();
         });
         super.onDestroy();
+    }
+
+    private void schedulePreferredRoute(long delaySeconds) {
+        ConnectionStore.Connection connection = connectionStore(this).load();
+        if (ConnectionRoutePolicy.useRelayFirst(connection, relaySupported)) {
+            Models.WakeRelayConfig relay = connection.wakeRelay();
+            schedule(
+                    () -> relayOnce(monitorStore.relaySequence(relay.channelId())),
+                    delaySeconds);
+        } else {
+            schedulePoll(delaySeconds);
+        }
     }
 
     private void schedulePoll(long delaySeconds) {
@@ -399,7 +411,7 @@ public final class AgentMonitorService extends Service {
     }
 
     private void retryAfterRelayFailure() {
-        lifecycle.commit(() -> schedulePoll(nextRetryDelay()));
+        lifecycle.commit(() -> schedulePreferredRoute(nextRetryDelay()));
     }
 
     private void registerNetworkRecovery() {
@@ -412,7 +424,7 @@ public final class AgentMonitorService extends Service {
                     network.execute(() -> {
                         lifecycle.commit(() -> {
                             failures = 0;
-                            schedulePoll(0);
+                            schedulePreferredRoute(0);
                         });
                     });
                 } catch (RejectedExecutionException ignored) {

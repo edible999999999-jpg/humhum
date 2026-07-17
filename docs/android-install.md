@@ -1,17 +1,17 @@
-# HUMHUM Android 0.3.9
+# HUMHUM Android 0.3.14
 
-HUMHUM Android is a native private-network client for the desktop Mobile Bridge. It supports Android 8.0 and newer, including current Xiaomi and Redmi phones. Pair on the same LAN by default, or use an optional Tailscale tailnet when the desktop and phone are on different networks.
+HUMHUM Android is the native phone companion for the desktop Mobile Bridge. It supports Android 8.0 and newer, including current Xiaomi and Redmi phones. Version 0.3.14 can pair through HUMHUM Anywhere while the phone is on 5G or another Wi-Fi; LAN and optional Tailscale access remain private-network fallbacks.
 
 ## Installable APK
 
-- Release APK: `build/releases/HUMHUM-Android-0.3.9.apk`
-- Xiaomi transfer ZIP: `build/releases/HUMHUM-Android-0.3.9-Xiaomi.zip`
-- Play-compatible bundle: `build/releases/HUMHUM-Android-0.3.9.aab`
+- Release APK: `build/releases/HUMHUM-Android-0.3.14.apk`
+- Xiaomi transfer ZIP: `build/releases/HUMHUM-Android-0.3.14-Xiaomi.zip`
+- Play-compatible bundle: `build/releases/HUMHUM-Android-0.3.14.aab`
 - Package: `com.humhum.mobile`
-- Version: `0.3.9` (`versionCode 12`)
-- APK SHA-256: `6a7ff62fb4d82b5f0f03ad09e26f4433735290c3b9a8bf20982e4e18c58838f8`
-- AAB SHA-256: `f6b4fb4076df7c7669c5244959798b3eaba2d865ffc5e06b4c75f4ce25521cb1`
-- Xiaomi ZIP SHA-256: `b8d5a03ad48db8b9d5a0f3d0887f1e4f7c63435537f9aaf6ae6c40e3688aec24`
+- Version: `0.3.14` (`versionCode 14`)
+- APK SHA-256: `c5b91faf24f4efe78d65b9fdaaac73a3efedbdb7ef74a5cb4fa0028de1d5df9d`
+- AAB SHA-256: `3e0b048dac4ebcd5884c108b5c4fccbf1b48944ee2259ee43843e91ee53b7e19`
+- Xiaomi ZIP SHA-256: `f139c4c972e980d4488d62716e66da435c11bad67421341aecc5133e28ae0acf`
 - Release certificate SHA-256: `C2:8C:FF:BE:03:98:B2:DB:58:DB:B7:14:DD:39:4F:06:36:CB:55:A6:90:EE:FE:6F:DA:20:2A:78:ED:4E:12:F8`
 
 The APK and AAB use HUMHUM's durable local release certificate. They are installable and update-compatible with later builds signed by the same key, but they have not been published to Xiaomi GetApps or Google Play.
@@ -32,20 +32,20 @@ Connect an authorized phone, then run:
 
 ```bash
 adb install -r \
-  build/releases/HUMHUM-Android-0.3.9.apk
+  build/releases/HUMHUM-Android-0.3.14.apk
 ```
 
 Put Android SDK Platform Tools on `PATH` first. On Windows, `adb.exe` is commonly under `%LOCALAPPDATA%\Android\Sdk\platform-tools`.
 
 ## Pair With The Desktop
 
-1. Put the computer and phone on the same trusted Wi-Fi network. Guest Wi-Fi or client isolation can prevent local devices from seeing each other.
-2. Open HUMHUM Hub on the desktop, choose Hexa, and enable mobile access.
-3. Generate a read-only or control pairing code. Control scope is required for approvals and follow-up messages.
-4. Hexa displays a short-lived QR code containing the desktop URL, expiring code, access scope, and certificate fingerprint. It never contains a durable device token.
-5. In the Android app, tap **扫描电脑配对二维码**, allow camera access, and scan within five minutes. HUMHUM validates the setup and starts certificate-pinned pairing automatically. **粘贴配对资料** and manual fields remain available as recovery paths.
+1. Install HUMHUM 0.3.14 on both the Mac and Android phone.
+2. Open HUMHUM Hub on the desktop, choose Hexa, and enable mobile access. For cross-network pairing, wait until Hexa reports that Anywhere is connected.
+3. Generate a read-only or control pairing QR code. Control scope is required for approvals and follow-up messages.
+4. In the Android app, tap **扫描电脑配对二维码**, allow camera access, and scan within five minutes.
+5. Android immediately starts encrypted pairing; it does not ask for the URL, code, fingerprint, or device name again. **使用手动配对** remains a recovery path for older or LAN-only desktop builds.
 
-After pairing, the app stores its token in app-private storage and verifies the exact TLS certificate fingerprint on every connection. Pressing **Disconnect** revokes that device on the desktop before clearing the local credential. If the desktop is unreachable, the app clears the phone and asks the user to revoke the stale device from Hexa.
+The QR contains only five-minute pairing material and temporary, independently scoped relay credentials. The Mac creates the durable per-device channels only after it verifies the encrypted request; the final credentials are sealed again with a phone-generated one-time key. For Anywhere pairings, foreground and background work use the encrypted relay first and retain the certificate-pinned Mac address only as a direct fallback. Pressing **Disconnect** revokes that device on the desktop before clearing the local credential.
 
 ## Read A Recent Agent Conversation
 
@@ -53,13 +53,11 @@ On a live session backed by a supported local transcript, tap **查看最近对�
 
 Conversation text stays only in the current Android Activity. It is never written to the encrypted offline snapshot, notifications, push payloads or Android saved-state storage. While a conversation is expanded, Android task previews and screenshots are blocked with `FLAG_SECURE`. Collapsing hides the disclosure while retaining only Activity memory for a quick reopen; disconnecting, changing the pairing or destroying the Activity clears it. Offline snapshot cards never offer conversation, approval or follow-up controls.
 
-## Use Away From Home With Tailnet
+## Use Away From Home
 
-1. Install Tailscale on both the computer and phone, sign both into the same tailnet, and confirm they can reach each other. HUMHUM never installs Tailscale or reads its credentials.
-2. Restart HUMHUM Mobile access. When Hexa detects the desktop's current `100.64.0.0/10` address, it shows **同网 LAN / 外出 Tailnet**.
-3. Select **外出 Tailnet**, generate a fresh read-only or control setup, and paste it into Android as usual.
+With the invite-only Anywhere beta enabled on the Mac, the computer and phone do not need to share a network. The Mac keeps an outbound HTTPS connection to the relay, Android uses its own outbound HTTPS connection, and the relay carries only authenticated AES-256-GCM ciphertext. No router port forwarding or public Mac address is required.
 
-The Android app accepts only a bounded assignable tailnet IPv4 address, the exact configured host, and the exact pinned HUMHUM certificate. Pairing codes, hashed device tokens, read/control scope, revocation, realtime wake, approvals and follow-ups remain the same. Port `31276` is not exposed as a public internet service.
+Tailscale remains an optional direct-connect alternative. Install it on both devices, join the same tailnet, then choose **外出 Tailnet** in Hexa when that option is available. HUMHUM never installs Tailscale or reads its account credentials. Port `31276` is not exposed as a public internet service in either mode.
 
 If the Tailnet choice is absent, Tailscale is unavailable or not connected on the desktop; LAN pairing continues to work. The current release was fallback-tested on a Mac without Tailscale, so actual cross-network routing still requires physical verification with both devices joined to one tailnet.
 
@@ -75,7 +73,7 @@ Background monitoring is visible and user-controlled. It uses Android's `remoteM
 
 For the invite-only Anywhere beta, Hexa can connect each newly paired phone to a self-hosted encrypted relay. Pairing creates independent Mac-to-phone and phone-to-Mac channels. The relay receives only AES-256-GCM ciphertext, opaque channel IDs, sequence numbers, timestamps and credential digests; it never receives readable session names, conversations, approvals, follow-ups, device names or encryption keys. Public relay URLs must use HTTPS, while loopback HTTP is accepted only for local development.
 
-Android always tries the certificate-pinned LAN or Tailnet bridge first. Reads may recover through Anywhere after DNS, route, connection, socket or timeout failures. Writes switch to Anywhere only when DNS, route or connection setup proves the direct request could not have reached the Mac; a socket or response timeout fails closed instead of risking a duplicate approval or message. Certificate failures, rejected credentials and malformed responses always fail closed. In remote mode the same redacted session list, bounded recent conversation, allow-once/deny and short follow-up controls travel end-to-end encrypted. The header says **远程连接** so the route is visible without exposing server settings. Read-only pairings remain read-only, every remote action has a five-minute expiry and opaque request ID, and the Mac persists command consumption before execution to prevent network retries from running an action twice.
+Version 0.3.14 Anywhere QR pairings use the relay first for reads, writes, app startup, network recovery, and background monitoring, avoiding an eight-second attempt against an unreachable home address. Older local pairings keep certificate-pinned LAN or Tailnet first and may recover through Anywhere only after a safe connection failure. Certificate failures, rejected credentials and malformed responses always fail closed. In remote mode the same redacted session list, bounded recent conversation, allow-once/deny and short follow-up controls travel end-to-end encrypted. The header says **远程连接** so the route is visible without exposing server settings. Read-only pairings remain read-only, every remote action has a five-minute expiry and opaque request ID, and the Mac persists command consumption before execution to prevent network retries from running an action twice.
 
 The optional background monitor can decrypt scoped snapshots into the same Android-Keystore-protected local cache. If it receives a foreground action response first, it hands that response to the Activity instead of discarding it. Android force-stop and aggressive Xiaomi process killing remain operating-system boundaries; production FCM or Xiaomi Push is still needed to wake a fully reclaimed process reliably.
 
@@ -93,6 +91,7 @@ Version 0.3.4 keeps one encrypted offline snapshot of at most 30 redacted sessio
 
 The release APK was installed through Android's real Package Manager on ARM64 Android 8.0/API 26 and Android 16/API 36 emulators and cold-launched successfully. Reinstalling it with `adb install -r` preserved `firstInstallTime` while changing `lastUpdateTime`; trying to install the debug APK over it failed with Android's expected `INSTALL_FAILED_UPDATE_INCOMPATIBLE`. On API 26, 0.3.3 reproduced an unsolicited cold-launch soft keyboard that hid the lower pairing form. The same-key 0.3.4 upgrade preserved first-install state, reported `mInputShown=false` on cold launch, kept the full pairing button visible, and still opened the keyboard after an explicit field tap. Earlier paired-flow validation used the visible connect form rather than injecting app preferences:
 
+- A real 0.3.14 Mac pairing QR registered temporary channels on `https://yuxilab.cn`; the Android relay client paired without contacting the QR's private Mac address, received fresh permanent per-device channels, and read the live control-scope Hexa session page. The disposable device and channels were then revoked.
 - Exact pinned-TLS pairing reached the Mac over its LAN address and returned control scope plus 23 redacted sessions.
 - Enabling background monitoring while the Activity was visible created a foreground service with runtime type `0x200` (`remoteMessaging`) and a low-importance private ongoing notification.
 - A disposable desktop permission request produced one high-importance private attention notification and one stored SHA-256 digest. Its notification update timestamp remained unchanged across later polls, proving deduplication at runtime.
@@ -116,14 +115,14 @@ This proves Android platform lifecycle behavior, not Xiaomi-specific battery-man
 ## Current Scope
 
 - Native session list, redacted to project, agent, status, recency, attention state, and bounded approval summaries.
-- Offline QR pairing from Hexa with strict setup parsing, certificate pinning, and five-minute expiry.
+- Automatic QR pairing from Hexa through temporary encrypted relay channels, with strict parsing, a phone-only response key, and five-minute expiry.
 - Read-only and control pairing scopes.
 - Allow-once/deny for supported Agent approvals.
 - Text follow-ups for known Codex, Claude Code, and OpenCode sessions.
 - Explicit, Activity-only disclosure of up to 12 bounded recent user/Agent messages for supported Codex, Claude and OpenClaw transcripts.
 - Foreground session refresh every 10 seconds.
 - Optional background monitoring with a persistent notification, authenticated realtime private-network wake, legacy 15-second polling fallback, bounded retry, approval deduplication, and opt-in reboot restoration.
-- Invite-only self-hosted Anywhere access with strict HTTPS, per-device bidirectional credentials, end-to-end encrypted session snapshots and scoped controls, replay protection, bounded retention and direct-first routing.
+- Invite-only self-hosted Anywhere access with strict HTTPS, per-device bidirectional credentials, end-to-end encrypted session snapshots and scoped controls, replay protection, bounded retention and relay-first routing for remotely paired phones.
 - Optional FCM registration and high-priority generic wake handling when both Android client and relay server configuration are supplied.
 - Immediate monitoring recovery when Android reports that the default network has returned.
 - Volatile per-device foreground/background presence with a 90-second fail-closed offline transition.
@@ -133,7 +132,7 @@ This proves Android platform lifecycle behavior, not Xiaomi-specific battery-man
 
 The APK requests network state, internet, foreground remote messaging, notification, opt-in boot restoration, and camera permissions. Camera access is requested only after the user opens the QR scanner, camera hardware is optional, and paste/manual pairing remains available. Firebase Messaging adds bounded wake-lock and C2DM receive permissions plus one package-scoped AndroidX receiver permission. HUMHUM does not request direct battery exemption, all-package visibility, location, nearby-device, contacts, files, microphone, overlay, or accessibility access.
 
-Not yet verified or shipped: a public HUMHUM-hosted Anywhere endpoint, physical 5G end-to-end evidence, production-configured FCM delivery, Xiaomi Push, physical HyperOS process-reclaim survival, full encrypted transcript history, attachments, iOS packaging, store distribution, or automatic updates. Xiaomi Push additionally requires an approved Xiaomi developer account, a registered package with AppID/AppKey, server-side AppSecret, and the region-appropriate Xiaomi SDK; none of those credentials are present on this machine, so the release does not pretend to initialize that provider. See Xiaomi's official [enablement guide](https://dev.mi.com/xiaomihyperos/documentation/detail?pId=1691) and [Android AAR integration guide](https://dev.mi.com/xiaomihyperos/documentation/detail?pId=1544).
+Not yet verified or shipped: physical-phone 5G evidence for 0.3.14, production-configured FCM delivery, Xiaomi Push, physical HyperOS process-reclaim survival, full encrypted transcript history, attachments, iOS packaging, store distribution, or automatic updates. Xiaomi Push additionally requires an approved Xiaomi developer account, a registered package with AppID/AppKey, server-side AppSecret, and the region-appropriate Xiaomi SDK; none of those credentials are present on this machine, so the release does not pretend to initialize that provider. See Xiaomi's official [enablement guide](https://dev.mi.com/xiaomihyperos/documentation/detail?pId=1691) and [Android AAR integration guide](https://dev.mi.com/xiaomihyperos/documentation/detail?pId=1544).
 
 ## Build With FCM
 

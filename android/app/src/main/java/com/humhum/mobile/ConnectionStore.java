@@ -15,6 +15,7 @@ public final class ConnectionStore {
     private static final String RELAY_COMMAND_CHANNEL_ID = "relay_command_channel_id";
     private static final String RELAY_COMMAND_PUBLISHER_TOKEN = "relay_command_publisher_token";
     private static final String RELAY_COMMAND_KEY = "relay_command_key";
+    private static final String PREFER_RELAY = "prefer_relay";
 
     interface KeyValueStore {
         String get(String key);
@@ -37,6 +38,10 @@ public final class ConnectionStore {
     }
 
     public void save(BridgeConfig config, Models.PairResult result) {
+        save(config, result, false);
+    }
+
+    public void save(BridgeConfig config, Models.PairResult result, boolean preferRelay) {
         if (result == null) throw new IllegalArgumentException("Pair result is missing");
         String token = result.token();
         Models.Scope scope = result.scope();
@@ -63,6 +68,9 @@ public final class ConnectionStore {
                 relay == null || relay.version() < 2 ? "" : relay.commandPublisherToken());
         storage.put(RELAY_COMMAND_KEY,
                 relay == null || relay.version() < 2 ? "" : relay.commandKey());
+        storage.put(PREFER_RELAY, preferRelay && relay != null && relay.version() == 2
+                ? "true"
+                : "false");
     }
 
     public Connection load() {
@@ -85,7 +93,8 @@ public final class ConnectionStore {
                     BridgeConfig.restore(baseUrl, fingerprint, deviceName),
                     token,
                     Models.Scope.fromWire(scope),
-                    relay);
+                    relay,
+                    "true".equals(storage.get(PREFER_RELAY)));
         } catch (IllegalArgumentException error) {
             return null;
         }
@@ -138,22 +147,34 @@ public final class ConnectionStore {
         private final String token;
         private final Models.Scope scope;
         private final Models.WakeRelayConfig wakeRelay;
+        private final boolean prefersRelay;
 
         Connection(
                 BridgeConfig config,
                 String token,
                 Models.Scope scope,
                 Models.WakeRelayConfig wakeRelay) {
+            this(config, token, scope, wakeRelay, false);
+        }
+
+        Connection(
+                BridgeConfig config,
+                String token,
+                Models.Scope scope,
+                Models.WakeRelayConfig wakeRelay,
+                boolean prefersRelay) {
             this.config = config;
             this.token = token;
             this.scope = scope;
             this.wakeRelay = wakeRelay;
+            this.prefersRelay = prefersRelay && wakeRelay != null && wakeRelay.version() == 2;
         }
 
         public BridgeConfig config() { return config; }
         public String token() { return token; }
         public Models.Scope scope() { return scope; }
         public Models.WakeRelayConfig wakeRelay() { return wakeRelay; }
+        public boolean prefersRelay() { return prefersRelay; }
     }
 
     private static final class PreferencesStore implements KeyValueStore {

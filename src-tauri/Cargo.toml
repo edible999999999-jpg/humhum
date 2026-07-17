@@ -1,6 +1,6 @@
 [package]
 name = "humhum"
-version = "0.3.13"
+version = "0.3.14"
 description = "HumHum - Desktop jellyfish companion for AI coding assistants"
 authors = ["HumHum Contributors"]
 license = "MIT"

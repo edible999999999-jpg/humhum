@@ -108,6 +108,29 @@ public class ManifestContractTest {
     }
 
     @Test
+    public void backgroundMonitorStartsWithTheSavedRemotePairingRoute() throws Exception {
+        String source = new String(
+                Files.readAllBytes(
+                        Path.of("src/main/java/com/humhum/mobile/AgentMonitorService.java")),
+                StandardCharsets.UTF_8);
+        String start = methodSource(
+                source,
+                "@Override public int onStartCommand(",
+                "@Override public IBinder onBind(");
+        assertTrue(start.contains("schedulePreferredRoute(0)"));
+
+        String preferred = methodSource(
+                source,
+                "private void schedulePreferredRoute(",
+                "private void schedulePoll(");
+        assertOrdered(
+                preferred,
+                "ConnectionRoutePolicy.useRelayFirst(",
+                "relayOnce(",
+                "schedulePoll(");
+    }
+
+    @Test
     public void rotationKeepsTheActivityOwnedDraftAndSendStateAlive() throws Exception {
         DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
         factory.setNamespaceAware(true);
@@ -262,12 +285,18 @@ public class ManifestContractTest {
                 .parse(Path.of("src/main/res/layout/activity_main.xml").toFile());
         Element scanButton = elementById(layout, "scanSetupButton");
         assertEquals("扫描电脑配对二维码", scanButton.getAttributeNS(ANDROID, "text"));
+        assertEquals(
+                "gone",
+                elementById(layout, "manualPairingPanel").getAttributeNS(ANDROID, "visibility"));
+        assertEquals(
+                "gone",
+                elementById(layout, "scanPairingStatus").getAttributeNS(ANDROID, "visibility"));
 
         String source = new String(Files.readAllBytes(
                 Path.of("src/main/java/com/humhum/mobile/MainActivity.java")),
                 StandardCharsets.UTF_8);
         String create = methodSource(source, "protected void onCreate(", "protected void onStart()");
-        assertTrue(create.contains("R.id.scanSetupButton"));
+        assertTrue(create.contains("scanSetupButton.setOnClickListener"));
         assertTrue(create.contains("scanSetup()"));
 
         String scan = methodSource(source, "private void scanSetup()", "private void applyPairingSetup(");
@@ -292,10 +321,12 @@ public class ManifestContractTest {
         assertOrdered(
                 apply,
                 "PairingSetup.parse(",
-                "urlInput.setText(setup.url())",
-                "fingerprintInput.setText(setup.fingerprint())",
-                "if (connectImmediately)",
-                "pair();");
+                "if (setup.canPairRemotely())",
+                "setScannedPairingState(true)",
+                "pair(setup);",
+                "return;",
+                "urlInput.setText(setup.url())");
+        assertTrue(apply.contains("setScannedPairingState(true)"));
     }
 
     @Test
@@ -704,12 +735,20 @@ public class ManifestContractTest {
                 "private void postRefreshIfCurrent(");
         assertOrdered(
                 refresh,
+                "ConnectionRoutePolicy.useRelayFirst(",
                 "long refreshGeneration = snapshotGenerationGate.capture();",
-                "Models.SessionPage page = current.sessions();",
+                "relayFirst",
+                "currentAnywhere.sessions(",
+                "current.sessions();",
+                "commitSessionPage(");
+        String commitPage = methodSource(
+                source, "private void commitSessionPage(", "private void clearRevokedConnection(");
+        assertOrdered(
+                commitPage,
                 "snapshotGenerationGate.callIfCurrent(",
-                "isCurrentConnection(current, currentConnection)",
+                "isCurrentConnection(expectedProtocol, expectedConnection)",
                 "writeSnapshotSafely(",
-                "postRefreshIfCurrent(refreshGeneration, current, currentConnection");
+                "postRefreshIfCurrent(generation, expectedProtocol, expectedConnection");
         assertOrdered(
                 refresh,
                 "} catch (Exception error) {",

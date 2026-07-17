@@ -109,85 +109,118 @@
                 android:textColor="@color/surface"
                 android:textStyle="bold" />
 
+            <TextView
+                android:id="@+id/scanPairingStatus"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:background="@drawable/role_hero_background"
+                android:gravity="center"
+                android:padding="16dp"
+                android:text="二维码已识别\n正在通过加密中继连接这台电脑"
+                android:textColor="@color/ink"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:visibility="gone" />
+
             <Button
-                android:id="@+id/pasteSetupButton"
+                android:id="@+id/manualPairingToggle"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:minHeight="44dp"
                 android:layout_marginTop="8dp"
                 android:background="@drawable/button_secondary"
-                android:text="粘贴配对资料"
+                android:text="使用手动配对"
                 android:textAllCaps="false"
                 android:textColor="@color/primary" />
 
-            <EditText
-                android:id="@+id/urlInput"
+            <LinearLayout
+                android:id="@+id/manualPairingPanel"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:minHeight="50dp"
-                android:layout_marginTop="10dp"
-                android:autofillHints=""
-                android:background="@drawable/input_background"
-                android:hint="https://192.168.x.x:31276"
-                android:inputType="textUri"
-                android:singleLine="true"
-                android:textColor="@color/ink"
-                android:textColorHint="#93A4B8" />
+                android:orientation="vertical"
+                android:visibility="gone">
 
-            <EditText
-                android:id="@+id/codeInput"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:minHeight="50dp"
-                android:layout_marginTop="10dp"
-                android:background="@drawable/input_background"
-                android:hint="8 位配对码"
-                android:inputType="textCapCharacters"
-                android:maxLength="8"
-                android:singleLine="true"
-                android:textColor="@color/ink"
-                android:textColorHint="#93A4B8" />
+                <Button
+                    android:id="@+id/pasteSetupButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="44dp"
+                    android:layout_marginTop="8dp"
+                    android:background="@drawable/button_secondary"
+                    android:text="粘贴配对资料"
+                    android:textAllCaps="false"
+                    android:textColor="@color/primary" />
 
-            <EditText
-                android:id="@+id/fingerprintInput"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:minHeight="72dp"
-                android:layout_marginTop="10dp"
-                android:background="@drawable/input_background"
-                android:gravity="top"
-                android:hint="TLS SHA-256 指纹"
-                android:inputType="textNoSuggestions"
-                android:maxLength="95"
-                android:textColor="@color/ink"
-                android:textColorHint="#93A4B8"
-                android:textSize="13sp" />
+                <EditText
+                    android:id="@+id/urlInput"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="50dp"
+                    android:layout_marginTop="10dp"
+                    android:autofillHints=""
+                    android:background="@drawable/input_background"
+                    android:hint="https://192.168.x.x:31276"
+                    android:inputType="textUri"
+                    android:singleLine="true"
+                    android:textColor="@color/ink"
+                    android:textColorHint="#93A4B8" />
 
-            <EditText
-                android:id="@+id/deviceNameInput"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:minHeight="50dp"
-                android:layout_marginTop="10dp"
-                android:background="@drawable/input_background"
-                android:hint="设备名称（例如 Xiaomi 14）"
-                android:inputType="textCapWords"
-                android:maxLength="80"
-                android:singleLine="true"
-                android:textColor="@color/ink"
-                android:textColorHint="#93A4B8" />
+                <EditText
+                    android:id="@+id/codeInput"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="50dp"
+                    android:layout_marginTop="10dp"
+                    android:background="@drawable/input_background"
+                    android:hint="8 位配对码"
+                    android:inputType="textCapCharacters"
+                    android:maxLength="8"
+                    android:singleLine="true"
+                    android:textColor="@color/ink"
+                    android:textColorHint="#93A4B8" />
 
-            <Button
-                android:id="@+id/connectButton"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:minHeight="48dp"
-                android:layout_marginTop="14dp"
-                android:backgroundTint="@color/primary"
-                android:text="安全配对"
-                android:textAllCaps="false"
-                android:textColor="@color/surface"
-                android:textStyle="bold" />
+                <EditText
+                    android:id="@+id/fingerprintInput"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="72dp"
+                    android:layout_marginTop="10dp"
+                    android:background="@drawable/input_background"
+                    android:gravity="top"
+                    android:hint="TLS SHA-256 指纹"
+                    android:inputType="textNoSuggestions"
+                    android:maxLength="95"
+                    android:textColor="@color/ink"
+                    android:textColorHint="#93A4B8"
+                    android:textSize="13sp" />
+
+                <EditText
+                    android:id="@+id/deviceNameInput"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="50dp"
+                    android:layout_marginTop="10dp"
+                    android:background="@drawable/input_background"
+                    android:hint="设备名称（例如 Xiaomi 14）"
+                    android:inputType="textCapWords"
+                    android:maxLength="80"
+                    android:singleLine="true"
+                    android:textColor="@color/ink"
+                    android:textColorHint="#93A4B8" />
+
+                <Button
+                    android:id="@+id/connectButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="48dp"
+                    android:layout_marginTop="14dp"
+                    android:backgroundTint="@color/primary"
+                    android:text="安全配对"
+                    android:textAllCaps="false"
+                    android:textColor="@color/surface"
+                    android:textStyle="bold" />
+            </LinearLayout>
 
             <TextView
                 android:id="@+id/connectError"
