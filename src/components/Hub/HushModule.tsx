@@ -37,6 +37,7 @@ interface HushInboxMessage {
   received_at: string;
   source_id?: string | null;
   preview_limited?: boolean;
+  raw?: Record<string, unknown>;
 }
 
 interface NotificationBridgeStatus {
@@ -75,6 +76,32 @@ export function compareHushContacts(
     (Number.isFinite(bTime) ? bTime : Number.NEGATIVE_INFINITY) -
     (Number.isFinite(aTime) ? aTime : Number.NEGATIVE_INFINITY);
   return timeDifference || b.importance - a.importance;
+}
+
+export function getHushConversationIdentity(
+  message: Pick<HushInboxMessage, "platform" | "sender" | "chat" | "source_id" | "raw">,
+): { id: string; name: string } {
+  const isDwsMessage =
+    message.source_id?.startsWith("dws:") || message.raw?.source === "dws";
+  if (isDwsMessage) {
+    const conversationId =
+      typeof message.raw?.conversation_id === "string"
+        ? message.raw.conversation_id.trim()
+        : "";
+    const chatName = message.chat?.trim() ?? "";
+    const conversationKey = conversationId || chatName;
+    if (conversationKey) {
+      return {
+        id: `${message.platform}:conversation:${conversationKey}`,
+        name: chatName || message.sender,
+      };
+    }
+  }
+
+  return {
+    id: `${message.platform}:${message.sender}`,
+    name: message.sender,
+  };
 }
 
 interface DwsHushStatus {
@@ -275,8 +302,8 @@ export function HushModule() {
     const messages = inbox?.messages ?? [];
     const map = new Map<string, DerivedContact>();
     for (const message of messages) {
-      const key = `${message.platform}:${message.sender}`;
-      const existing = map.get(key);
+      const identity = getHushConversationIdentity(message);
+      const existing = map.get(identity.id);
       if (existing) {
         existing.messages.push(message);
         if (message.received_at > existing.lastMessageTime) {
@@ -288,9 +315,9 @@ export function HushModule() {
           existing.platforms.push(message.platform);
         }
       } else {
-        map.set(key, {
-          id: key,
-          name: message.sender,
+        map.set(identity.id, {
+          id: identity.id,
+          name: identity.name,
           tier: TIER_ORDER.includes(message.tier) ? message.tier : "work",
           platforms: [message.platform],
           lastMessage: message.text,
