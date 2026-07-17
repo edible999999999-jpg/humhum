@@ -1,10 +1,10 @@
 use crate::hexa_protocol::{
     scope_provider_item, HexaEvent, HexaEventKind, HexaProjectionStore, HexaSensitivity,
-    HexaSessionProjection,
+    HexaSessionProjection, HexaSessionStatus,
 };
 use crate::hexa_watch_store::{
-    HexaPlanSyncRequest, HexaPlanningCapability, HexaWatchStore, HexaWatchedSession,
-    HexaWorkItemInput, HexaWorkItemStatus,
+    HexaPlanSyncRequest, HexaPlanningCapability, HexaWatchStatus, HexaWatchStore,
+    HexaWatchUpdateRequest, HexaWatchedSession, HexaWorkItemInput, HexaWorkItemStatus,
 };
 use serde_json::{json, Value};
 use std::collections::HashSet;
@@ -1076,7 +1076,60 @@ fn sync_watched_codex_event(
     if let Some(request) = codex_plan_sync_request(event) {
         return store.sync_plan(request).map(Some);
     }
+    if bound.status != HexaWatchStatus::Completed {
+        if let Some(status) = codex_lifecycle_watch_status(event, projection) {
+            let blocked = status == HexaWatchStatus::Blocked;
+            let waiting = status == HexaWatchStatus::Waiting;
+            return store
+                .update(HexaWatchUpdateRequest {
+                    session_id: event.session_id.clone(),
+                    status,
+                    current_step: bound.current_step.clone(),
+                    blocked_reason: blocked.then(|| {
+                        event
+                            .payload
+                            .get("message")
+                            .and_then(Value::as_str)
+                            .map(str::to_string)
+                            .or_else(|| bound.blocked_reason.clone())
+                            .unwrap_or_else(|| "Codex 本轮执行失败".to_string())
+                    }),
+                    need_user: Some(waiting),
+                    confidence: bound.confidence.clone(),
+                    goal: None,
+                })
+                .map(|updated| updated.or((!was_bound).then_some(bound)));
+        }
+    }
     Ok((!was_bound).then_some(bound))
+}
+
+fn codex_lifecycle_watch_status(
+    event: &HexaEvent,
+    projection: &HexaSessionProjection,
+) -> Option<HexaWatchStatus> {
+    match event.kind {
+        HexaEventKind::SessionStarted | HexaEventKind::SessionResumed => {
+            Some(HexaWatchStatus::Idle)
+        }
+        HexaEventKind::TurnStarted => Some(HexaWatchStatus::Working),
+        HexaEventKind::TurnCompleted | HexaEventKind::TurnInterrupted
+            if projection.status == HexaSessionStatus::Idle =>
+        {
+            Some(HexaWatchStatus::Idle)
+        }
+        HexaEventKind::TurnFailed if projection.status == HexaSessionStatus::Failed => {
+            Some(HexaWatchStatus::Blocked)
+        }
+        HexaEventKind::ApprovalRequested => Some(HexaWatchStatus::Waiting),
+        HexaEventKind::ApprovalResolved => match projection.status {
+            HexaSessionStatus::Working => Some(HexaWatchStatus::Working),
+            HexaSessionStatus::Idle => Some(HexaWatchStatus::Idle),
+            _ => None,
+        },
+        HexaEventKind::ErrorReported => Some(HexaWatchStatus::Blocked),
+        _ => None,
+    }
 }
 
 fn normalize_item(item: &Value, thread_id: &str, started: bool) -> Option<(HexaEventKind, Value)> {
@@ -1323,6 +1376,88 @@ if ($second.Contains('"method":"turn/start"')) {
         assert_eq!(
             watch_store.sessions()[0].previous_session_ids,
             ["temporary-watch-id"]
+        );
+    }
+
+    #[test]
+    fn turn_completion_idles_the_watch_without_completing_the_native_plan() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut watch_store = HexaWatchStore::load_or_create(directory.path()).unwrap();
+        watch_store
+            .register(HexaWatchRegisterRequest {
+                session_id: Some("thread-real".to_string()),
+                agent: "codex".to_string(),
+                name: Some("loop工程".to_string()),
+                provider: Some("codex".to_string()),
+                workspace: Some("/workspace/loop".to_string()),
+                goal: Some("盘清语义层".to_string()),
+            })
+            .unwrap();
+        let mut projections = HexaProjectionStore::default();
+
+        let plan = normalize_codex_message(
+            "turn/plan/updated",
+            json!({
+                "threadId": "thread-real",
+                "turnId": "turn-1",
+                "plan": [
+                    {"step": "运行真实语料并完成浏览器回归", "status": "inProgress"}
+                ]
+            }),
+        )
+        .unwrap();
+        projections.apply(&plan);
+        sync_watched_codex_event(
+            &mut watch_store,
+            &plan,
+            projections.session("thread-real").unwrap(),
+        )
+        .unwrap();
+
+        let started = normalize_codex_message(
+            "turn/started",
+            json!({
+                "threadId": "thread-real",
+                "turn": {"id": "turn-1"}
+            }),
+        )
+        .unwrap();
+        projections.apply(&started);
+        sync_watched_codex_event(
+            &mut watch_store,
+            &started,
+            projections.session("thread-real").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            watch_store.sessions()[0].status,
+            crate::hexa_watch_store::HexaWatchStatus::Working
+        );
+
+        let completed = normalize_codex_message(
+            "turn/completed",
+            json!({
+                "threadId": "thread-real",
+                "turn": {"id": "turn-1", "status": "completed"}
+            }),
+        )
+        .unwrap();
+        projections.apply(&completed);
+        let synced = sync_watched_codex_event(
+            &mut watch_store,
+            &completed,
+            projections.session("thread-real").unwrap(),
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(
+            synced.status,
+            crate::hexa_watch_store::HexaWatchStatus::Idle
+        );
+        assert_eq!(
+            synced.audit.work_items[0].status,
+            HexaWorkItemStatus::InProgress
         );
     }
 

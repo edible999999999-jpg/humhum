@@ -6,6 +6,7 @@ import type {
   HexaReviewRating,
   HexaWatchedSession,
   HexaWorkItem,
+  HexaWorkItemStatus,
 } from "./useHexaData";
 
 export interface HexaSessionGroup {
@@ -145,6 +146,21 @@ export function reviewLabel(rating: HexaReviewRating): string {
   }
 }
 
+export type HexaWorkItemDisplayStatus = HexaWorkItemStatus | "unclosed";
+
+export function workItemDisplayStatus(
+  itemStatus: HexaWorkItemStatus,
+  sessionStatus: HexaWatchedSession["status"],
+): HexaWorkItemDisplayStatus {
+  if (
+    itemStatus === "in_progress"
+    && (sessionStatus === "idle" || sessionStatus === "completed")
+  ) {
+    return "unclosed";
+  }
+  return itemStatus;
+}
+
 function verdictView(review: HexaReview | null): HexaVerdictView | null {
   if (!review) return null;
   return {
@@ -180,7 +196,12 @@ function nextAction(session: HexaWatchedSession, ordered: HexaWorkItem[]): strin
     return session.blocked_reason ?? session.current_step ?? "需要用户确认后继续";
   }
   const current = ordered.find((item) => item.status === "in_progress");
-  if (current) return current.title;
+  if (current) {
+    if (session.status === "idle" || session.status === "completed") {
+      return `Agent 本轮已结束，未确认“${current.title}”是否完成`;
+    }
+    return current.title;
+  }
   const completed = new Set(
     ordered.filter((item) => item.status === "completed").map((item) => item.id),
   );

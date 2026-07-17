@@ -13,6 +13,7 @@ import {
   reviewLabel,
   selectVisibleMilestones,
   tabCounts,
+  workItemDisplayStatus,
   workItemRemovalBlocker,
 } from "./hexaSessionReport";
 
@@ -119,6 +120,20 @@ describe("Hexa session report", () => {
       pendingConfirmations: 0,
     });
     expect(report.progress).toEqual({ completed: 2, total: 4, percent: 50 });
+  });
+
+  it("calls an in-progress plan item unclosed after the Agent turn becomes idle", () => {
+    const session = run("idle-plan", "/workspace/humhum", { status: "idle" });
+    session.audit.work_items = [item("browser-regression", "in_progress")];
+
+    const report = buildHexaSessionReport(session);
+
+    expect(report.nextAction).toBe(
+      "Agent 本轮已结束，未确认“Work browser-regression”是否完成",
+    );
+    expect(workItemDisplayStatus("in_progress", "idle")).toBe("unclosed");
+    expect(workItemDisplayStatus("in_progress", "working")).toBe("in_progress");
+    expect(workItemDisplayStatus("completed", "idle")).toBe("completed");
   });
 
   it("does not count inferred or migrated summaries as real work items", () => {
