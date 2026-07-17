@@ -524,7 +524,7 @@ public class ManifestContractTest {
                 destroy,
                 "recentConversationBySessionId.clear();",
                 "snapshotGenerationGate.close();",
-                "network.shutdownNow();");
+                "viewModel.close();");
 
         String card = methodSource(source, "private View sessionCard(Models.Session session)", "private View actionPanel(");
         assertTrue(card.contains("session.canReadConversation()"));
@@ -560,7 +560,7 @@ public class ManifestContractTest {
         assertOrdered(
                 loading,
                 "long generation = snapshotGenerationGate.capture();",
-                "network.execute(() -> {",
+                "companionRepository.executeNetwork(() -> {",
                 "current.conversation(session)",
                 "postConversationIfCurrent(");
 
@@ -717,7 +717,7 @@ public class ManifestContractTest {
 
         String destruction = methodSource(
                 source, "protected void onDestroy()", "private void bindViews()");
-        assertOrdered(destruction, "snapshotGenerationGate.close();", "network.shutdownNow();");
+        assertOrdered(destruction, "snapshotGenerationGate.close();", "viewModel.close();");
 
         String pairing = methodSource(source, "private void pair()", "private void pasteSetup()");
         assertOrdered(

@@ -36,10 +36,12 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import com.google.zxing.integration.android.IntentIntegrator;
 import com.google.zxing.integration.android.IntentResult;
+import com.humhum.mobile.app.HumHumAction;
+import com.humhum.mobile.app.HumHumUiState;
+import com.humhum.mobile.app.HumHumViewModel;
+import com.humhum.mobile.app.MobileCompanionRepository;
 
 public final class MainActivity extends Activity {
     private static final int NOTIFICATION_PERMISSION_REQUEST = 4103;
@@ -50,19 +52,11 @@ public final class MainActivity extends Activity {
     private static final DurableConnectionTransitionCoordinator TRANSITIONS =
             new DurableConnectionTransitionCoordinator(
                     MainActivity::notifyStartedActivityOfTransitionCompletion);
-    private final ExecutorService network = Executors.newSingleThreadExecutor();
     private final Map<String, List<Models.ConversationMessage>> recentConversationBySessionId =
             new HashMap<>();
     private final Map<String, String> messageDraftBySessionId = new HashMap<>();
     private final Set<String> sendingSessionIds = new HashSet<>();
     private final Handler main = new Handler(Looper.getMainLooper());
-    private final Runnable poll = new Runnable() {
-        @Override public void run() {
-            if (protocol != null) refreshSessions(false);
-            main.postDelayed(this, 10_000);
-        }
-    };
-
     private ConnectionStore connectionStore;
     private EncryptedSessionSnapshotStore snapshotStore;
     private SessionSnapshotGenerationGate snapshotGenerationGate;
@@ -72,6 +66,8 @@ public final class MainActivity extends Activity {
     private MobileProtocol protocol;
     private AnywhereRelayClient anywhereRelayClient;
     private AnywhereGateway anywhereGateway;
+    private MobileCompanionRepository companionRepository;
+    private HumHumViewModel viewModel;
     private boolean refreshInFlight;
     private MobileRoleDashboard.Role selectedRole = MobileRoleDashboard.Role.HUMI;
     private final Map<MobileRoleDashboard.Role, LinearLayout> roleTabs =
@@ -139,6 +135,10 @@ public final class MainActivity extends Activity {
         anywhereStateStore = new AnywhereStateStore(
                 getSharedPreferences("humhum_anywhere", MODE_PRIVATE));
         pushPreferences = getSharedPreferences("humhum_push", MODE_PRIVATE);
+        companionRepository = new MobileCompanionRepository();
+        companionRepository.bindConnectionStore(connectionStore);
+        companionRepository.bindMonitorStore(monitorStore);
+        viewModel = new HumHumViewModel(companionRepository, selectedRole);
         connectButton.setOnClickListener(view -> pair());
         scanSetupButton.setOnClickListener(view -> scanSetup());
         manualPairingToggle.setOnClickListener(
@@ -173,6 +173,7 @@ public final class MainActivity extends Activity {
         IntentResult result = IntentIntegrator.parseActivityResult(requestCode, resultCode, data);
         if (result != null) {
             if (result.getContents() == null) {
+                dispatchState(HumHumAction.ScanCancelled.INSTANCE);
                 connectError.setText("已取消扫描");
             } else {
                 applyPairingSetup(result.getContents(), true);
@@ -213,8 +214,9 @@ public final class MainActivity extends Activity {
             reportForegroundPresence();
         }
         updateDeviceCareStatus();
-        main.removeCallbacks(poll);
-        main.post(poll);
+        viewModel.startPolling(
+                10_000L,
+                (Runnable) () -> main.post(() -> refreshSessions(false)));
     }
 
     @Override
@@ -222,7 +224,7 @@ public final class MainActivity extends Activity {
         MainActivity fallback = STARTED_ACTIVITIES.stop(this);
         if (fallback != null) notifyPreviousStartedActivity(fallback);
         pushPreferences.unregisterOnSharedPreferenceChangeListener(pushStateListener);
-        main.removeCallbacks(poll);
+        viewModel.stopPolling();
         super.onStop();
     }
 
@@ -235,7 +237,7 @@ public final class MainActivity extends Activity {
         renderedSessions = List.of();
         if (anywhereRelayClient != null) anywhereRelayClient.cancel();
         snapshotGenerationGate.close();
-        network.shutdownNow();
+        viewModel.close();
         super.onDestroy();
     }
 
@@ -299,10 +301,18 @@ public final class MainActivity extends Activity {
             collapseConversationDisclosure();
             renderSessions(renderedSessions);
         }
-        selectedRole = role;
+        dispatchState(new HumHumAction.SelectRole(role));
         renderSelectedRole();
         ScrollView scroll = findViewById(R.id.rootScroll);
         scroll.smoothScrollTo(0, 0);
+    }
+
+    private HumHumUiState dispatchState(HumHumAction action) {
+        if (viewModel == null) return null;
+        viewModel.dispatch(action);
+        HumHumUiState state = viewModel.getState().getValue();
+        selectedRole = state.getSelectedRole();
+        return state;
     }
 
     private void renderSelectedRole() {
@@ -523,6 +533,14 @@ public final class MainActivity extends Activity {
         PowerManager power = getSystemService(PowerManager.class);
         boolean exempt = power != null && power.isIgnoringBatteryOptimizations(getPackageName());
         batteryStatusText.setText(DeviceCarePlan.batteryStatus(exempt));
+        dispatchState(new HumHumAction.DeviceCareChanged(
+                !exempt,
+                DeviceCarePlan.isXiaomiFamily(Build.MANUFACTURER),
+                PushRegistration.stateStore(this).read(
+                        connection != null && connection.wakeRelay() != null
+                                ? connection.wakeRelay().channelId()
+                                : null,
+                        HumHumApplication.isFcmConfigured()) == PushStateStore.State.REGISTERED));
     }
 
     private void openBatterySettings() {
@@ -568,6 +586,7 @@ public final class MainActivity extends Activity {
             adoptTransitionState();
             return;
         }
+        dispatchState(HumHumAction.PairingStarted.INSTANCE);
         setPairing(true);
     }
 
@@ -604,6 +623,7 @@ public final class MainActivity extends Activity {
             adoptTransitionState();
             return;
         }
+        dispatchState(HumHumAction.PairingStarted.INSTANCE);
         setPairing(true);
     }
 
@@ -629,6 +649,7 @@ public final class MainActivity extends Activity {
     }
 
     private void openQrScanner() {
+        dispatchState(HumHumAction.ScanStarted.INSTANCE);
         IntentIntegrator integrator = new IntentIntegrator(this);
         integrator.setCaptureActivity(QrCaptureActivity.class);
         integrator.setDesiredBarcodeFormats(IntentIntegrator.QR_CODE);
@@ -685,6 +706,8 @@ public final class MainActivity extends Activity {
             anywhereRelayClient = null;
             anywhereGateway = null;
         }
+        companionRepository.bindConnection(saved, protocol, anywhereGateway);
+        dispatchState(new HumHumAction.Connected(saved.scope()));
         connectPanel.setVisibility(View.GONE);
         sessionPanel.setVisibility(View.VISIBLE);
         roleNavigation.setVisibility(View.VISIBLE);
@@ -704,7 +727,7 @@ public final class MainActivity extends Activity {
     private void reportForegroundPresence() {
         MobileProtocol active = protocol;
         if (active == null) return;
-        network.execute(() -> {
+        companionRepository.executeNetwork(() -> {
             try {
                 active.reportPresence(MobileProtocol.PresenceMode.FOREGROUND);
             } catch (Exception ignored) {
@@ -724,6 +747,8 @@ public final class MainActivity extends Activity {
         anywhereGateway = null;
         protocol = null;
         connection = null;
+        if (companionRepository != null) companionRepository.clearConnection();
+        dispatchState(HumHumAction.Disconnected.INSTANCE);
         setScannedPairingState(false);
         connectPanel.setVisibility(View.VISIBLE);
         sessionPanel.setVisibility(View.GONE);
@@ -761,6 +786,7 @@ public final class MainActivity extends Activity {
             adoptTransitionState();
             return;
         }
+        dispatchState(HumHumAction.DisconnectStarted.INSTANCE);
         disableMonitor();
         PushRegistration.cancel(this);
         setDisconnecting(true);
@@ -777,6 +803,7 @@ public final class MainActivity extends Activity {
             pendingMonitorEnable = true;
             setMonitorSwitch(false);
             monitorStatusText.setText("需要通知权限");
+            dispatchState(new HumHumAction.MonitorChanged(false, true));
             requestPermissions(
                     new String[] {Manifest.permission.POST_NOTIFICATIONS},
                     NOTIFICATION_PERMISSION_REQUEST);
@@ -789,15 +816,18 @@ public final class MainActivity extends Activity {
         if (!monitorStore.isEnabled()) {
             setMonitorSwitch(false);
             monitorStatusText.setText("已关闭");
+            dispatchState(new HumHumAction.MonitorChanged(false, false));
             return;
         }
         if (!MonitorPermissionPolicy.canStart(Build.VERSION.SDK_INT, hasNotificationPermission())) {
             disableMonitor();
             monitorStatusText.setText("需要通知权限");
+            dispatchState(new HumHumAction.MonitorChanged(false, true));
             return;
         }
         setMonitorSwitch(true);
         monitorStatusText.setText("正在监控这台电脑");
+        dispatchState(new HumHumAction.MonitorChanged(true, false));
         AgentMonitorService.start(this);
     }
 
@@ -807,10 +837,12 @@ public final class MainActivity extends Activity {
             AgentMonitorService.start(this);
             setMonitorSwitch(true);
             monitorStatusText.setText("正在监控这台电脑");
+            dispatchState(new HumHumAction.MonitorChanged(true, false));
         } catch (RuntimeException error) {
             monitorStore.clear();
             setMonitorSwitch(false);
             monitorStatusText.setText("无法启动后台监控");
+            dispatchState(new HumHumAction.MonitorChanged(false, false));
         }
     }
 
@@ -820,6 +852,7 @@ public final class MainActivity extends Activity {
         monitorStore.clear();
         setMonitorSwitch(false);
         if (monitorStatusText != null) monitorStatusText.setText("已关闭");
+        dispatchState(new HumHumAction.MonitorChanged(false, false));
     }
 
     private void setMonitorSwitch(boolean checked) {
@@ -845,6 +878,13 @@ public final class MainActivity extends Activity {
                 channel,
                 HumHumApplication.isFcmConfigured());
         pushStatusText.setText(PushStateStore.copy(state));
+        if (viewModel != null) {
+            HumHumUiState uiState = viewModel.getState().getValue();
+            dispatchState(new HumHumAction.DeviceCareChanged(
+                    uiState.getDeviceCare().getBatteryOptimized(),
+                    uiState.getDeviceCare().getAutostartAvailable(),
+                    state == PushStateStore.State.REGISTERED));
+        }
     }
 
     @Override
@@ -865,12 +905,14 @@ public final class MainActivity extends Activity {
         } else {
             setMonitorSwitch(false);
             monitorStatusText.setText("需要通知权限");
+            dispatchState(new HumHumAction.MonitorChanged(false, true));
         }
     }
 
     private void refreshSessions(boolean userInitiated) {
         if (protocol == null || connection == null || refreshInFlight) return;
         refreshInFlight = true;
+        dispatchState(new HumHumAction.RefreshRequested(userInitiated));
         refreshButton.setEnabled(false);
         if (userInitiated) statusText.setText("正在刷新");
         MobileProtocol current = protocol;
@@ -879,7 +921,7 @@ public final class MainActivity extends Activity {
         boolean relayFirst =
                 ConnectionRoutePolicy.useRelayFirst(currentConnection, currentAnywhere != null);
         long refreshGeneration = snapshotGenerationGate.capture();
-        network.execute(() -> {
+        companionRepository.executeNetwork(() -> {
             try {
                 Models.SessionPage page = relayFirst
                         ? currentAnywhere.sessions(currentConnection.wakeRelay())
@@ -927,17 +969,22 @@ public final class MainActivity extends Activity {
                                 },
                                 null)
                         : null;
+                String visibleError = safeError(error);
                 postRefreshIfCurrent(refreshGeneration, current, currentConnection, () -> {
                     refreshInFlight = false;
                     refreshButton.setEnabled(true);
                     if (snapshot == null) {
+                        dispatchState(new HumHumAction.RefreshFailed(visibleError));
                         statusText.setText("电脑离线");
                         renderUnavailableSessions();
                         return;
                     }
-                    statusText.setText(
-                            SessionSnapshotCodec.ageCopy(snapshot.savedAtMillis(), nowMillis));
-                    renderSessions(snapshot.sessions());
+                    String ageCopy =
+                            SessionSnapshotCodec.ageCopy(snapshot.savedAtMillis(), nowMillis);
+                    HumHumUiState state = dispatchState(
+                            new HumHumAction.OfflineSnapshotLoaded(snapshot.sessions(), ageCopy));
+                    statusText.setText(ageCopy);
+                    renderSessions(state.getSessions());
                 });
             }
         });
@@ -962,8 +1009,10 @@ public final class MainActivity extends Activity {
         postRefreshIfCurrent(generation, expectedProtocol, expectedConnection, () -> {
             refreshInFlight = false;
             refreshButton.setEnabled(true);
-            statusText.setText(remote ? "远程连接 · 刚刚同步" : "刚刚同步");
-            renderSessions(page.sessions());
+            HumHumUiState state = dispatchState(
+                    new HumHumAction.SessionsLoaded(page.sessions(), remote));
+            statusText.setText(state.getStatusMessage());
+            renderSessions(state.getSessions());
         });
     }
 
@@ -1094,7 +1143,9 @@ public final class MainActivity extends Activity {
         if (completion.state() == DurableConnectionTransitionCoordinator.State.PAIRING) {
             setScannedPairingState(false);
             setPairing(false);
-            connectError.setText(safeError(completion.failure()));
+            String message = safeError(completion.failure());
+            dispatchState(new HumHumAction.PairingFailed(message));
+            connectError.setText(message);
         } else {
             setDisconnecting(false);
             statusText.setText(safeError(completion.failure()));
@@ -1252,6 +1303,10 @@ public final class MainActivity extends Activity {
         loadingConversationSessionId = null;
         conversationErrorSessionId = null;
         conversationErrorText = "";
+        if (viewModel != null
+                && viewModel.getState().getValue().getConversation().getSessionId() != null) {
+            dispatchState(HumHumAction.CloseConversation.INSTANCE);
+        }
         syncConversationPrivacy();
     }
 
@@ -1330,7 +1385,7 @@ public final class MainActivity extends Activity {
         card.addView(meta);
 
         for (Models.Action action : session.actions()) {
-            card.addView(actionPanel(action));
+            card.addView(actionPanel(session.id(), action));
         }
         if (session.canReadConversation()) {
             card.addView(conversationPanel(session));
@@ -1396,11 +1451,14 @@ public final class MainActivity extends Activity {
             return;
         }
         expandedConversationSessionId = sessionId;
+        dispatchState(new HumHumAction.OpenConversation(sessionId));
         syncConversationPrivacy();
         conversationErrorSessionId = null;
         conversationErrorText = "";
         if (recentConversationBySessionId.containsKey(sessionId)) {
             loadingConversationSessionId = null;
+            dispatchState(new HumHumAction.ConversationLoaded(
+                    sessionId, recentConversationBySessionId.get(sessionId)));
             renderSessions(renderedSessions);
             return;
         }
@@ -1411,6 +1469,7 @@ public final class MainActivity extends Activity {
 
     private void retryConversation(Models.Session session) {
         if (session == null || !session.id().equals(expandedConversationSessionId)) return;
+        dispatchState(new HumHumAction.OpenConversation(session.id()));
         loadingConversationSessionId = session.id();
         conversationErrorSessionId = null;
         conversationErrorText = "";
@@ -1443,7 +1502,7 @@ public final class MainActivity extends Activity {
         return row;
     }
 
-    private View actionPanel(Models.Action action) {
+    private View actionPanel(String sessionId, Models.Action action) {
         LinearLayout panel = vertical();
         panel.setPadding(0, dp(12), 0, 0);
         TextView title = text(action.operation(), 13, color(R.color.ink));
@@ -1456,8 +1515,10 @@ public final class MainActivity extends Activity {
         buttons.setPadding(0, dp(8), 0, 0);
         Button deny = button("拒绝", false);
         Button allow = button("允许一次", true);
-        deny.setOnClickListener(view -> resolve(action, "deny", deny, allow));
-        allow.setOnClickListener(view -> resolve(action, "allow_once", deny, allow));
+        deny.setOnClickListener(
+                view -> resolve(sessionId, action, "deny", deny, allow));
+        allow.setOnClickListener(
+                view -> resolve(sessionId, action, "allow_once", deny, allow));
         buttons.addView(deny, weightedButton());
         LinearLayout.LayoutParams allowParams = weightedButton();
         allowParams.leftMargin = dp(8);
@@ -1509,7 +1570,7 @@ public final class MainActivity extends Activity {
                 ConnectionRoutePolicy.useRelayFirst(currentConnection, currentAnywhere != null);
         String sessionId = session.id();
         long generation = snapshotGenerationGate.capture();
-        network.execute(() -> {
+        companionRepository.executeNetwork(() -> {
             if (relayFirst) {
                 try {
                     List<Models.ConversationMessage> messages = currentAnywhere.conversation(
@@ -1569,6 +1630,8 @@ public final class MainActivity extends Activity {
                             loadingConversationSessionId = null;
                             conversationErrorSessionId = sessionId;
                             conversationErrorText = visibleError;
+                            dispatchState(new HumHumAction.ConversationFailed(
+                                    sessionId, visibleError));
                             renderSessions(renderedSessions);
                         });
             }
@@ -1592,6 +1655,7 @@ public final class MainActivity extends Activity {
                     loadingConversationSessionId = null;
                     conversationErrorSessionId = null;
                     conversationErrorText = "";
+                    dispatchState(new HumHumAction.ConversationLoaded(sessionId, messages));
                     if (remote) statusText.setText("远程连接");
                     renderSessions(renderedSessions);
                 });
@@ -1613,7 +1677,14 @@ public final class MainActivity extends Activity {
         });
     }
 
-    private void resolve(Models.Action action, String decision, Button first, Button second) {
+    private void resolve(
+            String sessionId,
+            Models.Action action,
+            String decision,
+            Button first,
+            Button second) {
+        if (viewModel != null && !viewModel.getState().getValue().getCanControl()) return;
+        dispatchState(new HumHumAction.ApprovalStarted(sessionId, action.id()));
         first.setEnabled(false);
         second.setEnabled(false);
         MobileProtocol current = protocol;
@@ -1622,7 +1693,7 @@ public final class MainActivity extends Activity {
         boolean relayFirst =
                 ConnectionRoutePolicy.useRelayFirst(currentConnection, currentAnywhere != null);
         long generation = snapshotGenerationGate.capture();
-        network.execute(() -> {
+        companionRepository.executeNetwork(() -> {
             if (relayFirst) {
                 try {
                     currentAnywhere.resolveApproval(
@@ -1631,6 +1702,7 @@ public final class MainActivity extends Activity {
                             action,
                             decision);
                     postIfCurrent(generation, current, currentConnection, () -> {
+                        dispatchState(new HumHumAction.ApprovalFinished(sessionId, action.id()));
                         statusText.setText("远程连接 · 已处理");
                         refreshSessions(true);
                     });
@@ -1644,7 +1716,10 @@ public final class MainActivity extends Activity {
             }
             try {
                 current.resolveApproval(action, decision);
-                postIfCurrent(generation, current, currentConnection, () -> refreshSessions(true));
+                postIfCurrent(generation, current, currentConnection, () -> {
+                    dispatchState(new HumHumAction.ApprovalFinished(sessionId, action.id()));
+                    refreshSessions(true);
+                });
             } catch (Exception error) {
                 if (OfflineFallbackPolicy.isAuthorizationRevoked(error)) {
                     clearRevokedConnection(generation, current, currentConnection);
@@ -1659,6 +1734,8 @@ public final class MainActivity extends Activity {
                                 action,
                                 decision);
                         postIfCurrent(generation, current, currentConnection, () -> {
+                            dispatchState(new HumHumAction.ApprovalFinished(
+                                    sessionId, action.id()));
                             statusText.setText("远程连接 · 已处理");
                             refreshSessions(true);
                         });
@@ -1669,6 +1746,7 @@ public final class MainActivity extends Activity {
                 }
                 String visibleError = safeError(error);
                 postIfCurrent(generation, current, currentConnection, () -> {
+                    dispatchState(new HumHumAction.ApprovalFinished(sessionId, action.id()));
                     first.setEnabled(true);
                     second.setEnabled(true);
                     statusText.setText(visibleError);
@@ -1680,6 +1758,8 @@ public final class MainActivity extends Activity {
     private void send(Models.Session session, EditText draft, Button send) {
         String message = draft.getText().toString().trim();
         if (message.isEmpty() || sendingSessionIds.contains(session.id())) return;
+        if (viewModel != null && !viewModel.getState().getValue().getCanControl()) return;
+        dispatchState(new HumHumAction.FollowUpStarted(session.id()));
         sendingSessionIds.add(session.id());
         draft.setEnabled(false);
         send.setEnabled(false);
@@ -1689,7 +1769,7 @@ public final class MainActivity extends Activity {
         boolean relayFirst =
                 ConnectionRoutePolicy.useRelayFirst(currentConnection, currentAnywhere != null);
         long generation = snapshotGenerationGate.capture();
-        network.execute(() -> {
+        companionRepository.executeNetwork(() -> {
             if (relayFirst) {
                 try {
                     String state = currentAnywhere.sendMessage(
@@ -1698,6 +1778,7 @@ public final class MainActivity extends Activity {
                             session,
                             message);
                     postIfCurrent(generation, current, currentConnection, () -> {
+                        dispatchState(new HumHumAction.FollowUpFinished(session.id()));
                         sendingSessionIds.remove(session.id());
                         messageDraftBySessionId.remove(session.id());
                         statusText.setText("delivered".equals(state)
@@ -1717,6 +1798,7 @@ public final class MainActivity extends Activity {
             try {
                 String state = current.sendMessage(session, message);
                 postIfCurrent(generation, current, currentConnection, () -> {
+                    dispatchState(new HumHumAction.FollowUpFinished(session.id()));
                     sendingSessionIds.remove(session.id());
                     messageDraftBySessionId.remove(session.id());
                     statusText.setText("delivered".equals(state) ? "跟进已送达" : "跟进已进入队列");
@@ -1737,6 +1819,7 @@ public final class MainActivity extends Activity {
                                 session,
                                 message);
                         postIfCurrent(generation, current, currentConnection, () -> {
+                            dispatchState(new HumHumAction.FollowUpFinished(session.id()));
                             sendingSessionIds.remove(session.id());
                             messageDraftBySessionId.remove(session.id());
                             statusText.setText("delivered".equals(state)
@@ -1752,6 +1835,7 @@ public final class MainActivity extends Activity {
                 }
                 String visibleError = safeError(error);
                 postIfCurrent(generation, current, currentConnection, () -> {
+                    dispatchState(new HumHumAction.FollowUpFinished(session.id()));
                     sendingSessionIds.remove(session.id());
                     statusText.setText(visibleError);
                     renderSessions(renderedSessions);
