@@ -786,6 +786,7 @@ fn thread_list_entries(response: &Value) -> Vec<(HexaEvent, Option<PathBuf>)> {
         .collect()
 }
 
+#[cfg(test)]
 fn thread_list_events(response: &Value) -> Vec<HexaEvent> {
     thread_list_entries(response)
         .into_iter()
