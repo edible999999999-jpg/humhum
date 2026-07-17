@@ -10,11 +10,15 @@ const MAX_BATCH_SIGNALS: usize = 31;
 const MAX_BATCH_BYTES: usize = 64 * 1024;
 const MAX_SIGNAL_AGE: Duration = Duration::days(370);
 const MAX_FUTURE_SKEW: Duration = Duration::hours(48);
+const MIN_DAILY_INTERVAL: Duration = Duration::hours(20);
+const MAX_DAILY_INTERVAL: Duration = Duration::hours(28);
 const ALLOWED: &[(&str, &str)] = &[
     ("health.steps.daily", "count"),
     ("health.resting_heart_rate.daily", "bpm"),
     ("health.sleep.daily", "minutes"),
 ];
+const ALLOWED_SOURCES: &[&str] = &["health_connect", "phone_step_counter"];
+const ALLOWED_QUALITIES: &[&str] = &["trusted", "device_estimate"];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -262,12 +266,22 @@ fn validate_signal(signal: &HushSignalInput, now: DateTime<Utc>) -> Result<(), S
         return Err("Hush signal value must be finite".into());
     }
     validate_numeric_bounds(signal)?;
+    if !ALLOWED_SOURCES.contains(&signal.source.as_str()) {
+        return Err("Hush signal source is not supported".into());
+    }
+    if !ALLOWED_QUALITIES.contains(&signal.quality.as_str()) {
+        return Err("Hush signal quality is not supported".into());
+    }
 
     let started_at = parse_bounded_timestamp("start", &signal.started_at, now)?;
     let ended_at = parse_bounded_timestamp("end", &signal.ended_at, now)?;
     parse_bounded_timestamp("capture", &signal.captured_at, now)?;
     if ended_at <= started_at {
         return Err("Hush signal end timestamp must be after its start timestamp".into());
+    }
+    let interval = ended_at - started_at;
+    if interval < MIN_DAILY_INTERVAL || interval > MAX_DAILY_INTERVAL {
+        return Err("Hush signal daily interval must be between 20 and 28 hours".into());
     }
     Ok(())
 }
@@ -555,7 +569,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let mut store = HushSignalStore::load_or_create(temp.path()).unwrap();
         let mut signal = steps_signal("health-connect:steps:today", 1.0);
-        signal.source = "s".repeat(65_536);
+        signal.source_id = "s".repeat(65_536);
 
         let error = store
             .ingest(
@@ -646,6 +660,123 @@ mod tests {
             )
             .unwrap_err()
             .contains("range"));
+    }
+
+    #[test]
+    fn rejects_raw_intervals_labeled_as_daily_health_summaries() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut store = HushSignalStore::load_or_create(temp.path()).unwrap();
+
+        for (kind, unit, value) in [
+            ("health.steps.daily", "count", 1.0),
+            ("health.resting_heart_rate.daily", "bpm", 70.0),
+            ("health.sleep.daily", "minutes", 1.0),
+        ] {
+            let mut signal = steps_signal(&format!("health-connect:{kind}"), value);
+            signal.kind = kind.into();
+            signal.unit = unit.into();
+            let started_at = chrono::DateTime::parse_from_rfc3339(&signal.started_at).unwrap();
+            signal.ended_at = (started_at + Duration::seconds(1)).to_rfc3339();
+
+            assert!(store
+                .ingest(
+                    "phone-1",
+                    HushSignalBatch {
+                        signals: vec![signal],
+                    },
+                )
+                .unwrap_err()
+                .contains("interval"));
+        }
+    }
+
+    #[test]
+    fn accepts_twenty_to_twenty_eight_hour_daily_intervals_inclusively() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut store = HushSignalStore::load_or_create(temp.path()).unwrap();
+
+        for (source_id, duration) in [
+            ("health-connect:steps:short-day", Duration::hours(20)),
+            ("health-connect:steps:long-day", Duration::hours(28)),
+        ] {
+            let mut signal = steps_signal(source_id, 1.0);
+            let started_at = chrono::DateTime::parse_from_rfc3339(&signal.started_at).unwrap();
+            signal.ended_at = (started_at + duration).to_rfc3339();
+            assert_eq!(
+                store
+                    .ingest(
+                        "phone-1",
+                        HushSignalBatch {
+                            signals: vec![signal],
+                        },
+                    )
+                    .unwrap()
+                    .imported,
+                1
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_blank_unknown_and_free_form_signal_sources() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut store = HushSignalStore::load_or_create(temp.path()).unwrap();
+
+        for source in ["", "wearable_vendor", "heart rate from private clinic"] {
+            let mut signal = steps_signal(&format!("health-connect:source:{source}"), 1.0);
+            signal.source = source.into();
+            assert!(store
+                .ingest(
+                    "phone-1",
+                    HushSignalBatch {
+                        signals: vec![signal],
+                    },
+                )
+                .unwrap_err()
+                .contains("source"));
+        }
+    }
+
+    #[test]
+    fn rejects_blank_unknown_and_free_form_signal_qualities() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut store = HushSignalStore::load_or_create(temp.path()).unwrap();
+
+        for quality in ["", "estimated", "patient says they slept badly"] {
+            let mut signal = steps_signal(&format!("health-connect:quality:{quality}"), 1.0);
+            signal.quality = quality.into();
+            assert!(store
+                .ingest(
+                    "phone-1",
+                    HushSignalBatch {
+                        signals: vec![signal],
+                    },
+                )
+                .unwrap_err()
+                .contains("quality"));
+        }
+    }
+
+    #[test]
+    fn accepts_the_explicit_first_slice_source_and_quality_enums() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut store = HushSignalStore::load_or_create(temp.path()).unwrap();
+        let mut signal = steps_signal("phone-step-counter:steps:today", 1.0);
+        signal.source = "phone_step_counter".into();
+        signal.quality = "device_estimate".into();
+
+        assert_eq!(
+            store
+                .ingest(
+                    "phone-1",
+                    HushSignalBatch {
+                        signals: vec![signal],
+                    },
+                )
+                .unwrap()
+                .imported,
+            1
+        );
     }
 
     #[test]
