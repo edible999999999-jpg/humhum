@@ -34,6 +34,19 @@ pub(crate) struct TranscriptSignals {
     pub(crate) messages: Vec<TranscriptMessage>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CodexPlanStep {
+    pub(crate) title: String,
+    pub(crate) status: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CodexPlanSnapshot {
+    pub(crate) timestamp: Option<String>,
+    pub(crate) explanation: Option<String>,
+    pub(crate) steps: Vec<CodexPlanStep>,
+}
+
 pub(crate) fn parse_transcript_signals(path: &Path) -> Result<TranscriptSignals, String> {
     let recent_lines = read_recent_lines(path)?;
     let mut signals = TranscriptSignals::default();
@@ -81,6 +94,64 @@ pub(crate) fn parse_transcript_signals(path: &Path) -> Result<TranscriptSignals,
     }
 
     Ok(signals)
+}
+
+pub(crate) fn parse_latest_codex_plan(path: &Path) -> Result<Option<CodexPlanSnapshot>, String> {
+    let recent_lines = read_recent_lines(path)?;
+    let mut latest = None;
+
+    for line in recent_lines {
+        let Ok(value) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        let payload = value.get("payload").unwrap_or(&Value::Null);
+        if payload.get("type").and_then(Value::as_str) != Some("function_call")
+            || payload.get("name").and_then(Value::as_str) != Some("update_plan")
+        {
+            continue;
+        }
+        let arguments = match payload.get("arguments") {
+            Some(Value::String(raw)) => serde_json::from_str::<Value>(raw).ok(),
+            Some(Value::Object(_)) => payload.get("arguments").cloned(),
+            _ => None,
+        };
+        let Some(arguments) = arguments else {
+            continue;
+        };
+        let Some(plan) = arguments.get("plan").and_then(Value::as_array) else {
+            continue;
+        };
+        let steps = plan
+            .iter()
+            .filter_map(|step| {
+                let title = step
+                    .get("step")
+                    .and_then(Value::as_str)
+                    .and_then(clean_text)?;
+                let status = step
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .and_then(clean_text)?;
+                Some(CodexPlanStep { title, status })
+            })
+            .collect::<Vec<_>>();
+        if steps.len() != plan.len() {
+            continue;
+        }
+        latest = Some(CodexPlanSnapshot {
+            timestamp: value
+                .get("timestamp")
+                .and_then(Value::as_str)
+                .map(String::from),
+            explanation: arguments
+                .get("explanation")
+                .and_then(Value::as_str)
+                .and_then(clean_text),
+            steps,
+        });
+    }
+
+    Ok(latest)
 }
 
 fn read_recent_lines(path: &Path) -> Result<Vec<String>, String> {
@@ -307,8 +378,8 @@ fn truncate_text(text: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_transcript_signals, read_recent_lines_from_snapshot, TranscriptMessage,
-        TranscriptRole, MAX_TAIL_BYTES,
+        parse_latest_codex_plan, parse_transcript_signals, read_recent_lines_from_snapshot,
+        TranscriptMessage, TranscriptRole, MAX_TAIL_BYTES,
     };
     use std::fs::OpenOptions;
     use std::io::Write;
@@ -329,6 +400,29 @@ mod tests {
 
     fn parse(path: &Path) -> super::TranscriptSignals {
         parse_transcript_signals(path).unwrap()
+    }
+
+    #[test]
+    fn recovers_the_latest_structured_codex_plan_from_the_bounded_tail() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rollout.jsonl");
+        write_lines(
+            &path,
+            &[
+                r#"{"timestamp":"2026-07-17T03:15:05Z","type":"response_item","payload":{"type":"function_call","name":"update_plan","arguments":"{\"explanation\":\"first\",\"plan\":[{\"step\":\"Inspect\",\"status\":\"in_progress\"},{\"step\":\"Fix\",\"status\":\"pending\"}]}"}}"#.to_string(),
+                r#"{"timestamp":"2026-07-17T06:59:22Z","type":"response_item","payload":{"type":"function_call","name":"update_plan","arguments":"{\"explanation\":\"latest\",\"plan\":[{\"step\":\"Inspect\",\"status\":\"completed\"},{\"step\":\"Fix\",\"status\":\"in_progress\"}]}"}}"#.to_string(),
+            ],
+        );
+
+        let plan = parse_latest_codex_plan(&path).unwrap().unwrap();
+
+        assert_eq!(plan.timestamp.as_deref(), Some("2026-07-17T06:59:22Z"));
+        assert_eq!(plan.explanation.as_deref(), Some("latest"));
+        assert_eq!(plan.steps.len(), 2);
+        assert_eq!(plan.steps[0].title, "Inspect");
+        assert_eq!(plan.steps[0].status, "completed");
+        assert_eq!(plan.steps[1].title, "Fix");
+        assert_eq!(plan.steps[1].status, "in_progress");
     }
 
     #[test]
