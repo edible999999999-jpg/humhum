@@ -11,14 +11,11 @@ import java.io.IOException
 import java.security.GeneralSecurityException
 import java.security.KeyStore
 import java.time.DateTimeException
-import java.time.Instant
-import java.time.LocalDate
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 import org.json.JSONException
-import org.json.JSONObject
 
 class PhoneStepCheckpointUnavailableException(message: String, cause: Throwable) :
     IllegalStateException(message, cause)
@@ -42,7 +39,7 @@ class EncryptedStepCheckpointStore(context: Context) : PhoneStepCheckpointStore 
                 }
                 output.toByteArray()
             }
-            decode(decrypt(envelope))
+            PhoneStepCheckpointCodec.decode(decrypt(envelope))
         } catch (_: FileNotFoundException) {
             null
         } catch (_: GeneralSecurityException) {
@@ -68,7 +65,7 @@ class EncryptedStepCheckpointStore(context: Context) : PhoneStepCheckpointStore 
     @Synchronized
     override fun write(checkpoint: PhoneStepCheckpoint) {
         val encrypted = try {
-            encrypt(encode(checkpoint))
+            encrypt(PhoneStepCheckpointCodec.encode(checkpoint))
         } catch (error: GeneralSecurityException) {
             throw PhoneStepCheckpointUnavailableException(
                 "Could not encrypt phone step checkpoint",
@@ -93,30 +90,6 @@ class EncryptedStepCheckpointStore(context: Context) : PhoneStepCheckpointStore 
                 error,
             )
         }
-    }
-
-    private fun encode(checkpoint: PhoneStepCheckpoint): ByteArray = JSONObject()
-        .put("version", JSON_VERSION)
-        .put("day", checkpoint.day.toString())
-        .put("day_baseline_steps", checkpoint.dayBaselineSteps)
-        .put("last_cumulative_steps", checkpoint.lastCumulativeSteps)
-        .put("elapsed_realtime_millis", checkpoint.elapsedRealtimeMillis)
-        .put("observed_at", checkpoint.observedAt.toString())
-        .toString()
-        .toByteArray(Charsets.UTF_8)
-
-    private fun decode(plaintext: ByteArray): PhoneStepCheckpoint {
-        val value = JSONObject(String(plaintext, Charsets.UTF_8))
-        require(value.length() == 6 && value.getInt("version") == JSON_VERSION) {
-            "Phone step checkpoint format is invalid"
-        }
-        return PhoneStepCheckpoint(
-            day = LocalDate.parse(value.getString("day")),
-            dayBaselineSteps = value.getDouble("day_baseline_steps"),
-            lastCumulativeSteps = value.getDouble("last_cumulative_steps"),
-            elapsedRealtimeMillis = value.getLong("elapsed_realtime_millis"),
-            observedAt = Instant.parse(value.getString("observed_at")),
-        )
     }
 
     @Throws(GeneralSecurityException::class)
@@ -166,7 +139,6 @@ class EncryptedStepCheckpointStore(context: Context) : PhoneStepCheckpointStore 
         private const val KEY_ALIAS = "humhum_phone_step_checkpoint_v1"
         private const val KEYSTORE = "AndroidKeyStore"
         private const val TRANSFORMATION = "AES/GCM/NoPadding"
-        private const val JSON_VERSION = 1
         private const val NONCE_BYTES = 12
         private const val TAG_BITS = 128
         private const val MAX_ENVELOPE_BYTES = 4_096

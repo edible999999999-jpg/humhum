@@ -74,6 +74,7 @@ class PhoneStepTrackerTest {
         val store = MemoryCheckpointStore(
             PhoneStepCheckpoint(
                 day = day.minusDays(1),
+                carriedDailySteps = 600.0,
                 dayBaselineSteps = 2_000.0,
                 lastCumulativeSteps = 2_900.0,
                 elapsedRealtimeMillis = 30 * HOUR_MILLIS,
@@ -97,11 +98,12 @@ class PhoneStepTrackerTest {
 
         assertEquals(120.0, firstToday ?: -1.0, 0.0)
         assertEquals(200.0, laterToday ?: -1.0, 0.0)
+        assertEquals(0.0, store.checkpoint?.carriedDailySteps ?: -1.0, 0.0)
         assertEquals(2_900.0, store.checkpoint?.dayBaselineSteps ?: -1.0, 0.0)
     }
 
     @Test
-    fun rebootOrCounterDecreaseResetsWithoutMixingThePreviousBoot() {
+    fun sameDayRebootCarriesThePreviousBootSegment() {
         val store = MemoryCheckpointStore(
             PhoneStepCheckpoint(
                 day = day,
@@ -126,9 +128,46 @@ class PhoneStepTrackerTest {
             observedAt = Instant.parse("2026-07-18T03:00:00Z"),
         )
 
-        assertEquals(40.0, afterReboot ?: -1.0, 0.0)
-        assertEquals(65.0, later ?: -1.0, 0.0)
+        assertEquals(440.0, afterReboot ?: -1.0, 0.0)
+        assertEquals(465.0, later ?: -1.0, 0.0)
         assertEquals(0.0, store.checkpoint?.dayBaselineSteps ?: -1.0, 0.0)
+    }
+
+    @Test
+    fun multipleSameDayRebootsCarryEachCompletedSegmentOnce() {
+        val store = MemoryCheckpointStore(
+            PhoneStepCheckpoint(
+                day = day,
+                dayBaselineSteps = 100.0,
+                lastCumulativeSteps = 300.0,
+                elapsedRealtimeMillis = 8 * HOUR_MILLIS,
+                observedAt = Instant.parse("2026-07-18T00:00:00Z"),
+            ),
+        )
+        val tracker = PhoneStepTracker(store, zone)
+
+        val afterFirstReboot = tracker.observe(
+            day = day,
+            cumulativeSteps = 20.0,
+            elapsedRealtimeMillis = HOUR_MILLIS,
+            observedAt = Instant.parse("2026-07-18T02:00:00Z"),
+        )
+        val beforeSecondReboot = tracker.observe(
+            day = day,
+            cumulativeSteps = 30.0,
+            elapsedRealtimeMillis = 2 * HOUR_MILLIS,
+            observedAt = Instant.parse("2026-07-18T03:00:00Z"),
+        )
+        val afterSecondReboot = tracker.observe(
+            day = day,
+            cumulativeSteps = 5.0,
+            elapsedRealtimeMillis = 15 * 60_000L,
+            observedAt = Instant.parse("2026-07-18T04:00:00Z"),
+        )
+
+        assertEquals(220.0, afterFirstReboot ?: -1.0, 0.0)
+        assertEquals(230.0, beforeSecondReboot ?: -1.0, 0.0)
+        assertEquals(235.0, afterSecondReboot ?: -1.0, 0.0)
     }
 
     private class MemoryCheckpointStore(
