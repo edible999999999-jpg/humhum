@@ -12,12 +12,6 @@ const PLATFORM_ICONS: Record<string, string> = {
   facetime: "📱",
 };
 
-const TIER_LABEL_KEYS: Record<string, string> = {
-  family: "hub.hush.tier.family",
-  friends: "hub.hush.tier.friends",
-  work: "hub.hush.tier.work",
-};
-
 const TIER_ORDER: string[] = ["family", "friends", "work"];
 
 interface HushConnectorStatus {
@@ -71,6 +65,18 @@ interface DerivedContact {
   messages: HushInboxMessage[];
 }
 
+export function compareHushContacts(
+  a: Pick<DerivedContact, "importance" | "lastMessageTime">,
+  b: Pick<DerivedContact, "importance" | "lastMessageTime">,
+): number {
+  const aTime = Date.parse(a.lastMessageTime);
+  const bTime = Date.parse(b.lastMessageTime);
+  const timeDifference =
+    (Number.isFinite(bTime) ? bTime : Number.NEGATIVE_INFINITY) -
+    (Number.isFinite(aTime) ? aTime : Number.NEGATIVE_INFINITY);
+  return timeDifference || b.importance - a.importance;
+}
+
 interface DwsHushStatus {
   state: "not_installed" | "authentication_required" | "ready" | "syncing" | "error";
   message: string;
@@ -98,7 +104,6 @@ interface DwsSyncReport {
 export function HushModule() {
   const { t } = useTranslation();
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [collapsedTiers, setCollapsedTiers] = useState<Set<string>>(new Set());
   const [connectors, setConnectors] = useState<HushConnectorStatus[]>([]);
   const [inbox, setInbox] = useState<HushInboxSummary | null>(null);
   const [notificationBridge, setNotificationBridge] = useState<NotificationBridgeStatus | null>(null);
@@ -295,23 +300,12 @@ export function HushModule() {
         });
       }
     }
-    return Array.from(map.values()).sort(
-      (a, b) => b.importance - a.importance || b.lastMessageTime.localeCompare(a.lastMessageTime),
-    );
+    return Array.from(map.values()).sort(compareHushContacts);
   }, [inbox]);
 
   const selectedContact = selectedId
     ? contacts.find((c) => c.id === selectedId) ?? null
     : null;
-
-  const toggleTier = (tier: string) => {
-    setCollapsedTiers((prev) => {
-      const next = new Set(prev);
-      if (next.has(tier)) next.delete(tier);
-      else next.add(tier);
-      return next;
-    });
-  };
 
   return (
     <div className="hub-module">
@@ -406,50 +400,14 @@ export function HushModule() {
             }}
             className="scrollbar-thin"
           >
-            {TIER_ORDER.map((tier) => {
-              const tierContacts = contacts.filter((c) => c.tier === tier);
-              if (tierContacts.length === 0) return null;
-              const collapsed = collapsedTiers.has(tier);
-
-              return (
-                <div key={tier}>
-                  <div
-                    onClick={() => toggleTier(tier)}
-                    style={{
-                      padding: "8px 12px",
-                      fontSize: 11,
-                      fontWeight: 700,
-                      color: "#64748b",
-                      cursor: "pointer",
-                      borderBottom: "1px solid rgba(116,143,165,0.1)",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      position: "sticky",
-                      top: 0,
-                      background: "rgba(247,251,255,0.92)",
-                      backdropFilter: "blur(8px)",
-                      zIndex: 1,
-                    }}
-                  >
-                    <span>{t(TIER_LABEL_KEYS[tier] ?? "hub.hush.tier.work")}</span>
-                    <span style={{ fontSize: 10, color: "#94a3b8" }}>
-                      {tierContacts.length} {collapsed ? "▸" : "▾"}
-                    </span>
-                  </div>
-
-                  {!collapsed &&
-                    tierContacts.map((contact) => (
-                      <ContactRow
-                        key={contact.id}
-                        contact={contact}
-                        selected={selectedId === contact.id}
-                        onClick={() => setSelectedId(contact.id)}
-                      />
-                    ))}
-                </div>
-              );
-            })}
+            {contacts.map((contact) => (
+              <ContactRow
+                key={contact.id}
+                contact={contact}
+                selected={selectedId === contact.id}
+                onClick={() => setSelectedId(contact.id)}
+              />
+            ))}
           </div>
 
           {/* Detail panel */}
