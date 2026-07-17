@@ -578,9 +578,11 @@ impl CodexBridgeState {
             .await
             .map_err(|error| error.to_string())?;
         let home_dir = dirs::home_dir();
+        let mut attempted_watch_workspaces = HashSet::new();
         for (event, transcript_path) in thread_list_entries(&listed) {
             let thread_id = event.session_id.clone();
-            let watched = self.apply_event(app, event);
+            let sync_watch = should_sync_listed_watch(&mut attempted_watch_workspaces, &event);
+            let watched = self.apply_event_with_watch(app, event, sync_watch);
             if !watched {
                 continue;
             }
@@ -663,6 +665,15 @@ impl CodexBridgeState {
     }
 
     fn apply_event(&self, app: &tauri::AppHandle, event: HexaEvent) -> bool {
+        self.apply_event_with_watch(app, event, true)
+    }
+
+    fn apply_event_with_watch(
+        &self,
+        app: &tauri::AppHandle,
+        event: HexaEvent,
+        sync_watch: bool,
+    ) -> bool {
         let projection = self.projections.lock().ok().and_then(|mut store| {
             store.apply(&event);
             store.session(&event.session_id).cloned()
@@ -671,21 +682,23 @@ impl CodexBridgeState {
             let _ = app.emit("humhum://hexa-session-changed", projection);
         }
         let mut watched = false;
-        if let (Some(projection), Some(watch_store)) =
-            (projection, app.try_state::<Arc<Mutex<HexaWatchStore>>>())
-        {
-            if let Ok(mut store) = watch_store.lock() {
-                match sync_watched_codex_event(&mut store, &event, &projection) {
-                    Ok(Some(watched)) => {
-                        let _ = app.emit("humhum://hexa-session-changed", watched);
+        if sync_watch {
+            if let (Some(projection), Some(watch_store)) =
+                (projection, app.try_state::<Arc<Mutex<HexaWatchStore>>>())
+            {
+                if let Ok(mut store) = watch_store.lock() {
+                    match sync_watched_codex_event(&mut store, &event, &projection) {
+                        Ok(Some(watched)) => {
+                            let _ = app.emit("humhum://hexa-session-changed", watched);
+                        }
+                        Ok(None) => {}
+                        Err(error) => log::warn!("Could not sync Codex event into Hexa: {error}"),
                     }
-                    Ok(None) => {}
-                    Err(error) => log::warn!("Could not sync Codex event into Hexa: {error}"),
+                    watched = store.sessions().iter().any(|session| {
+                        session.session_id == event.session_id
+                            && session.status != crate::hexa_watch_store::HexaWatchStatus::Completed
+                    });
                 }
-                watched = store.sessions().iter().any(|session| {
-                    session.session_id == event.session_id
-                        && session.status != crate::hexa_watch_store::HexaWatchStatus::Completed
-                });
             }
         }
         watched
@@ -792,6 +805,13 @@ fn thread_list_events(response: &Value) -> Vec<HexaEvent> {
         .into_iter()
         .map(|(event, _)| event)
         .collect()
+}
+
+fn should_sync_listed_watch(attempted_workspaces: &mut HashSet<String>, event: &HexaEvent) -> bool {
+    let Some(workspace) = event.payload.get("workspace").and_then(Value::as_str) else {
+        return true;
+    };
+    attempted_workspaces.insert(format!("{}\0{workspace}", event.provider))
 }
 
 fn pending_key_for_event(event: &HexaEvent) -> Option<String> {
@@ -1362,6 +1382,31 @@ if ($second.Contains('"method":"turn/start"')) {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].session_id, "thread-1");
         assert_eq!(events[0].payload["project_name"], "Bridge work");
+    }
+
+    #[test]
+    fn only_the_newest_listed_thread_can_claim_a_watched_workspace() {
+        let response = json!({
+            "data": [
+                {
+                    "id": "thread-newest",
+                    "cwd": "/workspace/loop",
+                    "name": "loop工程",
+                    "preview": "latest"
+                },
+                {
+                    "id": "thread-older",
+                    "cwd": "/workspace/loop",
+                    "name": "old task",
+                    "preview": "older"
+                }
+            ]
+        });
+        let events = thread_list_events(&response);
+        let mut attempted = HashSet::new();
+
+        assert!(should_sync_listed_watch(&mut attempted, &events[0]));
+        assert!(!should_sync_listed_watch(&mut attempted, &events[1]));
     }
 
     #[tokio::test]

@@ -670,13 +670,39 @@ impl HexaWatchStore {
         thread_id: &str,
     ) -> Result<Option<HexaWatchedSession>, String> {
         self.reload_from_disk()?;
-        if let Some(existing) = self
-            .agents
-            .values()
-            .flat_map(|agent| &agent.runs)
-            .find(|session| session_matches_id(session, thread_id))
-        {
-            return Ok(Some(existing.clone()));
+        if let Some((agent_key, index)) = self.agents.iter().find_map(|(key, agent)| {
+            agent
+                .runs
+                .iter()
+                .position(|session| session_matches_id(session, thread_id))
+                .map(|index| (key.clone(), index))
+        }) {
+            let existing = &self
+                .agents
+                .get(&agent_key)
+                .expect("matched watched agent must exist")
+                .runs[index];
+            if existing.session_id == thread_id {
+                return Ok(Some(existing.clone()));
+            }
+            let mut agents = self.agents.clone();
+            let agent = agents
+                .get_mut(&agent_key)
+                .expect("matched watched agent must exist");
+            let session = &mut agent.runs[index];
+            let previous = std::mem::replace(&mut session.session_id, thread_id.to_string());
+            session
+                .previous_session_ids
+                .retain(|candidate| candidate != thread_id);
+            if previous != thread_id && !session.previous_session_ids.contains(&previous) {
+                session.previous_session_ids.push(previous);
+            }
+            session.updated_at = chrono::Utc::now().to_rfc3339();
+            agent.updated_at = session.updated_at.clone();
+            let promoted = session.clone();
+            self.persist_agents(&agents)?;
+            self.agents = agents;
+            return Ok(Some(promoted));
         }
 
         let candidates = self
@@ -694,6 +720,7 @@ impl HexaWatchStore {
                             workspace.is_some() && session.workspace.as_deref() == workspace;
                         (provider_matches
                             && workspace_matches
+                            && session.previous_session_ids.is_empty()
                             && session.status != HexaWatchStatus::Completed)
                             .then(|| (key.clone(), index))
                     })
@@ -1344,6 +1371,57 @@ mod tests {
             .sessions()
             .iter()
             .all(|session| session.session_id != "run-1"));
+    }
+
+    #[test]
+    fn does_not_rebind_an_already_bound_workspace_to_another_provider_thread() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut store = HexaWatchStore::load_or_create(directory.path()).unwrap();
+        store.register(register_request()).unwrap();
+        store
+            .bind_provider_thread("openai", Some("/workspace/humhum"), "thread-real")
+            .unwrap();
+
+        let rebound = store
+            .bind_provider_thread("openai", Some("/workspace/humhum"), "thread-other")
+            .unwrap();
+
+        assert!(rebound.is_none());
+        assert_eq!(store.sessions()[0].session_id, "thread-real");
+        assert_eq!(store.sessions()[0].previous_session_ids, ["run-1"]);
+    }
+
+    #[test]
+    fn promotes_a_previously_seen_provider_thread_back_to_current() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut store = HexaWatchStore::load_or_create(directory.path()).unwrap();
+        store.register(register_request()).unwrap();
+        store
+            .bind_provider_thread("openai", Some("/workspace/humhum"), "thread-real")
+            .unwrap();
+        drop(store);
+
+        let path = directory.path().join("hexa-watch.json");
+        let mut snapshot: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        let run = &mut snapshot["agents"]
+            .as_object_mut()
+            .unwrap()
+            .values_mut()
+            .next()
+            .unwrap()["runs"][0];
+        run["session_id"] = serde_json::json!("thread-wrong");
+        run["previous_session_ids"] = serde_json::json!(["run-1", "thread-real"]);
+        fs::write(&path, serde_json::to_vec_pretty(&snapshot).unwrap()).unwrap();
+
+        let mut restored = HexaWatchStore::load_or_create(directory.path()).unwrap();
+        let promoted = restored
+            .bind_provider_thread("openai", Some("/workspace/humhum"), "thread-real")
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(promoted.session_id, "thread-real");
+        assert_eq!(promoted.previous_session_ids, ["run-1", "thread-wrong"]);
     }
 
     #[test]
