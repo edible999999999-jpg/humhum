@@ -3,6 +3,7 @@ import {
   WATCHED_REFRESH_INTERVAL_MS,
   createCoalescedRefresh,
   hasPollableWatchedRun,
+  watchedRefreshAction,
 } from "./hexaRefreshPolicy";
 
 describe("Hexa refresh policy", () => {
@@ -10,11 +11,33 @@ describe("Hexa refresh policy", () => {
     expect(WATCHED_REFRESH_INTERVAL_MS).toBe(20_000);
   });
 
-  it("polls only while a watched run has not completed", () => {
-    expect(hasPollableWatchedRun([])).toBe(false);
-    expect(hasPollableWatchedRun([{ runs: [{ status: "completed" }] }])).toBe(false);
-    expect(hasPollableWatchedRun([{ runs: [{ status: "working" }] }])).toBe(true);
-    expect(hasPollableWatchedRun([{ runs: [{ status: "waiting" }] }])).toBe(true);
+  it("polls only fresh active watched runs", () => {
+    const now = new Date("2026-07-17T12:00:00Z").getTime();
+    expect(hasPollableWatchedRun([], now)).toBe(false);
+    expect(hasPollableWatchedRun([{
+      runs: [{ status: "completed", updated_at: "2026-07-17T11:59:00Z" }],
+    }], now)).toBe(false);
+    expect(hasPollableWatchedRun([{
+      runs: [{ status: "working", updated_at: "2026-07-17T11:45:00Z" }],
+    }], now)).toBe(true);
+    expect(hasPollableWatchedRun([{
+      runs: [{ status: "waiting", updated_at: "2026-07-17T11:29:59Z" }],
+    }], now)).toBe(false);
+    expect(hasPollableWatchedRun([{
+      runs: [{ status: "blocked", updated_at: "not-a-date" }],
+    }], now)).toBe(false);
+  });
+
+  it("renders a stale transition once without polling the backend forever", () => {
+    const now = new Date("2026-07-17T12:00:00Z").getTime();
+    const stale = [{
+      runs: [{ status: "working", updated_at: "2026-07-17T11:29:59Z" }],
+    }];
+    expect(watchedRefreshAction(stale, false, now)).toBe("render_expired");
+    expect(watchedRefreshAction(stale, true, now)).toBe("idle");
+    expect(watchedRefreshAction([{
+      runs: [{ status: "working", updated_at: "2026-07-17T11:45:00Z" }],
+    }], true, now)).toBe("poll");
   });
 
   it("coalesces triggers received during a refresh into one follow-up", async () => {

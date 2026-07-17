@@ -18,15 +18,17 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "test": "vitest run",
+    "test": "vitest run && npm run test:hexa",
+    "test:hexa": "node --test scripts/hexa-session-context.test.mjs scripts/hexa-plan-input.test.mjs scripts/humhum-hexa.test.mjs",
     "test:relay": "node --test relay/test/*.test.mjs",
     "test:all": "npm test && npm run test:relay",
     "preview": "vite preview",
     "tauri": "tauri",
-    "hexa:watch": "node scripts/hexa-watch.mjs",
-    "hexa:update": "node scripts/hexa-update.mjs",
-    "hexa:plan": "node scripts/hexa-plan.mjs",
-    "hexa:unwatch": "node scripts/hexa-unwatch.mjs"
+    "hexa:watch": "node scripts/humhum-hexa.mjs watch",
+    "hexa:update": "node scripts/humhum-hexa.mjs update",
+    "hexa:plan": "node scripts/humhum-hexa.mjs plan",
+    "hexa:complete": "node scripts/humhum-hexa.mjs complete",
+    "hexa:unwatch": "node scripts/humhum-hexa.mjs unwatch"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "^0.80.6",

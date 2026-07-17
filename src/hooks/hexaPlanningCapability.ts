@@ -33,5 +33,23 @@ export function watchedSessionIsExpired(
 ): boolean {
   if (!new Set(["starting", "working", "waiting", "blocked"]).has(status)) return false;
   const updated = new Date(updatedAt).getTime();
-  return Number.isFinite(updated) && now - updated > WATCHED_SESSION_EXPIRY_MS;
+  return !Number.isFinite(updated) || now - updated > WATCHED_SESSION_EXPIRY_MS;
+}
+
+export function watchedSessionConnectionLabel(
+  status: string,
+  updatedAt: string,
+  now = Date.now(),
+): string | null {
+  return watchedSessionIsExpired(status, updatedAt, now) ? "已断开" : null;
+}
+
+export function watchedSessionAge(value: string, now = Date.now()): string {
+  const updated = new Date(value).getTime();
+  if (!Number.isFinite(updated)) return "时间未知";
+  const minutes = Math.max(0, Math.floor((now - updated) / 60_000));
+  if (minutes < 1) return "刚刚";
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  return hours < 48 ? `${hours}h` : `${Math.floor(hours / 24)}d`;
 }

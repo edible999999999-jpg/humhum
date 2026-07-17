@@ -1,7 +1,7 @@
 use crate::event_bus::{self, HookEvent, PermissionDecision};
 use crate::hexa_watch_store::{
-    HexaAuditMutation, HexaAuditMutationRequest, HexaWatchDeleteRequest, HexaWatchRegisterRequest,
-    HexaPlanSyncRequest, HexaWatchStore, HexaWatchUpdateRequest,
+    HexaAuditMutation, HexaAuditMutationRequest, HexaPlanSyncRequest, HexaWatchDeleteRequest,
+    HexaWatchRegisterRequest, HexaWatchStore, HexaWatchUpdateRequest,
 };
 use crate::local_api_auth::{LocalApiAuth, TOKEN_HEADER};
 use crate::mobile_bridge::MobileBridgeState;

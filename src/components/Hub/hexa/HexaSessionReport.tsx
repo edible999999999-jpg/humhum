@@ -83,7 +83,7 @@ export function HexaSessionReportView({
   const report = buildHexaSessionReport(session, pendingConfirmations);
   const alignment = ALIGNMENT[report.alignment];
   const status = watchedSessionIsExpired(session.status, session.updated_at)
-    ? { label: "会话已过期", color: "#f59e0b" }
+    ? { label: "已断开", color: "#94a3b8" }
     : STATUS[session.status];
   const planning = planningCapabilityCopy(session.planning_capability);
   const evidence = [

@@ -1,11 +1,36 @@
 export const WATCHED_REFRESH_INTERVAL_MS = 20_000;
 
+import { watchedSessionIsExpired } from "./hexaPlanningCapability";
+
 type WatchedAgentLike = {
-  runs: Array<{ status: string }>;
+  runs: Array<{ status: string; updated_at: string }>;
 };
 
-export function hasPollableWatchedRun(agents: WatchedAgentLike[]): boolean {
-  return agents.some((agent) => agent.runs.some((run) => run.status !== "completed"));
+const ACTIVE_WATCHED_STATUSES = new Set(["starting", "working", "waiting", "blocked"]);
+
+export function hasPollableWatchedRun(
+  agents: WatchedAgentLike[],
+  now = Date.now(),
+): boolean {
+  return agents.some((agent) => agent.runs.some((run) => (
+    ACTIVE_WATCHED_STATUSES.has(run.status)
+    && !watchedSessionIsExpired(run.status, run.updated_at, now)
+  )));
+}
+
+export type WatchedRefreshAction = "poll" | "render_expired" | "idle";
+
+export function watchedRefreshAction(
+  agents: WatchedAgentLike[],
+  expiredTransitionRendered: boolean,
+  now = Date.now(),
+): WatchedRefreshAction {
+  if (hasPollableWatchedRun(agents, now)) return "poll";
+  const hasDisconnectedActiveRun = agents.some((agent) => agent.runs.some(
+    (run) => ACTIVE_WATCHED_STATUSES.has(run.status),
+  ));
+  if (hasDisconnectedActiveRun && !expiredTransitionRendered) return "render_expired";
+  return "idle";
 }
 
 export function createCoalescedRefresh(

@@ -59,9 +59,9 @@ const STATUS_COLORS: Record<HexaSupervisorSession["progress_status"], string> = 
   completed: "rgba(255,255,255,0.42)",
 };
 
-const HEXA_REGISTER_COMMAND = `npm run hexa:watch -- "请把这里改成这轮任务目标"`;
-const HEXA_UPDATE_COMMAND = `npm run hexa:update -- "我正在推进当前步骤"`;
-const HEXA_DELETE_COMMAND = `npm run hexa:unwatch`;
+const HEXA_REGISTER_COMMAND = `~/.humhum/bin/humhum-hexa watch "请把这里改成这轮任务目标"`;
+const HEXA_UPDATE_COMMAND = `~/.humhum/bin/humhum-hexa update "我正在推进当前步骤"`;
+const HEXA_DELETE_COMMAND = `~/.humhum/bin/humhum-hexa unwatch`;
 
 function getClientColor(client: string): string {
   return CLIENT_COLORS[client] || "#94eff4";
@@ -1400,7 +1400,7 @@ function WatchCommandPanel() {
         <div>
           <div style={{ color: "rgba(255,255,255,0.78)", fontSize: 12, fontWeight: 900 }}>主动加入 Hexa 托管</div>
           <div style={{ color: "rgba(255,255,255,0.34)", fontSize: 10, lineHeight: 1.45, marginTop: 4 }}>
-            自动扫描会按 Agent 折叠。任何 agent 只要看到用户说“重点监控这个会话”，就应该执行下面短命令绑定到 Hexa。
+            已接入的 Agent 在任何项目里看到“重点监控这个会话”后，都会用全局 Connector 绑定真实会话，不再依赖当前项目的 npm 脚本。
           </div>
         </div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
@@ -1432,7 +1432,7 @@ function WatchCommandPanel() {
           </pre>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
             <div style={{ color: "rgba(255,255,255,0.28)", fontSize: 10 }}>
-              后续进展用 update；结束托管用 unwatch。界面里托管卡片右上角也有删除按钮。
+              后续进展用 update；结束托管用 unwatch。Agent 没有结构化计划能力时，Hexa 会明确说明，不会伪造工作项。
             </div>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
               <button type="button" className="kawaii-toggle-btn" onClick={() => void copy("update", HEXA_UPDATE_COMMAND)}>

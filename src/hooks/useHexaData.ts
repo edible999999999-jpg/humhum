@@ -9,7 +9,7 @@ import type { HexaPlanningCapability, HexaWorkItemSource } from "./hexaPlanningC
 import {
   WATCHED_REFRESH_INTERVAL_MS,
   createCoalescedRefresh,
-  hasPollableWatchedRun,
+  watchedRefreshAction,
 } from "./hexaRefreshPolicy";
 import {
   applyWatchedLifecycle,
@@ -776,6 +776,7 @@ export function useHexaData() {
   const [mobilePairing, setMobilePairing] = useState<MobilePairingInfo | null>(null);
   const [queuedInterventions, setQueuedInterventions] = useState<QueuedIntervention[]>([]);
   const watchedAgentsRef = useRef<HexaWatchedAgent[]>([]);
+  const watchedExpiryRenderedRef = useRef(false);
   const sessionDataRef = useRef<HexaSession[]>([]);
   const statsDataRef = useRef<AgentStats[]>([]);
   const readoutDataRef = useRef<HexaReadout[]>([]);
@@ -826,6 +827,7 @@ export function useHexaData() {
       const bridgeData = bridgeDataRef.current;
       const watchedAgentData = watchRefresh.data ?? [];
       watchedAgentsRef.current = watchedAgentData;
+      watchedExpiryRenderedRef.current = false;
       const watchedData = watchedAgentData.flatMap((agent) => agent.runs);
       const healthData = healthResult.status === "fulfilled" ? healthResult.value : null;
       const queueData = queueDataRef.current;
@@ -904,6 +906,7 @@ export function useHexaData() {
       }
       if (watchedResult.status === "fulfilled") {
         watchedAgentsRef.current = watchedResult.value;
+        watchedExpiryRenderedRef.current = false;
         setWatchedAgents(watchedResult.value);
       }
       if (healthResult.status === "fulfilled") setBridgeHealth(healthResult.value);
@@ -914,9 +917,19 @@ export function useHexaData() {
 
   const fetchWatchedState = useMemo(
     () => createCoalescedRefresh(async () => {
-      if (!hasPollableWatchedRun(watchedAgentsRef.current)) return;
+      const action = watchedRefreshAction(
+        watchedAgentsRef.current,
+        watchedExpiryRenderedRef.current,
+      );
+      if (action === "idle") return;
+      if (action === "render_expired") {
+        watchedExpiryRenderedRef.current = true;
+        setWatchedAgents((current) => [...current]);
+        return;
+      }
       const watched = await invoke<HexaWatchedAgent[]>("get_hexa_watched_agents");
       watchedAgentsRef.current = watched;
+      watchedExpiryRenderedRef.current = false;
       setWatchedAgents(watched);
     }),
     [],

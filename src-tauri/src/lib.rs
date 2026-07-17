@@ -8,6 +8,7 @@ mod cursor_focus_extension;
 mod event_bus;
 mod git_changes;
 mod hermes_plugin;
+mod hexa_connector;
 mod hexa_protocol;
 mod hexa_watch_store;
 mod hook_server;
@@ -116,6 +117,18 @@ pub fn run() {
             if let Some(home) = dirs::home_dir() {
                 if let Err(error) = commands::ensure_hook_script_installed(&home) {
                     log::warn!("Could not refresh HUMHUM hook script: {error}");
+                }
+                match hexa_connector::ensure_installed(&home) {
+                    Ok(report) => {
+                        log::info!(
+                            "Hexa global connector ready for {} detected Agent(s)",
+                            report.installed_skills.len()
+                        );
+                        for warning in report.warnings {
+                            log::warn!("Hexa connector capability warning: {warning}");
+                        }
+                    }
+                    Err(error) => log::warn!("Could not install Hexa global connector: {error}"),
                 }
                 if let Err(error) = cursor_focus_extension::ensure_for_managed_hook(&home) {
                     log::warn!("Could not refresh HUMHUM Cursor focus extension: {error}");
