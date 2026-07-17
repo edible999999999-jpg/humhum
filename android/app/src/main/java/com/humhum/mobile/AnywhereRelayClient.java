@@ -142,7 +142,7 @@ public final class AnywhereRelayClient {
     public static final class RelayStatusException extends IOException {
         private final int status;
 
-        RelayStatusException(int status) {
+        public RelayStatusException(int status) {
             super("Anywhere relay request failed");
             this.status = status;
         }

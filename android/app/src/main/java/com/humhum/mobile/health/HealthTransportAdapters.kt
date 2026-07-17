@@ -6,13 +6,17 @@ import com.humhum.mobile.AnywhereRelayClient
 import com.humhum.mobile.AnywhereStateStore
 import com.humhum.mobile.ConnectionStore
 import com.humhum.mobile.MobileProtocol
-import java.io.IOException
+import java.time.Instant
 import org.json.JSONArray
+
+fun interface HealthSignalConnectionProvider {
+    fun current(): HealthSignalConnection
+}
 
 class AndroidHealthSignalConnectionProvider(
     private val context: Context,
-) {
-    fun current(): HealthSignalConnection {
+) : HealthSignalConnectionProvider {
+    override fun current(): HealthSignalConnection {
         val connection = ConnectionStore(
             context.getSharedPreferences("humhum_connection", Context.MODE_PRIVATE),
         ).load() ?: return HealthSignalConnection()
@@ -24,10 +28,11 @@ class AndroidHealthSignalConnectionProvider(
                     connection.scope(),
                 ).uploadSignals(signals.toJsonArray())
                 UploadResponse(result.imported(), result.duplicates())
-            } catch (error: IOException) {
-                throw error
             } catch (error: Exception) {
-                throw IOException("Direct health upload failed", error)
+                throw HealthTransportRetryPolicy.asTransportException(
+                    error,
+                    "Direct health upload",
+                )
             }
         }
         val relayConfig = connection.wakeRelay()
@@ -45,10 +50,11 @@ class AndroidHealthSignalConnectionProvider(
                     )
                     val result = gateway.uploadSignals(relayConfig, signals.toJsonArray())
                     UploadResponse(result.imported(), result.duplicates())
-                } catch (error: IOException) {
-                    throw error
                 } catch (error: Exception) {
-                    throw IOException("Anywhere health upload failed", error)
+                    throw HealthTransportRetryPolicy.asTransportException(
+                        error,
+                        "Anywhere health upload",
+                    )
                 }
             }
         } else {
@@ -66,12 +72,31 @@ class AndroidHealthSignalConnectionProvider(
     }
 }
 
-class QueuedHealthSignalSink(
+interface HealthSignalBuffer : PendingHealthSignalQueue {
+    fun enqueue(signals: Collection<HealthSignal>, now: Instant)
+}
+
+class EncryptedHealthSignalBuffer(
     private val queue: EncryptedHealthQueue,
-    private val connectionProvider: AndroidHealthSignalConnectionProvider,
+) : HealthSignalBuffer {
+    override fun enqueue(signals: Collection<HealthSignal>, now: Instant) {
+        queue.enqueue(signals, now)
+    }
+
+    override fun peekBatch(limit: Int, now: Instant): List<HealthSignal> =
+        queue.peekBatch(limit, now)
+
+    override fun acknowledge(sourceIds: Collection<String>) {
+        queue.acknowledge(sourceIds)
+    }
+}
+
+class QueuedHealthSignalSink(
+    private val queue: HealthSignalBuffer,
+    private val connectionProvider: HealthSignalConnectionProvider,
     private val uploader: HealthSignalUploader = HealthSignalUploader(),
 ) : HealthSignalSink {
-    override fun enqueue(signals: Collection<HealthSignal>, now: java.time.Instant) {
+    override fun enqueue(signals: Collection<HealthSignal>, now: Instant) {
         queue.enqueue(signals, now)
     }
 
@@ -81,12 +106,11 @@ class QueuedHealthSignalSink(
         if (!hasRoute) return HealthDelivery()
         return try {
             val result = uploader.syncPending(connection, queue)
-            HealthDelivery(
-                result = result,
-                transientFailure = !result.delivered,
-            )
+            HealthDelivery(result = result)
+        } catch (_: HealthQueueUnavailableException) {
+            HealthDelivery(queueUnavailable = true)
         } catch (_: RuntimeException) {
-            HealthDelivery(transientFailure = false)
+            HealthDelivery()
         }
     }
 }

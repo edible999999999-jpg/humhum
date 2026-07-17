@@ -525,7 +525,7 @@ public final class MobileProtocol {
     public static final class HttpStatusException extends IOException {
         private final int status;
 
-        HttpStatusException(int status, String message) {
+        public HttpStatusException(int status, String message) {
             super(message);
             this.status = status;
         }

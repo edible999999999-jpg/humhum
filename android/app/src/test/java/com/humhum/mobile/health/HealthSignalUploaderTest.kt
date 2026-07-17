@@ -98,6 +98,7 @@ class HealthSignalUploaderTest {
 
         assertFalse(result.delivered)
         assertTrue(result.incomplete)
+        assertFalse(result.retryable)
         assertEquals(UploadRoute.DIRECT, result.route)
         assertTrue(queue.acknowledged.isEmpty())
         assertEquals(listOf(signal), queue.peekBatch(31))
@@ -121,6 +122,32 @@ class HealthSignalUploaderTest {
 
         assertFalse(result.delivered)
         assertTrue(result.incomplete)
+        assertFalse(result.retryable)
+    }
+
+    @Test
+    fun onlyTypedTransientTransportFailureRequestsWorkerRetry() {
+        val transient = HealthSignalUploader().sync(
+            HealthSignalConnection(
+                direct = RecordingTransport(
+                    TransientHealthTransportException("connection timed out"),
+                ),
+            ),
+            listOf(signal),
+        )
+        val permanent = HealthSignalUploader().sync(
+            HealthSignalConnection(
+                direct = RecordingTransport(
+                    PermanentHealthTransportException("pairing revoked"),
+                ),
+            ),
+            listOf(signal),
+        )
+
+        assertTrue(transient.retryable)
+        assertFalse(permanent.retryable)
+        assertFalse(transient.delivered)
+        assertFalse(permanent.delivered)
     }
 
     @Test

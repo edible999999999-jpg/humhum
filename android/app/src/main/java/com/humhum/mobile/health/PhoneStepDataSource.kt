@@ -1,16 +1,15 @@
 package com.humhum.mobile.health
 
 import android.content.Context
-import android.content.SharedPreferences
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.Build
 import android.os.SystemClock
-import androidx.core.content.edit
 import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneId
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.resume
@@ -19,9 +18,11 @@ class PhoneStepDataSource(
     private val context: Context,
     private val sensorManager: SensorManager =
         context.getSystemService(Context.SENSOR_SERVICE) as SensorManager,
-    private val cursor: SharedPreferences =
-        context.getSharedPreferences("humhum_health_step_cursor", Context.MODE_PRIVATE),
+    private val checkpoints: PhoneStepCheckpointStore =
+        EncryptedStepCheckpointStore(context),
     private val clock: () -> Instant = Instant::now,
+    private val elapsedRealtime: () -> Long = SystemClock::elapsedRealtime,
+    private val zone: ZoneId = ZoneId.systemDefault(),
 ) : HealthDataSource {
     override val source = HealthSource.PHONE_STEP_COUNTER
 
@@ -61,21 +62,12 @@ class PhoneStepDataSource(
         val total = withTimeoutOrNull(SENSOR_TIMEOUT_MILLIS) {
             awaitCounter(sensor)
         } ?: return null
-        val elapsed = SystemClock.elapsedRealtime()
-        val storedDay = cursor.getString(KEY_DAY, null)
-        val baseline = cursor.getFloat(KEY_BASELINE, Float.NaN).toDouble()
-        val previousElapsed = cursor.getLong(KEY_ELAPSED, -1L)
-        val reset = storedDay != day.toString() ||
-            !baseline.isFinite() ||
-            total < baseline ||
-            previousElapsed < 0 ||
-            elapsed < previousElapsed
-        cursor.edit {
-            putString(KEY_DAY, day.toString())
-            putFloat(KEY_BASELINE, if (reset) total.toFloat() else baseline.toFloat())
-            putLong(KEY_ELAPSED, elapsed)
-        }
-        return if (reset) null else (total - baseline).coerceAtLeast(0.0)
+        return PhoneStepTracker(checkpoints, zone).observe(
+            day = day,
+            cumulativeSteps = total,
+            elapsedRealtimeMillis = elapsedRealtime(),
+            observedAt = clock(),
+        )
     }
 
     private suspend fun awaitCounter(sensor: Sensor): Double? =
@@ -103,9 +95,6 @@ class PhoneStepDataSource(
         }
 
     companion object {
-        private const val KEY_DAY = "day"
-        private const val KEY_BASELINE = "baseline"
-        private const val KEY_ELAPSED = "elapsed"
         private const val SENSOR_TIMEOUT_MILLIS = 2_000L
         private const val ACTIVITY_RECOGNITION_PERMISSION =
             "android.permission.ACTIVITY_RECOGNITION"

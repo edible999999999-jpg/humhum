@@ -32,14 +32,38 @@ class HealthWorkContractTest {
     fun workerRetriesOnlyTransientTransportFailures() {
         assertTrue(
             HealthSyncWorker.shouldRetry(
-                HealthDelivery(transientFailure = true),
+                HealthDelivery(
+                    result = SyncResult(delivered = false, retryable = true),
+                ),
             ),
         )
         assertFalse(
             HealthSyncWorker.shouldRetry(
-                HealthDelivery(transientFailure = false),
+                HealthDelivery(
+                    result = SyncResult(delivered = false, retryable = false),
+                ),
             ),
         )
         assertFalse(HealthSyncWorker.shouldRetry(HealthDelivery()))
+    }
+
+    @Test
+    fun queueIoFailureIsTransientButPartialAcknowledgementIsPermanent() {
+        assertTrue(
+            HealthSyncWorker.shouldRetry(
+                HealthDelivery(queueUnavailable = true),
+            ),
+        )
+        assertFalse(
+            HealthSyncWorker.shouldRetry(
+                HealthDelivery(
+                    result = SyncResult(
+                        delivered = false,
+                        incomplete = true,
+                        retryable = false,
+                    ),
+                ),
+            ),
+        )
     }
 }

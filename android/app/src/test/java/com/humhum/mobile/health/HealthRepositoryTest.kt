@@ -129,6 +129,36 @@ class HealthRepositoryTest {
     }
 
     @Test
+    fun transientQueueWriteFailureIsReportedForWorkerRetry() = runBlocking {
+        val sink = object : HealthSignalSink {
+            override fun enqueue(signals: Collection<HealthSignal>, now: Instant) {
+                throw HealthQueueUnavailableException(
+                    "queue unavailable",
+                    IOException("disk busy"),
+                )
+            }
+        }
+        val repository = HealthRepository(
+            planProvider = { allHealthConnectPlan(backgroundGranted = true) },
+            healthConnectSource = RecordingDataSource(
+                HealthSource.HEALTH_CONNECT,
+                summary(steps = 1_234.0, capturedAt = now),
+            ),
+            phoneStepSource = null,
+            signalSink = sink,
+            dayProvider = { day },
+            clock = { now },
+            zone = ZoneOffset.UTC,
+        )
+
+        val state = repository.refresh(SyncTrigger.BACKGROUND)
+
+        assertTrue(state.delivery.queueUnavailable)
+        assertTrue(state.delivery.transientFailure)
+        assertEquals(0, state.enqueuedSignals)
+    }
+
+    @Test
     fun backgroundSyncUsesOnlyTheSeparatelyGrantedMetricSet() = runBlocking {
         val healthConnect = RecordingDataSource(
             HealthSource.HEALTH_CONNECT,

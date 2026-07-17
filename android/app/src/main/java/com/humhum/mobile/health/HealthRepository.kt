@@ -75,13 +75,28 @@ class HealthRepository(
             else -> HealthFreshness.FRESH
         }
         val signals = signalsFor(day, summary, plan, requested, capturedAt)
-        if (signals.isNotEmpty()) signalSink.enqueue(signals, clock())
-        val delivery = if (requested.isEmpty()) HealthDelivery() else signalSink.sync()
+        var enqueuedSignals = signals.size
+        var queueUnavailable = false
+        if (signals.isNotEmpty()) {
+            try {
+                signalSink.enqueue(signals, clock())
+            } catch (error: HealthQueueUnavailableException) {
+                enqueuedSignals = 0
+                queueUnavailable = true
+                notices += error.message ?: "Health queue is temporarily unavailable"
+            }
+        }
+        val synced = if (requested.isEmpty()) HealthDelivery() else signalSink.sync()
+        val delivery = if (queueUnavailable) {
+            synced.copy(queueUnavailable = true)
+        } else {
+            synced
+        }
         return HealthUiState(
             summary = summary,
             freshness = freshness,
             notices = notices,
-            enqueuedSignals = signals.size,
+            enqueuedSignals = enqueuedSignals,
             delivery = delivery,
         )
     }

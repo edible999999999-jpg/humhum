@@ -150,7 +150,7 @@ class EncryptedHealthQueue private constructor(private val queueFile: HealthQueu
             queueFile.finishWrite(output)
         } catch (error: IOException) {
             output?.let(queueFile::failWrite)
-            throw IllegalStateException("Could not persist health queue", error)
+            throw HealthQueueUnavailableException("Could not persist health queue", error)
         }
     }
 

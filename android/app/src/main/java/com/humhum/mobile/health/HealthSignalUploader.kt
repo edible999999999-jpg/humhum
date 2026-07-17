@@ -27,6 +27,7 @@ data class HealthSignalConnection(
 data class SyncResult(
     val delivered: Boolean,
     val incomplete: Boolean = false,
+    val retryable: Boolean = false,
     val route: UploadRoute? = null,
     val imported: Int = 0,
     val duplicates: Int = 0,
@@ -48,6 +49,7 @@ class HealthSignalUploader {
         if (signals.isEmpty()) return SyncResult(delivered = true)
 
         var lastError: IOException? = null
+        var retryable = false
         for ((route, transport) in transports(connection)) {
             try {
                 val response = transport.upload(signals)
@@ -70,10 +72,13 @@ class HealthSignalUploader {
                 )
             } catch (error: IOException) {
                 lastError = error
+                retryable = retryable ||
+                    (error as? HealthTransportException)?.retryable == true
             }
         }
         return SyncResult(
             delivered = false,
+            retryable = retryable,
             error = lastError?.message ?: "No private HUMHUM route is available",
         )
     }

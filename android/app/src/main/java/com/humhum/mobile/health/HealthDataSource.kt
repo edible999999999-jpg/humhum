@@ -23,5 +23,8 @@ interface HealthSignalSink {
 
 data class HealthDelivery(
     val result: SyncResult? = null,
-    val transientFailure: Boolean = false,
-)
+    val queueUnavailable: Boolean = false,
+) {
+    val transientFailure: Boolean
+        get() = queueUnavailable || result?.retryable == true
+}

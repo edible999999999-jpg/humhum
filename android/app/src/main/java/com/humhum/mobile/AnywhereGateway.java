@@ -1,6 +1,7 @@
 package com.humhum.mobile;
 
 import java.io.IOException;
+import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
@@ -156,7 +157,7 @@ public final class AnywhereGateway {
                 }
             }
         }
-        throw new IOException("Mac has not answered the remote action yet");
+        throw new SocketTimeoutException("Mac has not answered the remote action yet");
     }
 
     private static JSONObject responseData(JSONObject response) throws IOException, JSONException {

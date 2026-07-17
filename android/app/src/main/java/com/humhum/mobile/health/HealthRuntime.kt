@@ -28,7 +28,7 @@ object HealthRuntime {
                 healthConnectSource = healthConnect,
                 phoneStepSource = PhoneStepDataSource(application),
                 signalSink = QueuedHealthSignalSink(
-                    EncryptedHealthQueue(application),
+                    EncryptedHealthSignalBuffer(EncryptedHealthQueue(application)),
                     AndroidHealthSignalConnectionProvider(application),
                 ),
                 dayProvider = { LocalDate.now(zone) },
