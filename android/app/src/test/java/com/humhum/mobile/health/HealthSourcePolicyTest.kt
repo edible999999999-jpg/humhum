@@ -3,7 +3,6 @@ package com.humhum.mobile.health
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
-import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -76,6 +75,65 @@ class HealthSourcePolicyTest {
                 capturedAt = startsAt.plusSeconds(60),
             )
             throw AssertionError("Expected value validation")
+        } catch (_: IllegalArgumentException) {
+            // Expected.
+        }
+    }
+
+    @Test
+    fun signalRejectsSourceIdsThatDoNotMatchItsSourceMetricAndLocalDay() {
+        val day = LocalDate.of(2026, 7, 17)
+        val startsAt = day.atStartOfDay(ZoneId.of("Asia/Shanghai")).toInstant()
+        try {
+            HealthSignal(
+                sourceId = "health-connect:sleep:2026-07-17",
+                metric = HealthMetric.STEPS,
+                value = 1.0,
+                source = HealthSource.HEALTH_CONNECT,
+                startedAt = startsAt,
+                endedAt = day.plusDays(1).atStartOfDay(ZoneId.of("Asia/Shanghai")).toInstant(),
+                capturedAt = startsAt,
+            )
+            throw AssertionError("Expected source id validation")
+        } catch (_: IllegalArgumentException) {
+            // Expected.
+        }
+    }
+
+    @Test
+    fun signalJsonRetainsTheExplicitPhoneLocalDayWithoutAssumingUtc() {
+        val day = LocalDate.of(2026, 7, 17)
+        val zone = ZoneId.of("Asia/Shanghai")
+        val signal = HealthSignal.forLocalDay(
+            metric = HealthMetric.STEPS,
+            value = 2.0,
+            source = HealthSource.HEALTH_CONNECT,
+            day = day,
+            zone = zone,
+            capturedAt = Instant.parse("2026-07-17T17:00:00Z"),
+        )
+
+        val restored = HealthSignal.fromJson(signal.toJson())
+
+        assertEquals(day, restored.localDay)
+        assertEquals("health-connect:steps:2026-07-17", restored.sourceId)
+        assertEquals(Instant.parse("2026-07-16T16:00:00Z"), restored.startedAt)
+    }
+
+    @Test
+    fun malformedSourceIdDateIsRejectedWhenRestoringJson() {
+        val signal = HealthSignal.forLocalDay(
+            HealthMetric.STEPS,
+            2.0,
+            HealthSource.HEALTH_CONNECT,
+            LocalDate.of(2026, 7, 17),
+            ZoneId.of("Asia/Shanghai"),
+            Instant.parse("2026-07-17T17:00:00Z"),
+        )
+        val json = signal.toJson().put("source_id", "health-connect:steps:2026-7-17")
+        try {
+            HealthSignal.fromJson(json)
+            throw AssertionError("Expected canonical source id validation")
         } catch (_: IllegalArgumentException) {
             // Expected.
         }

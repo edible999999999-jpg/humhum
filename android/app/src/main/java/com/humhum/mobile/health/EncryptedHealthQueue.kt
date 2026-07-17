@@ -16,18 +16,36 @@ import java.security.Key
 import java.security.KeyStore
 import java.time.Duration
 import java.time.Instant
+import java.time.DateTimeException
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 import org.json.JSONArray
+import org.json.JSONException
 
-class EncryptedHealthQueue(context: Context) : PendingHealthSignalQueue {
-    private val queueFile: AtomicFile
+class HealthQueueUnavailableException(message: String, cause: Throwable) :
+    IllegalStateException(message, cause)
 
-    init {
+interface HealthQueueFile {
+    @Throws(IOException::class)
+    fun openRead(): InputStream
+
+    @Throws(IOException::class)
+    fun startWrite(): FileOutputStream
+    fun finishWrite(output: FileOutputStream)
+    fun failWrite(output: FileOutputStream)
+    fun delete()
+    fun quarantinePrimary(): Boolean
+}
+
+class EncryptedHealthQueue private constructor(private val queueFile: HealthQueueFile) : PendingHealthSignalQueue {
+    constructor(context: Context) : this(
+        AtomicHealthQueueFile(File(requireNotNull(context).noBackupFilesDir, FILE_NAME)),
+    )
+
+    internal constructor(context: Context, queueFile: HealthQueueFile) : this(queueFile) {
         requireNotNull(context) { "Context is missing" }
-        queueFile = AtomicFile(File(context.noBackupFilesDir, FILE_NAME))
     }
 
     @Synchronized
@@ -36,19 +54,20 @@ class EncryptedHealthQueue(context: Context) : PendingHealthSignalQueue {
         val merged = LinkedHashMap<String, HealthSignal>()
         readSignals().forEach { merged[it.sourceId] = it }
         signals.forEach { merged[it.sourceId] = it }
-        val cutoff = now.minus(MAX_QUEUE_AGE)
-        val retained = merged.values
-            .filter { !it.endedAt.isBefore(cutoff) }
-            .sortedWith(compareBy<HealthSignal> { it.startedAt }.thenBy { it.sourceId })
-            .takeLast(MAX_QUEUE_RECORDS)
-        writeSignals(retained)
+        writeSignals(retainCurrent(merged.values, now).takeLast(MAX_QUEUE_RECORDS))
     }
 
     @Synchronized
-    override fun peekBatch(limit: Int): List<HealthSignal> {
+    override fun peekBatch(limit: Int, now: Instant): List<HealthSignal> {
         require(limit > 0) { "Health signal batch limit must be positive" }
-        return readSignals().take(limit.coerceAtMost(MAX_HEALTH_SIGNAL_BATCH_SIZE))
+        val stored = readSignals()
+        val retained = retainCurrent(stored, now)
+        if (retained.size != stored.size) writeSignals(retained)
+        return retained.take(limit.coerceAtMost(MAX_HEALTH_SIGNAL_BATCH_SIZE))
     }
+
+    override fun peekBatch(limit: Int): List<HealthSignal> =
+        peekBatch(limit, Instant.now())
 
     @Synchronized
     override fun acknowledge(sourceIds: Collection<String>) {
@@ -59,8 +78,7 @@ class EncryptedHealthQueue(context: Context) : PendingHealthSignalQueue {
 
     @Synchronized
     fun pruneExpired(now: Instant = Instant.now()) {
-        val cutoff = now.minus(MAX_QUEUE_AGE)
-        writeSignals(readSignals().filter { !it.endedAt.isBefore(cutoff) })
+        writeSignals(retainCurrent(readSignals(), now))
     }
 
     @Synchronized
@@ -87,10 +105,33 @@ class EncryptedHealthQueue(context: Context) : PendingHealthSignalQueue {
             }
         } catch (_: FileNotFoundException) {
             return emptyList()
-        } catch (_: Exception) {
-            queueFile.delete()
-            return emptyList()
+        } catch (error: HealthQueueCorruptionException) {
+            return discardCorruptPrimary(error)
+        } catch (error: GeneralSecurityException) {
+            return discardCorruptPrimary(error)
+        } catch (error: JSONException) {
+            return discardCorruptPrimary(error)
+        } catch (error: DateTimeException) {
+            return discardCorruptPrimary(error)
+        } catch (error: IllegalArgumentException) {
+            return discardCorruptPrimary(error)
+        } catch (error: IOException) {
+            throw HealthQueueUnavailableException("Health queue is temporarily unavailable", error)
         }
+    }
+
+    private fun discardCorruptPrimary(cause: Exception): List<HealthSignal> {
+        if (!queueFile.quarantinePrimary()) {
+            throw HealthQueueUnavailableException("Could not quarantine corrupt health queue", cause)
+        }
+        return emptyList()
+    }
+
+    private fun retainCurrent(signals: Collection<HealthSignal>, now: Instant): List<HealthSignal> {
+        val cutoff = now.minus(MAX_QUEUE_AGE)
+        return signals
+            .filter { !it.endedAt.isBefore(cutoff) }
+            .sortedWith(compareBy<HealthSignal> { it.startedAt }.thenBy { it.sourceId })
     }
 
     private fun writeSignals(signals: Collection<HealthSignal>) {
@@ -171,7 +212,7 @@ class EncryptedHealthQueue(context: Context) : PendingHealthSignalQueue {
             val read = input.read(buffer, 0, minOf(buffer.size, remaining + 1))
             if (read == -1) return output.toByteArray()
             if (read == 0) continue
-            if (read > remaining) throw IOException("Health queue is too large")
+            if (read > remaining) throw HealthQueueCorruptionException("Health queue is too large")
             output.write(buffer, 0, read)
             size += read
         }
@@ -188,5 +229,24 @@ class EncryptedHealthQueue(context: Context) : PendingHealthSignalQueue {
         private const val MAX_QUEUE_RECORDS = MAX_HEALTH_SIGNAL_BATCH_SIZE
         private val MAX_QUEUE_AGE = Duration.ofDays(7)
         private val ASSOCIATED_DATA = "humhum-health-outbound-v1".toByteArray(StandardCharsets.UTF_8)
+    }
+}
+
+private class HealthQueueCorruptionException(message: String) : IOException(message)
+
+private class AtomicHealthQueueFile(private val primary: File) : HealthQueueFile {
+    private val atomic = AtomicFile(primary)
+
+    override fun openRead(): InputStream = atomic.openRead()
+    override fun startWrite(): FileOutputStream = atomic.startWrite()
+    override fun finishWrite(output: FileOutputStream) = atomic.finishWrite(output)
+    override fun failWrite(output: FileOutputStream) = atomic.failWrite(output)
+    override fun delete() = atomic.delete()
+
+    override fun quarantinePrimary(): Boolean {
+        if (!primary.exists()) return true
+        val parent = primary.parentFile ?: return false
+        val quarantined = File(parent, "${primary.name}.corrupt-${System.currentTimeMillis()}")
+        return primary.renameTo(quarantined)
     }
 }

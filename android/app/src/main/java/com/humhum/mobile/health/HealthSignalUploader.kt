@@ -1,6 +1,7 @@
 package com.humhum.mobile.health
 
 import java.io.IOException
+import java.time.Instant
 
 const val MAX_HEALTH_SIGNAL_BATCH_SIZE = 31
 
@@ -25,6 +26,7 @@ data class HealthSignalConnection(
 
 data class SyncResult(
     val delivered: Boolean,
+    val incomplete: Boolean = false,
     val route: UploadRoute? = null,
     val imported: Int = 0,
     val duplicates: Int = 0,
@@ -32,7 +34,9 @@ data class SyncResult(
 )
 
 interface PendingHealthSignalQueue {
-    fun peekBatch(limit: Int = MAX_HEALTH_SIGNAL_BATCH_SIZE): List<HealthSignal>
+    fun peekBatch(limit: Int, now: Instant): List<HealthSignal>
+    fun peekBatch(limit: Int = MAX_HEALTH_SIGNAL_BATCH_SIZE): List<HealthSignal> =
+        peekBatch(limit, Instant.now())
     fun acknowledge(sourceIds: Collection<String>)
 }
 
@@ -47,6 +51,17 @@ class HealthSignalUploader {
         for ((route, transport) in transports(connection)) {
             try {
                 val response = transport.upload(signals)
+                val accounted = response.imported + response.duplicates
+                if (accounted != signals.size) {
+                    return SyncResult(
+                        delivered = false,
+                        incomplete = true,
+                        route = route,
+                        imported = response.imported,
+                        duplicates = response.duplicates,
+                        error = "Mac acknowledged $accounted of ${signals.size} health signals",
+                    )
+                }
                 return SyncResult(
                     delivered = true,
                     route = route,
@@ -63,8 +78,12 @@ class HealthSignalUploader {
         )
     }
 
-    fun syncPending(connection: HealthSignalConnection, queue: PendingHealthSignalQueue): SyncResult {
-        val batch = queue.peekBatch(MAX_HEALTH_SIGNAL_BATCH_SIZE)
+    fun syncPending(
+        connection: HealthSignalConnection,
+        queue: PendingHealthSignalQueue,
+        now: Instant = Instant.now(),
+    ): SyncResult {
+        val batch = queue.peekBatch(MAX_HEALTH_SIGNAL_BATCH_SIZE, now)
         val result = sync(connection, batch)
         if (result.delivered && batch.isNotEmpty()) {
             queue.acknowledge(batch.map(HealthSignal::sourceId))

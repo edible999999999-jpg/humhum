@@ -88,9 +88,52 @@ class HealthSignalUploaderTest {
     }
 
     @Test
+    fun partialResponseRemainsQueuedAndIsReportedAsIncomplete() {
+        val queue = RecordingQueue(listOf(signal))
+
+        val result = HealthSignalUploader().syncPending(
+            HealthSignalConnection(direct = RecordingTransport(UploadResponse(0, 0))),
+            queue,
+        )
+
+        assertFalse(result.delivered)
+        assertTrue(result.incomplete)
+        assertEquals(UploadRoute.DIRECT, result.route)
+        assertTrue(queue.acknowledged.isEmpty())
+        assertEquals(listOf(signal), queue.peekBatch(31))
+    }
+
+    @Test
+    fun responseMustAccountForEverySignalBeforeItIsDelivered() {
+        val second = HealthSignal.forLocalDay(
+            metric = HealthMetric.STEPS,
+            value = 43.0,
+            source = HealthSource.HEALTH_CONNECT,
+            day = LocalDate.of(2026, 7, 18),
+            zone = ZoneOffset.UTC,
+            capturedAt = Instant.parse("2026-07-18T13:00:00Z"),
+        )
+
+        val result = HealthSignalUploader().sync(
+            HealthSignalConnection(direct = RecordingTransport(UploadResponse(imported = 1, duplicates = 0))),
+            listOf(signal, second),
+        )
+
+        assertFalse(result.delivered)
+        assertTrue(result.incomplete)
+    }
+
+    @Test
     fun batchesAreNeverLargerThanThirtyOneSignals() {
         val signals = (1..32).map { index ->
-            signal.copy(sourceId = "health-connect:steps:2026-07-${index.toString().padStart(2, '0')}")
+            HealthSignal.forLocalDay(
+                metric = HealthMetric.STEPS,
+                value = index.toDouble(),
+                source = HealthSource.HEALTH_CONNECT,
+                day = LocalDate.of(2026, 1, 1).plusDays(index.toLong()),
+                zone = ZoneOffset.UTC,
+                capturedAt = Instant.parse("2026-07-17T13:00:00Z"),
+            )
         }
 
         try {
@@ -118,7 +161,7 @@ class HealthSignalUploaderTest {
         private val values = signals.toMutableList()
         val acknowledged = mutableListOf<String>()
 
-        override fun peekBatch(limit: Int): List<HealthSignal> = values.take(limit)
+        override fun peekBatch(limit: Int, now: Instant): List<HealthSignal> = values.take(limit)
 
         override fun acknowledge(sourceIds: Collection<String>) {
             acknowledged += sourceIds

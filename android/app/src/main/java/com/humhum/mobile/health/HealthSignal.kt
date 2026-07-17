@@ -33,7 +33,19 @@ enum class HealthSource(
     fun sourceId(metric: HealthMetric, day: LocalDate): String =
         "$sourceIdPrefix:${metric.sourceSegment}:$day"
 
+    fun localDayFromSourceId(metric: HealthMetric, value: String): LocalDate {
+        val prefix = "$sourceIdPrefix:${metric.sourceSegment}:"
+        require(value.startsWith(prefix)) { "Health signal source id is invalid" }
+        val encodedDay = value.removePrefix(prefix)
+        require(CANONICAL_DAY.matches(encodedDay)) { "Health signal source id is invalid" }
+        val day = LocalDate.parse(encodedDay, DateTimeFormatter.ISO_LOCAL_DATE)
+        require(sourceId(metric, day) == value) { "Health signal source id is invalid" }
+        return day
+    }
+
     companion object {
+        private val CANONICAL_DAY = Regex("\\d{4}-\\d{2}-\\d{2}")
+
         fun fromWireValue(value: String): HealthSource = entries.firstOrNull {
             it.wireValue == value
         } ?: throw IllegalArgumentException("Health signal source is invalid")
@@ -48,9 +60,13 @@ data class HealthSignal(
     val startedAt: Instant,
     val endedAt: Instant,
     val capturedAt: Instant,
+    val localDay: LocalDate = source.localDayFromSourceId(metric, sourceId),
 ) {
     init {
         require(sourceId.isNotBlank() && sourceId.length <= MAX_SOURCE_ID_LENGTH) {
+            "Health signal source id is invalid"
+        }
+        require(source.sourceId(metric, localDay) == sourceId) {
             "Health signal source id is invalid"
         }
         require(value.isFinite() && value >= 0.0) { "Health signal value is invalid" }
@@ -95,20 +111,24 @@ data class HealthSignal(
                 startedAt = startedAt,
                 endedAt = endedAt,
                 capturedAt = capturedAt,
+                localDay = day,
             )
         }
 
         fun fromJson(value: JSONObject): HealthSignal {
             val metric = HealthMetric.fromKind(value.getString("kind"))
             require(value.getString("unit") == metric.unit) { "Health signal unit is invalid" }
+            val source = HealthSource.fromWireValue(value.getString("source"))
+            val sourceId = value.getString("source_id")
             val signal = HealthSignal(
-                sourceId = value.getString("source_id"),
+                sourceId = sourceId,
                 metric = metric,
                 value = value.getDouble("value"),
-                source = HealthSource.fromWireValue(value.getString("source")),
+                source = source,
                 startedAt = Instant.parse(value.getString("started_at")),
                 endedAt = Instant.parse(value.getString("ended_at")),
                 capturedAt = Instant.parse(value.getString("captured_at")),
+                localDay = source.localDayFromSourceId(metric, sourceId),
             )
             require(value.getString("quality") == signal.source.quality) {
                 "Health signal quality is invalid"
