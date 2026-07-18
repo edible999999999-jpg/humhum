@@ -1,12 +1,42 @@
+// @vitest-environment happy-dom
+
 import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { act, type ComponentType } from "react";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import type { MobileBridgeStatus, MobilePairingInfo } from "../../hooks/useHexaData";
+import type {
+  HexaWatchedSession,
+  MobileBridgeStatus,
+  MobilePairingInfo,
+} from "../../hooks/useHexaData";
+import * as HexaModuleComponents from "./HexaModule";
 import { HexaMobilePairingCard, startOrRefreshMobilePairing } from "./HexaModule";
+import { HexaActiveMonitor } from "./hexa/HexaActiveMonitor";
 
-const hexaModuleSource = readFileSync(new URL("./HexaModule.tsx", import.meta.url), "utf8");
+declare global {
+  // React uses this opt-in flag to verify state updates stay inside act().
+  // eslint-disable-next-line no-var
+  var IS_REACT_ACT_ENVIRONMENT: boolean | undefined;
+}
+
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+
+type BindingPanelExports = {
+  HexaRemoteAccessPanel?: ComponentType<Record<string, unknown>>;
+  HexaMobileAccessPanel?: ComponentType<Record<string, unknown>>;
+  HexaWatchCommandPanel?: ComponentType;
+};
+
+const bindingPanels = HexaModuleComponents as unknown as BindingPanelExports;
+
+const hexaModuleSource = readFileSync(
+  resolve(process.cwd(), "src/components/Hub/HexaModule.tsx"),
+  "utf8",
+);
 const hexaRoomStyles = readFileSync(
-  new URL("../../styles/hub-character-rooms.css", import.meta.url),
+  resolve(process.cwd(), "src/styles/hub-character-rooms.css"),
   "utf8",
 );
 
@@ -32,6 +62,37 @@ const activePairing: MobilePairingInfo = {
   network: "lan",
   android_setup: JSON.stringify({ version: 1, code: "ABCD1234" }),
 };
+
+function watchedSession(
+  sessionId: string,
+  updatedAt: string,
+): HexaWatchedSession {
+  return {
+    session_id: sessionId,
+    agent: "codex",
+    name: `会话 ${sessionId}`,
+    provider: "Codex",
+    workspace: "/tmp/hexa-room",
+    goal: `目标 ${sessionId}`,
+    status: "working",
+    current_step: `当前步骤 ${sessionId}`,
+    blocked_reason: null,
+    need_user: false,
+    confidence: "reported",
+    started_at: updatedAt,
+    updated_at: updatedAt,
+    audit: {
+      goal_revisions: [],
+      success_criteria: [],
+      work_items: [],
+      milestones: [],
+      important_outputs: [],
+      interventions: [],
+      hexa_review: null,
+      user_review: null,
+    },
+  };
+}
 
 describe("HexaMobilePairingCard", () => {
   it("renders the default state as a compact accessible affordance with real Lucide icons", () => {
@@ -133,6 +194,114 @@ describe("HexaMobilePairingCard", () => {
 });
 
 describe("Hexa supervision room presentation", () => {
+  it("renders binding panels with responsive layout classes and no white inline text", () => {
+    const RemotePanel = bindingPanels.HexaRemoteAccessPanel;
+    const MobilePanel = bindingPanels.HexaMobileAccessPanel;
+    const WatchPanel = bindingPanels.HexaWatchCommandPanel;
+
+    expect(RemotePanel).toBeTypeOf("function");
+    expect(MobilePanel).toBeTypeOf("function");
+    expect(WatchPanel).toBeTypeOf("function");
+    if (!RemotePanel || !MobilePanel || !WatchPanel) {
+      throw new Error("Missing Hexa binding panel exports");
+    }
+
+    const remoteHtml = renderToStaticMarkup(
+      <RemotePanel
+        state={{
+          status: "disabled",
+          server_name: "HumHum",
+          installation_id: "install",
+          environment_id: null,
+          message: "等待启用",
+        }}
+        pairing={null}
+        onEnable={vi.fn()}
+        onDisable={vi.fn()}
+        onPair={vi.fn()}
+      />,
+    );
+    const mobileHtml = renderToStaticMarkup(
+      <MobilePanel
+        state={{ ...enabledBridge, enabled: false, pairing_active: false }}
+        pairing={null}
+        relayConfig={{ enabled: false, base_url: null, invite_code: null }}
+        onEnable={vi.fn()}
+        onDisable={vi.fn()}
+        onPair={vi.fn()}
+        onRevoke={vi.fn()}
+        onRevokeDevice={vi.fn()}
+        onConfigureRelay={vi.fn()}
+      />,
+    );
+    const watchHtml = renderToStaticMarkup(<WatchPanel />);
+
+    expect(remoteHtml).toContain("hexa-binding-section hexa-remote-access");
+    expect(mobileHtml).toContain("hexa-binding-section hexa-mobile-access");
+    expect(mobileHtml).toContain("hexa-mobile-relay-form");
+    expect(watchHtml).toContain("hexa-binding-section hexa-watch-command");
+    expect(`${remoteHtml}${mobileHtml}${watchHtml}`).not.toMatch(
+      /color:\s*rgba\(255,\s*255,\s*255/i,
+    );
+    expect(hexaModuleSource).toContain('className="hexa-binding-stack"');
+    expect(hexaModuleSource).not.toMatch(
+      /color:\s*"rgba\(255,\s*255,\s*255/i,
+    );
+  });
+
+  it("transitions selection and resolves the latest session when the selected run disappears", async () => {
+    const now = Date.now();
+    const older = watchedSession("older", new Date(now - 60_000).toISOString());
+    const latest = watchedSession("latest", new Date(now - 20_000).toISOString());
+    const replacement = watchedSession("replacement", new Date(now - 5_000).toISOString());
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const renderMonitor = async (sessions: HexaWatchedSession[]) => {
+      await act(async () => {
+        root.render(
+          <HexaActiveMonitor
+            sessions={sessions}
+            supervisorBySessionId={new Map()}
+            dataState="ready"
+            entryPanel={null}
+            onRetry={vi.fn(async () => undefined)}
+            onFocus={vi.fn(async () => ({
+              strategy: "generic_terminal" as const,
+              application: null,
+              exact: false,
+            }))}
+            onDelete={vi.fn(async () => undefined)}
+            onMutate={vi.fn(async () => null)}
+          />,
+        );
+      });
+    };
+    const selectedName = () =>
+      host.querySelector<HTMLButtonElement>('.hexa-session-nav-item[aria-current="true"]')
+        ?.querySelector("strong")?.textContent;
+
+    try {
+      await renderMonitor([older, latest]);
+      expect(selectedName()).toBe("会话 latest");
+      expect(host.querySelector(".hexa-report")?.getAttribute("aria-label")).toContain("会话 latest");
+
+      const olderButton = Array.from(
+        host.querySelectorAll<HTMLButtonElement>(".hexa-session-nav-item"),
+      ).find((button) => button.textContent?.includes("会话 older"));
+      expect(olderButton).toBeDefined();
+      await act(async () => olderButton!.click());
+      expect(selectedName()).toBe("会话 older");
+
+      await renderMonitor([latest, replacement]);
+      expect(selectedName()).toBe("会话 replacement");
+      expect(host.querySelector(".hexa-report")?.getAttribute("aria-label")).toContain("会话 replacement");
+    } finally {
+      await act(async () => root.unmount());
+      host.remove();
+    }
+  });
+
   it("uses one separator summary and keeps the shared room shell outside the module", () => {
     expect(hexaModuleSource).toContain('className="hexa-metric-summary"');
     expect(hexaModuleSource).not.toContain("function MetricCard");

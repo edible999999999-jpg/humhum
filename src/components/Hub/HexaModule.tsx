@@ -56,7 +56,7 @@ const STATUS_COLORS: Record<HexaSupervisorSession["progress_status"], string> = 
   looping: "#fb923c",
   stalled: "#f87171",
   idle: "#38bdf8",
-  completed: "rgba(255,255,255,0.42)",
+  completed: "#64748b",
 };
 
 const HEXA_REGISTER_COMMAND = `~/.humhum/bin/humhum-hexa watch "请把这里改成这轮任务目标"`;
@@ -122,7 +122,7 @@ function WatchedAgentOverview({
     <div style={{ display: "grid", gap: 0, borderTop: "1px solid rgba(255,255,255,0.07)" }}>
       {agents.map((agent) => {
         const selected = agent.id === selectedAgentId;
-        const statusColor = agent.online ? "#22c55e" : agent.currentStatus === "blocked" ? "#f87171" : "rgba(255,255,255,0.42)";
+        const statusColor = agent.online ? "#22c55e" : agent.currentStatus === "blocked" ? "#f87171" : "#64748b";
         const goal = agent.currentRun?.goal ?? "No current goal reported";
         const step = agent.currentRun?.current_step ?? agent.currentRun?.blocked_reason ?? "No current step reported";
 
@@ -148,10 +148,10 @@ function WatchedAgentOverview({
           >
             <div style={{ minWidth: 0, display: "grid", gap: 6 }}>
               <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 7 }}>
-                <span style={{ color: "rgba(255,255,255,0.9)", fontSize: 13, fontWeight: 900, overflowWrap: "anywhere" }}>
+                <span style={{ color: "#475569", fontSize: 13, fontWeight: 900, overflowWrap: "anywhere" }}>
                   {agent.name}
                 </span>
-                <span style={{ color: "rgba(255,255,255,0.36)", fontSize: 10, fontWeight: 750 }}>
+                <span style={{ color: "#7b8ba0", fontSize: 10, fontWeight: 750 }}>
                   {agent.provider}
                 </span>
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: statusColor, fontSize: 10, fontWeight: 850 }}>
@@ -159,16 +159,16 @@ function WatchedAgentOverview({
                   {agent.online ? "Online" : "Offline"} · {agent.currentStatus}
                 </span>
               </div>
-              <div style={{ color: "rgba(255,255,255,0.38)", fontSize: 10, overflowWrap: "anywhere" }}>
+              <div style={{ color: "#7b8ba0", fontSize: 10, overflowWrap: "anywhere" }}>
                 {agent.workspace ?? "No workspace declared"}
               </div>
-              <div style={{ color: "rgba(255,255,255,0.62)", fontSize: 11, lineHeight: 1.4, overflowWrap: "anywhere" }}>
+              <div style={{ color: "#475569", fontSize: 11, lineHeight: 1.4, overflowWrap: "anywhere" }}>
                 {goal}
               </div>
-              <div style={{ color: "rgba(255,255,255,0.36)", fontSize: 10, lineHeight: 1.4, overflowWrap: "anywhere" }}>
+              <div style={{ color: "#7b8ba0", fontSize: 10, lineHeight: 1.4, overflowWrap: "anywhere" }}>
                 {step}
               </div>
-              <div style={{ display: "inline-flex", alignItems: "center", gap: 5, color: "rgba(255,255,255,0.3)", fontSize: 10 }}>
+              <div style={{ display: "inline-flex", alignItems: "center", gap: 5, color: "#7b8ba0", fontSize: 10 }}>
                 <Clock3 size={12} /> Last heartbeat {formatHeartbeat(agent.lastHeartbeat)}
               </div>
             </div>
@@ -177,7 +177,7 @@ function WatchedAgentOverview({
               <MiniStat label="done" value={agent.metrics.completed} />
               <MiniStat label="blocked" value={agent.metrics.blocked} />
               <MiniStat label="success" value={`${agent.metrics.successRate}%`} />
-              <span style={{ gridColumn: "1 / -1", justifySelf: "end", display: "inline-flex", alignItems: "center", gap: 3, color: "rgba(255,255,255,0.4)", fontSize: 10, fontWeight: 800 }}>
+              <span style={{ gridColumn: "1 / -1", justifySelf: "end", display: "inline-flex", alignItems: "center", gap: 3, color: "#7b8ba0", fontSize: 10, fontWeight: 800 }}>
                 {selected ? <ChevronDown size={14} /> : <ChevronRight size={14} />} Details
               </span>
             </div>
@@ -200,11 +200,11 @@ function WatchedAgentDataState({
   const [retrying, setRetrying] = useState(false);
 
   if (state === "loading") {
-    return <div role="status" style={{ color: "rgba(255,255,255,0.42)", fontSize: 11, padding: "14px 0" }}>Loading watched Agents...</div>;
+    return <div role="status" style={{ color: "#7b8ba0", fontSize: 11, padding: "14px 0" }}>Loading watched Agents...</div>;
   }
 
   if (state === "ready" && !hasAgents) {
-    return <div style={{ color: "rgba(255,255,255,0.42)", fontSize: 11, padding: "14px 0" }}>No watched Agents yet. Register a run below to start durable supervision.</div>;
+    return <div style={{ color: "#7b8ba0", fontSize: 11, padding: "14px 0" }}>No watched Agents yet. Register a run below to start durable supervision.</div>;
   }
 
   if (state !== "error") return null;
@@ -391,7 +391,7 @@ function NeedFitBar({ item }: { item: HexaSupervisorSession }) {
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 10, marginBottom: 5 }}>
-        <span style={{ color: "rgba(255,255,255,0.42)", fontSize: 10, fontWeight: 750 }}>
+        <span style={{ color: "#7b8ba0", fontSize: 10, fontWeight: 750 }}>
           最近需求满足推断
         </span>
         <span style={{ color, fontSize: 11, fontWeight: 850 }}>
@@ -416,7 +416,7 @@ function NeedFitBar({ item }: { item: HexaSupervisorSession }) {
           }}
         />
       </div>
-      <div style={{ color: "rgba(255,255,255,0.25)", fontSize: 10, marginTop: 5 }}>
+      <div style={{ color: "#7b8ba0", fontSize: 10, marginTop: 5 }}>
         {item.recent_need_basis}
       </div>
     </div>
@@ -562,7 +562,7 @@ function SessionCard({
           <h3
             style={{
               margin: 0,
-              color: "rgba(255,255,255,0.9)",
+              color: "#475569",
               fontSize: 15,
               lineHeight: 1.25,
               overflowWrap: "anywhere",
@@ -570,16 +570,16 @@ function SessionCard({
           >
             {item.display_name}
           </h3>
-          <p style={{ margin: "6px 0 0", color: "rgba(255,255,255,0.52)", fontSize: 12, lineHeight: 1.45 }}>
+          <p style={{ margin: "6px 0 0", color: "#475569", fontSize: 12, lineHeight: 1.45 }}>
             {item.project_intent}
           </p>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
           <div style={{ textAlign: "right", minWidth: 42 }}>
-            <div style={{ color: "rgba(255,255,255,0.72)", fontSize: 18, fontWeight: 850 }}>
+            <div style={{ color: "#475569", fontSize: 18, fontWeight: 850 }}>
               {item.session.event_count}
             </div>
-            <div style={{ color: "rgba(255,255,255,0.28)", fontSize: 10 }}>events</div>
+            <div style={{ color: "#7b8ba0", fontSize: 10 }}>events</div>
           </div>
           {item.source === "watched" && (
             <button
@@ -703,7 +703,7 @@ function SessionCard({
             {changes.open ? "收起本轮改动" : "查看本轮改动"}
           </button>
           {changes.open && changes.status === "loading" && (
-            <div style={{ color: "rgba(255,255,255,0.38)", fontSize: 10 }}>正在读取本地 Git 状态...</div>
+            <div style={{ color: "#7b8ba0", fontSize: 10 }}>正在读取本地 Git 状态...</div>
           )}
           {changes.open && changes.status === "error" && (
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -768,11 +768,11 @@ function SessionCard({
 
 function SessionChangeSummary({ summary }: { summary: GitChangeSummary }) {
   if (summary.total_files === 0) {
-    return <div style={{ color: "rgba(255,255,255,0.38)", fontSize: 10 }}>工作区目前没有未提交改动</div>;
+    return <div style={{ color: "#7b8ba0", fontSize: 10 }}>工作区目前没有未提交改动</div>;
   }
   return (
     <div style={{ display: "grid", gap: 6, minWidth: 0 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", color: "rgba(255,255,255,0.48)", fontSize: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", color: "#7b8ba0", fontSize: 10 }}>
         <span>{summary.branch || "detached HEAD"}</span>
         <span>{summary.total_files} 个文件</span>
         {summary.truncated && <span>仅显示前 {summary.files.length} 个</span>}
@@ -793,10 +793,10 @@ function SessionChangeSummary({ summary }: { summary: GitChangeSummary }) {
           <span style={{ color: file.staged ? "#22c55e" : "#38bdf8", fontSize: 9, fontWeight: 850 }}>
             {file.staged ? "已暂存" : file.status === "untracked" ? "新文件" : file.status}
           </span>
-          <span style={{ minWidth: 0, color: "rgba(255,255,255,0.68)", fontSize: 10, overflowWrap: "anywhere" }}>
+          <span style={{ minWidth: 0, color: "#475569", fontSize: 10, overflowWrap: "anywhere" }}>
             {file.path}
           </span>
-          <span style={{ color: "rgba(255,255,255,0.38)", fontSize: 9, whiteSpace: "nowrap" }}>
+          <span style={{ color: "#7b8ba0", fontSize: 9, whiteSpace: "nowrap" }}>
             {file.binary ? "binary" : <><span style={{ color: "#22c55e" }}>+{file.insertions}</span> <span style={{ color: "#f87171" }}>-{file.deletions}</span></>}
           </span>
         </div>
@@ -885,7 +885,7 @@ function CodexIntervention({
             <div style={{ color: "#f87171", fontSize: 10, fontWeight: 850 }}>
               {queued.status === "sending" ? "正在重试" : `待重试 · 已尝试 ${queued.attempts} 次`}
             </div>
-            <div style={{ color: "rgba(255,255,255,0.64)", fontSize: 11, lineHeight: 1.4, marginTop: 3, overflowWrap: "anywhere" }}>
+            <div style={{ color: "#475569", fontSize: 11, lineHeight: 1.4, marginTop: 3, overflowWrap: "anywhere" }}>
               {queued.message}
             </div>
             {queued.last_error && (
@@ -920,7 +920,7 @@ function CodexIntervention({
       ))}
       {isCodex && item.pending_approvals.map((approval) => (
         <div key={approval.approval_id} style={{ display: "grid", gap: 7, padding: 9, borderRadius: 8, background: "rgba(250,204,21,0.07)", border: "1px solid rgba(250,204,21,0.2)" }}>
-          <div style={{ color: "rgba(255,255,255,0.66)", fontSize: 11, lineHeight: 1.45 }}>{approval.summary}</div>
+          <div style={{ color: "#475569", fontSize: 11, lineHeight: 1.45 }}>{approval.summary}</div>
           <div style={{ display: "flex", gap: 6 }}>
             <button type="button" disabled={busy} onClick={() => run(() => onResolveApproval(approval.approval_id, "allow_once"))} className="kawaii-toggle-btn connected">允许一次</button>
             <button type="button" disabled={busy} onClick={() => run(() => onResolveApproval(approval.approval_id, "deny"))} className="kawaii-toggle-btn">拒绝</button>
@@ -989,7 +989,7 @@ function CodexIntervention({
   );
 }
 
-function RemoteAccessPanel({
+export function HexaRemoteAccessPanel({
   state,
   pairing,
   onEnable,
@@ -1010,13 +1010,13 @@ function RemoteAccessPanel({
   const connected = state.status === "connected";
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "auto minmax(0, 1fr) auto", alignItems: "center", gap: 10, padding: 11, marginBottom: 14, borderRadius: 8, background: "rgba(56,189,248,0.045)", border: "1px solid rgba(56,189,248,0.16)" }}>
+    <section className="hexa-binding-section hexa-remote-access">
       <Smartphone size={18} color={connected ? "#22c55e" : "#38bdf8"} />
-      <div style={{ minWidth: 0 }}>
-        <div style={{ color: "rgba(255,255,255,0.72)", fontSize: 11, fontWeight: 850 }}>Codex Mobile Remote</div>
-        <div style={{ color: "rgba(255,255,255,0.34)", fontSize: 10, marginTop: 3, overflowWrap: "anywhere" }}>{pairing?.manual_pairing_code ? `配对码: ${pairing.manual_pairing_code}` : state.message}</div>
+      <div className="hexa-binding-copy">
+        <strong>Codex Mobile Remote</strong>
+        <span>{pairing?.manual_pairing_code ? `配对码: ${pairing.manual_pairing_code}` : state.message}</span>
       </div>
-      <div style={{ display: "flex", gap: 6 }}>
+      <div className="hexa-binding-actions">
         {connected ? (
           <button type="button" title="关闭移动访问" disabled={busy} onClick={() => run(onDisable)} className="kawaii-toggle-btn"><Power size={15} /></button>
         ) : (
@@ -1026,11 +1026,11 @@ function RemoteAccessPanel({
           </>
         )}
       </div>
-    </div>
+    </section>
   );
 }
 
-function HumHumMobilePanel({
+export function HexaMobileAccessPanel({
   state,
   pairing,
   relayConfig,
@@ -1097,21 +1097,21 @@ function HumHumMobilePanel({
       : "默认关闭；开启后仅同一局域网可见";
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "auto minmax(0, 1fr) auto", alignItems: "center", gap: 10, padding: 11, marginBottom: 10, borderRadius: 8, background: "rgba(34,197,94,0.045)", border: "1px solid rgba(34,197,94,0.16)" }}>
+    <section className="hexa-binding-section hexa-mobile-access">
       <Smartphone size={18} color={state.enabled ? "#22c55e" : "#86a7d5"} />
-      <div style={{ minWidth: 0 }}>
-        <div style={{ color: "rgba(255,255,255,0.72)", fontSize: 11, fontWeight: 850 }}>HUMHUM Mobile Web</div>
-        <div style={{ color: error ? "#f87171" : "rgba(255,255,255,0.34)", fontSize: 10, marginTop: 3, overflowWrap: "anywhere" }}>{error ?? detail}</div>
+      <div className="hexa-binding-copy hexa-mobile-access-copy">
+        <strong>HUMHUM Mobile Web</strong>
+        <span className={error ? "is-error" : undefined}>{error ?? detail}</span>
         {state.enabled && state.certificate_fingerprint && (
-          <div title={state.certificate_fingerprint} style={{ color: "rgba(255,255,255,0.22)", fontSize: 9, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          <small className="hexa-mobile-fingerprint" title={state.certificate_fingerprint}>
             TLS {state.certificate_fingerprint}
-          </div>
+          </small>
         )}
         {state.enabled && state.tailnet_url && (
           <div
             role="group"
             aria-label="Android 配对网络"
-            style={{ display: "inline-flex", gap: 2, padding: 2, marginTop: 6, borderRadius: 7, background: "rgba(255,255,255,0.035)", border: "1px solid rgba(255,255,255,0.07)" }}
+            className="hexa-mobile-network-control"
           >
             {(["lan", "tailnet"] as const).map((option) => (
               <button
@@ -1119,7 +1119,7 @@ function HumHumMobilePanel({
                 type="button"
                 aria-pressed={network === option}
                 onClick={() => setNetwork(option)}
-                style={{ border: 0, borderRadius: 5, padding: "4px 8px", background: network === option ? "rgba(34,197,94,0.16)" : "transparent", color: network === option ? "#86efac" : "rgba(255,255,255,0.38)", fontSize: 9, fontWeight: 800, cursor: "pointer" }}
+                className={network === option ? "is-active" : undefined}
               >
                 {option === "lan" ? "同网 LAN" : "外出 Tailnet"}
               </button>
@@ -1127,8 +1127,8 @@ function HumHumMobilePanel({
           </div>
         )}
         {!state.enabled && (
-          <div style={{ display: "grid", gridTemplateColumns: "auto minmax(140px, 1fr) auto", alignItems: "center", gap: 6, marginTop: 7 }}>
-            <label title="让手机在 5G 或其他 Wi-Fi 安全连接这台 Mac" style={{ display: "inline-flex", alignItems: "center", gap: 5, color: "rgba(255,255,255,0.45)", fontSize: 9, whiteSpace: "nowrap" }}>
+          <div className="hexa-mobile-relay-form">
+            <label title="让手机在 5G 或其他 Wi-Fi 安全连接这台 Mac">
               <input
                 type="checkbox"
                 checked={relayEnabled}
@@ -1136,7 +1136,7 @@ function HumHumMobilePanel({
               />
               Anywhere 内测
             </label>
-            <div style={{ display: "grid", gap: 5, minWidth: 0 }}>
+            <div className="hexa-mobile-relay-fields">
               <input
                 aria-label="Anywhere 中继 URL"
                 type="url"
@@ -1144,7 +1144,7 @@ function HumHumMobilePanel({
                 disabled={!relayEnabled || busy}
                 placeholder="https://relay.example.com"
                 onChange={(event) => setRelayUrl(event.target.value)}
-                style={{ minWidth: 0, height: 28, borderRadius: 6, border: "1px solid rgba(255,255,255,0.1)", background: "rgba(0,0,0,0.16)", color: "rgba(255,255,255,0.72)", padding: "0 8px", fontSize: 9 }}
+                className="hexa-binding-input"
               />
               <input
                 aria-label="Anywhere 内测邀请码"
@@ -1154,7 +1154,7 @@ function HumHumMobilePanel({
                 placeholder="内测邀请码"
                 autoComplete="off"
                 onChange={(event) => setRelayInvite(event.target.value)}
-                style={{ minWidth: 0, height: 28, borderRadius: 6, border: "1px solid rgba(255,255,255,0.1)", background: "rgba(0,0,0,0.16)", color: "rgba(255,255,255,0.72)", padding: "0 8px", fontSize: 9 }}
+                className="hexa-binding-input"
               />
             </div>
             <button
@@ -1173,21 +1173,21 @@ function HumHumMobilePanel({
           </div>
         )}
         {state.enabled && (
-          <div style={{ color: state.relay_status === "errored" ? "#f87171" : "rgba(255,255,255,0.3)", fontSize: 9, marginTop: 4, overflowWrap: "anywhere" }}>
+          <div className={`hexa-mobile-relay-status ${state.relay_status === "errored" ? "is-error" : ""}`}>
             加密唤醒 · {state.relay_status === "disabled" ? "未启用" : state.relay_status === "connected" ? "已连接" : state.relay_status === "retrying" ? "正在重试" : "连接异常"}{state.relay_url ? ` · ${state.relay_url}` : ""}
           </div>
         )}
         {state.devices.map((device) => (
-          <div key={device.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 7, marginTop: 5, color: "rgba(255,255,255,0.42)", fontSize: 9 }}>
-            <span title={device.last_seen_at ?? "尚未收到在线状态"} style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          <div key={device.id} className="hexa-mobile-device">
+            <span title={device.last_seen_at ?? "尚未收到在线状态"}>
               {device.name} · {device.scope === "control" ? "可控制" : "只读"} · {mobilePresenceLabel(device.presence_mode)}
             </span>
             <button type="button" title={`撤销 ${device.name}`} aria-label={`撤销 ${device.name}`} disabled={busy} onClick={() => run(() => onRevokeDevice(device.id))} className="kawaii-icon-btn" style={{ width: 24, height: 24, minWidth: 24 }}><Trash2 size={12} /></button>
           </div>
         ))}
         {pairing?.android_setup && pairingQrVisible && (
-          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12, marginTop: 10, padding: 10, borderRadius: 8, background: "rgba(255,255,255,0.035)", border: "1px solid rgba(255,255,255,0.08)" }}>
-            <div aria-label="Android 配对二维码" style={{ display: "grid", placeItems: "center", width: 176, height: 176, padding: 8, borderRadius: 6, background: "#ffffff", flex: "0 0 auto" }}>
+          <div className="hexa-mobile-setup">
+            <div aria-label="Android 配对二维码" className="hexa-mobile-setup-qr">
               <QRCodeSVG
                 value={pairing.android_setup}
                 size={160}
@@ -1198,19 +1198,19 @@ function HumHumMobilePanel({
                 title="HUMHUM Android 安全配对"
               />
             </div>
-            <div style={{ minWidth: 150, flex: "1 1 160px" }}>
-              <div style={{ color: "rgba(255,255,255,0.78)", fontSize: 11, fontWeight: 850 }}>手机扫码连接</div>
-              <div style={{ marginTop: 5, color: "rgba(255,255,255,0.58)", fontSize: 11, lineHeight: 1.6 }}>
+            <div className="hexa-mobile-setup-copy">
+              <strong>手机扫码连接</strong>
+              <span>
                 Android 打开 HUMHUM，点击“扫描电脑配对二维码”。
-              </div>
-              <div style={{ marginTop: 5, color: "#86efac", fontSize: 10, fontWeight: 750 }}>
+              </span>
+              <small>
                 {`${pairing.network === "tailnet" ? "Tailnet" : "同一网络"} · ${pairing.scope === "control" ? "可控制" : "只读"} · ${pairingSeconds} 秒`}
-              </div>
+              </small>
             </div>
           </div>
         )}
       </div>
-      <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "flex-end", gap: 6, maxWidth: 144 }}>
+      <div className="hexa-binding-actions hexa-mobile-access-actions">
         {state.enabled ? (
           <>
             {pairing?.android_setup && (
@@ -1236,7 +1236,7 @@ function HumHumMobilePanel({
           <button type="button" title="开启 HUMHUM 移动访问" aria-label="开启 HUMHUM 移动访问" disabled={busy} onClick={() => run(onEnable)} className="kawaii-toggle-btn connected"><Power size={15} /></button>
         )}
       </div>
-    </div>
+    </section>
   );
 }
 
@@ -1249,14 +1249,14 @@ function ReviewAction({ item }: { item: HexaSupervisorSession }) {
         borderRadius: 8,
         background: isCompleted ? "rgba(34,197,94,0.055)" : "rgba(255,255,255,0.025)",
         border: isCompleted ? "1px solid rgba(34,197,94,0.18)" : "1px solid rgba(255,255,255,0.06)",
-        color: "rgba(255,255,255,0.56)",
+        color: "#475569",
         fontSize: 11,
         lineHeight: 1.5,
         display: "grid",
         gap: 7,
       }}
     >
-      <div style={{ color: isCompleted ? "#22c55e" : "rgba(255,255,255,0.36)", fontWeight: 850 }}>
+      <div style={{ color: isCompleted ? "#22c55e" : "#526579", fontWeight: 850 }}>
         {isCompleted ? "复盘结论" : "建议提醒"}
       </div>
       <div>{item.suggested_nudge}</div>
@@ -1282,7 +1282,7 @@ function ReadoutBlock({ title, text, tone }: { title: string; text: string; tone
       }}
     >
       <div style={{ color: tone, fontSize: 10, fontWeight: 850, marginBottom: 4 }}>{title}</div>
-      <div style={{ color: "rgba(255,255,255,0.62)", fontSize: 12, lineHeight: 1.5 }}>
+      <div style={{ color: "#475569", fontSize: 12, lineHeight: 1.5 }}>
         {text}
       </div>
     </div>
@@ -1300,10 +1300,10 @@ function MiniStat({ label, value }: { label: string; value: string | number }) {
         border: "1px solid rgba(255,255,255,0.04)",
       }}
     >
-      <div style={{ color: "rgba(255,255,255,0.26)", fontSize: 9, marginBottom: 3 }}>{label}</div>
+      <div style={{ color: "#7b8ba0", fontSize: 9, marginBottom: 3 }}>{label}</div>
       <div
         style={{
-          color: "rgba(255,255,255,0.7)",
+          color: "#475569",
           fontSize: 12,
           fontWeight: 800,
           overflow: "hidden",
@@ -1320,7 +1320,7 @@ function MiniStat({ label, value }: { label: string; value: string | number }) {
 function ChipGroup({ title, values }: { title: string; values: string[] }) {
   return (
     <div style={{ minWidth: 0 }}>
-      <div style={{ color: "rgba(255,255,255,0.3)", fontSize: 10, fontWeight: 750, marginBottom: 5 }}>
+      <div style={{ color: "#7b8ba0", fontSize: 10, fontWeight: 750, marginBottom: 5 }}>
         {title}
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
@@ -1335,7 +1335,7 @@ function ChipGroup({ title, values }: { title: string; values: string[] }) {
               padding: "3px 7px",
               borderRadius: 6,
               background: "rgba(255,255,255,0.045)",
-              color: "rgba(255,255,255,0.45)",
+              color: "#7b8ba0",
               fontSize: 10,
               fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
             }}
@@ -1359,10 +1359,10 @@ function EmptyState() {
         textAlign: "center",
       }}
     >
-      <div style={{ color: "rgba(255,255,255,0.58)", fontSize: 13, fontWeight: 800 }}>
+      <div style={{ color: "#475569", fontSize: 13, fontWeight: 800 }}>
         暂无会话
       </div>
-      <div style={{ color: "rgba(255,255,255,0.28)", fontSize: 11, marginTop: 6 }}>
+      <div style={{ color: "#7b8ba0", fontSize: 11, marginTop: 6 }}>
         agent hook 产生事件后，这里会显示当前工作状态和最近需求推进度。
       </div>
     </div>
@@ -1381,19 +1381,19 @@ function SessionSection({
   children: ReactNode;
 }) {
   return (
-    <div style={{ display: "grid", gap: 8 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
-        <div style={{ color: "rgba(255,255,255,0.58)", fontSize: 11, fontWeight: 900 }}>
-          {title} <span style={{ color: "rgba(255,255,255,0.28)" }}>({count})</span>
-        </div>
-        <div style={{ color: "rgba(255,255,255,0.24)", fontSize: 10 }}>{detail}</div>
+    <div className="hexa-scanned-group">
+      <div className="hexa-scanned-group-heading">
+        <strong>
+          {title} <span>({count})</span>
+        </strong>
+        <small>{detail}</small>
       </div>
       {children}
     </div>
   );
 }
 
-function WatchCommandPanel() {
+export function HexaWatchCommandPanel() {
   const [copied, setCopied] = useState<"register" | "update" | "delete" | null>(null);
   const [expanded, setExpanded] = useState(false);
   const copy = async (kind: "register" | "update" | "delete", command: string) => {
@@ -1403,25 +1403,15 @@ function WatchCommandPanel() {
   };
 
   return (
-    <div
-      style={{
-        display: "grid",
-        gap: expanded ? 10 : 8,
-        padding: 10,
-        marginBottom: 14,
-        borderRadius: 8,
-        background: "rgba(52,211,153,0.055)",
-        border: "1px solid rgba(52,211,153,0.18)",
-      }}
-    >
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
-        <div>
-          <div style={{ color: "rgba(255,255,255,0.78)", fontSize: 12, fontWeight: 900 }}>主动加入 Hexa 托管</div>
-          <div style={{ color: "rgba(255,255,255,0.34)", fontSize: 10, lineHeight: 1.45, marginTop: 4 }}>
+    <section className={`hexa-binding-section hexa-watch-command ${expanded ? "is-expanded" : ""}`}>
+      <div className="hexa-watch-command-heading">
+        <div className="hexa-binding-copy">
+          <strong>主动加入 Hexa 托管</strong>
+          <span>
             已接入的 Agent 在任何项目里看到“重点监控这个会话”后，都会用全局 Connector 绑定真实会话，不再依赖当前项目的 npm 脚本。
-          </div>
+          </span>
         </div>
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+        <div className="hexa-binding-actions">
           <button type="button" className="kawaii-toggle-btn" onClick={() => setExpanded((value) => !value)}>
             {expanded ? "收起命令" : "展开命令"}
           </button>
@@ -1431,28 +1421,13 @@ function WatchCommandPanel() {
         </div>
       </div>
       {expanded ? (
-        <>
-          <pre
-            style={{
-              margin: 0,
-              padding: 10,
-              borderRadius: 8,
-              background: "rgba(0,0,0,0.22)",
-              border: "1px solid rgba(255,255,255,0.08)",
-              color: "rgba(255,255,255,0.72)",
-              fontSize: 10,
-              lineHeight: 1.45,
-              overflowX: "auto",
-              whiteSpace: "pre-wrap",
-            }}
-          >
-            {HEXA_REGISTER_COMMAND}
-          </pre>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-            <div style={{ color: "rgba(255,255,255,0.28)", fontSize: 10 }}>
+        <div className="hexa-watch-command-details">
+          <pre>{HEXA_REGISTER_COMMAND}</pre>
+          <div className="hexa-watch-command-footer">
+            <span>
               后续进展用 update；结束托管用 unwatch。Agent 没有结构化计划能力时，Hexa 会明确说明，不会伪造工作项。
-            </div>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            </span>
+            <div className="hexa-binding-actions">
               <button type="button" className="kawaii-toggle-btn" onClick={() => void copy("update", HEXA_UPDATE_COMMAND)}>
                 <Send size={14} /> {copied === "update" ? "已复制" : "复制更新命令"}
               </button>
@@ -1461,24 +1436,11 @@ function WatchCommandPanel() {
               </button>
             </div>
           </div>
-        </>
-      ) : (
-        <div
-          style={{
-            padding: "8px 10px",
-            borderRadius: 8,
-            background: "rgba(0,0,0,0.16)",
-            border: "1px solid rgba(255,255,255,0.07)",
-            color: "rgba(255,255,255,0.62)",
-            fontSize: 10,
-            fontFamily: "monospace",
-            overflowWrap: "anywhere",
-          }}
-        >
-          {HEXA_REGISTER_COMMAND}
         </div>
+      ) : (
+        <code className="hexa-watch-command-preview">{HEXA_REGISTER_COMMAND}</code>
       )}
-    </div>
+    </section>
   );
 }
 
@@ -1496,35 +1458,14 @@ function AgentSessionGroup({
   children: ReactNode;
 }) {
   return (
-    <div
-      style={{
-        display: "grid",
-        gap: collapsed ? 0 : 8,
-        padding: 8,
-        borderRadius: 8,
-        background: "rgba(255,255,255,0.018)",
-        border: "1px solid rgba(255,255,255,0.065)",
-      }}
-    >
+    <div className={`hexa-scanned-agent ${collapsed ? "is-collapsed" : ""}`}>
       <button
         type="button"
         onClick={onToggle}
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          gap: 10,
-          width: "100%",
-          border: 0,
-          background: "transparent",
-          color: "rgba(255,255,255,0.64)",
-          padding: "4px 2px",
-          cursor: "pointer",
-          textAlign: "left",
-        }}
+        className="hexa-scanned-agent-toggle"
       >
-        <span style={{ fontSize: 11, fontWeight: 900 }}>{collapsed ? "▸" : "▾"} {agent}</span>
-        <span style={{ color: "rgba(255,255,255,0.28)", fontSize: 10 }}>{count} scanned sessions</span>
+        <strong>{collapsed ? "▸" : "▾"} {agent}</strong>
+        <small>{count} scanned sessions</small>
       </button>
       {!collapsed && children}
     </div>
@@ -1764,16 +1705,16 @@ export function HexaModule() {
           onMutate={mutateHexaSessionAudit}
           renderOperations={renderWatchedOperations}
           entryPanel={(
-            <div style={{ display: "grid", gap: 10 }}>
-              <WatchCommandPanel />
-              <RemoteAccessPanel
+            <div className="hexa-binding-stack">
+              <HexaWatchCommandPanel />
+              <HexaRemoteAccessPanel
                 state={remoteControl}
                 pairing={remotePairing}
                 onEnable={enableCodexRemoteControl}
                 onDisable={disableCodexRemoteControl}
                 onPair={startCodexRemotePairing}
               />
-              <HumHumMobilePanel
+              <HexaMobileAccessPanel
                 state={mobileBridge}
                 pairing={mobilePairing}
                 relayConfig={mobileRelayConfig}
@@ -1795,21 +1736,11 @@ export function HexaModule() {
             <MetricSummaryItem label="最近完成" value={recentCompleted.length} tone="complete" detail="保留最近 6 个复盘样本" />
             <MetricSummaryItem label="告警信号" value={alerts.length} tone="alert" detail="停滞、循环、低进展" />
           </div>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
-          <div
-            style={{
-              color: "rgba(255,255,255,0.42)",
-              fontSize: 11,
-              fontWeight: 850,
-              textTransform: "uppercase",
-              letterSpacing: 0.4,
-            }}
-          >
-            自动扫描会话 ({secondarySessions.length})
-          </div>
-          <div style={{ color: "rgba(255,255,255,0.25)", fontSize: 10 }}>
+        <div className="hexa-scanned-heading">
+          <strong>自动扫描会话 ({secondarySessions.length})</strong>
+          <span>
             这里只展示发现结果，不把启发式判断冒充主动监控结论
-          </div>
+          </span>
         </div>
 
         {secondarySessions.length === 0 ? (
