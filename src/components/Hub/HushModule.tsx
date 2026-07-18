@@ -20,6 +20,7 @@ import {
   getHushPlatformIdentity,
   getHushUnreadCount,
   groupHushMessages,
+  migrateHushConversationState,
   parseHushConversationState,
   resolveHushSelectedContact,
   serializeHushConversationState,
@@ -478,6 +479,11 @@ export function HushModule() {
       const existing = map.get(identity.id);
       if (existing) {
         existing.messages.push(message);
+        for (const legacyId of identity.legacyIds) {
+          if (!existing.legacyIds.includes(legacyId)) {
+            existing.legacyIds.push(legacyId);
+          }
+        }
         if (message.received_at > existing.lastMessageTime) {
           existing.lastMessage = message.text;
           existing.lastMessageTime = message.received_at;
@@ -489,6 +495,7 @@ export function HushModule() {
       } else {
         map.set(identity.id, {
           id: identity.id,
+          legacyIds: identity.legacyIds,
           name: identity.name,
           tier: TIER_ORDER.includes(message.tier) ? message.tier : "work",
           platforms: [message.platform],
@@ -501,6 +508,12 @@ export function HushModule() {
     }
     return Array.from(map.values()).sort(compareHushContacts);
   }, [inbox]);
+
+  useEffect(() => {
+    setConversationState((current) =>
+      migrateHushConversationState(current, contacts),
+    );
+  }, [contacts]);
 
   const filteredContacts = useMemo(
     () => filterHushContacts(contacts, filter, conversationState),

@@ -5,6 +5,7 @@ import {
   getHushUnreadCount,
   groupHushMessages,
   isHushContactUnread,
+  migrateHushConversationState,
   parseHushConversationState,
   resolveHushSelectedContact,
   serializeHushConversationState,
@@ -12,6 +13,20 @@ import {
   type HushConversationState,
   type HushInboxMessage,
 } from "./hushPresentation";
+
+type TestConversationKind =
+  | "dws-id"
+  | "dws-chat"
+  | "notification-thread"
+  | "sender";
+
+function canonicalId(
+  kind: TestConversationKind,
+  platform: string,
+  value: string,
+): string {
+  return `hush:v2:${kind}:${encodeURIComponent(platform)}:${encodeURIComponent(value)}`;
+}
 
 function message(
   id: string,
@@ -38,6 +53,7 @@ function contact(
 ): DerivedContact {
   return {
     id,
+    legacyIds: [],
     name: id,
     tier: "work",
     platforms: ["dingtalk"],
@@ -71,9 +87,15 @@ describe("getHushConversationIdentity", () => {
       },
     });
 
-    expect(first.id).toBe("wechat:conversation:THREAD-ONE");
-    expect(second.id).toBe("wechat:conversation:thread-two");
+    expect(first.id).toBe(
+      canonicalId("notification-thread", "wechat", "THREAD-ONE"),
+    );
+    expect(second.id).toBe(
+      canonicalId("notification-thread", "wechat", "thread-two"),
+    );
     expect(first.id).not.toBe(second.id);
+    expect(first.legacyIds).toEqual([" WeChat : WeChat "]);
+    expect(second.legacyIds).toEqual(["wechat:wechat"]);
   });
 
   it("trims DWS conversation_id and chat_id values without changing case", () => {
@@ -101,10 +123,14 @@ describe("getHushConversationIdentity", () => {
     });
 
     expect(fromConversationId).toEqual({
-      id: "dingtalk:conversation:PROJECT-42",
+      id: canonicalId("dws-id", "dingtalk", "PROJECT-42"),
       name: "项目群",
+      legacyIds: [" DingTalk :成员甲"],
     });
     expect(fromChatId.id).toBe(fromConversationId.id);
+    expect(fromChatId.legacyIds).toEqual([
+      "dingtalk:conversation:项目群",
+    ]);
   });
 
   it("uses DWS chat metadata when conversation_id and chat_id are blank", () => {
@@ -133,9 +159,15 @@ describe("getHushConversationIdentity", () => {
       },
     });
 
-    expect(first.id).toBe("dingtalk:conversation:项目群甲");
-    expect(second.id).toBe("dingtalk:conversation:项目群乙");
+    expect(first.id).toBe(canonicalId("dws-chat", "dingtalk", "项目群甲"));
+    expect(second.id).toBe(canonicalId("dws-chat", "dingtalk", "项目群乙"));
     expect(first.id).not.toBe(second.id);
+    expect(first.legacyIds).toEqual([
+      "dingtalk:conversation:项目群甲",
+    ]);
+    expect(second.legacyIds).toEqual([
+      "dingtalk:conversation:项目群乙",
+    ]);
   });
 
   it.each([
@@ -203,8 +235,11 @@ describe("getHushConversationIdentity", () => {
       raw: lowerRaw,
     });
 
-    expect(upper.id).toBe("wechat:conversation:Chat-Aa");
-    expect(lower.id).toBe("wechat:conversation:chat-aa");
+    const kind = sourceId.startsWith("dws:")
+      ? "dws-id"
+      : "notification-thread";
+    expect(upper.id).toBe(canonicalId(kind, "wechat", "Chat-Aa"));
+    expect(lower.id).toBe(canonicalId(kind, "wechat", "chat-aa"));
     expect(upper.id).not.toBe(lower.id);
   });
 
@@ -221,7 +256,11 @@ describe("getHushConversationIdentity", () => {
       },
     });
 
-    expect(identity).toEqual({ id: "wechat:Alice", name: "Alice" });
+    expect(identity).toEqual({
+      id: canonicalId("sender", "wechat", "Alice"),
+      name: "Alice",
+      legacyIds: [" WeChat : Alice "],
+    });
   });
 
   it("does not merge sender fallback IDs that differ only by case", () => {
@@ -236,9 +275,11 @@ describe("getHushConversationIdentity", () => {
       chat: null,
     });
 
-    expect(upper.id).toBe("wechat:Alice");
-    expect(lower.id).toBe("wechat:alice");
+    expect(upper.id).toBe(canonicalId("sender", "wechat", "Alice"));
+    expect(lower.id).toBe(canonicalId("sender", "wechat", "alice"));
     expect(upper.id).not.toBe(lower.id);
+    expect(upper.legacyIds).toEqual(["wechat:Alice"]);
+    expect(lower.legacyIds).toEqual(["wechat:alice"]);
   });
 
   it("keeps the same notification thread key isolated by platform", () => {
@@ -263,9 +304,78 @@ describe("getHushConversationIdentity", () => {
       },
     });
 
-    expect(wechat.id).toBe("wechat:conversation:Shared-Thread");
-    expect(dingtalk.id).toBe("dingtalk:conversation:Shared-Thread");
+    expect(wechat.id).toBe(
+      canonicalId("notification-thread", "wechat", "Shared-Thread"),
+    );
+    expect(dingtalk.id).toBe(
+      canonicalId("notification-thread", "dingtalk", "Shared-Thread"),
+    );
     expect(wechat.id).not.toBe(dingtalk.id);
+  });
+
+  it("uses distinct canonical kinds for cross-type identity values", () => {
+    const sharedValue = "Shared:Key";
+    const identities = [
+      getHushConversationIdentity({
+        platform: "dingtalk",
+        sender: "sender",
+        chat: "group",
+        source_id: "dws:id",
+        raw: { source: "dws", conversation_id: sharedValue },
+      }),
+      getHushConversationIdentity({
+        platform: "dingtalk",
+        sender: "sender",
+        chat: sharedValue,
+        source_id: "dws:chat",
+        raw: {
+          source: "dws",
+          conversation_id: "",
+          chat_id: "",
+          chat: sharedValue,
+        },
+      }),
+      getHushConversationIdentity({
+        platform: "dingtalk",
+        sender: "sender",
+        chat: sharedValue,
+        source_id: "com.alibaba.dingtalkmac:thread",
+        raw: {
+          source: "macos_notification_center",
+          threadIdentifier: sharedValue,
+        },
+      }),
+      getHushConversationIdentity({
+        platform: "dingtalk",
+        sender: sharedValue,
+        chat: null,
+      }),
+    ];
+
+    expect(identities.map(({ id }) => id)).toEqual([
+      canonicalId("dws-id", "dingtalk", sharedValue),
+      canonicalId("dws-chat", "dingtalk", sharedValue),
+      canonicalId("notification-thread", "dingtalk", sharedValue),
+      canonicalId("sender", "dingtalk", sharedValue),
+    ]);
+    expect(new Set(identities.map(({ id }) => id))).toHaveLength(4);
+  });
+
+  it("encodes platform and value segments so delimiters cannot collide", () => {
+    const platformDelimiter = getHushConversationIdentity({
+      platform: "a:b",
+      sender: "c",
+      chat: null,
+    });
+    const valueDelimiter = getHushConversationIdentity({
+      platform: "a",
+      sender: "b:c",
+      chat: null,
+    });
+
+    expect(platformDelimiter.id).toBe(canonicalId("sender", "a:b", "c"));
+    expect(valueDelimiter.id).toBe(canonicalId("sender", "a", "b:c"));
+    expect(platformDelimiter.id).not.toBe(valueDelimiter.id);
   });
 });
 
@@ -481,5 +591,90 @@ describe("Hush conversation state storage", () => {
       attentionIds: [],
       readThrough: {},
     });
+  });
+});
+
+describe("migrateHushConversationState", () => {
+  it("maps real b6 DWS keys to canonical IDs without losing state", () => {
+    const identity = getHushConversationIdentity({
+      platform: "DingTalk",
+      sender: "成员甲",
+      chat: "项目群",
+      source_id: "dws:message-1",
+      raw: {
+        source: "dws",
+        conversation_id: " Conversation:42 ",
+      },
+    });
+    const legacyId = "DingTalk:conversation:Conversation:42";
+    const readThrough = "2026-07-18T05:00:00Z";
+    const migrated = migrateHushConversationState(
+      {
+        attentionIds: [legacyId, identity.id, legacyId, "unloaded:contact"],
+        readThrough: {
+          [legacyId]: readThrough,
+          "unloaded:contact": "2026-07-18T04:00:00Z",
+        },
+      },
+      [{ id: identity.id, legacyIds: identity.legacyIds }],
+    );
+
+    expect(identity.legacyIds).toEqual([legacyId]);
+    expect(migrated).toEqual({
+      attentionIds: [identity.id, "unloaded:contact"],
+      readThrough: {
+        [identity.id]: readThrough,
+        "unloaded:contact": "2026-07-18T04:00:00Z",
+      },
+    });
+  });
+
+  it("copies one collided b6 sender state to every canonical conversation", () => {
+    const legacyId = "wechat:WeChat";
+    const firstId = canonicalId(
+      "notification-thread",
+      "wechat",
+      "thread-one",
+    );
+    const secondId = canonicalId(
+      "notification-thread",
+      "wechat",
+      "thread-two",
+    );
+    const readThrough = "2026-07-18T03:00:00Z";
+    const migrated = migrateHushConversationState(
+      {
+        attentionIds: [legacyId, legacyId],
+        readThrough: { [legacyId]: readThrough },
+      },
+      [
+        { id: firstId, legacyIds: [legacyId] },
+        { id: secondId, legacyIds: [legacyId] },
+      ],
+    );
+
+    expect(migrated).toEqual({
+      attentionIds: [firstId, secondId],
+      readThrough: {
+        [firstId]: readThrough,
+        [secondId]: readThrough,
+      },
+    });
+  });
+
+  it("returns the original state when no loaded contact needs migration", () => {
+    const state: HushConversationState = {
+      attentionIds: ["unloaded:contact"],
+      readThrough: { "unloaded:contact": "2026-07-18T03:00:00Z" },
+    };
+
+    expect(
+      migrateHushConversationState(state, [
+        {
+          id: canonicalId("sender", "wechat", "Alice"),
+          legacyIds: ["wechat:Alice"],
+        },
+      ]),
+    ).toBe(state);
   });
 });

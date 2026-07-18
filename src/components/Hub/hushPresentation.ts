@@ -17,6 +17,7 @@ export interface HushInboxMessage {
 
 export interface DerivedContact {
   id: string;
+  legacyIds: string[];
   name: string;
   tier: string;
   platforms: string[];
@@ -41,10 +42,22 @@ export interface HushConversationState {
   readThrough: Record<string, string>;
 }
 
+export interface HushConversationIdentity {
+  id: string;
+  name: string;
+  legacyIds: string[];
+}
+
 export interface HushPlatformIdentity {
   key: "dingtalk" | "wechat" | "other";
   label: string;
 }
+
+type HushConversationKind =
+  | "dws-id"
+  | "dws-chat"
+  | "notification-thread"
+  | "sender";
 
 const EMPTY_HUSH_CONVERSATION_STATE: HushConversationState = {
   attentionIds: [],
@@ -68,28 +81,43 @@ export function getHushConversationIdentity(
     HushInboxMessage,
     "platform" | "sender" | "chat" | "source_id" | "raw"
   >,
-): { id: string; name: string } {
+): HushConversationIdentity {
   const platformKey =
     normalizeHushClassifier(message.platform) ?? "unknown-platform";
   const senderKey = trimHushIdentityPart(message.sender) ?? "unknown-sender";
   const senderName = message.sender.trim() || "Unknown sender";
+  const legacyIds = [getB6HushConversationId(message)];
   const source = normalizeHushClassifier(message.raw?.source);
   const sourceId = normalizeHushClassifier(message.source_id);
   const isDwsMessage =
     sourceId?.startsWith("dws:") === true || source === "dws";
   if (isDwsMessage) {
-    const conversationKey =
+    const conversationId =
       trimHushIdentityPart(message.raw?.conversation_id) ??
-      trimHushIdentityPart(message.raw?.chat_id) ??
-      trimHushIdentityPart(message.raw?.chat) ??
-      trimHushIdentityPart(message.chat);
-    if (conversationKey) {
+      trimHushIdentityPart(message.raw?.chat_id);
+    if (conversationId) {
       const chatName =
         trimHushIdentityPart(message.chat) ??
         trimHushIdentityPart(message.raw?.chat);
       return {
-        id: `${platformKey}:conversation:${conversationKey}`,
+        id: createHushConversationId(
+          platformKey,
+          "dws-id",
+          conversationId,
+        ),
         name: chatName || senderName,
+        legacyIds,
+      };
+    }
+
+    const chatKey =
+      trimHushIdentityPart(message.raw?.chat) ??
+      trimHushIdentityPart(message.chat);
+    if (chatKey) {
+      return {
+        id: createHushConversationId(platformKey, "dws-chat", chatKey),
+        name: trimHushIdentityPart(message.chat) ?? chatKey,
+        legacyIds,
       };
     }
   }
@@ -106,14 +134,20 @@ export function getHushConversationIdentity(
       : null);
   if (notificationThreadKey) {
     return {
-      id: `${platformKey}:conversation:${notificationThreadKey}`,
+      id: createHushConversationId(
+        platformKey,
+        "notification-thread",
+        notificationThreadKey,
+      ),
       name: senderName,
+      legacyIds,
     };
   }
 
   return {
-    id: `${platformKey}:${senderKey}`,
+    id: createHushConversationId(platformKey, "sender", senderKey),
     name: senderName,
+    legacyIds,
   };
 }
 
@@ -258,6 +292,57 @@ export function serializeHushConversationState(
   });
 }
 
+export function migrateHushConversationState(
+  state: HushConversationState,
+  contacts: Array<Pick<DerivedContact, "id" | "legacyIds">>,
+): HushConversationState {
+  const canonicalIds = new Set(contacts.map(({ id }) => id));
+  const legacyTargets = new Map<string, string[]>();
+  for (const contact of contacts) {
+    for (const legacyId of new Set(contact.legacyIds)) {
+      if (!legacyId || legacyId === contact.id) continue;
+      const targets = legacyTargets.get(legacyId) ?? [];
+      if (!targets.includes(contact.id)) targets.push(contact.id);
+      legacyTargets.set(legacyId, targets);
+    }
+  }
+
+  let changed = false;
+  const attentionIds: string[] = [];
+  const seenAttentionIds = new Set<string>();
+  for (const id of state.attentionIds) {
+    const targets = canonicalIds.has(id) ? undefined : legacyTargets.get(id);
+    if (targets) changed = true;
+    for (const nextId of targets ?? [id]) {
+      if (seenAttentionIds.has(nextId)) {
+        changed = true;
+        continue;
+      }
+      seenAttentionIds.add(nextId);
+      attentionIds.push(nextId);
+    }
+  }
+
+  const readThrough: Record<string, string> = {};
+  for (const [id, timestamp] of Object.entries(state.readThrough)) {
+    const targets = canonicalIds.has(id) ? undefined : legacyTargets.get(id);
+    if (!targets) readThrough[id] = timestamp;
+  }
+  for (const [id, timestamp] of Object.entries(state.readThrough)) {
+    const targets = canonicalIds.has(id) ? undefined : legacyTargets.get(id);
+    if (!targets) continue;
+    changed = true;
+    for (const target of targets) {
+      readThrough[target] = laterHushReadThrough(
+        readThrough[target],
+        timestamp,
+      );
+    }
+  }
+
+  return changed ? { attentionIds, readThrough } : state;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -271,6 +356,49 @@ function trimHushIdentityPart(value: unknown): string | null {
 function normalizeHushClassifier(value: unknown): string | null {
   const normalized = trimHushIdentityPart(value)?.toLowerCase();
   return normalized || null;
+}
+
+function createHushConversationId(
+  platform: string,
+  kind: HushConversationKind,
+  value: string,
+): string {
+  return `hush:v2:${kind}:${encodeURIComponent(platform)}:${encodeURIComponent(value)}`;
+}
+
+function getB6HushConversationId(
+  message: Pick<
+    HushInboxMessage,
+    "platform" | "sender" | "chat" | "source_id" | "raw"
+  >,
+): string {
+  const isDwsMessage =
+    message.source_id?.startsWith("dws:") || message.raw?.source === "dws";
+  if (isDwsMessage) {
+    const conversationId = trimHushIdentityPart(
+      message.raw?.conversation_id,
+    );
+    const chatName = trimHushIdentityPart(message.chat);
+    const conversationKey = conversationId ?? chatName;
+    if (conversationKey) {
+      return `${message.platform}:conversation:${conversationKey}`;
+    }
+  }
+  return `${message.platform}:${message.sender}`;
+}
+
+function laterHushReadThrough(
+  current: string | undefined,
+  candidate: string,
+): string {
+  if (!current) return candidate;
+  const currentTime = parseHushTimestamp(current);
+  const candidateTime = parseHushTimestamp(candidate);
+  return currentTime !== null &&
+    candidateTime !== null &&
+    candidateTime > currentTime
+    ? candidate
+    : current;
 }
 
 function orderHushMessages(messages: HushInboxMessage[]): HushInboxMessage[] {

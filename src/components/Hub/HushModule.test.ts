@@ -162,6 +162,7 @@ function contact(id: string, messages: HushInboxMessage[]): DerivedContact {
   const latest = messages[messages.length - 1]!;
   return {
     id,
+    legacyIds: [],
     name: id,
     tier: "work",
     platforms: ["dingtalk"],
@@ -215,8 +216,9 @@ describe("getHushConversationIdentity", () => {
     });
 
     expect(first).toEqual({
-      id: "dingtalk:conversation:conversation-42",
+      id: "hush:v2:dws-id:dingtalk:conversation-42",
       name: "项目群",
+      legacyIds: ["dingtalk:conversation:conversation-42"],
     });
     expect(second).toEqual(first);
   });
@@ -445,6 +447,84 @@ describe("Hush health command registration", () => {
     expect(lib).toContain("commands::clear_hush_health_signals");
     expect(commands).toContain("pub async fn get_hush_health_signals");
     expect(commands).toContain("pub async fn clear_hush_health_signals");
+  });
+});
+
+describe("HushModule conversation state migration", () => {
+  let view: { host: HTMLDivElement; root: Root } | null = null;
+
+  beforeEach(() => {
+    window.localStorage.clear();
+    listenMock.mockResolvedValue(() => undefined);
+  });
+
+  afterEach(async () => {
+    if (view) await disposeHushModule(view);
+    view = null;
+    window.localStorage.clear();
+    vi.clearAllMocks();
+  });
+
+  it("persists b6 attention and read-through state under the canonical ID", async () => {
+    const sourceMessage: HushInboxMessage = {
+      id: "message-1",
+      platform: "dingtalk",
+      sender: "成员甲",
+      chat: "项目群",
+      text: "需求文档已更新",
+      tier: "work",
+      importance: 3,
+      received_at: "2026-07-18T05:00:00Z",
+      source_id: "dws:message-1",
+      raw: {
+        source: "dws",
+        conversation_id: "conversation-42",
+        chat: "项目群",
+      },
+    };
+    const sourceSnapshot = JSON.stringify(sourceMessage);
+    const legacyId = "dingtalk:conversation:conversation-42";
+    const canonicalId = "hush:v2:dws-id:dingtalk:conversation-42";
+    const readThrough = "2026-07-18T04:00:00Z";
+    window.localStorage.setItem(
+      HUSH_CONVERSATION_STATE_KEY,
+      JSON.stringify({
+        version: 1,
+        attentionIds: [legacyId, canonicalId, legacyId],
+        readThrough: { [legacyId]: readThrough },
+      }),
+    );
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "get_hush_inbox") {
+        return Promise.resolve({
+          total: 1,
+          unread_priority: 1,
+          by_tier: { work: 1 },
+          by_platform: { dingtalk: 1 },
+          messages: [sourceMessage],
+        });
+      }
+      return Promise.resolve(defaultInvoke(command));
+    });
+
+    view = await renderHushModule();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(
+      JSON.parse(
+        window.localStorage.getItem(HUSH_CONVERSATION_STATE_KEY) ?? "null",
+      ),
+    ).toEqual({
+      version: 1,
+      attentionIds: [canonicalId],
+      readThrough: { [canonicalId]: readThrough },
+    });
+    expect(JSON.stringify(sourceMessage)).toBe(sourceSnapshot);
+    expect(invokeMock).not.toHaveBeenCalledWith("clear_hush_inbox");
+    expect(invokeMock).not.toHaveBeenCalledWith("sync_hush_dws");
   });
 });
 
