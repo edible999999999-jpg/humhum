@@ -1196,8 +1196,9 @@ fn recovered_codex_plan_events(
     thread_id: &str,
     transcript_path: &Path,
 ) -> Result<Vec<HexaEvent>, String> {
-    let plan = crate::transcript_reader::parse_latest_codex_plan(transcript_path)?;
-    let lifecycle = crate::transcript_reader::latest_codex_turn_lifecycle(transcript_path)?;
+    let recovery = crate::transcript_reader::parse_latest_codex_recovery(transcript_path)?;
+    let plan = recovery.plan;
+    let lifecycle = recovery.lifecycle;
     let mut events = Vec::new();
     if let Some(plan) = plan {
         let valid_timestamp = plan

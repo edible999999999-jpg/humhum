@@ -6,6 +6,9 @@ use std::path::Path;
 
 const MAX_TAIL_BYTES: u64 = 1024 * 1024;
 const MAX_RECORDS: usize = 500;
+const MAX_CODEX_CONTROL_SCAN_BYTES: u64 = 32 * 1024 * 1024;
+const MAX_CODEX_CONTROL_LINE_BYTES: usize = 256 * 1024;
+const CODEX_CONTROL_READ_CHUNK_BYTES: usize = 64 * 1024;
 const USER_LIMIT: usize = 10;
 const ASSISTANT_LIMIT: usize = 6;
 const TOOL_LIMIT: usize = 12;
@@ -65,6 +68,12 @@ pub(crate) struct CodexTurnLifecycleSnapshot {
     pub(crate) status: CodexTurnLifecycleStatus,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CodexRecoverySnapshot {
+    pub(crate) plan: Option<CodexPlanSnapshot>,
+    pub(crate) lifecycle: Option<CodexTurnLifecycleSnapshot>,
+}
+
 pub(crate) fn parse_transcript_signals(path: &Path) -> Result<TranscriptSignals, String> {
     let recent_lines = read_recent_lines(path)?;
     let mut signals = TranscriptSignals::default();
@@ -114,8 +123,21 @@ pub(crate) fn parse_transcript_signals(path: &Path) -> Result<TranscriptSignals,
     Ok(signals)
 }
 
+#[cfg(test)]
 pub(crate) fn parse_latest_codex_plan(path: &Path) -> Result<Option<CodexPlanSnapshot>, String> {
-    let recent_lines = read_recent_lines(path)?;
+    let recent_lines = read_recent_codex_control_lines(path)?;
+    Ok(parse_latest_codex_plan_from_lines(&recent_lines))
+}
+
+pub(crate) fn parse_latest_codex_recovery(path: &Path) -> Result<CodexRecoverySnapshot, String> {
+    let recent_lines = read_recent_codex_control_lines(path)?;
+    Ok(CodexRecoverySnapshot {
+        plan: parse_latest_codex_plan_from_lines(&recent_lines),
+        lifecycle: latest_codex_turn_lifecycle_from_lines(&recent_lines),
+    })
+}
+
+fn parse_latest_codex_plan_from_lines(recent_lines: &[String]) -> Option<CodexPlanSnapshot> {
     let mut latest: Option<CodexPlanSnapshot> = None;
 
     for line in recent_lines {
@@ -180,7 +202,7 @@ pub(crate) fn parse_latest_codex_plan(path: &Path) -> Result<Option<CodexPlanSna
         });
     }
 
-    Ok(latest)
+    latest
 }
 
 #[cfg(test)]
@@ -189,10 +211,17 @@ pub(crate) fn latest_codex_turn_completed(path: &Path) -> Result<bool, String> {
         .is_some_and(|lifecycle| lifecycle.status == CodexTurnLifecycleStatus::Completed))
 }
 
+#[cfg(test)]
 pub(crate) fn latest_codex_turn_lifecycle(
     path: &Path,
 ) -> Result<Option<CodexTurnLifecycleSnapshot>, String> {
-    let recent_lines = read_recent_lines(path)?;
+    let recent_lines = read_recent_codex_control_lines(path)?;
+    Ok(latest_codex_turn_lifecycle_from_lines(&recent_lines))
+}
+
+fn latest_codex_turn_lifecycle_from_lines(
+    recent_lines: &[String],
+) -> Option<CodexTurnLifecycleSnapshot> {
     let mut latest = None;
     let mut active_turn_id = None;
     let mut active_started_at = None;
@@ -246,7 +275,7 @@ pub(crate) fn latest_codex_turn_lifecycle(
         }
     }
 
-    Ok(latest)
+    latest
 }
 
 fn codex_turn_completed(payload: &Value) -> Option<bool> {
@@ -255,6 +284,84 @@ fn codex_turn_completed(payload: &Value) -> Option<bool> {
         Some("task_complete") => Some(payload.get("error").map(Value::is_null).unwrap_or(true)),
         _ => None,
     }
+}
+
+fn read_recent_codex_control_lines(path: &Path) -> Result<Vec<String>, String> {
+    let mut file = File::open(path).map_err(|error| error.to_string())?;
+    let file_len = file.metadata().map_err(|error| error.to_string())?.len();
+    let start = file_len.saturating_sub(MAX_CODEX_CONTROL_SCAN_BYTES);
+    let mut skip_partial_first_record = false;
+    if start > 0 {
+        file.seek(SeekFrom::Start(start - 1))
+            .map_err(|error| error.to_string())?;
+        let mut previous = [0_u8; 1];
+        file.read_exact(&mut previous)
+            .map_err(|error| error.to_string())?;
+        skip_partial_first_record = previous[0] != b'\n';
+    }
+    file.seek(SeekFrom::Start(start))
+        .map_err(|error| error.to_string())?;
+
+    let mut lines = Vec::new();
+    let mut current_line = Vec::new();
+    let mut oversized = false;
+    let mut remaining = file_len - start;
+    let mut chunk = vec![0_u8; CODEX_CONTROL_READ_CHUNK_BYTES];
+
+    while remaining > 0 {
+        let requested = remaining.min(chunk.len() as u64) as usize;
+        let read = file
+            .read(&mut chunk[..requested])
+            .map_err(|error| error.to_string())?;
+        if read == 0 {
+            break;
+        }
+        remaining -= read as u64;
+        for byte in &chunk[..read] {
+            if skip_partial_first_record {
+                if *byte == b'\n' {
+                    skip_partial_first_record = false;
+                }
+                continue;
+            }
+            if *byte == b'\n' {
+                if !oversized {
+                    push_codex_control_line(&mut lines, &current_line);
+                }
+                current_line.clear();
+                oversized = false;
+            } else if !oversized {
+                if current_line.len() < MAX_CODEX_CONTROL_LINE_BYTES {
+                    current_line.push(*byte);
+                } else {
+                    current_line.clear();
+                    oversized = true;
+                }
+            }
+        }
+    }
+    if !skip_partial_first_record && !oversized && !current_line.is_empty() {
+        push_codex_control_line(&mut lines, &current_line);
+    }
+    Ok(lines)
+}
+
+fn push_codex_control_line(lines: &mut Vec<String>, bytes: &[u8]) {
+    let Ok(line) = std::str::from_utf8(bytes) else {
+        return;
+    };
+    if ![
+        "\"name\":\"update_plan\"",
+        "\"type\":\"task_started\"",
+        "\"type\":\"task_complete\"",
+        "\"type\":\"turn_aborted\"",
+    ]
+    .iter()
+    .any(|needle| line.contains(needle))
+    {
+        return;
+    }
+    push_limited(lines, line.to_string(), MAX_RECORDS);
 }
 
 fn read_recent_lines(path: &Path) -> Result<Vec<String>, String> {
@@ -581,6 +688,32 @@ mod tests {
         let plan = parse_latest_codex_plan(&path).unwrap().unwrap();
 
         assert_eq!(plan.turn_id.as_deref(), Some("turn-current"));
+    }
+
+    #[test]
+    fn recovers_control_events_across_oversized_image_records() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rollout.jsonl");
+        let oversized_image = format!(
+            "{{\"type\":\"tool_output\",\"image_url\":\"{}\"}}",
+            "a".repeat(384 * 1024)
+        );
+        write_lines(
+            &path,
+            &[
+                r#"{"timestamp":"2026-07-18T04:20:00Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-current"}}"#.to_string(),
+                r#"{"timestamp":"2026-07-18T04:20:30Z","type":"response_item","payload":{"type":"function_call","name":"update_plan","arguments":"{\"plan\":[{\"step\":\"Fix\",\"status\":\"in_progress\"}]}","internal_chat_message_metadata_passthrough":{"turn_id":"turn-current"}}}"#.to_string(),
+                oversized_image.clone(),
+                oversized_image.clone(),
+                oversized_image,
+            ],
+        );
+
+        let plan = parse_latest_codex_plan(&path).unwrap().unwrap();
+        let lifecycle = latest_codex_turn_lifecycle(&path).unwrap().unwrap();
+
+        assert_eq!(plan.turn_id.as_deref(), Some("turn-current"));
+        assert_eq!(lifecycle.turn_id.as_deref(), Some("turn-current"));
     }
 
     #[test]
