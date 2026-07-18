@@ -114,10 +114,12 @@ public final class CompanionLifecycleContractTest {
     }
 
     @Test
-    public void legacyScreenDoesNotPretendTaskSixSettingsOrHealthEventsAreWired() throws Exception {
+    public void composeHostWiresTaskSixSettingsAndHealthEvents() throws Exception {
         String source = activitySource();
-        assertFalse(source.contains("HumHumAction.OpenSettings"));
-        assertFalse(source.contains("HumHumAction.HealthUpdated"));
+        assertTrue(source.contains("HumHumAction.OpenSettings"));
+        assertTrue(source.contains("HumHumAction.CloseSettings"));
+        assertTrue(source.contains("requestHealthPermission(HealthPermission permission)"));
+        assertTrue(source.contains("HealthActivityBridge.refresh(this, viewModel)"));
     }
 
     private static String methodSource(String source, String start, String end) {

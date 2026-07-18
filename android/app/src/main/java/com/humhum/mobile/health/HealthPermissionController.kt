@@ -40,10 +40,12 @@ interface HealthBackgroundScheduler {
 class HealthPermissionController internal constructor(
     private val snapshotProvider: HealthPermissionSnapshotProvider,
     private val scheduler: HealthBackgroundScheduler,
+    private val backgroundEnabledProvider: () -> Boolean = { true },
 ) {
     constructor(context: Context) : this(
         snapshotProvider = AndroidHealthPermissionSnapshotProvider(context.applicationContext),
         scheduler = WorkManagerHealthBackgroundScheduler(context.applicationContext),
+        backgroundEnabledProvider = HealthBackgroundPreference(context)::isEnabled,
     )
 
     suspend fun plan(trigger: SyncTrigger): HealthSourcePlan {
@@ -74,7 +76,8 @@ class HealthPermissionController internal constructor(
         val hasMetricGrant = HealthMetric.entries.any { metric ->
             permissionsFor(metric).all(snapshot.grantedHealthPermissions::contains)
         }
-        val enabled = snapshot.healthConnectAvailable &&
+        val enabled = backgroundEnabledProvider() &&
+            snapshot.healthConnectAvailable &&
             snapshot.backgroundFeatureAvailable &&
             hasMetricGrant &&
             backgroundPermissions().all(snapshot.grantedHealthPermissions::contains)

@@ -1,0 +1,96 @@
+package com.humhum.mobile.ui
+
+import androidx.activity.ComponentActivity
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onRoot
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import com.humhum.mobile.MobileRoleDashboard
+import com.humhum.mobile.Models
+import com.humhum.mobile.app.ConnectionStatus
+import com.humhum.mobile.app.HealthPermission
+import com.humhum.mobile.app.HealthPermissionState
+import com.humhum.mobile.app.HumHumUiState
+import com.humhum.mobile.health.HealthFreshness
+import com.humhum.mobile.health.HealthSummary
+import com.humhum.mobile.health.HealthUiState
+import java.io.File
+import java.io.FileOutputStream
+import java.time.Instant
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+
+@RunWith(AndroidJUnit4::class)
+class LivingSignalsVisualQaTest {
+    @get:Rule
+    val compose = createAndroidComposeRule<ComponentActivity>()
+
+    @Test
+    fun captureHumiReferenceViewport() = capture(connectedState(), "living-signals-first-viewport")
+
+    @Test
+    fun captureHypeReferenceViewport() = capture(
+        connectedState(MobileRoleDashboard.Role.HYPE),
+        "hype-first-viewport",
+    )
+
+    @Test
+    fun captureHushReferenceViewport() = capture(
+        connectedState(MobileRoleDashboard.Role.HUSH),
+        "hush-first-viewport",
+    )
+
+    @Test
+    fun captureHexaReferenceViewport() = capture(
+        connectedState(MobileRoleDashboard.Role.HEXA),
+        "hexa-first-viewport",
+    )
+
+    @Test
+    fun capturePairingReferenceViewport() = capture(HumHumUiState(), "pairing-first-viewport")
+
+    @Test
+    fun captureSettingsReferenceViewport() = capture(
+        connectedState().copy(settingsVisible = true),
+        "settings-first-viewport",
+    )
+
+    private fun capture(state: HumHumUiState, fileName: String) {
+        compose.setContent { HumHumApp(state = state, callbacks = HumHumCallbacks()) }
+
+        compose.waitForIdle()
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val directory = File(context.filesDir, "qa").apply { mkdirs() }
+        FileOutputStream(File(directory, "$fileName.png")).use { output ->
+            compose.onRoot().captureToImage().asAndroidBitmap()
+                .compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output)
+        }
+    }
+
+    private fun connectedState(
+        selectedRole: MobileRoleDashboard.Role = MobileRoleDashboard.Role.HUMI,
+    ) = HumHumUiState(
+        connection = ConnectionStatus.CONNECTED,
+        scope = Models.Scope.CONTROL,
+        selectedRole = selectedRole,
+        statusMessage = "已连接 · 本机优先",
+        healthPermissions = HealthPermissionState(
+            granted = HealthPermission.entries.toSet(),
+        ),
+        health = HealthUiState(
+            summary = HealthSummary(
+                steps = 6_342.0,
+                restingHeartRate = 58.0,
+                sleepMinutes = 432.0,
+                capturedAt = Instant.now(),
+                sourceStates = emptyMap(),
+            ),
+            freshness = HealthFreshness.FRESH,
+            notices = emptyList(),
+            enqueuedSignals = 0,
+        ),
+    )
+}

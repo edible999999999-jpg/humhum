@@ -1,7 +1,7 @@
 package com.humhum.mobile;
 
 import android.Manifest;
-import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
@@ -23,6 +23,7 @@ import android.view.WindowManager;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -34,16 +35,28 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import androidx.activity.ComponentActivity;
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
+import androidx.compose.ui.platform.ComposeView;
+import androidx.health.connect.client.PermissionController;
 import com.google.zxing.integration.android.IntentIntegrator;
 import com.google.zxing.integration.android.IntentResult;
+import com.humhum.mobile.app.HealthPermission;
 import com.humhum.mobile.app.HumHumAction;
 import com.humhum.mobile.app.HumHumUiState;
 import com.humhum.mobile.app.HumHumViewModel;
 import com.humhum.mobile.app.MobileCompanionRepository;
 import com.humhum.mobile.app.PendingAction;
 import com.humhum.mobile.app.PendingActionKind;
+import com.humhum.mobile.health.EncryptedHealthQueue;
+import com.humhum.mobile.health.HealthActivityBridge;
+import com.humhum.mobile.health.HealthBackgroundPreference;
+import com.humhum.mobile.ui.HumHumActivityActions;
+import com.humhum.mobile.ui.HumHumComposeHost;
 
-public final class MainActivity extends Activity {
+public final class MainActivity extends ComponentActivity {
     private static final int NOTIFICATION_PERMISSION_REQUEST = 4103;
     private static final int CAMERA_PERMISSION_REQUEST = 4104;
     private static final String SELECTED_ROLE_STATE = "selected_role";
@@ -118,18 +131,31 @@ public final class MainActivity extends Activity {
     private String conversationErrorSessionId;
     private String conversationErrorText = "";
     private SharedPreferences pushPreferences;
+    private ActivityResultLauncher<Set<String>> healthPermissionLauncher;
+    private ActivityResultLauncher<String> activityRecognitionLauncher;
     private final SharedPreferences.OnSharedPreferenceChangeListener pushStateListener =
             (preferences, key) -> main.post(this::updatePushStatus);
 
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
+        healthPermissionLauncher = registerForActivityResult(
+                PermissionController.createRequestPermissionResultContract(),
+                granted -> refreshHealthState());
+        activityRecognitionLauncher = registerForActivityResult(
+                new ActivityResultContracts.RequestPermission(),
+                granted -> refreshHealthState());
         MobileRoleDashboard.Role restoredRole = MobileRoleDashboard.Role.HUMI;
         if (state != null) {
             restoredRole = MobileRoleDashboard.Role.fromId(
                     state.getString(SELECTED_ROLE_STATE, MobileRoleDashboard.Role.HUMI.id()));
         }
-        setContentView(R.layout.activity_main);
+        FrameLayout appShell = new FrameLayout(this);
+        View compatibilityUi = getLayoutInflater().inflate(
+                R.layout.activity_main, appShell, false);
+        compatibilityUi.setVisibility(View.GONE);
+        appShell.addView(compatibilityUi);
+        setContentView(appShell);
         applySystemBarInsets(findViewById(R.id.rootLayout));
         bindViews();
         bindRoleTabs();
@@ -144,6 +170,13 @@ public final class MainActivity extends Activity {
         companionRepository.bindConnectionStore(connectionStore);
         companionRepository.bindMonitorStore(monitorStore);
         viewModel = new HumHumViewModel(companionRepository, restoredRole);
+        ComposeView composeView = HumHumComposeHost.create(
+                this, viewModel.getState(), composeActions());
+        appShell.addView(
+                composeView,
+                new FrameLayout.LayoutParams(
+                        FrameLayout.LayoutParams.MATCH_PARENT,
+                        FrameLayout.LayoutParams.MATCH_PARENT));
         connectButton.setOnClickListener(view -> pair());
         scanSetupButton.setOnClickListener(view -> scanSetup());
         manualPairingToggle.setOnClickListener(
@@ -165,12 +198,178 @@ public final class MainActivity extends Activity {
         } else {
             activate(connection);
         }
+        refreshHealthState();
     }
 
     @Override
     protected void onSaveInstanceState(Bundle outState) {
         outState.putString(SELECTED_ROLE_STATE, currentUiState().getSelectedRole().id());
         super.onSaveInstanceState(outState);
+    }
+
+    private HumHumActivityActions composeActions() {
+        return new HumHumActivityActions() {
+            @Override public void selectRole(MobileRoleDashboard.Role role) {
+                MainActivity.this.selectRole(role);
+            }
+
+            @Override public void openSettings() {
+                dispatchState(HumHumAction.OpenSettings.INSTANCE);
+            }
+
+            @Override public void closeSettings() {
+                dispatchState(HumHumAction.CloseSettings.INSTANCE);
+            }
+
+            @Override public void refresh() {
+                refreshSessions(true);
+            }
+
+            @Override public void adjustToday() {
+                selectRole(MobileRoleDashboard.Role.HEXA);
+            }
+
+            @Override public void scanPairing() {
+                scanSetup();
+            }
+
+            @Override public void pastePairing() {
+                pasteSetup();
+            }
+
+            @Override public void manualPair(
+                    String address,
+                    String code,
+                    String fingerprint,
+                    String deviceName) {
+                urlInput.setText(address);
+                codeInput.setText(code);
+                fingerprintInput.setText(fingerprint);
+                deviceNameInput.setText(deviceName.isBlank() ? defaultDeviceName() : deviceName);
+                pair();
+            }
+
+            @Override public void disconnect() {
+                MainActivity.this.disconnect();
+            }
+
+            @Override public void requestHealthPermission(HealthPermission permission) {
+                MainActivity.this.requestHealthPermission(permission);
+            }
+
+            @Override public void setBackgroundHealth(boolean enabled) {
+                MainActivity.this.setBackgroundHealth(enabled);
+            }
+
+            @Override public void setMonitor(boolean enabled) {
+                onMonitorChanged(enabled);
+            }
+
+            @Override public void openDeviceCare() {
+                if (!DeviceCareNavigator.openBatterySettings(MainActivity.this)
+                        && DeviceCarePlan.isXiaomiFamily(Build.MANUFACTURER)) {
+                    DeviceCareNavigator.openAutostartSettings(
+                            MainActivity.this, Build.MANUFACTURER);
+                }
+            }
+
+            @Override public void deleteLocalData() {
+                confirmDeleteLocalData();
+            }
+
+            @Override public void openConversation(Models.Session session) {
+                toggleConversation(session);
+            }
+
+            @Override public void closeConversation() {
+                collapseConversationDisclosure();
+                renderSessions(currentUiState().getSessions());
+            }
+
+            @Override public void resolve(
+                    Models.Session session,
+                    Models.Action action,
+                    boolean approved) {
+                Button first = new Button(MainActivity.this);
+                Button second = new Button(MainActivity.this);
+                MainActivity.this.resolve(
+                        session.id(),
+                        action,
+                        approved ? "allow_once" : "deny",
+                        first,
+                        second);
+            }
+
+            @Override public void sendFollowUp(Models.Session session, String message) {
+                EditText draft = new EditText(MainActivity.this);
+                draft.setText(message);
+                MainActivity.this.send(session, draft, new Button(MainActivity.this));
+            }
+        };
+    }
+
+    private void requestHealthPermission(HealthPermission permission) {
+        if (HealthActivityBridge.healthConnectAvailable(this)) {
+            healthPermissionLauncher.launch(HealthActivityBridge.permissionsFor(permission));
+            return;
+        }
+        if (permission == HealthPermission.STEPS) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                activityRecognitionLauncher.launch(Manifest.permission.ACTIVITY_RECOGNITION);
+            } else {
+                refreshHealthState();
+            }
+            return;
+        }
+        dispatchState(new HumHumAction.StatusChanged(
+                "这台手机没有可用的健康连接，暂时无法读取"
+                        + (permission == HealthPermission.SLEEP ? "睡眠" : "静息心率")));
+    }
+
+    private void setBackgroundHealth(boolean enabled) {
+        HealthBackgroundPreference preference = new HealthBackgroundPreference(this);
+        preference.setEnabled(enabled);
+        if (!enabled) {
+            androidx.work.WorkManager.getInstance(this).cancelUniqueWork(
+                    com.humhum.mobile.health.WorkManagerHealthBackgroundScheduler
+                            .UNIQUE_WORK_NAME);
+            dispatchState(new HumHumAction.HealthPermissionResult(
+                    currentUiState().getHealthPermissions().getGranted(), false));
+            return;
+        }
+        if (!HealthActivityBridge.healthConnectAvailable(this)) {
+            dispatchState(new HumHumAction.StatusChanged(
+                    "后台健康同步需要系统健康连接"));
+            return;
+        }
+        healthPermissionLauncher.launch(HealthActivityBridge.backgroundPermissions());
+    }
+
+    private void refreshHealthState() {
+        if (viewModel == null || isFinishing() || isDestroyed()) return;
+        HealthActivityBridge.refresh(this, viewModel);
+    }
+
+    private void confirmDeleteLocalData() {
+        new AlertDialog.Builder(this)
+                .setTitle("删除手机上的 HUMHUM 数据？")
+                .setMessage("这会清除配对、离线会话和健康待传队列。Mac 上的数据不会被删除。")
+                .setNegativeButton("取消", null)
+                .setPositiveButton("删除", (dialog, which) -> {
+                    if (anywhereRelayClient != null) anywhereRelayClient.cancel();
+                    AgentMonitorService.stop(this);
+                    PushRegistration.cancel(this);
+                    monitorStore.clear();
+                    anywhereStateStore.clear();
+                    connectionStore.clear();
+                    clearSnapshotSafely();
+                    new EncryptedHealthQueue(this).clear();
+                    new HealthBackgroundPreference(this).clear();
+                    getSharedPreferences("humhum_push", MODE_PRIVATE).edit().clear().apply();
+                    showConnect();
+                    dispatchState(new HumHumAction.StatusChanged("手机本地数据已删除"));
+                })
+                .show();
     }
 
     @Override

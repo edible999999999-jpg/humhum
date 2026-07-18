@@ -254,6 +254,22 @@ class HealthRepositoryTest {
     }
 
     @Test
+    fun backgroundPreferenceKeepsWorkOffAfterPermissionWasGranted() = runBlocking {
+        val scheduler = RecordingScheduler()
+        val controller = HealthPermissionController(
+            snapshotProvider = {
+                permissionSnapshot(backgroundFeatureAvailable = true, backgroundGranted = true)
+            },
+            scheduler = scheduler,
+            backgroundEnabledProvider = { false },
+        )
+
+        controller.reconcileBackgroundSync()
+
+        assertEquals(listOf("cancel"), scheduler.actions)
+    }
+
+    @Test
     fun healthPermissionRequestsAreReadOnlyAndMetricSpecific() {
         val steps = HealthPermissionController.permissionsFor(HealthMetric.STEPS)
         val heart = HealthPermissionController.permissionsFor(HealthMetric.RESTING_HEART_RATE)
