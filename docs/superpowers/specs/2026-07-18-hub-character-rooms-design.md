@@ -57,7 +57,7 @@ be generated as clean, text-free assets derived from them.
 ### 1. Information first
 
 Text, controls, state, and list structure carry the strongest contrast. Mascot
-art stays around 10-18% contrast in content areas and must never sit directly
+art stays around 8-12% contrast in content areas and must never sit directly
 under important body text.
 
 ### 2. Mascots are spatial grammar, not enlarged wallpaper
@@ -73,8 +73,9 @@ Each room abstracts its mascot through recognizable features:
 - Hexa: round glasses, wrench/tool-arm silhouette, and a blueprint grid aligned
   to operational columns.
 
-One small fully rendered mascot may appear near the module title or current
-activity. A large literal character render must not be used as the page
+At most one small fully rendered mascot may appear in a room, near the module
+title or current activity. The other three mascots must not be repeated inside
+that room. A large literal character render must not be used as the page
 wallpaper.
 
 ### 3. One shared shell, four independent rooms
