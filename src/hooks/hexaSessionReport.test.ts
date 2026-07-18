@@ -13,6 +13,7 @@ import {
   reviewLabel,
   selectVisibleMilestones,
   tabCounts,
+  workItemDisplayStatus,
   workItemRemovalBlocker,
 } from "./hexaSessionReport";
 
@@ -121,6 +122,20 @@ describe("Hexa session report", () => {
     expect(report.progress).toEqual({ completed: 2, total: 4, percent: 50 });
   });
 
+  it("calls an in-progress plan item unclosed after the Agent turn becomes idle", () => {
+    const session = run("idle-plan", "/workspace/humhum", { status: "idle" });
+    session.audit.work_items = [item("browser-regression", "in_progress")];
+
+    const report = buildHexaSessionReport(session);
+
+    expect(report.nextAction).toBe(
+      "Agent 本轮已结束，未确认“Work browser-regression”是否完成",
+    );
+    expect(workItemDisplayStatus("in_progress", "idle")).toBe("unclosed");
+    expect(workItemDisplayStatus("in_progress", "working")).toBe("in_progress");
+    expect(workItemDisplayStatus("completed", "idle")).toBe("completed");
+  });
+
   it("does not count inferred or migrated summaries as real work items", () => {
     const session = run("fallback");
     session.audit.work_items = [
@@ -205,13 +220,61 @@ describe("Hexa session report", () => {
       run("latest-live", "/repo", { updated_at: "2026-07-15T04:00:00Z" }),
     ];
     const groups = groupWatchedSessions(watched);
+    const now = new Date("2026-07-15T04:01:00Z").getTime();
 
-    expect(resolveSelectedSession(groups, null)?.session_id).toBe("latest-live");
-    expect(resolveSelectedSession(groups, "deleted")?.session_id).toBe("latest-live");
+    expect(resolveSelectedSession(groups, null, now)?.session_id).toBe("latest-live");
+    expect(resolveSelectedSession(groups, "deleted", now)?.session_id).toBe("latest-live");
     expect(tabCounts(watched, [{ source: "hook" }, { source: "codex_bridge" }])).toEqual({
       active: 2,
       scanned: 2,
     });
+  });
+
+  it("does not let an expired inferred watch replace a valid default report", () => {
+    const stale = run("stale-inferred", "/repo", {
+      status: "working",
+      updated_at: "2000-01-01T00:00:00Z",
+      planning_capability: "inferred",
+    });
+    const valid = run("valid-history", "/repo", {
+      status: "completed",
+      updated_at: "2026-07-18T04:00:00Z",
+      planning_capability: "native",
+    });
+    const groups = groupWatchedSessions([stale, valid]);
+    const now = new Date("2026-07-18T05:00:00Z").getTime();
+
+    expect(resolveSelectedSession(groups, null, now)?.session_id).toBe("valid-history");
+    expect(resolveSelectedSession(groups, "stale-inferred", now)?.session_id).toBe("stale-inferred");
+  });
+
+  it("recomputes an automatic selection after the previously live watch expires", () => {
+    const soonStale = run("soon-stale", "/repo", {
+      status: "working",
+      updated_at: "2026-07-18T04:00:00Z",
+      planning_capability: "inferred",
+    });
+    const valid = run("valid-history", "/repo", {
+      status: "completed",
+      updated_at: "2026-07-18T04:20:00Z",
+      planning_capability: "native",
+    });
+    const groups = groupWatchedSessions([soonStale, valid]);
+
+    expect(
+      resolveSelectedSession(
+        groups,
+        null,
+        new Date("2026-07-18T04:10:00Z").getTime(),
+      )?.session_id,
+    ).toBe("soon-stale");
+    expect(
+      resolveSelectedSession(
+        groups,
+        null,
+        new Date("2026-07-18T04:40:01Z").getTime(),
+      )?.session_id,
+    ).toBe("valid-history");
   });
 
   it("uses the three user-facing review labels", () => {

@@ -663,6 +663,117 @@ impl HexaWatchStore {
         Ok(updated)
     }
 
+    pub fn complete_active_native_plan_items(
+        &mut self,
+        session_id: &str,
+        source_provider: &str,
+    ) -> Result<Option<HexaWatchedSession>, String> {
+        self.reload_from_disk()?;
+        let mut agents = self.agents.clone();
+        let now = chrono::Utc::now().to_rfc3339();
+        let mut updated = None;
+
+        for watched_agent in agents.values_mut() {
+            let Some(session) = watched_agent
+                .runs
+                .iter_mut()
+                .find(|session| session_matches_id(session, session_id))
+            else {
+                continue;
+            };
+
+            let mut changed = false;
+            for item in &mut session.audit.work_items {
+                if item.source == HexaWorkItemSource::NativePlan
+                    && item.source_provider.as_deref() == Some(source_provider)
+                    && item.status == HexaWorkItemStatus::InProgress
+                {
+                    item.status = HexaWorkItemStatus::Completed;
+                    item.updated_at = now.clone();
+                    item.completed_at = Some(now.clone());
+                    changed = true;
+                }
+            }
+            if changed {
+                session.current_step = session
+                    .audit
+                    .work_items
+                    .iter()
+                    .find(|item| item.status == HexaWorkItemStatus::InProgress)
+                    .or_else(|| {
+                        session
+                            .audit
+                            .work_items
+                            .iter()
+                            .find(|item| item.status == HexaWorkItemStatus::Pending)
+                    })
+                    .map(|item| item.title.clone());
+                session.updated_at = now.clone();
+                watched_agent.updated_at = now.clone();
+                updated = Some(session.clone());
+            }
+            break;
+        }
+
+        if updated.is_some() {
+            self.persist_agents(&agents)?;
+            self.agents = agents;
+        }
+        Ok(updated)
+    }
+
+    pub fn resume_session_for_new_work(
+        &mut self,
+        session_id: &str,
+        event_timestamp: &str,
+        current_step: Option<String>,
+    ) -> Result<Option<HexaWatchedSession>, String> {
+        self.reload_from_disk()?;
+        let Ok(event_time) = chrono::DateTime::parse_from_rfc3339(event_timestamp) else {
+            return Ok(None);
+        };
+        let mut agents = self.agents.clone();
+        let mut updated = None;
+
+        for watched_agent in agents.values_mut() {
+            let Some(session) = watched_agent
+                .runs
+                .iter_mut()
+                .find(|session| session_matches_id(session, session_id))
+            else {
+                continue;
+            };
+            let Ok(previous_time) = chrono::DateTime::parse_from_rfc3339(&session.updated_at)
+            else {
+                break;
+            };
+            if !matches!(
+                session.status,
+                HexaWatchStatus::Completed | HexaWatchStatus::Idle
+            ) || event_time <= previous_time
+            {
+                break;
+            }
+
+            session.status = HexaWatchStatus::Working;
+            if let Some(current_step) = current_step.and_then(clean_text) {
+                session.current_step = Some(current_step);
+            }
+            session.blocked_reason = None;
+            session.need_user = false;
+            session.updated_at = event_timestamp.to_string();
+            watched_agent.updated_at = event_timestamp.to_string();
+            updated = Some(session.clone());
+            break;
+        }
+
+        if updated.is_some() {
+            self.persist_agents(&agents)?;
+            self.agents = agents;
+        }
+        Ok(updated)
+    }
+
     pub fn bind_provider_thread(
         &mut self,
         provider: &str,
@@ -1320,6 +1431,46 @@ mod tests {
         assert_eq!(agents[0].provider, "openai");
         assert_eq!(agents[0].workspace.as_deref(), Some("/workspace/humhum"));
         assert_eq!(agents[0].name, "Codex");
+    }
+
+    #[test]
+    fn resumes_completed_session_only_for_newer_work() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut store = HexaWatchStore::load_or_create(directory.path()).unwrap();
+        store.register(register_request()).unwrap();
+        let completed = store
+            .update(HexaWatchUpdateRequest {
+                session_id: "run-1".to_string(),
+                status: HexaWatchStatus::Completed,
+                current_step: Some("Previous round completed".to_string()),
+                blocked_reason: Some("Old blocker".to_string()),
+                need_user: Some(true),
+                confidence: Some("agent-bound".to_string()),
+                goal: None,
+            })
+            .unwrap()
+            .unwrap();
+        let completed_at = chrono::DateTime::parse_from_rfc3339(&completed.updated_at).unwrap();
+        let older = (completed_at - chrono::Duration::seconds(1)).to_rfc3339();
+        let newer = (completed_at + chrono::Duration::seconds(1)).to_rfc3339();
+
+        assert!(store
+            .resume_session_for_new_work("run-1", &older, Some("Replayed work".to_string()))
+            .unwrap()
+            .is_none());
+        assert_eq!(store.sessions()[0].status, HexaWatchStatus::Completed);
+
+        let resumed = store
+            .resume_session_for_new_work("run-1", &newer, Some("New round started".to_string()))
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(resumed.session_id, "run-1");
+        assert_eq!(resumed.status, HexaWatchStatus::Working);
+        assert_eq!(resumed.current_step.as_deref(), Some("New round started"));
+        assert!(resumed.blocked_reason.is_none());
+        assert!(!resumed.need_user);
+        assert_eq!(resumed.updated_at, newer);
     }
 
     #[cfg(unix)]

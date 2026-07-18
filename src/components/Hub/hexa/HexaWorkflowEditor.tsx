@@ -3,6 +3,7 @@ import { Check, ChevronDown, ChevronRight, GitBranch, Plus, Trash2, X } from "lu
 import {
   createWorkItemId,
   orderWorkflow,
+  workItemDisplayStatus,
   workItemRemovalBlocker,
 } from "../../../hooks/hexaSessionReport";
 import type {
@@ -13,12 +14,14 @@ import type {
   HexaWorkItemStatus,
 } from "../../../hooks/useHexaData";
 import { workItemSourceLabel } from "../../../hooks/hexaPlanningCapability";
+import type { HexaWorkItemDisplayStatus } from "../../../hooks/hexaSessionReport";
 
-const STATUS: Record<HexaWorkItemStatus, { label: string; color: string }> = {
+const STATUS: Record<HexaWorkItemDisplayStatus, { label: string; color: string }> = {
   pending: { label: "待开始", color: "#94a3b8" },
   in_progress: { label: "进行中", color: "#38bdf8" },
   completed: { label: "已完成", color: "#22c55e" },
   failed: { label: "失败", color: "#f87171" },
+  unclosed: { label: "Agent 未确认完成", color: "#f59e0b" },
 };
 
 function inputFrom(item: HexaWorkItem): HexaWorkItemInput {
@@ -116,7 +119,7 @@ export function HexaWorkflowEditor({
       {items.length ? (
         <ol className="hexa-workflow-list">
           {items.map((item, index) => {
-            const status = STATUS[item.status];
+            const status = STATUS[workItemDisplayStatus(item.status, session.status)];
             const expanded = editingId === item.id;
             return (
               <li key={item.id}>
