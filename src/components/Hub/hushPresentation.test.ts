@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   filterHushContacts,
+  getHushConversationIdentity,
   getHushUnreadCount,
   groupHushMessages,
   isHushContactUnread,
@@ -46,6 +47,89 @@ function contact(
     messages,
   };
 }
+
+describe("getHushConversationIdentity", () => {
+  it("keeps system notification threads separate for the same sender and platform", () => {
+    const first = getHushConversationIdentity({
+      platform: " WeChat ",
+      sender: " WeChat ",
+      chat: " THREAD-ONE ",
+      source_id: "com.tencent.xinwechat:first",
+      raw: {
+        source: "macos_notification_center",
+        chat: " THREAD-ONE ",
+      },
+    });
+    const second = getHushConversationIdentity({
+      platform: "wechat",
+      sender: "wechat",
+      chat: "thread-two",
+      source_id: "com.tencent.xinwechat:second",
+      raw: {
+        source: "macos_notification_center",
+        threadIdentifier: " thread-two ",
+      },
+    });
+
+    expect(first.id).toBe("wechat:conversation:thread-one");
+    expect(second.id).toBe("wechat:conversation:thread-two");
+    expect(first.id).not.toBe(second.id);
+  });
+
+  it("uses normalized DWS conversation_id and chat_id values as stable keys", () => {
+    const fromConversationId = getHushConversationIdentity({
+      platform: " DingTalk ",
+      sender: "成员甲",
+      chat: "项目群",
+      source_id: " DWS:message-1 ",
+      raw: {
+        source: " DWS ",
+        conversation_id: " PROJECT-42 ",
+        chat_id: "ignored-chat",
+      },
+    });
+    const fromChatId = getHushConversationIdentity({
+      platform: "dingtalk",
+      sender: "成员乙",
+      chat: "项目群",
+      source_id: "dws:message-2",
+      raw: {
+        source: "dws",
+        conversation_id: " ",
+        chat_id: " project-42 ",
+      },
+    });
+
+    expect(fromConversationId).toEqual({
+      id: "dingtalk:conversation:project-42",
+      name: "项目群",
+    });
+    expect(fromChatId.id).toBe(fromConversationId.id);
+  });
+
+  it("falls back to a normalized platform and sender when metadata is missing", () => {
+    const first = getHushConversationIdentity({
+      platform: " WeChat ",
+      sender: " Alice ",
+      chat: null,
+      source_id: "com.tencent.xinwechat:first",
+      raw: {
+        source: "macos_notification_center",
+        chat: " ",
+        threadIdentifier: null,
+      },
+    });
+    const second = getHushConversationIdentity({
+      platform: "wechat",
+      sender: "alice",
+      chat: " ",
+      source_id: "com.tencent.xinwechat:second",
+    });
+
+    expect(first).toEqual({ id: "wechat:alice", name: "Alice" });
+    expect(second.id).toBe(first.id);
+  });
+});
 
 describe("groupHushMessages", () => {
   it("orders messages chronologically inside a conversation", () => {

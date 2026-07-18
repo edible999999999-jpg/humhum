@@ -69,26 +69,48 @@ export function getHushConversationIdentity(
     "platform" | "sender" | "chat" | "source_id" | "raw"
   >,
 ): { id: string; name: string } {
+  const platformKey =
+    normalizeHushIdentityPart(message.platform) ?? "unknown-platform";
+  const senderKey =
+    normalizeHushIdentityPart(message.sender) ?? "unknown-sender";
+  const senderName = message.sender.trim() || "Unknown sender";
+  const source = normalizeHushIdentityPart(message.raw?.source);
+  const sourceId = normalizeHushIdentityPart(message.source_id);
   const isDwsMessage =
-    message.source_id?.startsWith("dws:") || message.raw?.source === "dws";
+    sourceId?.startsWith("dws:") === true || source === "dws";
   if (isDwsMessage) {
-    const conversationId =
-      typeof message.raw?.conversation_id === "string"
-        ? message.raw.conversation_id.trim()
-        : "";
-    const chatName = message.chat?.trim() ?? "";
-    const conversationKey = conversationId || chatName;
+    const conversationKey =
+      normalizeHushIdentityPart(message.raw?.conversation_id) ??
+      normalizeHushIdentityPart(message.raw?.chat_id);
     if (conversationKey) {
+      const chatName = message.chat?.trim();
       return {
-        id: `${message.platform}:conversation:${conversationKey}`,
-        name: chatName || message.sender,
+        id: `${platformKey}:conversation:${conversationKey}`,
+        name: chatName || senderName,
       };
     }
   }
 
+  const isMacNotification =
+    source === "macos_notification_center" ||
+    sourceId?.startsWith("com.tencent.xinwechat:") === true ||
+    sourceId?.startsWith("com.alibaba.dingtalkmac:") === true;
+  const notificationThreadKey =
+    normalizeHushIdentityPart(message.raw?.threadIdentifier) ??
+    (isMacNotification
+      ? (normalizeHushIdentityPart(message.raw?.chat) ??
+        normalizeHushIdentityPart(message.chat))
+      : null);
+  if (notificationThreadKey) {
+    return {
+      id: `${platformKey}:conversation:${notificationThreadKey}`,
+      name: senderName,
+    };
+  }
+
   return {
-    id: `${message.platform}:${message.sender}`,
-    name: message.sender,
+    id: `${platformKey}:${senderKey}`,
+    name: senderName,
   };
 }
 
@@ -235,6 +257,12 @@ export function serializeHushConversationState(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function normalizeHushIdentityPart(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  return normalized || null;
 }
 
 function orderHushMessages(messages: HushInboxMessage[]): HushInboxMessage[] {
