@@ -580,6 +580,30 @@ describe("Hush conversation state storage", () => {
     expect(parseHushConversationState(serialized)).toEqual(state);
   });
 
+  it("round-trips optional legacy migration metadata in version 1 storage", () => {
+    const legacyId = "wechat:WeChat";
+    const targetId = canonicalId(
+      "notification-thread",
+      "wechat",
+      "thread-one",
+    );
+    const state = {
+      attentionIds: [targetId],
+      readThrough: { [targetId]: "2026-07-18T03:00:00Z" },
+      legacyMigrations: {
+        [legacyId]: {
+          attention: true,
+          readThrough: "2026-07-18T03:00:00Z",
+          targetIds: [targetId],
+        },
+      },
+    };
+    const serialized = serializeHushConversationState(state);
+
+    expect(JSON.parse(serialized)).toEqual({ version: 1, ...state });
+    expect(parseHushConversationState(serialized)).toEqual(state);
+  });
+
   it.each([
     null,
     "",
@@ -626,10 +650,17 @@ describe("migrateHushConversationState", () => {
         [identity.id]: readThrough,
         "unloaded:contact": "2026-07-18T04:00:00Z",
       },
+      legacyMigrations: {
+        [legacyId]: {
+          attention: true,
+          readThrough,
+          targetIds: [identity.id],
+        },
+      },
     });
   });
 
-  it("copies one collided b6 sender state to every canonical conversation", () => {
+  it("migrates a shared b6 sender state across contacts loaded in stages", () => {
     const legacyId = "wechat:WeChat";
     const firstId = canonicalId(
       "notification-thread",
@@ -642,24 +673,107 @@ describe("migrateHushConversationState", () => {
       "thread-two",
     );
     const readThrough = "2026-07-18T03:00:00Z";
-    const migrated = migrateHushConversationState(
+    const firstStage = migrateHushConversationState(
       {
         attentionIds: [legacyId, legacyId],
         readThrough: { [legacyId]: readThrough },
       },
-      [
-        { id: firstId, legacyIds: [legacyId] },
-        { id: secondId, legacyIds: [legacyId] },
-      ],
+      [{ id: firstId, legacyIds: [legacyId] }],
     );
 
-    expect(migrated).toEqual({
+    expect(firstStage).toEqual({
+      attentionIds: [firstId],
+      readThrough: {
+        [firstId]: readThrough,
+      },
+      legacyMigrations: {
+        [legacyId]: {
+          attention: true,
+          readThrough,
+          targetIds: [firstId],
+        },
+      },
+    });
+
+    const secondStage = migrateHushConversationState(firstStage, [
+      { id: firstId, legacyIds: [legacyId] },
+      { id: secondId, legacyIds: [legacyId] },
+    ]);
+
+    expect(secondStage).toEqual({
       attentionIds: [firstId, secondId],
       readThrough: {
         [firstId]: readThrough,
         [secondId]: readThrough,
       },
+      legacyMigrations: {
+        [legacyId]: {
+          attention: true,
+          readThrough,
+          targetIds: [firstId, secondId],
+        },
+      },
     });
+  });
+
+  it("does not restore user changes while new targets inherit the legacy source", () => {
+    const legacyId = "wechat:WeChat";
+    const firstId = canonicalId(
+      "notification-thread",
+      "wechat",
+      "thread-one",
+    );
+    const secondId = canonicalId(
+      "notification-thread",
+      "wechat",
+      "thread-two",
+    );
+    const legacyReadThrough = "2026-07-18T03:00:00Z";
+    const updatedReadThrough = "2026-07-18T05:00:00Z";
+    const firstStage = migrateHushConversationState(
+      {
+        attentionIds: [legacyId],
+        readThrough: { [legacyId]: legacyReadThrough },
+      },
+      [{ id: firstId, legacyIds: [legacyId] }],
+    );
+    const userUpdated = {
+      ...firstStage,
+      attentionIds: [],
+      readThrough: { [firstId]: updatedReadThrough },
+    };
+
+    expect(
+      migrateHushConversationState(userUpdated, [
+        { id: firstId, legacyIds: [legacyId] },
+      ]),
+    ).toBe(userUpdated);
+
+    const secondStage = migrateHushConversationState(userUpdated, [
+      { id: firstId, legacyIds: [legacyId] },
+      { id: secondId, legacyIds: [legacyId] },
+    ]);
+
+    expect(secondStage).toEqual({
+      attentionIds: [secondId],
+      readThrough: {
+        [firstId]: updatedReadThrough,
+        [secondId]: legacyReadThrough,
+      },
+      legacyMigrations: {
+        [legacyId]: {
+          attention: true,
+          readThrough: legacyReadThrough,
+          targetIds: [firstId, secondId],
+        },
+      },
+    });
+    expect(
+      migrateHushConversationState(secondStage, [
+        { id: firstId, legacyIds: [legacyId] },
+        { id: secondId, legacyIds: [legacyId] },
+      ]),
+    ).toBe(secondStage);
   });
 
   it("returns the original state when no loaded contact needs migration", () => {

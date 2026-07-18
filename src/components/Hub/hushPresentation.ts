@@ -40,6 +40,13 @@ export interface HushMessageGroup {
 export interface HushConversationState {
   attentionIds: string[];
   readThrough: Record<string, string>;
+  legacyMigrations?: Record<string, HushLegacyMigration>;
+}
+
+export interface HushLegacyMigration {
+  attention: boolean;
+  readThrough?: string;
+  targetIds: string[];
 }
 
 export interface HushConversationIdentity {
@@ -273,9 +280,13 @@ export function parseHushConversationState(
         (entry): entry is [string, string] => typeof entry[1] === "string",
       ),
     );
+    const legacyMigrations = parseHushLegacyMigrations(
+      parsed.legacyMigrations,
+    );
     return {
       attentionIds: Array.from(new Set(attentionIds)),
       readThrough,
+      ...(legacyMigrations ? { legacyMigrations } : {}),
     };
   } catch {
     return { ...EMPTY_HUSH_CONVERSATION_STATE, readThrough: {} };
@@ -289,6 +300,9 @@ export function serializeHushConversationState(
     version: 1,
     attentionIds: Array.from(new Set(state.attentionIds)),
     readThrough: state.readThrough,
+    ...(state.legacyMigrations
+      ? { legacyMigrations: state.legacyMigrations }
+      : {}),
   });
 }
 
@@ -307,44 +321,101 @@ export function migrateHushConversationState(
     }
   }
 
-  let changed = false;
-  const attentionIds: string[] = [];
-  const seenAttentionIds = new Set<string>();
-  for (const id of state.attentionIds) {
-    const targets = canonicalIds.has(id) ? undefined : legacyTargets.get(id);
-    if (targets) changed = true;
-    for (const nextId of targets ?? [id]) {
-      if (seenAttentionIds.has(nextId)) {
-        changed = true;
-        continue;
+  const attentionIds = new Set(state.attentionIds);
+  const readThrough = { ...state.readThrough };
+  const legacyMigrations = Object.fromEntries(
+    Object.entries(state.legacyMigrations ?? {}).map(([legacyId, migration]) => [
+      legacyId,
+      { ...migration, targetIds: [...migration.targetIds] },
+    ]),
+  );
+  let changed = attentionIds.size !== state.attentionIds.length;
+
+  for (const [legacyId, targets] of legacyTargets) {
+    if (canonicalIds.has(legacyId)) continue;
+    let migration = legacyMigrations[legacyId];
+    if (
+      !migration &&
+      !attentionIds.has(legacyId) &&
+      readThrough[legacyId] === undefined
+    ) {
+      continue;
+    }
+    if (!migration) {
+      migration = {
+        attention: attentionIds.has(legacyId),
+        ...(readThrough[legacyId] !== undefined
+          ? { readThrough: readThrough[legacyId] }
+          : {}),
+        targetIds: [],
+      };
+      legacyMigrations[legacyId] = migration;
+      changed = true;
+    }
+
+    if (attentionIds.delete(legacyId)) changed = true;
+    if (readThrough[legacyId] !== undefined) {
+      delete readThrough[legacyId];
+      changed = true;
+    }
+
+    for (const targetId of targets) {
+      if (migration.targetIds.includes(targetId)) continue;
+      if (migration.attention) attentionIds.add(targetId);
+      if (migration.readThrough !== undefined) {
+        readThrough[targetId] = laterHushReadThrough(
+          readThrough[targetId],
+          migration.readThrough,
+        );
       }
-      seenAttentionIds.add(nextId);
-      attentionIds.push(nextId);
+      migration.targetIds.push(targetId);
+      changed = true;
     }
   }
 
-  const readThrough: Record<string, string> = {};
-  for (const [id, timestamp] of Object.entries(state.readThrough)) {
-    const targets = canonicalIds.has(id) ? undefined : legacyTargets.get(id);
-    if (!targets) readThrough[id] = timestamp;
-  }
-  for (const [id, timestamp] of Object.entries(state.readThrough)) {
-    const targets = canonicalIds.has(id) ? undefined : legacyTargets.get(id);
-    if (!targets) continue;
-    changed = true;
-    for (const target of targets) {
-      readThrough[target] = laterHushReadThrough(
-        readThrough[target],
-        timestamp,
-      );
-    }
-  }
-
-  return changed ? { attentionIds, readThrough } : state;
+  return changed
+    ? {
+        attentionIds: Array.from(attentionIds),
+        readThrough,
+        ...(Object.keys(legacyMigrations).length > 0
+          ? { legacyMigrations }
+          : {}),
+      }
+    : state;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseHushLegacyMigrations(
+  value: unknown,
+): Record<string, HushLegacyMigration> | undefined {
+  if (!isRecord(value)) return undefined;
+  const migrations: Record<string, HushLegacyMigration> = {};
+  for (const [legacyId, candidate] of Object.entries(value)) {
+    if (
+      !isRecord(candidate) ||
+      typeof candidate.attention !== "boolean" ||
+      !Array.isArray(candidate.targetIds)
+    ) {
+      continue;
+    }
+    migrations[legacyId] = {
+      attention: candidate.attention,
+      ...(typeof candidate.readThrough === "string"
+        ? { readThrough: candidate.readThrough }
+        : {}),
+      targetIds: Array.from(
+        new Set(
+          candidate.targetIds.filter(
+            (targetId): targetId is string => typeof targetId === "string",
+          ),
+        ),
+      ),
+    };
+  }
+  return migrations;
 }
 
 function trimHushIdentityPart(value: unknown): string | null {

@@ -521,6 +521,13 @@ describe("HushModule conversation state migration", () => {
       version: 1,
       attentionIds: [canonicalId],
       readThrough: { [canonicalId]: readThrough },
+      legacyMigrations: {
+        [legacyId]: {
+          attention: true,
+          readThrough,
+          targetIds: [canonicalId],
+        },
+      },
     });
     expect(JSON.stringify(sourceMessage)).toBe(sourceSnapshot);
     expect(invokeMock).not.toHaveBeenCalledWith("clear_hush_inbox");
