@@ -4,7 +4,7 @@
 
 Approved on 2026-07-18.
 
-Design baseline: `origin/main` at `a362644`.
+Implementation baseline: `origin/main` at `c55b9bd`.
 
 The approved direction is **four independent character rooms inside one shared
 Hub shell**. Each module keeps its existing operational purpose and data, while
