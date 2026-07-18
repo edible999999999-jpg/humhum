@@ -1540,6 +1540,52 @@ if ($second.Contains('"method":"turn/start"')) {
     }
 
     #[test]
+    fn recovery_does_not_complete_a_recent_plan_after_an_error() {
+        let directory = tempfile::tempdir().unwrap();
+        let transcript = directory.path().join("rollout.jsonl");
+        std::fs::write(
+            &transcript,
+            concat!(
+                "{\"timestamp\":\"2026-07-18T04:17:25Z\",\"type\":\"response_item\",",
+                "\"payload\":{\"type\":\"function_call\",\"name\":\"update_plan\",",
+                "\"arguments\":\"{\\\"plan\\\":[{\\\"step\\\":\\\"Fix\\\",",
+                "\\\"status\\\":\\\"in_progress\\\"}]}\"}}\n",
+                "{\"timestamp\":\"2026-07-18T04:19:14Z\",\"type\":\"event_msg\",",
+                "\"payload\":{\"type\":\"task_complete\",\"error\":\"model failed\"}}\n"
+            ),
+        )
+        .unwrap();
+
+        let events = recovered_codex_plan_events("thread-real", &transcript).unwrap();
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].kind, HexaEventKind::PlanUpdated);
+    }
+
+    #[test]
+    fn recovery_does_not_complete_an_older_persisted_plan_after_failure_or_abort() {
+        let directory = tempfile::tempdir().unwrap();
+        let transcript = directory.path().join("rollout.jsonl");
+
+        for terminal in [
+            r#"{"type":"task_complete","error":"model failed"}"#,
+            r#"{"type":"turn_aborted","reason":"interrupted"}"#,
+        ] {
+            std::fs::write(
+                &transcript,
+                format!(
+                    "{{\"timestamp\":\"2026-07-18T04:19:14Z\",\"type\":\"event_msg\",\"payload\":{terminal}}}\n"
+                ),
+            )
+            .unwrap();
+
+            let events = recovered_codex_plan_events("thread-real", &transcript).unwrap();
+
+            assert!(events.is_empty());
+        }
+    }
+
+    #[test]
     fn ignores_unknown_notifications() {
         assert!(normalize_codex_message("account/updated", json!({})).is_none());
     }

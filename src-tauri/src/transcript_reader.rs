@@ -110,10 +110,8 @@ pub(crate) fn parse_latest_codex_plan(path: &Path) -> Result<Option<CodexPlanSna
             || payload.get("name").and_then(Value::as_str) != Some("update_plan")
         {
             if let Some(plan) = latest.as_mut() {
-                match payload.get("type").and_then(Value::as_str) {
-                    Some("task_started") => plan.turn_completed_after_plan = false,
-                    Some("task_complete") => plan.turn_completed_after_plan = true,
-                    _ => {}
+                if let Some(completed) = codex_turn_completed(payload) {
+                    plan.turn_completed_after_plan = completed;
                 }
             }
             continue;
@@ -171,18 +169,20 @@ pub(crate) fn latest_codex_turn_completed(path: &Path) -> Result<bool, String> {
         let Ok(value) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
-        match value
-            .get("payload")
-            .and_then(|payload| payload.get("type"))
-            .and_then(Value::as_str)
-        {
-            Some("task_started") => completed = false,
-            Some("task_complete") => completed = true,
-            _ => {}
+        if let Some(turn_completed) = value.get("payload").and_then(codex_turn_completed) {
+            completed = turn_completed;
         }
     }
 
     Ok(completed)
+}
+
+fn codex_turn_completed(payload: &Value) -> Option<bool> {
+    match payload.get("type").and_then(Value::as_str) {
+        Some("task_started" | "turn_aborted") => Some(false),
+        Some("task_complete") => Some(payload.get("error").map(Value::is_null).unwrap_or(true)),
+        _ => None,
+    }
 }
 
 fn read_recent_lines(path: &Path) -> Result<Vec<String>, String> {
