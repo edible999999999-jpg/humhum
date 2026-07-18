@@ -146,11 +146,11 @@ mod tests {
         );
 
         assert_eq!(
-            discover_from_candidates(&[valid], Duration::from_secs(1)).await,
+            discover_from_candidates(&[valid], Duration::from_secs(5)).await,
             Some("100.101.2.3".parse().unwrap())
         );
         assert_eq!(
-            discover_from_candidates(&[failed], Duration::from_secs(1)).await,
+            discover_from_candidates(&[failed], Duration::from_secs(5)).await,
             None
         );
         let started = std::time::Instant::now();

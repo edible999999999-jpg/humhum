@@ -55,9 +55,9 @@ The production layout intentionally uses shorter route cards than the concept im
 - Android release lint, signed APK and signed AAB builds: passed.
 - Release APK: certificate SHA-256 `c28cffbe0398b2db58dbb714dd394f0636cb55a690eefe6fda202a78ed4e12f8`; v2/v3 signatures verified; package `com.humhum.mobile`, version `0.3.15` / code `15`, target SDK `36`, no debuggable flag.
 - Release install: clean `adb install --no-streaming` passed and `MainActivity` cold-launched in `407 ms` on the API 36 emulator.
-- Desktop/web: `108` Vitest tests and `13` fixed Node tests passed.
+- Desktop/web: `111` Vitest tests and `13` fixed Node tests passed.
 - Relay: `19` tests passed.
-- Rust: `327` passed, `3` ignored platform/live tests, `0` failed.
+- Rust: `343` passed, `3` ignored platform/live tests, `0` failed.
 
 ## Honest Device Gaps
 
