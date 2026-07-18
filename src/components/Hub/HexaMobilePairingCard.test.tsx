@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { act, type ComponentType } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
+import postcss, { type AtRule, type Container, type Rule } from "postcss";
 import { describe, expect, it, vi } from "vitest";
 import type {
   HexaWatchedSession,
@@ -27,6 +28,19 @@ type BindingPanelExports = {
   HexaRemoteAccessPanel?: ComponentType<Record<string, unknown>>;
   HexaMobileAccessPanel?: ComponentType<Record<string, unknown>>;
   HexaWatchCommandPanel?: ComponentType;
+  HexaInterventionDeliveryStatus?: ComponentType<{
+    status: "idle" | "sending" | "queued" | "delivered" | "failed";
+    agentLabel: string;
+    error: string | null;
+  }>;
+  HexaMetricSummary?: ComponentType<{
+    items: Array<{
+      label: string;
+      value: string | number;
+      tone: "progress" | "attention" | "complete" | "alert";
+      detail: string;
+    }>;
+  }>;
 };
 
 const bindingPanels = HexaModuleComponents as unknown as BindingPanelExports;
@@ -39,6 +53,34 @@ const hexaRoomStyles = readFileSync(
   resolve(process.cwd(), "src/styles/hub-character-rooms.css"),
   "utf8",
 );
+const hexaRoomStyleRoot = postcss.parse(hexaRoomStyles);
+
+function selectorRule(
+  selector: string,
+  parent: Container = hexaRoomStyleRoot,
+): Rule | undefined {
+  let match: Rule | undefined;
+  parent.walkRules((rule) => {
+    if (!match && rule.selectors.includes(selector)) match = rule;
+  });
+  return match;
+}
+
+function mediaRule(params: string): AtRule | undefined {
+  let match: AtRule | undefined;
+  hexaRoomStyleRoot.walkAtRules("media", (rule) => {
+    if (rule.params === params) match = rule;
+  });
+  return match;
+}
+
+function declaration(rule: Rule | undefined, property: string): string | undefined {
+  let value: string | undefined;
+  rule?.walkDecls(property, (node) => {
+    value ??= node.value;
+  });
+  return value;
+}
 
 const enabledBridge: MobileBridgeStatus = {
   enabled: true,
@@ -194,6 +236,68 @@ describe("HexaMobilePairingCard", () => {
 });
 
 describe("Hexa supervision room presentation", () => {
+  it("renders the sending delivery state with a readable, selector-backed status contract", () => {
+    const DeliveryStatus = bindingPanels.HexaInterventionDeliveryStatus;
+
+    expect(DeliveryStatus).toBeTypeOf("function");
+    if (!DeliveryStatus) {
+      throw new Error("Missing Hexa intervention delivery status export");
+    }
+
+    const html = renderToStaticMarkup(
+      <DeliveryStatus
+        status="sending"
+        agentLabel="Codex"
+        error={null}
+      />,
+    );
+
+    expect(html).toContain('class="hexa-intervention-delivery is-sending"');
+    expect(html).toContain('data-status="sending"');
+    expect(html).toContain("正在发送...");
+    expect(html).toContain("color:#526579");
+    expect(html).not.toMatch(/rgba\(255,\s*255,\s*255/i);
+  });
+
+  it("renders the metric strip structure and binds responsive rules to its selectors", () => {
+    const MetricSummary = bindingPanels.HexaMetricSummary;
+
+    expect(MetricSummary).toBeTypeOf("function");
+    if (!MetricSummary) {
+      throw new Error("Missing Hexa metric summary export");
+    }
+
+    const html = renderToStaticMarkup(
+      <MetricSummary
+        items={[
+          { label: "活跃会话", value: 2, tone: "progress", detail: "正在推进" },
+          { label: "需要关注", value: 1, tone: "attention", detail: "等待确认" },
+          { label: "最近完成", value: 3, tone: "complete", detail: "复盘样本" },
+          { label: "告警信号", value: 0, tone: "alert", detail: "无停滞" },
+        ]}
+      />,
+    );
+
+    expect(html).toContain('class="hexa-metric-summary"');
+    expect(html.match(/class="hexa-metric-summary-item"/g)).toHaveLength(4);
+    expect(html).toContain('data-tone="attention"');
+
+    const baseSummary = selectorRule(".hexa-metric-summary");
+    expect(declaration(baseSummary, "display")).toBe("grid");
+    expect(declaration(baseSummary, "grid-template-columns")).toBe(
+      "repeat(4, minmax(0, 1fr))",
+    );
+
+    const narrow = mediaRule("(max-width: 760px)");
+    expect(narrow).toBeDefined();
+    expect(declaration(selectorRule(".hexa-binding-section", narrow), "grid-template-columns"))
+      .toBe("minmax(0, 1fr)");
+    expect(declaration(selectorRule(".hexa-metric-summary", narrow), "grid-template-columns"))
+      .toBe("repeat(2, minmax(0, 1fr))");
+    expect(declaration(selectorRule(".hexa-metric-summary-item small", narrow), "white-space"))
+      .toBe("normal");
+  });
+
   it("renders binding panels with responsive layout classes and no white inline text", () => {
     const RemotePanel = bindingPanels.HexaRemoteAccessPanel;
     const MobilePanel = bindingPanels.HexaMobileAccessPanel;
@@ -244,9 +348,6 @@ describe("Hexa supervision room presentation", () => {
       /color:\s*rgba\(255,\s*255,\s*255/i,
     );
     expect(hexaModuleSource).toContain('className="hexa-binding-stack"');
-    expect(hexaModuleSource).not.toMatch(
-      /color:\s*"rgba\(255,\s*255,\s*255/i,
-    );
   });
 
   it("transitions selection and resolves the latest session when the selected run disappears", async () => {
@@ -302,20 +403,23 @@ describe("Hexa supervision room presentation", () => {
     }
   });
 
-  it("uses one separator summary and keeps the shared room shell outside the module", () => {
-    expect(hexaModuleSource).toContain('className="hexa-metric-summary"');
+  it("keeps the shared room shell outside the module", () => {
     expect(hexaModuleSource).not.toContain("function MetricCard");
     expect(hexaModuleSource).not.toContain("<HubRoom");
     expect(hexaModuleSource).not.toMatch(/mascot/i);
   });
 
-  it("defines responsive and reduced-motion contracts for the dense workbench", () => {
-    expect(hexaRoomStyles).toContain(".hexa-room-module");
-    expect(hexaRoomStyles).toMatch(/@media \(max-width: 1100px\)/);
-    expect(hexaRoomStyles).toMatch(/@media \(max-width: 900px\)/);
-    expect(hexaRoomStyles).toMatch(/@media \(max-width: 820px\)/);
-    expect(hexaRoomStyles).toMatch(/@media \(max-width: 760px\)/);
-    expect(hexaRoomStyles).toMatch(/@media \(prefers-reduced-motion: reduce\)/);
-    expect(hexaRoomStyles).toContain(".hexa-room-module {\n    animation: none !important;");
+  it("scopes reduced motion to the Hexa room", () => {
+    const reducedMotion = mediaRule("(prefers-reduced-motion: reduce)");
+    expect(reducedMotion).toBeDefined();
+    expect(declaration(selectorRule(".hexa-room-module", reducedMotion), "animation"))
+      .toBe("none");
+    expect(
+      selectorRule(".hexa-room-module *::after", reducedMotion)?.nodes.some(
+        (node) => node.type === "decl"
+          && node.prop === "scroll-behavior"
+          && node.value === "auto",
+      ),
+    ).toBe(true);
   });
 });

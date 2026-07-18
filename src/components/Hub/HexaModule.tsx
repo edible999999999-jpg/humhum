@@ -16,7 +16,11 @@ import {
   type QueuedIntervention,
 } from "../../hooks/useHexaData";
 import { initialWatchDeleteState, watchDeleteReducer } from "../../hooks/hexaWatchState";
-import { initialInterventionState, interventionReducer } from "../../hooks/interventionState";
+import {
+  initialInterventionState,
+  interventionReducer,
+  type InterventionState,
+} from "../../hooks/interventionState";
 import { mobilePresenceLabel } from "../../hooks/mobilePresence";
 import {
   mobilePairingSecondsRemaining,
@@ -99,6 +103,25 @@ function MetricSummaryItem({
       <strong>{value}</strong>
       <span>{label}</span>
       <small>{detail}</small>
+    </div>
+  );
+}
+
+export function HexaMetricSummary({
+  items,
+}: {
+  items: Array<{
+    label: string;
+    value: string | number;
+    tone: "progress" | "attention" | "complete" | "alert";
+    detail: string;
+  }>;
+}) {
+  return (
+    <div className="hexa-metric-summary" aria-label="自动扫描摘要">
+      {items.map((item) => (
+        <MetricSummaryItem key={item.label} {...item} />
+      ))}
     </div>
   );
 }
@@ -805,6 +828,50 @@ function SessionChangeSummary({ summary }: { summary: GitChangeSummary }) {
   );
 }
 
+const DELIVERY_STATUS_COLORS: Record<InterventionState["status"], string> = {
+  idle: "#7b8ba0",
+  sending: "#526579",
+  queued: "#1f70a8",
+  delivered: "#25775c",
+  failed: "#b23a53",
+};
+
+export function HexaInterventionDeliveryStatus({
+  status,
+  agentLabel,
+  error,
+}: {
+  status: InterventionState["status"];
+  agentLabel: string;
+  error: string | null;
+}) {
+  const message = status === "sending"
+    ? "正在发送..."
+    : status === "queued"
+      ? "前一条指令尚未送达，当前指令已安全排队"
+      : status === "delivered"
+        ? `已送达 ${agentLabel} 会话`
+        : status === "failed"
+          ? `发送失败，指令已保留，可重试：${error}`
+          : "";
+
+  return (
+    <div
+      role="status"
+      className={`hexa-intervention-delivery is-${status}`}
+      data-status={status}
+      style={{
+        minHeight: 14,
+        color: DELIVERY_STATUS_COLORS[status],
+        fontSize: 10,
+        overflowWrap: "anywhere",
+      }}
+    >
+      {message}
+    </div>
+  );
+}
+
 function CodexIntervention({
   item,
   provider,
@@ -959,31 +1026,11 @@ function CodexIntervention({
           <RotateCcw size={14} /> 由 HUMHUM 恢复后介入
         </button>
       )}
-      <div
-        role="status"
-        style={{
-          minHeight: 14,
-          color: delivery.status === "failed"
-            ? "#f87171"
-            : delivery.status === "delivered"
-              ? "#22c55e"
-              : delivery.status === "queued"
-                ? "#38bdf8"
-                : "rgba(255,255,255,0.28)",
-          fontSize: 10,
-          overflowWrap: "anywhere",
-        }}
-      >
-        {delivery.status === "sending"
-          ? "正在发送..."
-          : delivery.status === "queued"
-            ? "前一条指令尚未送达，当前指令已安全排队"
-          : delivery.status === "delivered"
-            ? `已送达 ${agentLabel} 会话`
-            : delivery.status === "failed"
-              ? `发送失败，指令已保留，可重试：${delivery.error}`
-              : ""}
-      </div>
+      <HexaInterventionDeliveryStatus
+        status={delivery.status}
+        agentLabel={agentLabel}
+        error={delivery.error}
+      />
       {error && <div style={{ color: "#f87171", fontSize: 10, overflowWrap: "anywhere" }}>{error}</div>}
     </div>
   );
@@ -1730,12 +1777,14 @@ export function HexaModule() {
         />
       ) : (
         <section className="hexa-scanned-section">
-          <div className="hexa-metric-summary" aria-label="自动扫描摘要">
-            <MetricSummaryItem label="活跃会话" value={active.length} tone="progress" detail={`${workingCount} 个正在推进`} />
-            <MetricSummaryItem label="需要关注" value={attentionCount} tone="attention" detail={`${pendingCount} 个等待确认`} />
-            <MetricSummaryItem label="最近完成" value={recentCompleted.length} tone="complete" detail="保留最近 6 个复盘样本" />
-            <MetricSummaryItem label="告警信号" value={alerts.length} tone="alert" detail="停滞、循环、低进展" />
-          </div>
+          <HexaMetricSummary
+            items={[
+              { label: "活跃会话", value: active.length, tone: "progress", detail: `${workingCount} 个正在推进` },
+              { label: "需要关注", value: attentionCount, tone: "attention", detail: `${pendingCount} 个等待确认` },
+              { label: "最近完成", value: recentCompleted.length, tone: "complete", detail: "保留最近 6 个复盘样本" },
+              { label: "告警信号", value: alerts.length, tone: "alert", detail: "停滞、循环、低进展" },
+            ]}
+          />
         <div className="hexa-scanned-heading">
           <strong>自动扫描会话 ({secondarySessions.length})</strong>
           <span>
