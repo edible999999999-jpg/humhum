@@ -793,7 +793,7 @@ export function KnowledgeModule() {
               style={{
                 width: "100%",
                 padding: "10px",
-                borderRadius: 12,
+                borderRadius: 8,
                 border: "1px dashed rgba(148,239,244,0.2)",
                 background: "rgba(148,239,244,0.04)",
                 color: "rgba(148,239,244,0.7)",
@@ -813,7 +813,7 @@ export function KnowledgeModule() {
             <div
               style={{
                 padding: 14,
-                borderRadius: 14,
+                borderRadius: 8,
                 background: "rgba(255,255,255,0.025)",
                 border: "1px solid rgba(148,239,244,0.15)",
                 marginBottom: 12,
@@ -855,7 +855,7 @@ export function KnowledgeModule() {
                     flex: 1,
                     padding: 8,
                     fontSize: 12,
-                    borderRadius: 9999,
+                    borderRadius: 8,
                     border: "1px solid rgba(255,255,255,0.06)",
                     background: "rgba(255,255,255,0.03)",
                     color: "rgba(255,255,255,0.4)",
@@ -882,7 +882,7 @@ export function KnowledgeModule() {
                     key={pref.id}
                     style={{
                       padding: 12,
-                      borderRadius: 14,
+                      borderRadius: 8,
                       background: "rgba(255,255,255,0.02)",
                       border: "1px solid rgba(255,255,255,0.05)",
                       borderLeft: `3px solid ${color}`,
@@ -892,7 +892,7 @@ export function KnowledgeModule() {
                       <span
                         style={{
                           padding: "1px 6px",
-                          borderRadius: 9999,
+                          borderRadius: 8,
                           background: `${color}15`,
                           color,
                           fontSize: 10,
@@ -977,7 +977,7 @@ export function KnowledgeModule() {
             style={{
               marginTop: 16,
               padding: "8px 12px",
-              borderRadius: 10,
+              borderRadius: 8,
               background: "rgba(255,255,255,0.015)",
               border: "1px solid rgba(255,255,255,0.03)",
               fontSize: 11,
@@ -1015,7 +1015,7 @@ export function KnowledgeModule() {
           <div
             style={{
               padding: 14,
-              borderRadius: 14,
+              borderRadius: 8,
               background: "rgba(255,255,255,0.025)",
               border: "1px solid rgba(148,239,244,0.12)",
               marginBottom: 12,
@@ -1079,7 +1079,7 @@ function KnowledgeStat({ label, value, color }: { label: string; value: number; 
     <div
       style={{
         padding: "10px 12px",
-        borderRadius: 10,
+        borderRadius: 8,
         background: "rgba(255,255,255,0.025)",
         border: "1px solid rgba(255,255,255,0.05)",
       }}
@@ -1314,7 +1314,7 @@ function ObsidianNoteCard({ note }: { note: ObsidianNote }) {
     <div
       style={{
         padding: 12,
-        borderRadius: 14,
+        borderRadius: 8,
         background: "rgba(255,255,255,0.02)",
         border: "1px solid rgba(255,255,255,0.05)",
         borderLeft: `3px solid ${color}`,
@@ -1373,7 +1373,7 @@ function ObsidianNoteCard({ note }: { note: ObsidianNote }) {
               key={tag}
               style={{
                 padding: "1px 6px",
-                borderRadius: 9999,
+                borderRadius: 8,
                 background: "rgba(148,239,244,0.08)",
                 color: "rgba(148,239,244,0.75)",
                 fontSize: 10,
@@ -1423,7 +1423,7 @@ function RuleCard({ rule }: { rule: AgentRule }) {
     <div
       style={{
         padding: 12,
-        borderRadius: 14,
+        borderRadius: 8,
         background: "rgba(255,255,255,0.02)",
         border: "1px solid rgba(255,255,255,0.05)",
         cursor: "pointer",

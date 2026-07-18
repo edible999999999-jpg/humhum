@@ -590,7 +590,7 @@ function QuietSignal({ label, value }: { label: string; value: string }) {
     <div
       style={{
         padding: 11,
-        borderRadius: 16,
+        borderRadius: 8,
         background: "rgba(255,255,255,0.72)",
         border: "1px solid rgba(116,143,165,0.12)",
         boxShadow: "0 10px 28px rgba(90,115,150,0.08)",
@@ -652,7 +652,7 @@ function RuntimeDetails({
                 key={clientId}
                 style={{
                   padding: "4px 10px",
-                  borderRadius: 9999,
+                  borderRadius: 8,
                   border: `1px solid ${connected ? "rgba(52,211,153,0.2)" : "rgba(116,143,165,0.12)"}`,
                   background: connected ? "rgba(223,248,239,0.78)" : "rgba(255,255,255,0.62)",
                   color: connected ? "#15803d" : "#94a3b8",
@@ -694,7 +694,7 @@ function RuntimeDetails({
                 key={s.session_id}
                 style={{
                   padding: "8px 12px",
-                  borderRadius: 12,
+                  borderRadius: 8,
                   background: "rgba(255,255,255,0.72)",
                   border: "1px solid rgba(116,143,165,0.12)",
                   display: "flex",
@@ -733,7 +733,7 @@ function RuntimeDetails({
 
 function InsightList({ title, items }: { title: string; items: LocalUsageInsight[] }) {
   return (
-    <div style={{ padding: 9, borderRadius: 12, background: "rgba(255,255,255,0.62)", border: "1px solid rgba(116,143,165,0.12)" }}>
+    <div style={{ padding: 9, borderRadius: 8, background: "rgba(255,255,255,0.62)", border: "1px solid rgba(116,143,165,0.12)" }}>
       <div style={{ fontSize: 10, color: "#64748b", fontWeight: 850, marginBottom: 6 }}>
         {title}
       </div>
@@ -770,7 +770,7 @@ function WarmInsightCard({ title, body, tint }: { title: string; body: string; t
       style={{
         minHeight: 112,
         padding: 12,
-        borderRadius: 16,
+        borderRadius: 8,
         background: tint,
         border: "1px solid rgba(116,143,165,0.12)",
       }}
@@ -791,7 +791,7 @@ function AgentTrace({ steps }: { steps: HumiAgentStep[] }) {
       style={{
         marginTop: 10,
         padding: 10,
-        borderRadius: 14,
+        borderRadius: 8,
         background: "rgba(255,255,255,0.58)",
         border: "1px solid rgba(116,143,165,0.12)",
       }}
@@ -826,7 +826,7 @@ function AgentKernelStatusView({ status }: { status: AgentKernelStatus }) {
       style={{
         marginTop: 10,
         padding: 10,
-        borderRadius: 14,
+        borderRadius: 8,
         background: "rgba(255,255,255,0.58)",
         border: "1px solid rgba(116,143,165,0.12)",
       }}
@@ -870,7 +870,7 @@ function ContextPacketView({ context }: { context: HumiContextPacket }) {
       style={{
         marginTop: 10,
         padding: 10,
-        borderRadius: 14,
+        borderRadius: 8,
         background: "rgba(255,255,255,0.58)",
         border: "1px solid rgba(116,143,165,0.12)",
       }}
@@ -977,7 +977,7 @@ function KernelStatusCard({
     <div
       style={{
         padding: 10,
-        borderRadius: 12,
+        borderRadius: 8,
         background: ok ? "rgba(223,248,239,0.8)" : "rgba(255,255,255,0.58)",
         border: `1px solid ${ok ? "rgba(52,211,153,0.18)" : "rgba(116,143,165,0.12)"}`,
       }}
@@ -1002,7 +1002,7 @@ function KernelStatusCard({
 
 const warmInputStyle: CSSProperties = {
   width: "100%",
-  borderRadius: 18,
+  borderRadius: 8,
   border: "1px solid rgba(116,143,165,0.16)",
   background: "rgba(255,255,255,0.76)",
   color: "#263241",
@@ -1014,7 +1014,7 @@ const warmInputStyle: CSSProperties = {
 
 const detailsInputStyle: CSSProperties = {
   width: "100%",
-  borderRadius: 12,
+  borderRadius: 8,
   border: "1px solid rgba(116,143,165,0.14)",
   background: "rgba(255,255,255,0.58)",
   color: "#334155",
@@ -1025,7 +1025,7 @@ const detailsInputStyle: CSSProperties = {
 
 const kernelPillStyle: CSSProperties = {
   padding: "3px 7px",
-  borderRadius: 999,
+  borderRadius: 8,
   border: "1px solid rgba(116,143,165,0.14)",
   background: "rgba(255,255,255,0.62)",
   color: "#64748b",
@@ -1038,7 +1038,7 @@ function warmButtonStyle(primary: boolean): CSSProperties {
     border: `1px solid ${primary ? "rgba(109,106,222,0.26)" : "rgba(116,143,165,0.16)"}`,
     background: primary ? "linear-gradient(135deg, #8d7ddf, #63bdd1)" : "rgba(255,255,255,0.68)",
     color: primary ? "#ffffff" : "#57667a",
-    borderRadius: 999,
+    borderRadius: 8,
     fontSize: 12,
     fontWeight: 800,
     padding: primary ? "9px 16px" : "8px 12px",
@@ -1052,7 +1052,7 @@ function StatCard({ label, value, color }: { label: string; value: number; color
     <div
       style={{
         padding: 12,
-        borderRadius: 14,
+        borderRadius: 8,
         background: "rgba(255,255,255,0.02)",
         border: "1px solid rgba(255,255,255,0.04)",
         textAlign: "center",

@@ -1600,6 +1600,13 @@ option {
   animation: bounce-in 0.3s ease-out;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .hub-module {
+    animation: none;
+    transition: none;
+  }
+}
+
 .hexa-session-details {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
