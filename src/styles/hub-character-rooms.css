@@ -81,12 +81,32 @@
   transition: opacity 160ms ease;
 }
 
-.hub-nav-hype-icon:not(.is-active) {
+.hub-nav-hype-antenna {
+  opacity: 1;
+}
+
+.hub-nav-hype-alert {
   opacity: 0;
 }
 
-.hub-nav-symbol-hush svg {
-  animation: hub-hush-peek 2.8s ease-in-out infinite;
+.hub-nav-item-hype:hover .hub-nav-hype-antenna,
+.hub-nav-symbol-hype.is-signaled .hub-nav-hype-antenna {
+  opacity: 0;
+}
+
+.hub-nav-item-hype:hover .hub-nav-hype-alert,
+.hub-nav-symbol-hype.is-signaled .hub-nav-hype-alert {
+  opacity: 1;
+}
+
+.hub-nav-hush-eye {
+  transform: translateX(-12px);
+  transform-origin: center;
+  transition: transform 160ms ease-out;
+}
+
+.hub-nav-item-hush:hover .hub-nav-hush-eye {
+  animation: hub-hush-peek 520ms ease-out 1 forwards;
 }
 
 .hub-nav-symbol-hexa {
@@ -109,17 +129,26 @@
 }
 
 @keyframes hub-hush-peek {
-  0%,
-  42%,
-  46%,
-  50%,
-  100% {
-    transform: translateX(0) scaleY(1);
+  0% {
+    transform: translateX(-12px) scaleY(1);
   }
 
-  44%,
-  48% {
-    transform: translateX(-4px) scaleY(0.12);
+  30%,
+  42% {
+    transform: translateX(-8px) scaleY(1);
+  }
+
+  50% {
+    transform: translateX(-8px) scaleY(0.12);
+  }
+
+  58%,
+  72% {
+    transform: translateX(-8px) scaleY(1);
+  }
+
+  100% {
+    transform: translateX(-10px) scaleY(1);
   }
 }
 
@@ -127,8 +156,12 @@
   .hub-nav-item,
   .hub-nav-symbol,
   .hub-nav-hype-icon,
-  .hub-nav-symbol-hush svg {
-    animation: none;
+  .hub-nav-hush-eye {
     transition: none;
+  }
+
+  .hub-nav-item-hush:hover .hub-nav-hush-eye {
+    animation: none;
+    transform: translateX(-12px);
   }
 }

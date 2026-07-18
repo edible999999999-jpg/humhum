@@ -19,14 +19,17 @@ function RoomSymbol({ room, signalActive = false }: Pick<HubNavigationItemProps,
       );
     case "hype":
       return (
-        <span className="hub-nav-symbol hub-nav-symbol-hype" aria-hidden="true">
+        <span
+          className={`hub-nav-symbol hub-nav-symbol-hype${signalActive ? " is-signaled" : ""}`}
+          aria-hidden="true"
+        >
           <Antenna
-            className={`hub-nav-hype-icon ${signalActive ? "is-active" : ""}`}
+            className="hub-nav-hype-icon hub-nav-hype-antenna"
             size={18}
             strokeWidth={1.9}
           />
           <CircleAlert
-            className={`hub-nav-hype-icon ${signalActive ? "" : "is-active"}`}
+            className="hub-nav-hype-icon hub-nav-hype-alert"
             size={18}
             strokeWidth={1.9}
           />
@@ -35,7 +38,7 @@ function RoomSymbol({ room, signalActive = false }: Pick<HubNavigationItemProps,
     case "hush":
       return (
         <span className="hub-nav-symbol hub-nav-symbol-hush" aria-hidden="true">
-          <Eye size={18} strokeWidth={1.9} />
+          <Eye className="hub-nav-hush-eye" size={18} strokeWidth={1.9} />
         </span>
       );
     case "hexa":

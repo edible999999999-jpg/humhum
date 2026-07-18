@@ -1,16 +1,25 @@
+import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { HubNavigationItem } from "./HubNavigation";
 
 const rooms = ["humi", "hype", "hush", "hexa"] as const;
+const characterRoomStyles = readFileSync(
+  new URL("../../styles/hub-character-rooms.css", import.meta.url),
+  "utf8",
+);
 
-function renderNavigationItem(room: (typeof rooms)[number], active = false) {
+function renderNavigationItem(
+  room: (typeof rooms)[number],
+  active = false,
+  signalActive?: boolean,
+) {
   return renderToStaticMarkup(
     <HubNavigationItem
       room={room}
       label={`${room} room`}
       active={active}
-      signalActive={room === "hype"}
+      signalActive={signalActive}
       onSelect={vi.fn()}
     />,
   );
@@ -21,19 +30,28 @@ describe("HubNavigationItem", () => {
     expect(renderNavigationItem("humi")).toContain("lucide-mic-vocal");
   });
 
-  it("keeps Hype's antenna and alert symbols in a stable wrapper", () => {
+  it("shows Hype's antenna by default using stable semantic icon classes", () => {
     const html = renderNavigationItem("hype");
 
     expect(html).toContain('class="hub-nav-symbol hub-nav-symbol-hype"');
-    expect(html).toContain("lucide-antenna");
-    expect(html).toContain("lucide-circle-alert");
+    expect(html).toContain("hub-nav-hype-antenna");
+    expect(html).toContain("hub-nav-hype-alert");
+    expect(html).not.toContain("is-signaled");
   });
 
-  it("clips Hush's eye at the rail edge", () => {
+  it("marks Hype's stable wrapper when its signal is active", () => {
+    const html = renderNavigationItem("hype", false, true);
+
+    expect(html).toContain(
+      'class="hub-nav-symbol hub-nav-symbol-hype is-signaled"',
+    );
+  });
+
+  it("gives Hush's clipped eye a stable hover-animation hook", () => {
     const html = renderNavigationItem("hush");
 
     expect(html).toContain('class="hub-nav-symbol hub-nav-symbol-hush"');
-    expect(html).toContain("lucide-eye");
+    expect(html).toContain("hub-nav-hush-eye");
   });
 
   it("uses a wrench for Hexa", () => {
@@ -60,5 +78,38 @@ describe("HubNavigationItem", () => {
 
     expect(html).not.toContain("<img");
     expect(html).not.toContain("hub-navigation-monogram");
+  });
+});
+
+describe("Hub navigation motion styles", () => {
+  it("crossfades Hype from antenna to alert on hover or signal", () => {
+    expect(characterRoomStyles).toMatch(
+      /\.hub-nav-hype-antenna\s*\{[^}]*opacity:\s*1/,
+    );
+    expect(characterRoomStyles).toMatch(
+      /\.hub-nav-hype-alert\s*\{[^}]*opacity:\s*0/,
+    );
+    expect(characterRoomStyles).toMatch(
+      /\.hub-nav-item-hype:hover \.hub-nav-hype-antenna,[\s\S]*\.hub-nav-symbol-hype\.is-signaled \.hub-nav-hype-antenna\s*\{[^}]*opacity:\s*0/,
+    );
+    expect(characterRoomStyles).toMatch(
+      /\.hub-nav-item-hype:hover \.hub-nav-hype-alert,[\s\S]*\.hub-nav-symbol-hype\.is-signaled \.hub-nav-hype-alert\s*\{[^}]*opacity:\s*1/,
+    );
+  });
+
+  it("keeps Hush half-hidden at rest and runs one finite peek only on hover", () => {
+    expect(characterRoomStyles).toMatch(
+      /\.hub-nav-hush-eye\s*\{[^}]*transform:\s*translateX\(-12px\)/,
+    );
+    expect(characterRoomStyles).toMatch(
+      /\.hub-nav-item-hush:hover \.hub-nav-hush-eye\s*\{[^}]*animation:\s*hub-hush-peek [^;]* 1 forwards/,
+    );
+    expect(characterRoomStyles).not.toContain("infinite");
+  });
+
+  it("keeps Hush static when reduced motion is requested", () => {
+    expect(characterRoomStyles).toMatch(
+      /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.hub-nav-item-hush:hover \.hub-nav-hush-eye\s*\{[^}]*animation:\s*none/,
+    );
   });
 });
