@@ -42,7 +42,8 @@ fun RoleNavigation(
             .height(82.dp)
             .background(Color.White)
             .border(width = 1.dp, color = Color(0xFFE8EAF1))
-            .padding(horizontal = 8.dp, vertical = 5.dp),
+            .padding(horizontal = 8.dp, vertical = 5.dp)
+            .testTag("role-navigation"),
         horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.CenterVertically,
     ) {

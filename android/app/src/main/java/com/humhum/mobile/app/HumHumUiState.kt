@@ -62,6 +62,8 @@ data class HumHumUiState(
     val sessions: List<Models.Session> = emptyList(),
     val conversation: ConversationDisclosure = ConversationDisclosure(),
     val pendingActions: Set<PendingAction> = emptySet(),
+    val lastSuccessfulFollowUpSessionId: String? = null,
+    val followUpSuccessRevision: Long = 0,
     val monitor: MonitorUiState = MonitorUiState(),
     val deviceCare: DeviceCareUiState = DeviceCareUiState(),
     val health: HealthUiState? = null,

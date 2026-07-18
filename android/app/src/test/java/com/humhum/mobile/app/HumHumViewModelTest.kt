@@ -128,8 +128,25 @@ class HumHumViewModelTest {
         assertEquals(2, viewModel.state.value.pendingActions.size)
 
         viewModel.dispatch(HumHumAction.ApprovalFinished("session-1", "action-1"))
-        viewModel.dispatch(HumHumAction.FollowUpFinished("session-2"))
+        viewModel.dispatch(HumHumAction.FollowUpSucceeded("session-2"))
         assertTrue(viewModel.state.value.pendingActions.isEmpty())
+        assertEquals("session-2", viewModel.state.value.lastSuccessfulFollowUpSessionId)
+        assertEquals(1L, viewModel.state.value.followUpSuccessRevision)
+    }
+
+    @Test
+    fun failedFollowUpStopsPendingWithoutClaimingDelivery() {
+        viewModel.dispatch(HumHumAction.Connected(Models.Scope.CONTROL))
+        viewModel.dispatch(
+            HumHumAction.SessionsLoaded(listOf(session("session-1")), viaRelay = false),
+        )
+        viewModel.dispatch(HumHumAction.FollowUpStarted("session-1"))
+
+        viewModel.dispatch(HumHumAction.FollowUpFailed("session-1"))
+
+        assertTrue(viewModel.state.value.pendingActions.isEmpty())
+        assertNull(viewModel.state.value.lastSuccessfulFollowUpSessionId)
+        assertEquals(0L, viewModel.state.value.followUpSuccessRevision)
     }
 
     @Test

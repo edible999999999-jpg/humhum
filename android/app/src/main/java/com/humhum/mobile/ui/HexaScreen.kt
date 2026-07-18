@@ -29,13 +29,16 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.humhum.mobile.Models
 import com.humhum.mobile.MobileRoleDashboard
@@ -121,6 +124,18 @@ private fun SessionPanel(
     callbacks: HumHumCallbacks,
 ) {
     var draft by remember(session.id()) { mutableStateOf("") }
+    var handledSuccessRevision by remember(session.id()) {
+        mutableLongStateOf(state.followUpSuccessRevision)
+    }
+    val followUpPending = PendingAction(PendingActionKind.FOLLOW_UP, session.id()) in state.pendingActions
+    LaunchedEffect(state.followUpSuccessRevision, state.lastSuccessfulFollowUpSessionId) {
+        if (state.followUpSuccessRevision > handledSuccessRevision &&
+            state.lastSuccessfulFollowUpSessionId == session.id()
+        ) {
+            draft = ""
+        }
+        handledSuccessRevision = state.followUpSuccessRevision
+    }
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(8.dp),
@@ -154,7 +169,7 @@ private fun SessionPanel(
                         value = draft,
                         onValueChange = { draft = it.take(4000) },
                         label = { Text("追问或补充") },
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.weight(1f).testTag("follow-up-draft"),
                         shape = RoundedCornerShape(8.dp),
                         maxLines = 3,
                     )
@@ -163,10 +178,9 @@ private fun SessionPanel(
                             val text = draft.trim()
                             if (text.isNotEmpty()) {
                                 callbacks.onSendFollowUp(session, text)
-                                draft = ""
                             }
                         },
-                        enabled = draft.isNotBlank(),
+                        enabled = draft.isNotBlank() && !followUpPending,
                         modifier = Modifier.size(48.dp),
                     ) {
                         Icon(Icons.AutoMirrored.Outlined.Send, contentDescription = "发送", tint = Hexa)

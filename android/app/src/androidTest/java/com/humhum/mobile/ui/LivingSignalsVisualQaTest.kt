@@ -14,7 +14,9 @@ import com.humhum.mobile.app.HealthPermission
 import com.humhum.mobile.app.HealthPermissionState
 import com.humhum.mobile.app.HumHumUiState
 import com.humhum.mobile.health.HealthFreshness
+import com.humhum.mobile.health.HealthMetric
 import com.humhum.mobile.health.HealthSummary
+import com.humhum.mobile.health.HealthSourceState
 import com.humhum.mobile.health.HealthUiState
 import java.io.File
 import java.io.FileOutputStream
@@ -56,6 +58,53 @@ class LivingSignalsVisualQaTest {
     fun captureSettingsReferenceViewport() = capture(
         connectedState().copy(settingsVisible = true),
         "settings-first-viewport",
+    )
+
+    @Test
+    fun captureHealthUnavailableViewport() = capture(
+        connectedState(MobileRoleDashboard.Role.HUSH).copy(
+            health = HealthUiState(
+                summary = HealthSummary(
+                    steps = null,
+                    restingHeartRate = null,
+                    sleepMinutes = null,
+                    capturedAt = null,
+                    sourceStates = HealthMetric.entries.associateWith { HealthSourceState.UNAVAILABLE },
+                ),
+                freshness = HealthFreshness.EMPTY,
+                notices = listOf("Health Connect unavailable"),
+                enqueuedSignals = 0,
+            ),
+        ),
+        "health-unavailable-viewport",
+    )
+
+    @Test
+    fun captureHealthDeniedViewport() = capture(
+        connectedState(MobileRoleDashboard.Role.HUSH).copy(
+            healthPermissions = HealthPermissionState(),
+            health = HealthUiState(
+                summary = HealthSummary(
+                    steps = null,
+                    restingHeartRate = null,
+                    sleepMinutes = null,
+                    capturedAt = null,
+                    sourceStates = HealthMetric.entries.associateWith { HealthSourceState.DISABLED },
+                ),
+                freshness = HealthFreshness.EMPTY,
+                notices = emptyList(),
+                enqueuedSignals = 0,
+            ),
+        ),
+        "health-denied-viewport",
+    )
+
+    @Test
+    fun captureStaleHealthViewport() = capture(
+        connectedState().copy(
+            health = connectedState().health?.copy(freshness = HealthFreshness.STALE),
+        ),
+        "health-stale-viewport",
     )
 
     private fun capture(state: HumHumUiState, fileName: String) {

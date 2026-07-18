@@ -237,7 +237,15 @@ class HumHumViewModel @JvmOverloads constructor(
                     it.id() == action.sessionId && it.canMessage()
                 },
             )
-            is HumHumAction.FollowUpFinished -> state.copy(
+            is HumHumAction.FollowUpSucceeded -> state.copy(
+                pendingActions = state.pendingActions - PendingAction(
+                    PendingActionKind.FOLLOW_UP,
+                    action.sessionId,
+                ),
+                lastSuccessfulFollowUpSessionId = action.sessionId,
+                followUpSuccessRevision = state.followUpSuccessRevision + 1,
+            )
+            is HumHumAction.FollowUpFailed -> state.copy(
                 pendingActions = state.pendingActions - PendingAction(
                     PendingActionKind.FOLLOW_UP,
                     action.sessionId,

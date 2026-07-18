@@ -15,6 +15,7 @@ interface HumHumActivityActions {
     fun manualPair(address: String, code: String, fingerprint: String, deviceName: String)
     fun disconnect()
     fun requestHealthPermission(permission: HealthPermission)
+    fun manageHealthPermissions()
     fun setBackgroundHealth(enabled: Boolean)
     fun setMonitor(enabled: Boolean)
     fun openDeviceCare()

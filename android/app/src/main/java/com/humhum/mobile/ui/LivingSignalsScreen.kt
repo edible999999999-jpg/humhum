@@ -48,6 +48,7 @@ import com.humhum.mobile.ui.theme.Line
 import com.humhum.mobile.ui.theme.Muted
 import com.humhum.mobile.ui.components.RoleMascot
 import java.time.LocalDate
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.roundToInt
@@ -62,12 +63,12 @@ fun LivingSignalsScreen(
     val headline = when (health?.freshness) {
         HealthFreshness.STALE -> "今天的数据需要再同步一下"
         HealthFreshness.EMPTY, null -> "先从今天的一点点开始"
-        HealthFreshness.FRESH -> "今天的节奏值得慢一点"
+        HealthFreshness.FRESH -> "今天的身体信号已更新"
     }
     val supporting = when (health?.freshness) {
         HealthFreshness.STALE -> "身体信号有些旧了。先按自己的感受来，连接恢复后我会更新。"
         HealthFreshness.EMPTY, null -> "还没有开启身体信号。你仍然可以安静查看 Agent 进展。"
-        HealthFreshness.FRESH -> "你的身体在恢复，适合稳步推进关键工作；有一个决定值得你稍作停留再选择。"
+        HealthFreshness.FRESH -> healthSummaryCopy(state)
     }
     LazyColumn(
         modifier = modifier,
@@ -129,10 +130,10 @@ fun LivingSignalsScreen(
                 time = "早上\n07:30",
                 icon = Icons.Outlined.FavoriteBorder,
                 accent = Hush,
-                title = "身体恢复",
+                title = "身体信号",
                 state = healthStateCopy(state),
                 detail = healthDetail(state),
-                trailing = recoveryScore(state),
+                trailing = healthTrailing(state),
             )
         }
         item {
@@ -164,6 +165,10 @@ fun LivingSignalsScreen(
                 Text("个人信号", style = MaterialTheme.typography.titleLarge, color = Ink)
                 Text(" · 本机私密数据", style = MaterialTheme.typography.bodyMedium, color = Muted)
                 Spacer(Modifier.weight(1f))
+                healthCapturedCopy(state)?.let {
+                    Text(it, style = MaterialTheme.typography.labelMedium, color = Muted)
+                    Spacer(Modifier.size(6.dp))
+                }
                 Icon(Icons.Outlined.Lock, contentDescription = null, tint = Muted, modifier = Modifier.size(18.dp))
             }
         }
@@ -237,12 +242,12 @@ private fun TimelineItem(
 private fun PersonalSignals(state: HumHumUiState) {
     val summary = state.health?.summary
     Surface(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().testTag("personal-signals-card"),
         color = Color.White,
         shape = RoundedCornerShape(8.dp),
         border = androidx.compose.foundation.BorderStroke(1.dp, Line),
     ) {
-        Row(modifier = Modifier.padding(vertical = 14.dp)) {
+        Row(modifier = Modifier.padding(vertical = 7.dp)) {
             SignalMetric(
                 label = "步数",
                 value = summary?.steps?.roundToInt()?.let { "%,d".format(it) } ?: "--",
@@ -284,13 +289,18 @@ private fun SignalMetric(
         Icon(icon, contentDescription = null, tint = accent, modifier = Modifier.size(22.dp))
         Spacer(Modifier.height(4.dp))
         Text(label, style = MaterialTheme.typography.labelMedium, color = Muted, textAlign = TextAlign.Center)
-        Text(value, style = MaterialTheme.typography.titleMedium, color = Ink, textAlign = TextAlign.Center, maxLines = 1)
-        if (unit.isNotEmpty()) Text(unit, style = MaterialTheme.typography.labelMedium, color = Muted)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(value, style = MaterialTheme.typography.titleMedium, color = Ink, textAlign = TextAlign.Center, maxLines = 1)
+            if (unit.isNotEmpty()) {
+                Spacer(Modifier.size(3.dp))
+                Text(unit, style = MaterialTheme.typography.labelMedium, color = Muted)
+            }
+        }
     }
 }
 
 private fun healthStateCopy(state: HumHumUiState): String = when (state.health?.freshness) {
-    HealthFreshness.FRESH -> "恢复中"
+    HealthFreshness.FRESH -> "已更新"
     HealthFreshness.STALE -> "待更新"
     HealthFreshness.EMPTY, null -> "未开启"
 }
@@ -298,17 +308,43 @@ private fun healthStateCopy(state: HumHumUiState): String = when (state.health?.
 private fun healthDetail(state: HumHumUiState): String {
     val summary = state.health?.summary ?: return "开启身体信号后，Humi 会只用日汇总理解你的节奏"
     return when {
-        summary.sleepMinutes != null && summary.sleepMinutes < 420 -> "昨晚休息略少，今天适合稳一点"
-        summary.restingHeartRate != null -> "静息心率平稳，适合稳步推进"
-        summary.steps != null -> "今天已经开始活动，记得留一点恢复时间"
+        summary.sleepMinutes != null -> "昨晚记录睡眠 ${formatSleep(summary.sleepMinutes)}"
+        summary.restingHeartRate != null -> "今日静息心率 ${summary.restingHeartRate.roundToInt()} bpm"
+        summary.steps != null -> "今天记录步数 ${"%,d".format(summary.steps.roundToInt())}"
         else -> "身体信号已连接，等待今天的汇总"
     }
 }
 
-private fun recoveryScore(state: HumHumUiState): String {
+private fun healthTrailing(state: HumHumUiState): String {
     val summary = state.health?.summary ?: return "等待信号"
-    val sleep = summary.sleepMinutes ?: 0.0
-    val heart = summary.restingHeartRate ?: 72.0
-    return (50 + (sleep / 12) - ((heart - 55).coerceAtLeast(0.0) / 2)).coerceIn(0.0, 100.0)
-        .roundToInt().let { "$it 恢复分" }
+    return when {
+        summary.sleepMinutes != null -> "睡眠 ${formatSleep(summary.sleepMinutes)}"
+        summary.restingHeartRate != null -> "${summary.restingHeartRate.roundToInt()} bpm"
+        summary.steps != null -> "${"%,d".format(summary.steps.roundToInt())} 步"
+        else -> "等待信号"
+    }
 }
+
+private fun healthSummaryCopy(state: HumHumUiState): String {
+    val summary = state.health?.summary ?: return "身体信号已开启，等待今天的日汇总。"
+    val values = listOfNotNull(
+        summary.sleepMinutes?.let { "睡眠 ${formatSleep(it)}" },
+        summary.restingHeartRate?.let { "静息心率 ${it.roundToInt()} bpm" },
+        summary.steps?.let { "步数 ${"%,d".format(it.roundToInt())}" },
+    )
+    return values.takeIf { it.isNotEmpty() }?.joinToString(" · ")
+        ?: "身体信号已开启，等待今天的日汇总。"
+}
+
+private fun healthCapturedCopy(state: HumHumUiState): String? {
+    val capturedAt = state.health?.summary?.capturedAt ?: return null
+    val local = capturedAt.atZone(ZoneId.systemDefault())
+    return if (state.health.freshness == HealthFreshness.STALE) {
+        "采集于 ${local.format(DateTimeFormatter.ofPattern("M月d日 HH:mm"))}"
+    } else {
+        "${local.format(DateTimeFormatter.ofPattern("HH:mm"))} 更新"
+    }
+}
+
+private fun formatSleep(minutes: Double): String =
+    "${(minutes / 60).toInt()}时${(minutes % 60).roundToInt()}分"

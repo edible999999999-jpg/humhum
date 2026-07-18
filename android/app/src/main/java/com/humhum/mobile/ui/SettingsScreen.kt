@@ -12,8 +12,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.BatteryChargingFull
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.DeleteOutline
@@ -39,7 +39,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
-import com.humhum.mobile.app.HealthPermission
 import com.humhum.mobile.app.HumHumUiState
 import com.humhum.mobile.ui.theme.Humi
 import com.humhum.mobile.ui.theme.Ink
@@ -61,7 +60,7 @@ fun SettingsScreen(
         item {
             Row(modifier = Modifier.fillMaxWidth().height(64.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = callbacks.onCloseSettings, modifier = Modifier.size(48.dp)) {
-                    Icon(Icons.Outlined.ArrowBack, contentDescription = "返回")
+                    Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回")
                 }
                 Text("设置", style = MaterialTheme.typography.headlineMedium, color = Ink)
             }
@@ -82,7 +81,7 @@ fun SettingsScreen(
                 icon = Icons.Outlined.HealthAndSafety,
                 title = "步数、静息心率与睡眠",
                 detail = "已允许 ${state.healthPermissions.granted.size}/3 项",
-                onClick = { callbacks.onRequestHealthPermission(HealthPermission.STEPS) },
+                onClick = callbacks.onManageHealthPermissions,
                 trailing = "管理",
             )
         }

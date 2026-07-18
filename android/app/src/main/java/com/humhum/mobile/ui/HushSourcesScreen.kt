@@ -44,6 +44,7 @@ import com.humhum.mobile.ui.components.RoleMascot
 fun HushSourcesScreen(
     state: HumHumUiState,
     onRequestPermission: (HealthPermission) -> Unit,
+    onManagePermissions: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     LazyColumn(
@@ -79,7 +80,13 @@ fun HushSourcesScreen(
                 detail = sourceDetail(state, HealthPermission.STEPS, HealthMetric.STEPS),
                 enabled = HealthPermission.STEPS in state.healthPermissions.granted,
                 testTag = "health-source-steps",
-                onClick = { onRequestPermission(HealthPermission.STEPS) },
+                onClick = {
+                    if (HealthPermission.STEPS in state.healthPermissions.granted) {
+                        onManagePermissions()
+                    } else {
+                        onRequestPermission(HealthPermission.STEPS)
+                    }
+                },
             )
         }
         item {
@@ -89,7 +96,13 @@ fun HushSourcesScreen(
                 detail = sourceDetail(state, HealthPermission.RESTING_HEART_RATE, HealthMetric.RESTING_HEART_RATE),
                 enabled = HealthPermission.RESTING_HEART_RATE in state.healthPermissions.granted,
                 testTag = "health-source-heart",
-                onClick = { onRequestPermission(HealthPermission.RESTING_HEART_RATE) },
+                onClick = {
+                    if (HealthPermission.RESTING_HEART_RATE in state.healthPermissions.granted) {
+                        onManagePermissions()
+                    } else {
+                        onRequestPermission(HealthPermission.RESTING_HEART_RATE)
+                    }
+                },
             )
         }
         item {
@@ -99,7 +112,13 @@ fun HushSourcesScreen(
                 detail = sourceDetail(state, HealthPermission.SLEEP, HealthMetric.SLEEP),
                 enabled = HealthPermission.SLEEP in state.healthPermissions.granted,
                 testTag = "health-source-sleep",
-                onClick = { onRequestPermission(HealthPermission.SLEEP) },
+                onClick = {
+                    if (HealthPermission.SLEEP in state.healthPermissions.granted) {
+                        onManagePermissions()
+                    } else {
+                        onRequestPermission(HealthPermission.SLEEP)
+                    }
+                },
             )
         }
         item {

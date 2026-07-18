@@ -3,14 +3,21 @@ package com.humhum.mobile.ui
 import android.content.res.Configuration
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextInput
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.humhum.mobile.MainActivity
@@ -29,6 +36,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -51,7 +59,7 @@ class HumHumAppTest {
         }
 
         compose.onNodeWithTag("living-signals-date").assertIsDisplayed()
-        compose.onNodeWithText("今天的节奏值得慢一点").assertIsDisplayed()
+        compose.onNodeWithText("今天的身体信号已更新").assertIsDisplayed()
         compose.onNodeWithText("今天的路线").assertIsDisplayed()
         compose.onNodeWithText("本机私密数据", substring = true).assertIsDisplayed()
         compose.onAllNodesWithTag("role-destination", useUnmergedTree = true).assertCountEquals(4)
@@ -65,7 +73,10 @@ class HumHumAppTest {
     fun hushOnlyRequestsHealthPermissionAfterSourceAction() {
         val requests = AtomicInteger()
         setContent(
-            state = connectedState().copy(selectedRole = MobileRoleDashboard.Role.HUSH),
+            state = connectedState().copy(
+                selectedRole = MobileRoleDashboard.Role.HUSH,
+                healthPermissions = HealthPermissionState(),
+            ),
             callbacks = HumHumCallbacks(onRequestHealthPermission = { requests.incrementAndGet() }),
         )
 
@@ -76,12 +87,38 @@ class HumHumAppTest {
     }
 
     @Test
+    fun enabledHealthSourceOpensSystemManagementInsteadOfRequestingAgain() {
+        val requests = AtomicInteger()
+        val management = AtomicInteger()
+        setContent(
+            state = connectedState().copy(selectedRole = MobileRoleDashboard.Role.HUSH),
+            callbacks = HumHumCallbacks(
+                onRequestHealthPermission = { requests.incrementAndGet() },
+                onManageHealthPermissions = { management.incrementAndGet() },
+            ),
+        )
+
+        compose.onNodeWithTag("health-source-steps").performClick()
+
+        assertEquals(0, requests.get())
+        assertEquals(1, management.get())
+    }
+
+    @Test
     fun manualPairingMaterialIsRecoveryOnly() {
         setContent(state = HumHumUiState())
 
         compose.onNodeWithTag("manual-pairing-fields").assertDoesNotExist()
         compose.onNodeWithText("连接遇到问题").performClick()
         compose.onNodeWithTag("manual-pairing-fields").assertIsDisplayed()
+    }
+
+    @Test
+    fun pairingExplainsTheActualAndroidStorageBoundary() {
+        setContent(state = HumHumUiState())
+
+        compose.onNodeWithText("Android 安全存储", substring = true).assertDoesNotExist()
+        compose.onNodeWithText("Android 私有应用存储", substring = true).assertIsDisplayed()
     }
 
     @Test
@@ -100,11 +137,119 @@ class HumHumAppTest {
     }
 
     @Test
+    fun hexaKeepsFollowUpDraftUntilDeliverySucceeds() {
+        val sends = AtomicInteger()
+        setContent(
+            state = connectedState().copy(
+                selectedRole = MobileRoleDashboard.Role.HEXA,
+                sessions = listOf(controllableSession()),
+            ),
+            callbacks = HumHumCallbacks(onSendFollowUp = { _, _ -> sends.incrementAndGet() }),
+        )
+
+        compose.onNodeWithTag("follow-up-draft").performTextInput("请继续验证")
+        compose.onNodeWithContentDescription("发送").performClick()
+
+        assertEquals(1, sends.get())
+        assertEditableText("follow-up-draft", "请继续验证")
+    }
+
+    @Test
+    fun hexaClearsFollowUpDraftAfterDeliverySucceeds() {
+        var state by mutableStateOf(
+            connectedState().copy(
+                selectedRole = MobileRoleDashboard.Role.HEXA,
+                sessions = listOf(controllableSession()),
+            ),
+        )
+        compose.setContent {
+            HumHumApp(state = state, callbacks = HumHumCallbacks())
+        }
+
+        compose.onNodeWithTag("follow-up-draft").performTextInput("请继续验证")
+        compose.runOnIdle {
+            state = state.copy(
+                lastSuccessfulFollowUpSessionId = "session-1",
+                followUpSuccessRevision = state.followUpSuccessRevision + 1,
+            )
+        }
+
+        assertEditableText("follow-up-draft", "")
+    }
+
+    @Test
     fun primaryActionsAndBottomNavigationRemainVisibleAtLargeFont() {
         setContent(state = connectedState(), fontScale = 1.3f)
 
         compose.onNodeWithText("调整今天安排").assertIsDisplayed()
         compose.onAllNodesWithTag("role-destination", useUnmergedTree = true).assertCountEquals(4)
+    }
+
+    @Test
+    fun livingSignalsNeverInventARecoveryScore() {
+        setContent(state = connectedState())
+
+        compose.onNodeWithText("恢复分", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun livingSignalsFreshHeadlineStatesWhatWasActuallyObserved() {
+        setContent(state = connectedState())
+
+        compose.onNodeWithText("今天的节奏值得慢一点").assertDoesNotExist()
+        compose.onNodeWithText("今天的身体信号已更新").assertIsDisplayed()
+    }
+
+    @Test
+    fun staleHealthShowsWhenTheSummaryWasCaptured() {
+        setContent(
+            state = connectedState().copy(
+                health = connectedState().health?.copy(freshness = HealthFreshness.STALE),
+            ),
+        )
+
+        compose.onNodeWithText("采集于", substring = true).assertIsDisplayed()
+    }
+
+    @Test
+    fun companionContentStaysInsideSystemBars() {
+        setContent(state = connectedState())
+
+        val resources = compose.activity.resources
+        val windowInsets = ViewCompat.getRootWindowInsets(compose.activity.window.decorView)
+        val statusBar = windowInsets
+            ?.getInsets(WindowInsetsCompat.Type.statusBars())
+            ?.top
+            ?: 0
+        val navigationBar = windowInsets
+            ?.getInsets(WindowInsetsCompat.Type.navigationBars())
+            ?.bottom
+            ?: 0
+        val root = compose.onRoot().fetchSemanticsNode().boundsInRoot
+        val header = compose.onNodeWithTag("companion-header").fetchSemanticsNode().boundsInRoot
+        val navigation = compose.onNodeWithTag("role-navigation").fetchSemanticsNode().boundsInRoot
+        val displayHeight = resources.displayMetrics.heightPixels.toFloat()
+        val decorAlreadyFitsSystemWindows =
+            root.height <= displayHeight - statusBar - navigationBar + 1f
+
+        val evidence = "root=$root displayHeight=$displayHeight status=$statusBar nav=$navigationBar " +
+            "header=$header navigation=$navigation"
+        assertTrue(evidence, decorAlreadyFitsSystemWindows || header.top >= statusBar)
+        assertTrue(evidence, decorAlreadyFitsSystemWindows || navigation.bottom <= root.bottom - navigationBar)
+    }
+
+    @Test
+    fun personalSignalsStayAboveTheFixedRoleNavigation() {
+        setContent(state = connectedState())
+
+        val signals = compose.onNodeWithTag("personal-signals-card")
+            .fetchSemanticsNode()
+            .boundsInRoot
+        val navigation = compose.onNodeWithTag("role-navigation")
+            .fetchSemanticsNode()
+            .boundsInRoot
+
+        assertTrue("signals=$signals navigation=$navigation", signals.bottom <= navigation.top)
     }
 
     @Test
@@ -122,8 +267,12 @@ class HumHumAppTest {
     ) {
         compose.setContent {
             val current = LocalConfiguration.current
+            val currentDensity = LocalDensity.current
             val configuration = Configuration(current).apply { this.fontScale = fontScale }
-            androidx.compose.runtime.CompositionLocalProvider(LocalConfiguration provides configuration) {
+            androidx.compose.runtime.CompositionLocalProvider(
+                LocalConfiguration provides configuration,
+                LocalDensity provides Density(currentDensity.density, fontScale),
+            ) {
                 HumHumApp(state = state, callbacks = callbacks)
             }
         }
@@ -165,5 +314,13 @@ class HumHumAppTest {
         true,
         listOf(Models.Action("action-1", "Codex", "Run command", "需要确认")),
     )
+
+    private fun assertEditableText(tag: String, expected: String) {
+        val actual = compose.onNodeWithTag(tag)
+            .fetchSemanticsNode()
+            .config[SemanticsProperties.EditableText]
+            .text
+        assertEquals(expected, actual)
+    }
 
 }

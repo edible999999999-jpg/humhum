@@ -12,20 +12,20 @@ import androidx.compose.ui.unit.sp
 import com.humhum.mobile.MobileRoleDashboard
 
 val Ink = Color(0xFF243247)
-val Muted = Color(0xFF6C7890)
+val Muted = Color(0xFF667085)
 val Canvas = Color(0xFFFAFCFF)
 val Line = Color(0xFFE3E8F0)
-val Humi = Color(0xFF8174D6)
+val Humi = Color(0xFF6657B8)
 val HumiSoft = Color(0xFFF1EEFF)
 val HumiIce = Color(0xFFEAF6FF)
-val Hype = Color(0xFFEE7B62)
+val Hype = Color(0xFFB44A34)
 val HypeSoft = Color(0xFFFFF0E9)
-val Hush = Color(0xFF4FAF98)
+val Hush = Color(0xFF287765)
 val HushSoft = Color(0xFFEAF8F4)
-val Hexa = Color(0xFFC89A24)
+val Hexa = Color(0xFF80620F)
 val HexaSoft = Color(0xFFFFF7DE)
 val Sky = Color(0xFFEAF6FF)
-val Attention = Color(0xFFE9892D)
+val Attention = Color(0xFFB75D12)
 
 data class RolePalette(val accent: Color, val soft: Color, val companion: Color)
 

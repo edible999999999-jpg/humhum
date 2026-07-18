@@ -38,7 +38,8 @@ sealed interface HumHumAction {
     data class ApprovalStarted(val sessionId: String, val actionId: String) : HumHumAction
     data class ApprovalFinished(val sessionId: String, val actionId: String) : HumHumAction
     data class FollowUpStarted(val sessionId: String) : HumHumAction
-    data class FollowUpFinished(val sessionId: String) : HumHumAction
+    data class FollowUpSucceeded(val sessionId: String) : HumHumAction
+    data class FollowUpFailed(val sessionId: String) : HumHumAction
     data class MonitorChanged(
         val enabled: Boolean,
         val permissionRequired: Boolean,

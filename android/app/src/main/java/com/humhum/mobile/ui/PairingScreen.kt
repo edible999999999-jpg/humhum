@@ -174,7 +174,7 @@ fun PairingScreen(
                 }
             }
             Text(
-                "默认只在你明确操作时连接。配对密钥保存在 Android 安全存储中。",
+                "默认只在你明确操作时连接。配对资料保存在 Android 私有应用存储中；健康队列与离线快照使用 Android Keystore 加密。",
                 style = MaterialTheme.typography.bodyMedium,
                 color = Muted,
             )

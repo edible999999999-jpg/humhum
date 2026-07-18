@@ -11,11 +11,13 @@ import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.PowerManager;
+import android.provider.Settings;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.view.View;
@@ -40,6 +42,7 @@ import androidx.activity.ComponentActivity;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.compose.ui.platform.ComposeView;
+import androidx.health.connect.client.HealthConnectClient;
 import androidx.health.connect.client.PermissionController;
 import com.google.zxing.integration.android.IntentIntegrator;
 import com.google.zxing.integration.android.IntentResult;
@@ -141,7 +144,15 @@ public final class MainActivity extends ComponentActivity {
         super.onCreate(state);
         healthPermissionLauncher = registerForActivityResult(
                 PermissionController.createRequestPermissionResultContract(),
-                granted -> refreshHealthState());
+                granted -> {
+                    HealthBackgroundPreference preference =
+                            new HealthBackgroundPreference(this);
+                    if (preference.isRequestPending()) {
+                        preference.completeEnableRequest(
+                                granted.containsAll(HealthActivityBridge.backgroundPermissions()));
+                    }
+                    refreshHealthState();
+                });
         activityRecognitionLauncher = registerForActivityResult(
                 new ActivityResultContracts.RequestPermission(),
                 granted -> refreshHealthState());
@@ -198,7 +209,6 @@ public final class MainActivity extends ComponentActivity {
         } else {
             activate(connection);
         }
-        refreshHealthState();
     }
 
     @Override
@@ -255,6 +265,10 @@ public final class MainActivity extends ComponentActivity {
 
             @Override public void requestHealthPermission(HealthPermission permission) {
                 MainActivity.this.requestHealthPermission(permission);
+            }
+
+            @Override public void manageHealthPermissions() {
+                MainActivity.this.manageHealthPermissions();
             }
 
             @Override public void setBackgroundHealth(boolean enabled) {
@@ -328,8 +342,8 @@ public final class MainActivity extends ComponentActivity {
 
     private void setBackgroundHealth(boolean enabled) {
         HealthBackgroundPreference preference = new HealthBackgroundPreference(this);
-        preference.setEnabled(enabled);
         if (!enabled) {
+            preference.setEnabled(false);
             androidx.work.WorkManager.getInstance(this).cancelUniqueWork(
                     com.humhum.mobile.health.WorkManagerHealthBackgroundScheduler
                             .UNIQUE_WORK_NAME);
@@ -338,11 +352,28 @@ public final class MainActivity extends ComponentActivity {
             return;
         }
         if (!HealthActivityBridge.healthConnectAvailable(this)) {
+            preference.setEnabled(false);
             dispatchState(new HumHumAction.StatusChanged(
                     "后台健康同步需要系统健康连接"));
             return;
         }
+        preference.beginEnableRequest();
         healthPermissionLauncher.launch(HealthActivityBridge.backgroundPermissions());
+    }
+
+    private void manageHealthPermissions() {
+        if (HealthActivityBridge.healthConnectAvailable(this)) {
+            Intent healthSettings = new Intent(
+                    HealthConnectClient.getHealthConnectSettingsAction());
+            if (healthSettings.resolveActivity(getPackageManager()) != null) {
+                startActivity(healthSettings);
+                return;
+            }
+        }
+        Intent details = new Intent(
+                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.parse("package:" + getPackageName()));
+        startActivity(details);
     }
 
     private void refreshHealthState() {
@@ -418,6 +449,7 @@ public final class MainActivity extends ComponentActivity {
             reportForegroundPresence();
         }
         updateDeviceCareStatus();
+        refreshHealthState();
         startCompanionPolling();
     }
 
@@ -2046,7 +2078,7 @@ public final class MainActivity extends ComponentActivity {
                             session,
                             message);
                     postIfCurrent(generation, current, currentConnection, () -> {
-                        dispatchState(new HumHumAction.FollowUpFinished(session.id()));
+                        dispatchState(new HumHumAction.FollowUpSucceeded(session.id()));
                         messageDraftBySessionId.remove(session.id());
                         setStatusMessage("delivered".equals(state)
                                 ? "远程连接 · 跟进已送达"
@@ -2065,7 +2097,7 @@ public final class MainActivity extends ComponentActivity {
             try {
                 String state = current.sendMessage(session, message);
                 postIfCurrent(generation, current, currentConnection, () -> {
-                    dispatchState(new HumHumAction.FollowUpFinished(session.id()));
+                    dispatchState(new HumHumAction.FollowUpSucceeded(session.id()));
                     messageDraftBySessionId.remove(session.id());
                     setStatusMessage(
                             "delivered".equals(state) ? "跟进已送达" : "跟进已进入队列");
@@ -2086,7 +2118,7 @@ public final class MainActivity extends ComponentActivity {
                                 session,
                                 message);
                         postIfCurrent(generation, current, currentConnection, () -> {
-                            dispatchState(new HumHumAction.FollowUpFinished(session.id()));
+                            dispatchState(new HumHumAction.FollowUpSucceeded(session.id()));
                             messageDraftBySessionId.remove(session.id());
                             setStatusMessage("delivered".equals(state)
                                     ? "远程连接 · 跟进已送达"
@@ -2101,7 +2133,7 @@ public final class MainActivity extends ComponentActivity {
                 }
                 String visibleError = safeError(error);
                 postIfCurrent(generation, current, currentConnection, () -> {
-                    dispatchState(new HumHumAction.FollowUpFinished(session.id()));
+                    dispatchState(new HumHumAction.FollowUpFailed(session.id()));
                     setStatusMessage(visibleError);
                     renderSessions(currentUiState().getSessions());
                 });

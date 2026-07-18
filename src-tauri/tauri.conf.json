@@ -1,6 +1,6 @@
 {
   "productName": "HumHum",
-  "version": "0.3.14",
+  "version": "0.3.15",
   "identifier": "com.humhum.app",
   "build": {
     "beforeDevCommand": "npm run dev",

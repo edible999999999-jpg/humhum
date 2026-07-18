@@ -600,7 +600,7 @@ public class ManifestContractTest {
                 "new HumHumAction.FollowUpStarted(session.id())",
                 "draft.setEnabled(false);",
                 "current.sendMessage(session, message)",
-                "new HumHumAction.FollowUpFinished(session.id())",
+                "new HumHumAction.FollowUpSucceeded(session.id())",
                 "messageDraftBySessionId.remove(session.id());",
                 "renderSessions(currentUiState().getSessions())");
     }

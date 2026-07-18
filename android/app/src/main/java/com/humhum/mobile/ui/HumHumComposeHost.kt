@@ -34,6 +34,7 @@ object HumHumComposeHost {
                     onManualPair = actions::manualPair,
                     onDisconnect = actions::disconnect,
                     onRequestHealthPermission = actions::requestHealthPermission,
+                    onManageHealthPermissions = actions::manageHealthPermissions,
                     onBackgroundHealthChanged = actions::setBackgroundHealth,
                     onMonitorChanged = actions::setMonitor,
                     onOpenDeviceCare = actions::openDeviceCare,

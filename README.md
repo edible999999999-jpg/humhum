@@ -8,11 +8,11 @@
 [中文文档](./README.zh-CN.md)
 
 <p align="center">
-  <a href="https://github.com/edible999999999-jpg/humhum/releases/download/v0.3.14-beta.1/HumHum_0.3.14_aarch64.dmg"><strong>Download for macOS</strong></a>
+  <a href="https://github.com/edible999999999-jpg/humhum/releases/download/v0.3.15-beta.1/HumHum_0.3.15_aarch64.dmg"><strong>Download for macOS</strong></a>
   ·
   <a href="https://github.com/edible999999999-jpg/humhum/releases/latest/download/HumHum_0.3.12_x64-setup.exe"><strong>Download Windows Preview</strong></a>
   ·
-  <a href="https://github.com/edible999999999-jpg/humhum/releases/download/v0.3.14-beta.1/HUMHUM-Android-0.3.14.apk"><strong>Download for Android / Xiaomi</strong></a>
+  <a href="https://github.com/edible999999999-jpg/humhum/releases/download/v0.3.15-beta.1/HUMHUM-Android-0.3.15-Xiaomi.zip"><strong>Download for Android / Xiaomi</strong></a>
   ·
   <a href="https://yuxilab.cn/intro"><strong>Visit the website</strong></a>
   ·
@@ -134,6 +134,8 @@ After launch, open the **Hub** from the system tray menu or by right-clicking th
 
 The native Android client pairs by scanning the short-lived QR code in Hexa. On the same network it uses certificate-pinned HTTPS directly to the Mac. The invite-only **HUMHUM Anywhere** beta can automatically fall back to a self-hosted opaque relay when the phone is on 5G or another network: session summaries, bounded recent conversation, approvals and short follow-ups stay AES-256-GCM encrypted between the Mac and phone, while the relay stores only bounded ciphertext and credential digests. Read-only/control scope and per-device revocation still apply.
 
+Android 0.3.15 adds a native Living Signals home with distinct Humi, Hype, Hush and Hexa tabs. Optional Health Connect sources provide daily steps, resting heart rate and sleep duration; permissions are requested one source at a time, the phone keeps only a seven-day encrypted delivery queue, and durable encrypted summaries live on the user's Mac. Phones without Health Connect can use the local step counter after explicit permission, while heart rate and sleep remain unavailable instead of being inferred.
+
 Anywhere requires a deployed HTTPS relay and an invite code configured in Hexa. See [Android setup](./docs/android-install.md) and [relay deployment](./relay/README.md). It is currently a self-hosted beta, not a promise that a public HUMHUM endpoint is already online.
 
 ## Data & privacy
@@ -146,6 +148,7 @@ HUMHUM is local-first — the data on your own machine is its advantage. All dur
 - `vault/preferences/*.md` and `vault/memory/*.md` — Hype's preference and memory source of truth; back up the whole `vault/` directory
 - `stats.json` — token and cost statistics
 - `hush-inbox.json` — Hush's local message inbox (up to 500 messages)
+- `hush/structured-signals.sqlite3` — encrypted, user-approved daily health summaries received from paired phones
 - `local-agent-memory.md` — Humi's local Agent memory
 
 Privacy shows up in behavior: HUMHUM does not read private chats or sensitive stores without an explicit action from you; local message bridges are read-only by default; and while raw scan results remain available for debugging, **the interpreted summary is the default product surface**.

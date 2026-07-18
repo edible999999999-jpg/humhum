@@ -122,6 +122,16 @@ public final class CompanionLifecycleContractTest {
         assertTrue(source.contains("HealthActivityBridge.refresh(this, viewModel)"));
     }
 
+    @Test
+    public void returningToTheForegroundRechecksHealthPermissionsAndData() throws Exception {
+        String resume = methodSource(
+                activitySource(),
+                "protected void onResume()",
+                "protected void onStop()");
+
+        assertTrue(resume.contains("refreshHealthState();"));
+    }
+
     private static String methodSource(String source, String start, String end) {
         int startIndex = source.indexOf(start);
         int endIndex = source.indexOf(end, startIndex);
