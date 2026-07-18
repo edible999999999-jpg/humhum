@@ -45,6 +45,7 @@ pub(crate) struct CodexPlanSnapshot {
     pub(crate) timestamp: Option<String>,
     pub(crate) explanation: Option<String>,
     pub(crate) steps: Vec<CodexPlanStep>,
+    pub(crate) turn_completed_after_plan: bool,
 }
 
 pub(crate) fn parse_transcript_signals(path: &Path) -> Result<TranscriptSignals, String> {
@@ -98,7 +99,7 @@ pub(crate) fn parse_transcript_signals(path: &Path) -> Result<TranscriptSignals,
 
 pub(crate) fn parse_latest_codex_plan(path: &Path) -> Result<Option<CodexPlanSnapshot>, String> {
     let recent_lines = read_recent_lines(path)?;
-    let mut latest = None;
+    let mut latest: Option<CodexPlanSnapshot> = None;
 
     for line in recent_lines {
         let Ok(value) = serde_json::from_str::<Value>(&line) else {
@@ -108,6 +109,13 @@ pub(crate) fn parse_latest_codex_plan(path: &Path) -> Result<Option<CodexPlanSna
         if payload.get("type").and_then(Value::as_str) != Some("function_call")
             || payload.get("name").and_then(Value::as_str) != Some("update_plan")
         {
+            if let Some(plan) = latest.as_mut() {
+                match payload.get("type").and_then(Value::as_str) {
+                    Some("task_started") => plan.turn_completed_after_plan = false,
+                    Some("task_complete") => plan.turn_completed_after_plan = true,
+                    _ => {}
+                }
+            }
             continue;
         }
         let arguments = match payload.get("arguments") {
@@ -148,6 +156,7 @@ pub(crate) fn parse_latest_codex_plan(path: &Path) -> Result<Option<CodexPlanSna
                 .and_then(Value::as_str)
                 .and_then(clean_text),
             steps,
+            turn_completed_after_plan: false,
         });
     }
 
@@ -411,6 +420,7 @@ mod tests {
             &[
                 r#"{"timestamp":"2026-07-17T03:15:05Z","type":"response_item","payload":{"type":"function_call","name":"update_plan","arguments":"{\"explanation\":\"first\",\"plan\":[{\"step\":\"Inspect\",\"status\":\"in_progress\"},{\"step\":\"Fix\",\"status\":\"pending\"}]}"}}"#.to_string(),
                 r#"{"timestamp":"2026-07-17T06:59:22Z","type":"response_item","payload":{"type":"function_call","name":"update_plan","arguments":"{\"explanation\":\"latest\",\"plan\":[{\"step\":\"Inspect\",\"status\":\"completed\"},{\"step\":\"Fix\",\"status\":\"in_progress\"}]}"}}"#.to_string(),
+                r#"{"timestamp":"2026-07-17T07:10:00Z","type":"event_msg","payload":{"type":"task_complete"}}"#.to_string(),
             ],
         );
 
@@ -423,6 +433,7 @@ mod tests {
         assert_eq!(plan.steps[0].status, "completed");
         assert_eq!(plan.steps[1].title, "Fix");
         assert_eq!(plan.steps[1].status, "in_progress");
+        assert!(plan.turn_completed_after_plan);
     }
 
     #[test]

@@ -663,6 +663,65 @@ impl HexaWatchStore {
         Ok(updated)
     }
 
+    pub fn complete_active_native_plan_items(
+        &mut self,
+        session_id: &str,
+        source_provider: &str,
+    ) -> Result<Option<HexaWatchedSession>, String> {
+        self.reload_from_disk()?;
+        let mut agents = self.agents.clone();
+        let now = chrono::Utc::now().to_rfc3339();
+        let mut updated = None;
+
+        for watched_agent in agents.values_mut() {
+            let Some(session) = watched_agent
+                .runs
+                .iter_mut()
+                .find(|session| session_matches_id(session, session_id))
+            else {
+                continue;
+            };
+
+            let mut changed = false;
+            for item in &mut session.audit.work_items {
+                if item.source == HexaWorkItemSource::NativePlan
+                    && item.source_provider.as_deref() == Some(source_provider)
+                    && item.status == HexaWorkItemStatus::InProgress
+                {
+                    item.status = HexaWorkItemStatus::Completed;
+                    item.updated_at = now.clone();
+                    item.completed_at = Some(now.clone());
+                    changed = true;
+                }
+            }
+            if changed {
+                session.current_step = session
+                    .audit
+                    .work_items
+                    .iter()
+                    .find(|item| item.status == HexaWorkItemStatus::InProgress)
+                    .or_else(|| {
+                        session
+                            .audit
+                            .work_items
+                            .iter()
+                            .find(|item| item.status == HexaWorkItemStatus::Pending)
+                    })
+                    .map(|item| item.title.clone());
+                session.updated_at = now.clone();
+                watched_agent.updated_at = now.clone();
+                updated = Some(session.clone());
+            }
+            break;
+        }
+
+        if updated.is_some() {
+            self.persist_agents(&agents)?;
+            self.agents = agents;
+        }
+        Ok(updated)
+    }
+
     pub fn bind_provider_thread(
         &mut self,
         provider: &str,

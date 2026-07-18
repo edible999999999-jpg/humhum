@@ -592,11 +592,12 @@ impl CodexBridgeState {
             else {
                 continue;
             };
-            match recovered_codex_plan_event(&thread_id, &path) {
-                Ok(Some(plan_event)) => {
-                    self.apply_event(app, plan_event);
+            match recovered_codex_plan_events(&thread_id, &path) {
+                Ok(events) => {
+                    for recovered_event in events {
+                        self.apply_event(app, recovered_event);
+                    }
                 }
-                Ok(None) => {}
                 Err(error) => {
                     log::warn!("Could not recover existing Codex plan for Hexa: {error}")
                 }
@@ -1012,12 +1013,12 @@ fn codex_plan_sync_request(event: &HexaEvent) -> Option<HexaPlanSyncRequest> {
     })
 }
 
-fn recovered_codex_plan_event(
+fn recovered_codex_plan_events(
     thread_id: &str,
     transcript_path: &Path,
-) -> Result<Option<HexaEvent>, String> {
+) -> Result<Vec<HexaEvent>, String> {
     let Some(plan) = crate::transcript_reader::parse_latest_codex_plan(transcript_path)? else {
-        return Ok(None);
+        return Ok(Vec::new());
     };
     let timestamp = plan
         .timestamp
@@ -1027,20 +1028,34 @@ fn recovered_codex_plan_event(
         .into_iter()
         .map(|step| json!({"step": step.title, "status": step.status}))
         .collect::<Vec<_>>();
-    Ok(Some(HexaEvent {
+    let mut events = vec![HexaEvent {
         event_id: uuid::Uuid::new_v4().to_string(),
         session_id: thread_id.to_string(),
         provider: "codex".to_string(),
         provider_thread_id: Some(thread_id.to_string()),
         turn_id: None,
-        timestamp,
+        timestamp: timestamp.clone(),
         kind: HexaEventKind::PlanUpdated,
         payload: json!({
             "explanation": plan.explanation,
             "plan": steps,
         }),
         sensitivity: HexaSensitivity::Private,
-    }))
+    }];
+    if plan.turn_completed_after_plan {
+        events.push(HexaEvent {
+            event_id: uuid::Uuid::new_v4().to_string(),
+            session_id: thread_id.to_string(),
+            provider: "codex".to_string(),
+            provider_thread_id: Some(thread_id.to_string()),
+            turn_id: None,
+            timestamp,
+            kind: HexaEventKind::TurnCompleted,
+            payload: json!({"status": "completed", "recovered": true}),
+            sensitivity: HexaSensitivity::Private,
+        });
+    }
+    Ok(events)
 }
 
 fn canonical_codex_transcript(path: &Path, home_dir: &Path) -> Option<PathBuf> {
@@ -1080,25 +1095,31 @@ fn sync_watched_codex_event(
         if let Some(status) = codex_lifecycle_watch_status(event, projection) {
             let blocked = status == HexaWatchStatus::Blocked;
             let waiting = status == HexaWatchStatus::Waiting;
-            return store
-                .update(HexaWatchUpdateRequest {
-                    session_id: event.session_id.clone(),
-                    status,
-                    current_step: bound.current_step.clone(),
-                    blocked_reason: blocked.then(|| {
-                        event
-                            .payload
-                            .get("message")
-                            .and_then(Value::as_str)
-                            .map(str::to_string)
-                            .or_else(|| bound.blocked_reason.clone())
-                            .unwrap_or_else(|| "Codex 本轮执行失败".to_string())
-                    }),
-                    need_user: Some(waiting),
-                    confidence: bound.confidence.clone(),
-                    goal: None,
-                })
-                .map(|updated| updated.or((!was_bound).then_some(bound)));
+            let updated = store.update(HexaWatchUpdateRequest {
+                session_id: event.session_id.clone(),
+                status,
+                current_step: bound.current_step.clone(),
+                blocked_reason: blocked.then(|| {
+                    event
+                        .payload
+                        .get("message")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                        .or_else(|| bound.blocked_reason.clone())
+                        .unwrap_or_else(|| "Codex 本轮执行失败".to_string())
+                }),
+                need_user: Some(waiting),
+                confidence: bound.confidence.clone(),
+                goal: None,
+            })?;
+            if event.kind == HexaEventKind::TurnCompleted {
+                if let Some(completed) =
+                    store.complete_active_native_plan_items(&event.session_id, "codex")?
+                {
+                    return Ok(Some(completed));
+                }
+            }
+            return Ok(updated.or((!was_bound).then_some(bound)));
         }
     }
     Ok((!was_bound).then_some(bound))
@@ -1380,7 +1401,7 @@ if ($second.Contains('"method":"turn/start"')) {
     }
 
     #[test]
-    fn turn_completion_idles_the_watch_without_completing_the_native_plan() {
+    fn successful_turn_completion_closes_the_active_native_plan_item() {
         let directory = tempfile::tempdir().unwrap();
         let mut watch_store = HexaWatchStore::load_or_create(directory.path()).unwrap();
         watch_store
@@ -1457,12 +1478,13 @@ if ($second.Contains('"method":"turn/start"')) {
         );
         assert_eq!(
             synced.audit.work_items[0].status,
-            HexaWorkItemStatus::InProgress
+            HexaWorkItemStatus::Completed
         );
+        assert!(synced.audit.work_items[0].completed_at.is_some());
     }
 
     #[test]
-    fn rebuilds_a_native_plan_event_from_the_existing_codex_transcript() {
+    fn rebuilds_native_plan_and_completion_events_from_the_existing_codex_transcript() {
         let directory = tempfile::tempdir().unwrap();
         let transcript = directory.path().join("rollout.jsonl");
         std::fs::write(
@@ -1472,21 +1494,23 @@ if ($second.Contains('"method":"turn/start"')) {
                 "\"payload\":{\"type\":\"function_call\",\"name\":\"update_plan\",",
                 "\"arguments\":\"{\\\"explanation\\\":\\\"latest\\\",\\\"plan\\\":[",
                 "{\\\"step\\\":\\\"Inspect\\\",\\\"status\\\":\\\"completed\\\"},",
-                "{\\\"step\\\":\\\"Fix\\\",\\\"status\\\":\\\"in_progress\\\"}] }\"}}\n"
+                "{\\\"step\\\":\\\"Fix\\\",\\\"status\\\":\\\"in_progress\\\"}] }\"}}\n",
+                "{\"timestamp\":\"2026-07-17T07:10:00Z\",\"type\":\"event_msg\",",
+                "\"payload\":{\"type\":\"task_complete\"}}\n"
             ),
         )
         .unwrap();
 
-        let event = recovered_codex_plan_event("thread-real", &transcript)
-            .unwrap()
-            .unwrap();
-        let request = codex_plan_sync_request(&event).unwrap();
+        let events = recovered_codex_plan_events("thread-real", &transcript).unwrap();
+        let request = codex_plan_sync_request(&events[0]).unwrap();
 
-        assert_eq!(event.session_id, "thread-real");
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].session_id, "thread-real");
         assert_eq!(request.capability, HexaPlanningCapability::Native);
         assert_eq!(request.items.len(), 2);
         assert_eq!(request.items[0].status, HexaWorkItemStatus::Completed);
         assert_eq!(request.items[1].status, HexaWorkItemStatus::InProgress);
+        assert_eq!(events[1].kind, HexaEventKind::TurnCompleted);
     }
 
     #[test]
