@@ -26,6 +26,28 @@
   min-height: 100%;
 }
 
+.hub-room .kawaii-badge,
+.hub-room .kawaii-icon-btn,
+.hub-room .kawaii-input,
+.hub-room .kawaii-save-btn,
+.hub-room .kawaii-tab,
+.hub-room .kawaii-toggle-btn {
+  border-radius: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hub-room,
+  .hub-room::before,
+  .hub-room::after,
+  .hub-room *,
+  .hub-room *::before,
+  .hub-room *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 .hub-nav-item {
   position: relative;
   min-height: 58px;

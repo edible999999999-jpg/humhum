@@ -1,17 +1,101 @@
 // @vitest-environment happy-dom
 
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
+import postcss, { type Root, type Rule } from "postcss";
 import * as ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { HumiModule } from "./HumiModule";
 import { KnowledgeModule } from "./KnowledgeModule";
 
+const hubSourceDirectory = resolve(process.cwd(), "src/components/Hub");
 const modulePaths = [
   resolve(process.cwd(), "src/components/Hub/HumiModule.tsx"),
   resolve(process.cwd(), "src/components/Hub/KnowledgeModule.tsx"),
 ];
+const globalStyleRoot = postcss.parse(
+  readFileSync(resolve(process.cwd(), "src/styles/global.css"), "utf8"),
+);
+const characterRoomStyleRoot = postcss.parse(
+  readFileSync(
+    resolve(process.cwd(), "src/styles/hub-character-rooms.css"),
+    "utf8",
+  ),
+);
+
+function componentSourcePaths(directory: string): string[] {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const path = resolve(directory, entry.name);
+    if (entry.isDirectory()) return componentSourcePaths(path);
+    if (!entry.name.endsWith(".tsx") || entry.name.includes(".test.")) return [];
+    return [path];
+  });
+}
+
+function usedHubKawaiiClasses(): string[] {
+  const classes = componentSourcePaths(hubSourceDirectory).flatMap((path) =>
+    Array.from(
+      readFileSync(path, "utf8").matchAll(/\bkawaii-[a-z0-9-]+\b/g),
+      (match) => match[0],
+    ),
+  );
+
+  return Array.from(new Set(classes)).sort();
+}
+
+function selectorRule(root: Root, selector: string): Rule | undefined {
+  let match: Rule | undefined;
+  root.walkRules((rule) => {
+    if (!match && rule.selectors.includes(selector)) match = rule;
+  });
+  return match;
+}
+
+function declaration(rule: Rule | undefined, property: string): string | undefined {
+  let value: string | undefined;
+  rule?.walkDecls(property, (node) => {
+    value ??= node.value;
+  });
+  return value;
+}
+
+function isExplicitCssCircle(rule: Rule, radius: string): boolean {
+  const numericRadius = Number.parseFloat(radius);
+  if (radius !== "50%" && numericRadius < 999) return false;
+
+  const width = declaration(rule, "width");
+  const height = declaration(rule, "height");
+  return width !== undefined && width === height && /^\d+(?:\.\d+)?px$/.test(width);
+}
+
+function classRadiusViolations(): string[] {
+  return usedHubKawaiiClasses().flatMap((className) => {
+    const baseRule = selectorRule(globalStyleRoot, `.${className}`);
+    const baseRadius = declaration(baseRule, "border-radius");
+    const numericBaseRadius = Number.parseFloat(baseRadius ?? "");
+
+    if (
+      !baseRule ||
+      !Number.isFinite(numericBaseRadius) ||
+      numericBaseRadius <= 8 ||
+      isExplicitCssCircle(baseRule, baseRadius ?? "")
+    ) {
+      return [];
+    }
+
+    const scopedSelector = `.hub-room .${className}`;
+    const scopedRadius = declaration(
+      selectorRule(characterRoomStyleRoot, scopedSelector),
+      "border-radius",
+    );
+    const numericScopedRadius = Number.parseFloat(scopedRadius ?? "");
+
+    return Number.isFinite(numericScopedRadius) && numericScopedRadius <= 8
+      ? []
+      : [`${className}: ${baseRadius} -> ${scopedRadius ?? "missing"}`];
+  });
+}
 
 function numericLiteralText(
   node: ts.Expression,
@@ -175,5 +259,11 @@ describe("Hub inline radius contract", () => {
     );
 
     expect(renderedRadiusViolations(html)).toEqual([]);
+  });
+});
+
+describe("Hub class radius contract", () => {
+  it("scopes every used non-circular kawaii class radius to 8px or less", () => {
+    expect(classRadiusViolations()).toEqual([]);
   });
 });

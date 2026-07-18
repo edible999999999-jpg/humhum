@@ -1,31 +1,38 @@
 import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
-import postcss from "postcss";
+import postcss, { type Container, type Declaration } from "postcss";
 import { describe, expect, it } from "vitest";
 import { HubRoom } from "./HubRoom";
 
 const globalStyleRoot = postcss.parse(
   readFileSync(new URL("../../styles/global.css", import.meta.url), "utf8"),
 );
+const characterRoomStyleRoot = postcss.parse(
+  readFileSync(
+    new URL("../../styles/hub-character-rooms.css", import.meta.url),
+    "utf8",
+  ),
+);
 
 function reducedMotionDeclaration(
+  root: Container,
   selector: string,
   property: string,
-): string | undefined {
-  let value: string | undefined;
+): Declaration | undefined {
+  let match: Declaration | undefined;
 
-  globalStyleRoot.walkAtRules("media", (media) => {
+  root.walkAtRules("media", (media) => {
     if (media.params !== "(prefers-reduced-motion: reduce)") return;
 
     media.walkRules((rule) => {
       if (!rule.selectors.includes(selector)) return;
       rule.walkDecls(property, (declaration) => {
-        value ??= declaration.value;
+        match ??= declaration;
       });
     });
   });
 
-  return value;
+  return match;
 }
 
 describe("HubRoom", () => {
@@ -44,7 +51,43 @@ describe("HubRoom", () => {
   });
 
   it("disables Hub room entrance motion at the reduced-motion selector", () => {
-    expect(reducedMotionDeclaration(".hub-module", "animation")).toBe("none");
-    expect(reducedMotionDeclaration(".hub-module", "transition")).toBe("none");
+    expect(
+      reducedMotionDeclaration(globalStyleRoot, ".hub-module", "animation")
+        ?.value,
+    ).toBe("none");
+    expect(
+      reducedMotionDeclaration(globalStyleRoot, ".hub-module", "transition")
+        ?.value,
+    ).toBe("none");
+  });
+
+  it("disables motion for every Hub room descendant and pseudo-element", () => {
+    const selectors = [
+      ".hub-room",
+      ".hub-room::before",
+      ".hub-room::after",
+      ".hub-room *",
+      ".hub-room *::before",
+      ".hub-room *::after",
+    ];
+
+    for (const selector of selectors) {
+      for (const [property, value] of [
+        ["animation", "none"],
+        ["transition", "none"],
+        ["scroll-behavior", "auto"],
+      ] as const) {
+        const declaration = reducedMotionDeclaration(
+          characterRoomStyleRoot,
+          selector,
+          property,
+        );
+
+        expect(declaration?.value, `${selector} ${property}`).toBe(value);
+        expect(declaration?.important, `${selector} ${property} priority`).toBe(
+          true,
+        );
+      }
+    }
   });
 });
