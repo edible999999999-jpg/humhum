@@ -18,7 +18,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "test": "vitest run && npm run test:hexa",
+    "test": "node scripts/run-tests.mjs",
     "test:hexa": "node --test scripts/hexa-session-context.test.mjs scripts/hexa-plan-input.test.mjs scripts/humhum-hexa.test.mjs",
     "test:relay": "node --test relay/test/*.test.mjs",
     "test:all": "npm test && npm run test:relay",
