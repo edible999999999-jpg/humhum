@@ -71,12 +71,12 @@ describe("getHushConversationIdentity", () => {
       },
     });
 
-    expect(first.id).toBe("wechat:conversation:thread-one");
+    expect(first.id).toBe("wechat:conversation:THREAD-ONE");
     expect(second.id).toBe("wechat:conversation:thread-two");
     expect(first.id).not.toBe(second.id);
   });
 
-  it("uses normalized DWS conversation_id and chat_id values as stable keys", () => {
+  it("trims DWS conversation_id and chat_id values without changing case", () => {
     const fromConversationId = getHushConversationIdentity({
       platform: " DingTalk ",
       sender: "成员甲",
@@ -96,19 +96,120 @@ describe("getHushConversationIdentity", () => {
       raw: {
         source: "dws",
         conversation_id: " ",
-        chat_id: " project-42 ",
+        chat_id: " PROJECT-42 ",
       },
     });
 
     expect(fromConversationId).toEqual({
-      id: "dingtalk:conversation:project-42",
+      id: "dingtalk:conversation:PROJECT-42",
       name: "项目群",
     });
     expect(fromChatId.id).toBe(fromConversationId.id);
   });
 
-  it("falls back to a normalized platform and sender when metadata is missing", () => {
+  it("uses DWS chat metadata when conversation_id and chat_id are blank", () => {
     const first = getHushConversationIdentity({
+      platform: "dingtalk",
+      sender: "成员甲",
+      chat: "项目群甲",
+      source_id: "dws:first",
+      raw: {
+        source: "dws",
+        conversation_id: " ",
+        chat_id: "",
+        chat: " 项目群甲 ",
+      },
+    });
+    const second = getHushConversationIdentity({
+      platform: "dingtalk",
+      sender: "成员甲",
+      chat: "项目群乙",
+      source_id: "dws:second",
+      raw: {
+        source: "dws",
+        conversation_id: "",
+        chat_id: " ",
+        chat: " 项目群乙 ",
+      },
+    });
+
+    expect(first.id).toBe("dingtalk:conversation:项目群甲");
+    expect(second.id).toBe("dingtalk:conversation:项目群乙");
+    expect(first.id).not.toBe(second.id);
+  });
+
+  it.each([
+    {
+      label: "threadIdentifier",
+      sourceId: "com.tencent.xinwechat:first",
+      upperRaw: {
+        source: "macos_notification_center",
+        threadIdentifier: " Chat-Aa ",
+      },
+      lowerRaw: {
+        source: "macos_notification_center",
+        threadIdentifier: " chat-aa ",
+      },
+    },
+    {
+      label: "raw chat",
+      sourceId: "com.tencent.xinwechat:first",
+      upperRaw: {
+        source: "macos_notification_center",
+        chat: " Chat-Aa ",
+      },
+      lowerRaw: {
+        source: "macos_notification_center",
+        chat: " chat-aa ",
+      },
+    },
+    {
+      label: "DWS conversation_id",
+      sourceId: "dws:first",
+      upperRaw: {
+        source: "dws",
+        conversation_id: " Chat-Aa ",
+      },
+      lowerRaw: {
+        source: "dws",
+        conversation_id: " chat-aa ",
+      },
+    },
+    {
+      label: "DWS chat_id",
+      sourceId: "dws:first",
+      upperRaw: {
+        source: "dws",
+        chat_id: " Chat-Aa ",
+      },
+      lowerRaw: {
+        source: "dws",
+        chat_id: " chat-aa ",
+      },
+    },
+  ])("preserves case for opaque $label keys", ({ sourceId, upperRaw, lowerRaw }) => {
+    const upper = getHushConversationIdentity({
+      platform: "wechat",
+      sender: "同一发送者",
+      chat: null,
+      source_id: sourceId,
+      raw: upperRaw,
+    });
+    const lower = getHushConversationIdentity({
+      platform: "wechat",
+      sender: "同一发送者",
+      chat: null,
+      source_id: sourceId.replace("first", "second"),
+      raw: lowerRaw,
+    });
+
+    expect(upper.id).toBe("wechat:conversation:Chat-Aa");
+    expect(lower.id).toBe("wechat:conversation:chat-aa");
+    expect(upper.id).not.toBe(lower.id);
+  });
+
+  it("preserves the legacy platform and sender fallback ID", () => {
+    const identity = getHushConversationIdentity({
       platform: " WeChat ",
       sender: " Alice ",
       chat: null,
@@ -119,15 +220,52 @@ describe("getHushConversationIdentity", () => {
         threadIdentifier: null,
       },
     });
-    const second = getHushConversationIdentity({
+
+    expect(identity).toEqual({ id: "wechat:Alice", name: "Alice" });
+  });
+
+  it("does not merge sender fallback IDs that differ only by case", () => {
+    const upper = getHushConversationIdentity({
+      platform: "wechat",
+      sender: "Alice",
+      chat: null,
+    });
+    const lower = getHushConversationIdentity({
       platform: "wechat",
       sender: "alice",
-      chat: " ",
-      source_id: "com.tencent.xinwechat:second",
+      chat: null,
     });
 
-    expect(first).toEqual({ id: "wechat:alice", name: "Alice" });
-    expect(second.id).toBe(first.id);
+    expect(upper.id).toBe("wechat:Alice");
+    expect(lower.id).toBe("wechat:alice");
+    expect(upper.id).not.toBe(lower.id);
+  });
+
+  it("keeps the same notification thread key isolated by platform", () => {
+    const wechat = getHushConversationIdentity({
+      platform: "wechat",
+      sender: "系统通知",
+      chat: null,
+      source_id: "com.tencent.xinwechat:first",
+      raw: {
+        source: "macos_notification_center",
+        threadIdentifier: " Shared-Thread ",
+      },
+    });
+    const dingtalk = getHushConversationIdentity({
+      platform: "dingtalk",
+      sender: "系统通知",
+      chat: null,
+      source_id: "com.alibaba.dingtalkmac:first",
+      raw: {
+        source: "macos_notification_center",
+        threadIdentifier: " Shared-Thread ",
+      },
+    });
+
+    expect(wechat.id).toBe("wechat:conversation:Shared-Thread");
+    expect(dingtalk.id).toBe("dingtalk:conversation:Shared-Thread");
+    expect(wechat.id).not.toBe(dingtalk.id);
   });
 });
 

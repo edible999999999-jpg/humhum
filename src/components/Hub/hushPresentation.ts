@@ -70,20 +70,23 @@ export function getHushConversationIdentity(
   >,
 ): { id: string; name: string } {
   const platformKey =
-    normalizeHushIdentityPart(message.platform) ?? "unknown-platform";
-  const senderKey =
-    normalizeHushIdentityPart(message.sender) ?? "unknown-sender";
+    normalizeHushClassifier(message.platform) ?? "unknown-platform";
+  const senderKey = trimHushIdentityPart(message.sender) ?? "unknown-sender";
   const senderName = message.sender.trim() || "Unknown sender";
-  const source = normalizeHushIdentityPart(message.raw?.source);
-  const sourceId = normalizeHushIdentityPart(message.source_id);
+  const source = normalizeHushClassifier(message.raw?.source);
+  const sourceId = normalizeHushClassifier(message.source_id);
   const isDwsMessage =
     sourceId?.startsWith("dws:") === true || source === "dws";
   if (isDwsMessage) {
     const conversationKey =
-      normalizeHushIdentityPart(message.raw?.conversation_id) ??
-      normalizeHushIdentityPart(message.raw?.chat_id);
+      trimHushIdentityPart(message.raw?.conversation_id) ??
+      trimHushIdentityPart(message.raw?.chat_id) ??
+      trimHushIdentityPart(message.raw?.chat) ??
+      trimHushIdentityPart(message.chat);
     if (conversationKey) {
-      const chatName = message.chat?.trim();
+      const chatName =
+        trimHushIdentityPart(message.chat) ??
+        trimHushIdentityPart(message.raw?.chat);
       return {
         id: `${platformKey}:conversation:${conversationKey}`,
         name: chatName || senderName,
@@ -96,10 +99,10 @@ export function getHushConversationIdentity(
     sourceId?.startsWith("com.tencent.xinwechat:") === true ||
     sourceId?.startsWith("com.alibaba.dingtalkmac:") === true;
   const notificationThreadKey =
-    normalizeHushIdentityPart(message.raw?.threadIdentifier) ??
+    trimHushIdentityPart(message.raw?.threadIdentifier) ??
     (isMacNotification
-      ? (normalizeHushIdentityPart(message.raw?.chat) ??
-        normalizeHushIdentityPart(message.chat))
+      ? (trimHushIdentityPart(message.raw?.chat) ??
+        trimHushIdentityPart(message.chat))
       : null);
   if (notificationThreadKey) {
     return {
@@ -259,9 +262,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function normalizeHushIdentityPart(value: unknown): string | null {
+function trimHushIdentityPart(value: unknown): string | null {
   if (typeof value !== "string") return null;
-  const normalized = value.trim().toLowerCase();
+  const normalized = value.trim();
+  return normalized || null;
+}
+
+function normalizeHushClassifier(value: unknown): string | null {
+  const normalized = trimHushIdentityPart(value)?.toLowerCase();
   return normalized || null;
 }
 
