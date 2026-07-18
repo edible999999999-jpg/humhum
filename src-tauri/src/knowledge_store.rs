@@ -8,6 +8,11 @@ const MAX_OBSIDIAN_NOTES: usize = 2000;
 const MAX_AGENT_ASSETS: usize = 8000;
 const MAX_MARKDOWN_BYTES: u64 = 512 * 1024;
 const MAX_ASSET_BYTES: u64 = 384 * 1024;
+const AGENT_RULE_SCAN_PATHS: [(&str, &str, &str); 3] = [
+    ("claude-code", "CLAUDE.md", "CLAUDE.md"),
+    ("cursor", ".cursorrules", ".cursorrules"),
+    ("codex", "AGENTS.md", "AGENTS.md"),
+];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Preference {
@@ -18,7 +23,7 @@ pub struct Preference {
     pub priority: u8,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AgentRule {
     pub id: String,
     pub agent_id: String,
@@ -430,47 +435,75 @@ impl KnowledgeStore {
 
     pub fn scan_agent_rules(&mut self) -> Vec<AgentRule> {
         let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-        let mut found: Vec<AgentRule> = Vec::new();
-
-        let scan_paths: Vec<(&str, &str, &str)> = vec![
-            ("claude-code", "CLAUDE.md", "CLAUDE.md"),
-            ("cursor", ".cursorrules", ".cursorrules"),
-            ("codex", "AGENTS.md", "AGENTS.md"),
-        ];
-
         let search_dirs = agent_rule_search_dirs(&home, dirs::desktop_dir(), dirs::document_dir());
+        self.scan_agent_rules_in(&search_dirs)
+    }
 
-        for dir in &search_dirs {
-            for (agent_id, filename, rule_type) in &scan_paths {
-                if let Ok(entries) = std::fs::read_dir(dir) {
-                    for entry in entries.flatten() {
-                        let path = entry.path();
-                        let rule_file = path.join(filename);
-                        if rule_file.exists() {
-                            if let Ok(content) = std::fs::read_to_string(&rule_file) {
-                                let id = format!("{}:{}", agent_id, rule_file.to_string_lossy());
-                                if !self.data.agent_rules.iter().any(|r| r.id == id) {
-                                    let rule = AgentRule {
-                                        id: id.clone(),
-                                        agent_id: agent_id.to_string(),
-                                        rule_type: rule_type.to_string(),
-                                        file_path: rule_file.to_string_lossy().to_string(),
-                                        content: truncate_content(&content, 2000),
-                                    };
-                                    found.push(rule.clone());
-                                    self.data.agent_rules.push(rule);
-                                }
-                            }
+    fn scan_agent_rules_in(&mut self, search_dirs: &[PathBuf]) -> Vec<AgentRule> {
+        let mut found = Vec::new();
+        let mut scanned_roots = Vec::new();
+
+        for dir in search_dirs {
+            let Ok(entries) = std::fs::read_dir(dir) else {
+                continue;
+            };
+            scanned_roots.push(dir.clone());
+            let entry_paths: Vec<PathBuf> = entries.flatten().map(|entry| entry.path()).collect();
+
+            for (agent_id, filename, rule_type) in AGENT_RULE_SCAN_PATHS {
+                for path in &entry_paths {
+                    let rule_file = path.join(filename);
+                    if let Ok(content) = std::fs::read_to_string(&rule_file) {
+                        let id = format!("{}:{}", agent_id, rule_file.to_string_lossy());
+                        if !found.iter().any(|rule: &AgentRule| rule.id == id) {
+                            found.push(AgentRule {
+                                id,
+                                agent_id: agent_id.to_string(),
+                                rule_type: rule_type.to_string(),
+                                file_path: rule_file.to_string_lossy().to_string(),
+                                content: truncate_content(&content, 2000),
+                            });
                         }
                     }
                 }
             }
         }
 
-        if !found.is_empty() {
+        let mut changed = Vec::new();
+        let mut reconciled = Vec::with_capacity(self.data.agent_rules.len() + found.len());
+
+        for existing in std::mem::take(&mut self.data.agent_rules) {
+            // A refresh only owns legacy scan-shaped rules beneath roots it could read.
+            if is_scanned_agent_rule_in_roots(&existing, &scanned_roots) {
+                if let Some(current) = found.iter().find(|rule| rule.id == existing.id) {
+                    if current != &existing {
+                        changed.push(current.clone());
+                    }
+                    reconciled.push(current.clone());
+                    continue;
+                }
+
+                if matches!(Path::new(&existing.file_path).try_exists(), Ok(false)) {
+                    changed.push(existing);
+                    continue;
+                }
+            }
+
+            reconciled.push(existing);
+        }
+
+        for rule in found {
+            if !reconciled.iter().any(|existing| existing.id == rule.id) {
+                changed.push(rule.clone());
+                reconciled.push(rule);
+            }
+        }
+
+        self.data.agent_rules = reconciled;
+        if !changed.is_empty() {
             self.save();
         }
-        found
+        changed
     }
 
     pub fn scan_agent_assets(
@@ -729,6 +762,28 @@ fn agent_rule_search_dirs(
         }
     }
     search_dirs
+}
+
+fn is_scanned_agent_rule_in_roots(rule: &AgentRule, scanned_roots: &[PathBuf]) -> bool {
+    let path = Path::new(&rule.file_path);
+    let Some((agent_id, _, rule_type)) = AGENT_RULE_SCAN_PATHS
+        .iter()
+        .find(|(_, filename, _)| path.file_name().is_some_and(|name| name == *filename))
+    else {
+        return false;
+    };
+
+    if rule.agent_id != *agent_id
+        || rule.rule_type != *rule_type
+        || rule.id != format!("{}:{}", agent_id, rule.file_path)
+    {
+        return false;
+    }
+
+    let Some(parent) = path.parent().and_then(Path::parent) else {
+        return false;
+    };
+    scanned_roots.iter().any(|root| root == parent)
 }
 
 fn resolve_agent_asset_roots(roots: Option<Vec<String>>) -> Result<Vec<PathBuf>, String> {
@@ -1823,6 +1878,135 @@ mod tests {
                 home,
             ]
         );
+    }
+
+    #[test]
+    fn scan_agent_rules_reconciles_added_modified_and_deleted_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let scan_root = root.join("scan-root");
+        let other_scan_root = root.join("other-scan-root");
+        let unavailable_scan_root = root.join("unavailable-scan-root");
+        let project = scan_root.join("project");
+        let other_project = other_scan_root.join("other-project");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(&other_project).unwrap();
+
+        let rule_path = project.join("AGENTS.md");
+        let other_rule_path = other_project.join("CLAUDE.md");
+        std::fs::write(&rule_path, "initial rule").unwrap();
+        std::fs::write(&other_rule_path, "other root rule").unwrap();
+
+        let rule_id = format!("codex:{}", rule_path.to_string_lossy());
+        let other_rule_id = format!("claude-code:{}", other_rule_path.to_string_lossy());
+        let unavailable_rule_path = unavailable_scan_root.join("project").join("AGENTS.md");
+        let unavailable_rule_id = format!("codex:{}", unavailable_rule_path.to_string_lossy());
+        let manual_rule_id = "manual-rule".to_string();
+
+        let mut store = store_at(root);
+        store.save_preference(Preference {
+            id: "pref-1".into(),
+            category: "style".into(),
+            content: "keep preference".into(),
+            source: "manual".into(),
+            priority: 3,
+        });
+        store.save_memory(MemoryItem {
+            id: "memory-1".into(),
+            agent_id: "codex".into(),
+            content: "keep memory".into(),
+            temperature: "warm".into(),
+        });
+        store.data.agent_rules.push(AgentRule {
+            id: manual_rule_id.clone(),
+            agent_id: "custom".into(),
+            rule_type: "manual".into(),
+            file_path: rule_path.to_string_lossy().into_owned(),
+            content: "keep manual rule".into(),
+        });
+        store.data.agent_rules.push(AgentRule {
+            id: unavailable_rule_id.clone(),
+            agent_id: "codex".into(),
+            rule_type: "AGENTS.md".into(),
+            file_path: unavailable_rule_path.to_string_lossy().into_owned(),
+            content: "keep rule from unavailable root".into(),
+        });
+
+        let scan_roots = vec![scan_root, other_scan_root, unavailable_scan_root];
+        let added = store.scan_agent_rules_in(&scan_roots);
+        let added_content = store
+            .get_all()
+            .agent_rules
+            .iter()
+            .find(|rule| rule.id == rule_id)
+            .map(|rule| rule.content.clone());
+
+        std::fs::write(&rule_path, "updated rule").unwrap();
+        let modified = store.scan_agent_rules_in(&scan_roots);
+        let modified_content = store
+            .get_all()
+            .agent_rules
+            .iter()
+            .find(|rule| rule.id == rule_id)
+            .map(|rule| rule.content.clone());
+
+        std::fs::remove_file(&rule_path).unwrap();
+        let deleted = store.scan_agent_rules_in(&scan_roots);
+        let deleted_rule_remains = store
+            .get_all()
+            .agent_rules
+            .iter()
+            .any(|rule| rule.id == rule_id);
+
+        assert_eq!(added_content.as_deref(), Some("initial rule"));
+        assert_eq!(
+            (modified_content.as_deref(), deleted_rule_remains),
+            (Some("updated rule"), false)
+        );
+        assert!(added.iter().any(|rule| rule.id == rule_id));
+        assert!(modified.iter().any(|rule| rule.id == rule_id));
+        assert!(deleted.iter().any(|rule| rule.id == rule_id));
+        assert!(store
+            .get_all()
+            .agent_rules
+            .iter()
+            .any(|rule| rule.id == manual_rule_id));
+        assert!(store
+            .get_all()
+            .agent_rules
+            .iter()
+            .any(|rule| rule.id == other_rule_id));
+        assert!(store
+            .get_all()
+            .agent_rules
+            .iter()
+            .any(|rule| rule.id == unavailable_rule_id));
+
+        let reloaded = store_at(root);
+        assert_eq!(reloaded.get_all().preferences.len(), 1);
+        assert_eq!(reloaded.get_all().preferences[0].content, "keep preference");
+        assert_eq!(reloaded.get_all().memory_items.len(), 1);
+        assert_eq!(reloaded.get_all().memory_items[0].content, "keep memory");
+        assert!(reloaded
+            .get_all()
+            .agent_rules
+            .iter()
+            .any(|rule| rule.id == manual_rule_id));
+        assert!(reloaded
+            .get_all()
+            .agent_rules
+            .iter()
+            .any(|rule| rule.id == other_rule_id));
+        assert!(reloaded
+            .get_all()
+            .agent_rules
+            .iter()
+            .any(|rule| rule.id == unavailable_rule_id));
+        assert!(!reloaded
+            .get_all()
+            .agent_rules
+            .iter()
+            .any(|rule| rule.id == rule_id));
     }
 
     #[test]
