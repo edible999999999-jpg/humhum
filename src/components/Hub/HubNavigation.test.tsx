@@ -30,6 +30,18 @@ describe("HubNavigationItem", () => {
     expect(renderNavigationItem("humi")).toContain("lucide-mic-vocal");
   });
 
+  it("marks Humi's existing 24px symbol wrapper when its activity signal is active", () => {
+    const html = renderNavigationItem("humi", false, true);
+
+    expect(html).toContain(
+      'class="hub-nav-symbol hub-nav-symbol-humi is-signaled"',
+    );
+    expect(html).toContain('class="hub-nav-symbol-stack"');
+    expect(characterRoomStyles).toMatch(
+      /\.hub-nav-symbol\s*\{[^}]*width:\s*24px[^}]*height:\s*24px/,
+    );
+  });
+
   it("shows Hype's antenna by default using stable semantic icon classes", () => {
     const html = renderNavigationItem("hype");
 

@@ -13,7 +13,10 @@ function RoomSymbol({ room, signalActive = false }: Pick<HubNavigationItemProps,
   switch (room) {
     case "humi":
       return (
-        <span className="hub-nav-symbol hub-nav-symbol-humi" aria-hidden="true">
+        <span
+          className={`hub-nav-symbol hub-nav-symbol-humi${signalActive ? " is-signaled" : ""}`}
+          aria-hidden="true"
+        >
           <Mic2 size={18} strokeWidth={1.9} />
         </span>
       );

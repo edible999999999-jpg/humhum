@@ -72,6 +72,7 @@ export function HubWindowControls({
 
 export function HubLayout() {
   const [active, setActive] = useState<Module>("humi");
+  const [humiActivity, setHumiActivity] = useState(false);
   const { t } = useTranslation();
   const subtitle = t("hub.subtitle");
 
@@ -120,6 +121,7 @@ export function HubLayout() {
               room={m.id}
               label={t(m.labelKey)}
               active={active === m.id}
+              signalActive={m.id === "humi" && humiActivity}
               onSelect={() => setActive(m.id)}
             />
           ))}
@@ -129,7 +131,7 @@ export function HubLayout() {
         <main className="hub-content">
           <HubRoom room={active}>
             <Suspense fallback={<div className="hub-loading" />}>
-              {active === "humi" && <HumiModule />}
+              {active === "humi" && <HumiModule onActivityChange={setHumiActivity} />}
               {active === "hexa" && <HexaModule />}
               {active === "hype" && <KnowledgeModule />}
               {active === "hush" && <HushModule />}

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef, type CSSProperties, type KeyboardEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { ArrowUp } from "lucide-react";
 import { useTranslation } from "../../lib/i18n/react";
 import type { AppConfig } from "../../types";
 import { createHumiPiRuntime } from "../../lib/pi/runtime";
@@ -125,6 +126,10 @@ interface AgentKernelRole {
   writes: string[];
 }
 
+interface HumiModuleProps {
+  onActivityChange?: (active: boolean) => void;
+}
+
 const DEFAULT_KERNEL_ROOTS = [
   "~/.codex/skills",
   "~/.codex/plugins/cache",
@@ -176,7 +181,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promi
   });
 }
 
-export function HumiModule() {
+export function HumiModule({ onActivityChange }: HumiModuleProps) {
   const { t } = useTranslation();
   const [sessions, setSessions] = useState<ActiveSession[]>([]);
   const [hooksStatus, setHooksStatus] = useState<HooksStatus>({});
@@ -263,6 +268,12 @@ export function HumiModule() {
   useEffect(() => {
     sessionStorage.setItem(HUMI_CHAT_STORAGE_KEY, JSON.stringify(chatMessages));
   }, [chatMessages]);
+
+  useEffect(() => {
+    onActivityChange?.(kernelLoading);
+  }, [kernelLoading, onActivityChange]);
+
+  useEffect(() => () => onActivityChange?.(false), [onActivityChange]);
 
   const startPiKernel = useCallback(async () => {
     setKernelLoading(true);
@@ -372,16 +383,8 @@ export function HumiModule() {
   }, [fetchSessions, kernelSession]);
 
   return (
-    <div className="hub-module">
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          minHeight: "min(720px, calc(100vh - 72px))",
-          background: "transparent",
-          color: "#263241",
-        }}
-      >
+    <div className="hub-module humi-room-module">
+      <div className="humi-conversation">
         <header style={{ display: "flex", alignItems: "center", gap: 10, width: "min(820px, 100%)", margin: "0 auto", minHeight: 52, padding: "4px 0" }}>
           <img
             src="/mascots/humi-sprite-v1.png"
@@ -400,35 +403,27 @@ export function HumiModule() {
           </button>
         </header>
 
-        <div style={{ flex: 1, width: "min(820px, 100%)", margin: "0 auto", overflowY: "auto", padding: "24px 0", display: "flex", flexDirection: "column", gap: 18 }}>
+        <div className="humi-transcript">
           {chatMessages.map((message) => (
-            <div key={message.id} style={{ display: "flex", justifyContent: message.role === "user" ? "flex-end" : "flex-start" }}>
-              <div style={{ maxWidth: "min(720px, 88%)", padding: message.role === "user" ? "10px 14px" : "2px 0", borderRadius: 14, background: message.role === "user" ? "rgba(109,106,222,0.12)" : "transparent", color: "#2d3748", fontSize: 14, lineHeight: 1.75, whiteSpace: "pre-wrap" }}>
+            <div key={message.id} className={`humi-message-row humi-message-row-${message.role}`}>
+              <div className="humi-message">
                 {message.text}
               </div>
             </div>
           ))}
-          {kernelLoading && <div style={{ color: "#8290a3", fontSize: 13 }}>{humiProgress}…</div>}
+          {kernelLoading && <div className="humi-loading-message">{humiProgress}…</div>}
         </div>
 
-        <div style={{ width: "min(820px, 100%)", margin: "0 auto", padding: "10px 0 14px" }}>
-          <div style={{ display: "flex", gap: 8, alignItems: "flex-end", border: "1px solid rgba(116,143,165,0.2)", borderRadius: 12, background: "rgba(255,255,255,0.9)", padding: "8px 8px 8px 12px", boxShadow: "0 4px 18px rgba(61, 82, 108, 0.06)" }}>
-            <textarea value={kernelPrompt} onChange={(e) => setKernelPrompt(e.target.value)} onKeyDown={handleComposerKeyDown} placeholder="和 Humi 聊聊" rows={1} style={{ ...warmInputStyle, flex: 1, minHeight: 30, maxHeight: 120, resize: "vertical", border: 0, padding: "5px 0", background: "transparent", boxShadow: "none" }} />
-            <button onClick={() => void askHumi()} disabled={kernelLoading || !kernelPrompt.trim()} aria-label="Send message" style={{ width: 32, height: 32, border: 0, borderRadius: 10, background: kernelLoading || !kernelPrompt.trim() ? "rgba(116,143,165,0.12)" : "#6d6ade", color: kernelLoading || !kernelPrompt.trim() ? "#9aa6b6" : "#fff", fontSize: 18, lineHeight: 1, cursor: kernelLoading || !kernelPrompt.trim() ? "default" : "pointer" }}>↑</button>
+        <div className="humi-composer-shell">
+          <div className="humi-composer">
+            <textarea className="humi-composer-input" value={kernelPrompt} onChange={(e) => setKernelPrompt(e.target.value)} onKeyDown={handleComposerKeyDown} placeholder="和 Humi 聊聊" rows={1} style={{ ...warmInputStyle, flex: 1, minHeight: 30, maxHeight: 120, resize: "vertical", border: 0, padding: "5px 0", background: "transparent", boxShadow: "none" }} />
+            <button className="humi-composer-send" onClick={() => void askHumi()} disabled={kernelLoading || !kernelPrompt.trim()} aria-label="Send message"><ArrowUp size={17} strokeWidth={2.3} aria-hidden="true" /></button>
           </div>
         </div>
 
         {showDetails && (
-          <div
-            style={{
-              marginTop: 12,
-              padding: 12,
-              borderRadius: 16,
-              background: "rgba(255,255,255,0.48)",
-              border: "1px dashed rgba(116,143,165,0.22)",
-            }}
-          >
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
+          <div className="humi-details-panel">
+            <div className="humi-details-status-grid">
               <KernelStatusCard
                 name="Pi Agent"
                 ok={!!appConfig?.pi.token}
