@@ -21,8 +21,40 @@ const PERSONAL_SKILL_ROOTS = [
   "/.qwen/skills/",
 ];
 
-function normalizedAssetPath(asset: AgentAsset): string {
-  return asset.file_path.replaceAll("\\", "/").toLowerCase();
+function normalizePath(value: string): string {
+  return value
+    .trim()
+    .replaceAll("\\", "/")
+    .replace(/\/+/g, "/")
+    .replace(/\/$/, "")
+    .toLowerCase();
+}
+
+function assetPathCandidates(asset: AgentAsset): string[] {
+  return [
+    asset.file_path,
+    asset.source,
+    asset.relative_path,
+  ].map(normalizePath);
+}
+
+function isWithinConfiguredRoot(candidate: string, configuredRoot: string): boolean {
+  const root = normalizePath(configuredRoot);
+  if (!root) {
+    return false;
+  }
+
+  if (root.startsWith("~/")) {
+    const expandedSuffix = root.slice(1);
+    return (
+      candidate === root ||
+      candidate.startsWith(`${root}/`) ||
+      candidate.endsWith(expandedSuffix) ||
+      candidate.includes(`${expandedSuffix}/`)
+    );
+  }
+
+  return candidate === root || candidate.startsWith(`${root}/`);
 }
 
 function oneLine(value: string): string {
@@ -31,15 +63,27 @@ function oneLine(value: string): string {
 
 export type AgentAssetScope = "mine" | "all";
 
-export function isPersonalAgentAsset(asset: AgentAsset): boolean {
-  const path = normalizedAssetPath(asset);
-  if (EXCLUDED_AGENT_ASSET_PATHS.some((excluded) => path.includes(excluded))) {
+export function isPersonalAgentAsset(
+  asset: AgentAsset,
+  configuredRoots: string[] = [],
+): boolean {
+  const paths = assetPathCandidates(asset);
+  if (
+    paths.some((path) =>
+      EXCLUDED_AGENT_ASSET_PATHS.some((excluded) => path.includes(excluded))
+    )
+  ) {
     return false;
   }
 
   return (
-    path.includes("/openai-curated-remote/") ||
-    PERSONAL_SKILL_ROOTS.some((root) => path.includes(root))
+    paths.some((path) => path.includes("/openai-curated-remote/")) ||
+    paths.some((path) =>
+      PERSONAL_SKILL_ROOTS.some((root) => path.includes(root))
+    ) ||
+    configuredRoots.some((root) =>
+      paths.some((path) => isWithinConfiguredRoot(path, root))
+    )
   );
 }
 
@@ -47,11 +91,12 @@ export function filterAgentAssets(
   assets: AgentAsset[],
   scope: AgentAssetScope,
   query: string,
+  configuredRoots: string[] = [],
 ): AgentAsset[] {
   const normalizedQuery = query.trim().toLowerCase();
 
   return assets.filter((asset) => {
-    if (scope === "mine" && !isPersonalAgentAsset(asset)) {
+    if (scope === "mine" && !isPersonalAgentAsset(asset, configuredRoots)) {
       return false;
     }
     if (!normalizedQuery) {

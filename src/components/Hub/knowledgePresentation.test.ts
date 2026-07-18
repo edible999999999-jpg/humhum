@@ -26,9 +26,12 @@ function asset(
 }
 
 describe("isPersonalAgentAsset", () => {
-  it("includes user skill roots and curated remote skills", () => {
+  it("includes known user skill roots", () => {
     expect(isPersonalAgentAsset(asset("/Users/me/.codex/skills/my-skill/SKILL.md"))).toBe(true);
     expect(isPersonalAgentAsset(asset("/Users/me/.agents/skills/ali-dws-cli/SKILL.md"))).toBe(true);
+  });
+
+  it("includes installed curated remote skills such as Superpowers", () => {
     expect(
       isPersonalAgentAsset(
         asset(
@@ -38,7 +41,41 @@ describe("isPersonalAgentAsset", () => {
     ).toBe(true);
   });
 
-  it("excludes bundled, system, and marketplace inventories", () => {
+  it("includes arbitrary configured roots after tilde expansion", () => {
+    const custom = asset(
+      "/Users/me/Projects/my-skills/foo/SKILL.md",
+      "",
+      { source: "/Users/me/Projects/my-skills" },
+    );
+
+    expect(isPersonalAgentAsset(custom, ["~/Projects/my-skills"])).toBe(true);
+  });
+
+  it("matches configured Windows roots case-insensitively across separators", () => {
+    const custom = asset(
+      "C:\\Users\\Me\\Projects\\My-Skills\\Foo\\SKILL.md",
+      "",
+      { source: "C:\\Users\\Me\\Projects\\My-Skills" },
+    );
+
+    expect(
+      isPersonalAgentAsset(custom, ["c:/users/me/PROJECTS/my-skills"]),
+    ).toBe(true);
+  });
+
+  it("matches mixed-case Unix configured roots", () => {
+    const custom = asset(
+      "/Users/me/Projects/My-Skills/Foo/SKILL.md",
+      "",
+      { source: "/Users/me/Projects/My-Skills" },
+    );
+
+    expect(
+      isPersonalAgentAsset(custom, ["/users/ME/projects/my-skills"]),
+    ).toBe(true);
+  });
+
+  it("excludes system and provider inventory before configured roots", () => {
     expect(isPersonalAgentAsset(asset("/Users/me/.codex/skills/.system/skill-installer/SKILL.md"))).toBe(false);
     expect(
       isPersonalAgentAsset(
@@ -48,6 +85,16 @@ describe("isPersonalAgentAsset", () => {
     expect(
       isPersonalAgentAsset(
         asset("/Users/me/.claude/plugins/marketplaces/official/agents/reviewer.md"),
+      ),
+    ).toBe(false);
+    expect(
+      isPersonalAgentAsset(
+        asset(
+          "/Users/me/.codex/plugins/cache/openai-primary-runtime/documents/skills/documents/SKILL.md",
+          "",
+          { source: "/Users/me/.codex/plugins/cache" },
+        ),
+        ["~/.codex/plugins/cache"],
       ),
     ).toBe(false);
   });
@@ -105,13 +152,22 @@ describe("filterAgentAssets", () => {
       tags: ["collaboration"],
     },
   );
-  const superpowers = asset(
-    "/Users/me/.codex/plugins/cache/openai-curated-remote/superpowers/6.1.1/skills/brainstorming/SKILL.md",
+  const projectSkill = asset(
+    "/Users/me/Projects/my-skills/brainstorming/SKILL.md",
     "Explore intent before implementation.",
     {
       name: "Brainstorming",
       agent_id: "codex",
-      source: "OpenAI curated remote",
+      source: "/Users/me/Projects/my-skills",
+      tags: ["design"],
+    },
+  );
+  const superpowers = asset(
+    "/Users/me/.codex/plugins/cache/openai-curated-remote/superpowers/6.1.1/skills/brainstorming/SKILL.md",
+    "Explore intent before implementation.",
+    {
+      name: "Superpowers Brainstorming",
+      source: "/Users/me/.codex/plugins/cache",
       tags: ["design"],
     },
   );
@@ -133,16 +189,23 @@ describe("filterAgentAssets", () => {
   const mixedAssets = [
     custom,
     agentsSkill,
+    projectSkill,
     superpowers,
     bundled,
     system,
     marketplace,
   ];
 
-  it("keeps personal and curated installed assets in mine scope", () => {
-    expect(filterAgentAssets(mixedAssets, "mine", "")).toEqual([
+  it("keeps known and configured personal assets in mine scope", () => {
+    expect(filterAgentAssets(
+      mixedAssets,
+      "mine",
+      "",
+      ["~/Projects/my-skills"],
+    )).toEqual([
       custom,
       agentsSkill,
+      projectSkill,
       superpowers,
     ]);
   });
@@ -156,9 +219,14 @@ describe("filterAgentAssets", () => {
     ["path", "ali-dws-cli", agentsSkill],
     ["tags", "COLLABORATION", agentsSkill],
   ])("searches asset %s", (_field, query, expected) => {
-    expect(filterAgentAssets(mixedAssets, "mine", `  ${query}  `)).toEqual([
-      expected,
-    ]);
+    expect(
+      filterAgentAssets(
+        mixedAssets,
+        "mine",
+        `  ${query}  `,
+        ["~/Projects/my-skills"],
+      ),
+    ).toEqual([expected]);
   });
 
   it("returns all matching inventory when scope is all", () => {

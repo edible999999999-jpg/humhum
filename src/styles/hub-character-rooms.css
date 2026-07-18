@@ -263,6 +263,35 @@
   margin-bottom: 4px;
 }
 
+.hype-load-error {
+  display: grid;
+  width: min(440px, 100%);
+  gap: 8px;
+  margin: 56px auto 0;
+  padding: 16px;
+  border: 1px solid rgba(220, 95, 115, 0.22);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.78);
+  color: #64748b;
+  font-size: 12px;
+}
+
+.hype-load-error strong {
+  color: #3f4b5c;
+  font-size: 13px;
+}
+
+.hype-load-error button {
+  width: fit-content;
+  padding: 6px 10px;
+  border: 1px solid rgba(109, 106, 222, 0.2);
+  border-radius: 8px;
+  background: rgba(109, 106, 222, 0.09);
+  color: #5d59c9;
+  font-size: 11px;
+  font-weight: 700;
+}
+
 .hype-search-toolbar {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 42px;
@@ -619,7 +648,9 @@
   .humi-details-status-grid {
     grid-template-columns: minmax(0, 1fr);
   }
+}
 
+@media (max-width: 860px) {
   .hype-primary-controls {
     align-items: stretch;
     flex-direction: column;
@@ -683,6 +714,10 @@
   .hub-nav-hype-icon,
   .hub-nav-hush-eye {
     transition: none;
+  }
+
+  .hype-refresh-button .is-spinning {
+    animation: none;
   }
 
   .hub-nav-item-hush:hover .hub-nav-hush-eye {

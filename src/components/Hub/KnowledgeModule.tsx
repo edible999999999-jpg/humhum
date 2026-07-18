@@ -52,7 +52,151 @@ const DEFAULT_ASSET_ROOTS = [
   "~/.pi",
 ].join("\n");
 
-type Tab = "assets" | "preferences" | "rules" | "obsidian";
+function parseAssetRoots(value: string): string[] {
+  return value
+    .split(/\n|,/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+export type KnowledgeTab = "assets" | "preferences" | "rules" | "obsidian";
+
+export type KnowledgeOperationStatus = {
+  kind: "busy" | "success" | "error";
+  message: string;
+};
+
+type KnowledgeRefreshActions = Record<
+  KnowledgeTab,
+  () => void | Promise<void>
+>;
+
+type KnowledgeOperationMessages<T> = {
+  busy: string;
+  success: string | ((result: T) => string);
+  error: string;
+};
+
+export async function dispatchKnowledgeRefresh(
+  activeTab: KnowledgeTab,
+  actions: KnowledgeRefreshActions,
+): Promise<void> {
+  await actions[activeTab]();
+}
+
+export async function runKnowledgeOperation<T>(
+  action: () => Promise<T>,
+  onStatusChange: (status: KnowledgeOperationStatus) => void,
+  messages: KnowledgeOperationMessages<T>,
+): Promise<boolean> {
+  onStatusChange({ kind: "busy", message: messages.busy });
+  try {
+    const result = await action();
+    onStatusChange({
+      kind: "success",
+      message:
+        typeof messages.success === "function"
+          ? messages.success(result)
+          : messages.success,
+    });
+    return true;
+  } catch (error) {
+    onStatusChange({
+      kind: "error",
+      message: `${messages.error}：${String(error)}`,
+    });
+    return false;
+  }
+}
+
+export function KnowledgeLoadGate({
+  loading,
+  error,
+  onRetry,
+}: {
+  loading: boolean;
+  error: string | null;
+  onRetry: () => void;
+}) {
+  if (loading) {
+    return (
+      <div
+        className="hub-loading"
+        role="status"
+        aria-live="polite"
+        aria-label="正在读取 Hype 知识库"
+      />
+    );
+  }
+
+  return (
+    <div className="hype-load-error" role="alert" aria-live="assertive">
+      <strong>Hype 暂时无法读取知识库</strong>
+      <span>{error || "读取知识库失败"}</span>
+      <button type="button" onClick={onRetry}>
+        重试
+      </button>
+    </div>
+  );
+}
+
+export function KnowledgeSearchToolbar({
+  query,
+  onQueryChange,
+  onRefresh,
+  refreshBusy,
+  refreshDisabled,
+  refreshLabel,
+  status,
+}: {
+  query: string;
+  onQueryChange: (value: string) => void;
+  onRefresh: () => void;
+  refreshBusy: boolean;
+  refreshDisabled: boolean;
+  refreshLabel: string;
+  status: KnowledgeOperationStatus | null;
+}) {
+  return (
+    <>
+      <div className="hype-search-toolbar">
+        <label className="hype-search-field">
+          <Search size={18} strokeWidth={1.8} aria-hidden="true" />
+          <span className="sr-only">搜索 Hype 知识库</span>
+          <input
+            value={query}
+            onChange={(event) => onQueryChange(event.target.value)}
+            placeholder="搜索技能、规则、偏好与记忆"
+          />
+        </label>
+        <button
+          type="button"
+          className="hype-refresh-button"
+          onClick={onRefresh}
+          disabled={refreshDisabled}
+          aria-label={refreshLabel}
+          title={refreshLabel}
+        >
+          <RefreshCw
+            size={18}
+            strokeWidth={1.8}
+            className={refreshBusy ? "is-spinning" : undefined}
+            aria-hidden="true"
+          />
+        </button>
+      </div>
+      {status && (
+        <div
+          className={`hype-toolbar-status ${status.kind === "error" ? "is-error" : ""}`}
+          role={status.kind === "error" ? "alert" : "status"}
+          aria-live={status.kind === "error" ? "assertive" : "polite"}
+        >
+          {status.message}
+        </div>
+      )}
+    </>
+  );
+}
 
 interface CodexBridgeHealth {
   status: "starting" | "connected" | "codex_missing" | "unsupported" | "disconnected" | "error";
@@ -137,7 +281,12 @@ type AgentAssetRootDiagnostic = {
 
 export function KnowledgeModule() {
   const [data, setData] = useState<KnowledgeData | null>(null);
-  const [activeTab, setActiveTab] = useState<Tab>("assets");
+  const [knowledgeLoading, setKnowledgeLoading] = useState(true);
+  const [knowledgeLoadError, setKnowledgeLoadError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<KnowledgeTab>("assets");
+  const [operationStatus, setOperationStatus] = useState<
+    (KnowledgeOperationStatus & { tab: KnowledgeTab }) | null
+  >(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
   const [scanningAssets, setScanningAssets] = useState(false);
@@ -169,12 +318,18 @@ export function KnowledgeModule() {
   const [showForm, setShowForm] = useState(false);
 
   const fetchData = useCallback(async () => {
+    setKnowledgeLoading(true);
     try {
       const result = await invoke<KnowledgeData>("get_knowledge");
       setData(result);
       setVaultPath(result.obsidian_vault?.path || "");
-    } catch {
-      // ignore
+      setKnowledgeLoadError(null);
+      return result;
+    } catch (error) {
+      setKnowledgeLoadError(`读取知识库失败：${String(error)}`);
+      throw error;
+    } finally {
+      setKnowledgeLoading(false);
     }
   }, []);
 
@@ -194,8 +349,8 @@ export function KnowledgeModule() {
   }, []);
 
   useEffect(() => {
-    fetchData();
-    fetchReviewEngine();
+    void fetchData().catch(() => undefined);
+    void fetchReviewEngine();
   }, [fetchData, fetchReviewEngine]);
 
   const handleSave = async () => {
@@ -210,24 +365,47 @@ export function KnowledgeModule() {
     });
     setNewContent("");
     setShowForm(false);
-    fetchData();
+    await fetchData();
   };
 
   const handleDelete = async (id: string) => {
     await invoke("delete_preference", { id });
-    fetchData();
+    await fetchData();
   };
 
   const handleScan = async () => {
     setScanning(true);
     try {
-      const found = await invoke<AgentRule[]>("scan_agent_rules");
-      if (found.length > 0) {
-        fetchData();
-      }
+      await runKnowledgeOperation(
+        async () => {
+          const found = await invoke<AgentRule[]>("scan_agent_rules");
+          if (found.length > 0) {
+            await fetchData();
+          }
+          return found.length;
+        },
+        (status) => setOperationStatus({ ...status, tab: "rules" }),
+        {
+          busy: "正在扫描 Agent 规则...",
+          success: (count) => `规则已刷新，共发现 ${count} 条。`,
+          error: "扫描 Agent 规则失败",
+        },
+      );
     } finally {
       setScanning(false);
     }
+  };
+
+  const handleRefreshPreferences = async () => {
+    await runKnowledgeOperation(
+      async () => fetchData(),
+      (status) => setOperationStatus({ ...status, tab: "preferences" }),
+      {
+        busy: "正在刷新偏好...",
+        success: "偏好已刷新。",
+        error: "刷新偏好失败",
+      },
+    );
   };
 
   const handleScanAssets = async () => {
@@ -235,10 +413,7 @@ export function KnowledgeModule() {
     setAssetError(null);
     setAssetScanSummary(null);
     try {
-      const roots = assetRoots
-        .split(/\n|,/)
-        .map((item) => item.trim())
-        .filter(Boolean);
+      const roots = parseAssetRoots(assetRoots);
       const found = await invoke<AgentAsset[]>("scan_agent_assets", { roots });
       const skillCount = found.filter((asset) => asset.asset_type === "skill").length;
       const agentCount = found.filter((asset) => asset.asset_type === "agent").length;
@@ -256,10 +431,7 @@ export function KnowledgeModule() {
     setAssetError(null);
     setAssetScanSummary(null);
     try {
-      const roots = assetRoots
-        .split(/\n|,/)
-        .map((item) => item.trim())
-        .filter(Boolean);
+      const roots = parseAssetRoots(assetRoots);
       const diagnostics = await invoke<AgentAssetRootDiagnostic[]>("diagnose_agent_asset_roots", { roots });
       const candidates = diagnostics.reduce((sum, item) => sum + item.candidate_count, 0);
       const skills = diagnostics.reduce((sum, item) => sum + item.skill_count, 0);
@@ -278,7 +450,7 @@ export function KnowledgeModule() {
     try {
       const path = vaultPath.trim() || null;
       await invoke<ObsidianNote[]>("scan_obsidian_vault", { path });
-      fetchData();
+      await fetchData();
     } catch (error) {
       setVaultError(String(error));
     } finally {
@@ -333,11 +505,19 @@ export function KnowledgeModule() {
       priority: newPriority,
     });
     setEditing(null);
-    fetchData();
+    await fetchData();
   };
 
   if (!data) {
-    return <div className="hub-loading" />;
+    return (
+      <KnowledgeLoadGate
+        loading={knowledgeLoading}
+        error={knowledgeLoadError}
+        onRetry={() => {
+          void fetchData().catch(() => undefined);
+        }}
+      />
+    );
   }
 
   const notes = data.obsidian_notes || [];
@@ -377,16 +557,30 @@ export function KnowledgeModule() {
   }, {});
   const hotCount = notes.filter((note) => note.memory_temperature === "hot").length;
   const coldCount = notes.length - hotCount;
-  const scopedAssets = filterAgentAssets(assets, assetScope, "");
+  const configuredAssetRoots = parseAssetRoots(assetRoots);
+  const scopedAssets = filterAgentAssets(
+    assets,
+    assetScope,
+    "",
+    configuredAssetRoots,
+  );
   const assetTypeCounts = scopedAssets.reduce<Record<string, number>>((acc, asset) => {
     acc[asset.asset_type] = (acc[asset.asset_type] || 0) + 1;
     return acc;
   }, {});
-  const filteredAssets = filterAgentAssets(assets, assetScope, searchQuery);
+  const filteredAssets = filterAgentAssets(
+    assets,
+    assetScope,
+    searchQuery,
+    configuredAssetRoots,
+  );
+  const operationBusy =
+    operationStatus?.tab === activeTab && operationStatus.kind === "busy";
   const refreshBusy =
     (activeTab === "assets" && scanningAssets) ||
     (activeTab === "rules" && scanning) ||
-    (activeTab === "obsidian" && scanningVault);
+    (activeTab === "obsidian" && scanningVault) ||
+    operationBusy;
   const refreshDisabled =
     refreshBusy || (activeTab === "obsidian" && !vaultPath.trim());
   const refreshLabel =
@@ -398,16 +592,37 @@ export function KnowledgeModule() {
           ? "刷新 Obsidian 索引"
           : "刷新偏好";
 
+  const toolbarStatus: KnowledgeOperationStatus | null =
+    activeTab === "assets"
+      ? scanningAssets
+        ? { kind: "busy", message: "正在扫描 Agent 资产..." }
+        : assetError
+          ? { kind: "error", message: assetError }
+          : assetScanSummary
+            ? { kind: "success", message: assetScanSummary }
+            : null
+      : activeTab === "obsidian"
+        ? scanningVault
+          ? { kind: "busy", message: "正在刷新 Obsidian 索引..." }
+          : vaultError
+            ? { kind: "error", message: vaultError }
+            : data.obsidian_vault?.last_indexed_at
+              ? {
+                  kind: "success",
+                  message: `上次索引：${new Date(data.obsidian_vault.last_indexed_at).toLocaleString()}`,
+                }
+              : null
+        : operationStatus?.tab === activeTab
+          ? operationStatus
+          : null;
+
   const handleActiveRefresh = () => {
-    if (activeTab === "assets") {
-      void handleScanAssets();
-    } else if (activeTab === "rules") {
-      void handleScan();
-    } else if (activeTab === "obsidian") {
-      void handleScanVault();
-    } else {
-      void fetchData();
-    }
+    void dispatchKnowledgeRefresh(activeTab, {
+      assets: handleScanAssets,
+      preferences: handleRefreshPreferences,
+      rules: handleScan,
+      obsidian: handleScanVault,
+    });
   };
 
   return (
@@ -417,48 +632,19 @@ export function KnowledgeModule() {
         <p className="hub-module-desc">我安装和创建的技能、规则与记忆</p>
       </header>
 
-      <div className="hype-search-toolbar">
-        <label className="hype-search-field">
-          <Search size={18} strokeWidth={1.8} aria-hidden="true" />
-          <span className="sr-only">搜索 Hype 知识库</span>
-          <input
-            value={searchQuery}
-            onChange={(event) => setSearchQuery(event.target.value)}
-            placeholder="搜索技能、规则、偏好与记忆"
-          />
-        </label>
-        <button
-          type="button"
-          className="hype-refresh-button"
-          onClick={handleActiveRefresh}
-          disabled={refreshDisabled}
-          aria-label={refreshLabel}
-          title={refreshLabel}
-        >
-          <RefreshCw
-            size={18}
-            strokeWidth={1.8}
-            className={refreshBusy ? "is-spinning" : undefined}
-            aria-hidden="true"
-          />
-        </button>
-      </div>
-
-      {activeTab === "assets" && (assetError || assetScanSummary) && (
-        <div className={`hype-toolbar-status ${assetError ? "is-error" : ""}`}>
-          {assetError || assetScanSummary}
-        </div>
-      )}
-      {activeTab === "obsidian" && (vaultError || data.obsidian_vault?.last_indexed_at) && (
-        <div className={`hype-toolbar-status ${vaultError ? "is-error" : ""}`}>
-          {vaultError ||
-            `上次索引：${new Date(data.obsidian_vault.last_indexed_at!).toLocaleString()}`}
-        </div>
-      )}
+      <KnowledgeSearchToolbar
+        query={searchQuery}
+        onQueryChange={setSearchQuery}
+        onRefresh={handleActiveRefresh}
+        refreshBusy={refreshBusy}
+        refreshDisabled={refreshDisabled}
+        refreshLabel={refreshLabel}
+        status={toolbarStatus}
+      />
 
       <div className="hype-primary-controls">
         <div className="hype-tabs" role="tablist" aria-label="Hype 知识视图">
-          {(["assets", "preferences", "rules", "obsidian"] as Tab[]).map((tab) => (
+          {(["assets", "preferences", "rules", "obsidian"] as KnowledgeTab[]).map((tab) => (
             <button
               key={tab}
               type="button"
