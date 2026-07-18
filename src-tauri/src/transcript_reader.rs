@@ -43,9 +43,26 @@ pub(crate) struct CodexPlanStep {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CodexPlanSnapshot {
     pub(crate) timestamp: Option<String>,
+    pub(crate) turn_id: Option<String>,
     pub(crate) explanation: Option<String>,
     pub(crate) steps: Vec<CodexPlanStep>,
     pub(crate) turn_completed_after_plan: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CodexTurnLifecycleStatus {
+    Started,
+    Completed,
+    Failed,
+    Interrupted,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CodexTurnLifecycleSnapshot {
+    pub(crate) timestamp: Option<String>,
+    pub(crate) started_at: Option<String>,
+    pub(crate) turn_id: Option<String>,
+    pub(crate) status: CodexTurnLifecycleStatus,
 }
 
 pub(crate) fn parse_transcript_signals(path: &Path) -> Result<TranscriptSignals, String> {
@@ -149,6 +166,11 @@ pub(crate) fn parse_latest_codex_plan(path: &Path) -> Result<Option<CodexPlanSna
                 .get("timestamp")
                 .and_then(Value::as_str)
                 .map(String::from),
+            turn_id: payload
+                .get("internal_chat_message_metadata_passthrough")
+                .and_then(|metadata| metadata.get("turn_id"))
+                .and_then(Value::as_str)
+                .map(String::from),
             explanation: arguments
                 .get("explanation")
                 .and_then(Value::as_str)
@@ -161,20 +183,70 @@ pub(crate) fn parse_latest_codex_plan(path: &Path) -> Result<Option<CodexPlanSna
     Ok(latest)
 }
 
+#[cfg(test)]
 pub(crate) fn latest_codex_turn_completed(path: &Path) -> Result<bool, String> {
+    Ok(latest_codex_turn_lifecycle(path)?
+        .is_some_and(|lifecycle| lifecycle.status == CodexTurnLifecycleStatus::Completed))
+}
+
+pub(crate) fn latest_codex_turn_lifecycle(
+    path: &Path,
+) -> Result<Option<CodexTurnLifecycleSnapshot>, String> {
     let recent_lines = read_recent_lines(path)?;
-    let mut completed = false;
+    let mut latest = None;
+    let mut active_turn_id = None;
+    let mut active_started_at = None;
 
     for line in recent_lines {
         let Ok(value) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
-        if let Some(turn_completed) = value.get("payload").and_then(codex_turn_completed) {
-            completed = turn_completed;
+        let payload = value.get("payload").unwrap_or(&Value::Null);
+        let timestamp = value
+            .get("timestamp")
+            .and_then(Value::as_str)
+            .map(String::from);
+        let payload_turn_id = payload
+            .get("turn_id")
+            .and_then(Value::as_str)
+            .map(String::from);
+        match payload.get("type").and_then(Value::as_str) {
+            Some("task_started") => {
+                active_turn_id = payload_turn_id;
+                active_started_at = timestamp.clone();
+                latest = Some(CodexTurnLifecycleSnapshot {
+                    timestamp,
+                    started_at: active_started_at.clone(),
+                    turn_id: active_turn_id.clone(),
+                    status: CodexTurnLifecycleStatus::Started,
+                });
+            }
+            Some("task_complete") => {
+                let status = if payload.get("error").map(Value::is_null).unwrap_or(true) {
+                    CodexTurnLifecycleStatus::Completed
+                } else {
+                    CodexTurnLifecycleStatus::Failed
+                };
+                latest = Some(CodexTurnLifecycleSnapshot {
+                    timestamp,
+                    started_at: active_started_at.clone(),
+                    turn_id: payload_turn_id.or_else(|| active_turn_id.clone()),
+                    status,
+                });
+            }
+            Some("turn_aborted") => {
+                latest = Some(CodexTurnLifecycleSnapshot {
+                    timestamp,
+                    started_at: active_started_at.clone(),
+                    turn_id: payload_turn_id.or_else(|| active_turn_id.clone()),
+                    status: CodexTurnLifecycleStatus::Interrupted,
+                });
+            }
+            _ => {}
         }
     }
 
-    Ok(completed)
+    Ok(latest)
 }
 
 fn codex_turn_completed(payload: &Value) -> Option<bool> {
@@ -409,8 +481,9 @@ fn truncate_text(text: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        latest_codex_turn_completed, parse_latest_codex_plan, parse_transcript_signals,
-        read_recent_lines_from_snapshot, TranscriptMessage, TranscriptRole, MAX_TAIL_BYTES,
+        latest_codex_turn_completed, latest_codex_turn_lifecycle, parse_latest_codex_plan,
+        parse_transcript_signals, read_recent_lines_from_snapshot, CodexTurnLifecycleStatus,
+        TranscriptMessage, TranscriptRole, MAX_TAIL_BYTES,
     };
     use std::fs::OpenOptions;
     use std::io::Write;
@@ -471,6 +544,43 @@ mod tests {
         );
 
         assert!(!latest_codex_turn_completed(&path).unwrap());
+    }
+
+    #[test]
+    fn preserves_the_latest_codex_turn_identity_and_original_timestamp() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rollout.jsonl");
+        write_lines(
+            &path,
+            &[
+                r#"{"timestamp":"2026-07-18T04:20:00Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-current"}}"#.to_string(),
+                r#"{"timestamp":"2026-07-18T04:21:00Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-current"}}"#.to_string(),
+            ],
+        );
+
+        let lifecycle = latest_codex_turn_lifecycle(&path).unwrap().unwrap();
+
+        assert_eq!(lifecycle.status, CodexTurnLifecycleStatus::Completed);
+        assert_eq!(lifecycle.turn_id.as_deref(), Some("turn-current"));
+        assert_eq!(
+            lifecycle.started_at.as_deref(),
+            Some("2026-07-18T04:20:00Z")
+        );
+        assert_eq!(lifecycle.timestamp.as_deref(), Some("2026-07-18T04:21:00Z"));
+    }
+
+    #[test]
+    fn associates_a_plan_with_its_codex_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rollout.jsonl");
+        write_lines(
+            &path,
+            &[r#"{"timestamp":"2026-07-18T04:20:30Z","type":"response_item","payload":{"type":"function_call","name":"update_plan","arguments":"{\"plan\":[{\"step\":\"Fix\",\"status\":\"in_progress\"}]}","internal_chat_message_metadata_passthrough":{"turn_id":"turn-current"}}}"#.to_string()],
+        );
+
+        let plan = parse_latest_codex_plan(&path).unwrap().unwrap();
+
+        assert_eq!(plan.turn_id.as_deref(), Some("turn-current"));
     }
 
     #[test]

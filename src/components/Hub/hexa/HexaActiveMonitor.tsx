@@ -43,12 +43,6 @@ export function HexaActiveMonitor({
   const selected = resolveSelectedSession(groups, selectedSessionId);
 
   useEffect(() => {
-    if (selected?.session_id !== selectedSessionId) {
-      setSelectedSessionId(selected?.session_id ?? null);
-    }
-  }, [selected?.session_id, selectedSessionId]);
-
-  useEffect(() => {
     if (!entryTouched && dataState !== "loading") {
       setEntryOpen(sessions.length === 0);
     }
@@ -110,7 +104,7 @@ export function HexaActiveMonitor({
                     <small>{group.sessions.length}</small>
                   </button>
                   {!collapsed && group.sessions.map((session) => {
-                    const selected = session.session_id === selectedSessionId;
+                    const isSelected = session.session_id === selected?.session_id;
                     const expired = watchedSessionIsExpired(session.status, session.updated_at);
                     const connectionLabel = watchedSessionConnectionLabel(session.status, session.updated_at);
                     const revisions = session.audit.goal_revisions;
@@ -119,7 +113,7 @@ export function HexaActiveMonitor({
                       <button
                         key={session.session_id}
                         type="button"
-                        className={`hexa-session-nav-item ${selected ? "selected" : ""}`}
+                        className={`hexa-session-nav-item ${isSelected ? "selected" : ""}`}
                         onClick={() => setSelectedSessionId(session.session_id)}
                       >
                         <span

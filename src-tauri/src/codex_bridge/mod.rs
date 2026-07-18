@@ -7,7 +7,7 @@ use crate::hexa_watch_store::{
     HexaWatchUpdateRequest, HexaWatchedSession, HexaWorkItemInput, HexaWorkItemStatus,
 };
 use serde_json::{json, Value};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
@@ -132,6 +132,18 @@ struct PendingCodexRequest {
     expires_at: chrono::DateTime<chrono::Utc>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ListedSyncMode {
+    Discover,
+    WatchedOnly,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TranscriptRevision {
+    bytes: u64,
+    modified_millis: u128,
+}
+
 impl Default for CodexBridgeHealth {
     fn default() -> Self {
         Self {
@@ -149,6 +161,7 @@ pub struct CodexBridgeState {
     transport: AsyncRwLock<Option<Arc<JsonRpcTransport>>>,
     attached_threads: AsyncMutex<HashSet<String>>,
     pending_requests: Mutex<std::collections::HashMap<String, PendingCodexRequest>>,
+    recovered_transcripts: Mutex<HashMap<String, TranscriptRevision>>,
     remote_control: RwLock<CodexRemoteControlState>,
 }
 
@@ -160,6 +173,7 @@ impl Default for CodexBridgeState {
             transport: AsyncRwLock::new(None),
             attached_threads: AsyncMutex::new(HashSet::new()),
             pending_requests: Mutex::new(std::collections::HashMap::new()),
+            recovered_transcripts: Mutex::new(HashMap::new()),
             remote_control: RwLock::new(CodexRemoteControlState::default()),
         }
     }
@@ -210,25 +224,63 @@ impl CodexBridgeState {
     }
 
     pub async fn refresh_watched_sessions(&self, app: &tauri::AppHandle) -> Result<(), String> {
+        let watched_ids = watched_codex_session_snapshots(app, ListedSyncMode::WatchedOnly)
+            .into_keys()
+            .collect::<HashSet<_>>();
+        if watched_ids.is_empty() {
+            return Ok(());
+        }
         let transport = self
             .transport
             .read()
             .await
             .clone()
             .ok_or_else(|| "Codex bridge is not connected".to_string())?;
-        let listed = transport
-            .request(
-                "thread/list",
-                json!({
-                    "limit": 50,
-                    "archived": false,
-                    "sortKey": "updated_at",
-                    "sortDirection": "desc"
-                }),
-            )
-            .await
-            .map_err(|error| error.to_string())?;
-        self.sync_listed_threads(app, &listed);
+        let mut matched = Vec::new();
+        let mut remaining = watched_ids.clone();
+        let mut cursor: Option<String> = None;
+        for _ in 0..10 {
+            let mut request = json!({
+                "limit": 100,
+                "archived": false,
+                "sortKey": "updated_at",
+                "sortDirection": "desc"
+            });
+            if let Some(cursor) = cursor.as_ref() {
+                request["cursor"] = Value::String(cursor.clone());
+            }
+            let listed = transport
+                .request("thread/list", request)
+                .await
+                .map_err(|error| error.to_string())?;
+            for thread in listed
+                .get("data")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                let Some(thread_id) = string_at(thread, "id") else {
+                    continue;
+                };
+                if remaining.remove(thread_id) {
+                    matched.push(thread.clone());
+                }
+            }
+            if remaining.is_empty() {
+                break;
+            }
+            cursor = listed
+                .get("nextCursor")
+                .and_then(Value::as_str)
+                .map(String::from);
+            if cursor.is_none() {
+                break;
+            }
+        }
+        if let Ok(mut recovered) = self.recovered_transcripts.lock() {
+            recovered.retain(|thread_id, _| watched_ids.contains(thread_id));
+        }
+        self.sync_listed_threads(app, &json!({"data": matched}), ListedSyncMode::WatchedOnly);
         Ok(())
     }
 
@@ -600,7 +652,7 @@ impl CodexBridgeState {
             )
             .await
             .map_err(|error| error.to_string())?;
-        self.sync_listed_threads(app, &listed);
+        self.sync_listed_threads(app, &listed, ListedSyncMode::Discover);
 
         *self.transport.write().await = Some(transport.clone());
         self.set_health(
@@ -663,12 +715,22 @@ impl CodexBridgeState {
         Err("app-server stopped".to_string())
     }
 
-    fn sync_listed_threads(&self, app: &tauri::AppHandle, listed: &Value) {
+    fn sync_listed_threads(&self, app: &tauri::AppHandle, listed: &Value, mode: ListedSyncMode) {
         let home_dir = dirs::home_dir();
         let mut attempted_watch_workspaces = HashSet::new();
+        let watched_sessions = watched_codex_session_snapshots(app, mode);
+        let watched_ids = watched_sessions.keys().cloned().collect::<HashSet<_>>();
         for (event, transcript_path) in thread_list_entries(listed) {
             let thread_id = event.session_id.clone();
-            let sync_watch = should_sync_listed_watch(&mut attempted_watch_workspaces, &event);
+            let exact_watch = watched_ids.contains(&thread_id);
+            if mode == ListedSyncMode::WatchedOnly && !exact_watch {
+                continue;
+            }
+            let baseline = watched_sessions
+                .get(&thread_id)
+                .and_then(|session| chrono::DateTime::parse_from_rfc3339(&session.updated_at).ok());
+            let sync_watch =
+                should_sync_listed_watch(&mut attempted_watch_workspaces, &watched_ids, &event);
             let watched = self.apply_event_with_watch(app, event, sync_watch);
             if !watched {
                 continue;
@@ -679,9 +741,47 @@ impl CodexBridgeState {
             else {
                 continue;
             };
+            let Ok(revision) = transcript_revision(&path) else {
+                continue;
+            };
+            if self
+                .recovered_transcripts
+                .lock()
+                .ok()
+                .and_then(|recovered| recovered.get(&thread_id).copied())
+                == Some(revision)
+            {
+                continue;
+            }
             match recovered_codex_plan_events(&thread_id, &path) {
                 Ok(events) => {
+                    if let Ok(mut recovered) = self.recovered_transcripts.lock() {
+                        recovered.insert(thread_id.clone(), revision);
+                    }
                     for recovered_event in events {
+                        let Ok(event_time) =
+                            chrono::DateTime::parse_from_rfc3339(&recovered_event.timestamp)
+                        else {
+                            continue;
+                        };
+                        if baseline.is_some_and(|accepted| event_time <= accepted) {
+                            continue;
+                        }
+                        if matches!(
+                            recovered_event.kind,
+                            HexaEventKind::TurnCompleted
+                                | HexaEventKind::TurnFailed
+                                | HexaEventKind::TurnInterrupted
+                        ) && recovered_event.turn_id.is_none()
+                            && self
+                                .projections
+                                .lock()
+                                .ok()
+                                .and_then(|store| store.session(&thread_id).cloned())
+                                .is_some_and(|projection| projection.current_turn_id.is_some())
+                        {
+                            continue;
+                        }
                         self.apply_event(app, recovered_event);
                     }
                 }
@@ -839,11 +939,59 @@ fn thread_list_events(response: &Value) -> Vec<HexaEvent> {
         .collect()
 }
 
-fn should_sync_listed_watch(attempted_workspaces: &mut HashSet<String>, event: &HexaEvent) -> bool {
+fn should_sync_listed_watch(
+    attempted_workspaces: &mut HashSet<String>,
+    watched_ids: &HashSet<String>,
+    event: &HexaEvent,
+) -> bool {
+    if watched_ids.contains(&event.session_id) {
+        return true;
+    }
     let Some(workspace) = event.payload.get("workspace").and_then(Value::as_str) else {
         return true;
     };
     attempted_workspaces.insert(format!("{}\0{workspace}", event.provider))
+}
+
+fn watched_codex_session_snapshots(
+    app: &tauri::AppHandle,
+    mode: ListedSyncMode,
+) -> HashMap<String, HexaWatchedSession> {
+    let Some(watch_store) = app.try_state::<Arc<Mutex<HexaWatchStore>>>() else {
+        return HashMap::new();
+    };
+    let Ok(store) = watch_store.lock() else {
+        return HashMap::new();
+    };
+    store
+        .sessions()
+        .into_iter()
+        .filter(watched_session_is_codex)
+        .filter(|session| {
+            mode == ListedSyncMode::Discover
+                || watched_codex_session_is_pollable(session, chrono::Utc::now())
+        })
+        .map(|session| (session.session_id.clone(), session))
+        .collect()
+}
+
+fn watched_session_is_codex(session: &HexaWatchedSession) -> bool {
+    session.provider == "codex" || session.agent == "codex"
+}
+
+fn watched_codex_session_is_pollable(
+    session: &HexaWatchedSession,
+    now: chrono::DateTime<chrono::Utc>,
+) -> bool {
+    match session.status {
+        HexaWatchStatus::Idle => true,
+        HexaWatchStatus::Starting
+        | HexaWatchStatus::Working
+        | HexaWatchStatus::Waiting
+        | HexaWatchStatus::Blocked => chrono::DateTime::parse_from_rfc3339(&session.updated_at)
+            .is_ok_and(|updated| now.signed_duration_since(updated).num_minutes() <= 30),
+        HexaWatchStatus::Completed => false,
+    }
 }
 
 fn pending_key_for_event(event: &HexaEvent) -> Option<String> {
@@ -1049,48 +1197,93 @@ fn recovered_codex_plan_events(
     transcript_path: &Path,
 ) -> Result<Vec<HexaEvent>, String> {
     let plan = crate::transcript_reader::parse_latest_codex_plan(transcript_path)?;
-    let turn_completed = match plan.as_ref() {
-        Some(plan) => plan.turn_completed_after_plan,
-        None => crate::transcript_reader::latest_codex_turn_completed(transcript_path)?,
-    };
+    let lifecycle = crate::transcript_reader::latest_codex_turn_lifecycle(transcript_path)?;
     let mut events = Vec::new();
     if let Some(plan) = plan {
-        let timestamp = plan
+        let valid_timestamp = plan
             .timestamp
-            .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
-        let steps = plan
-            .steps
-            .into_iter()
-            .map(|step| json!({"step": step.title, "status": step.status}))
-            .collect::<Vec<_>>();
-        events.push(HexaEvent {
-            event_id: uuid::Uuid::new_v4().to_string(),
-            session_id: thread_id.to_string(),
-            provider: "codex".to_string(),
-            provider_thread_id: Some(thread_id.to_string()),
-            turn_id: None,
-            timestamp,
-            kind: HexaEventKind::PlanUpdated,
-            payload: json!({
-                "explanation": plan.explanation,
-                "plan": steps,
-            }),
-            sensitivity: HexaSensitivity::Private,
+            .as_ref()
+            .filter(|timestamp| chrono::DateTime::parse_from_rfc3339(timestamp).is_ok());
+        let belongs_to_latest_turn = lifecycle.as_ref().is_none_or(|lifecycle| {
+            let same_turn = match (&plan.turn_id, &lifecycle.turn_id) {
+                (Some(plan_turn), Some(lifecycle_turn)) => plan_turn == lifecycle_turn,
+                _ => true,
+            };
+            let after_latest_start = match (valid_timestamp, lifecycle.started_at.as_ref()) {
+                (Some(plan_at), Some(started_at)) => {
+                    match (
+                        chrono::DateTime::parse_from_rfc3339(plan_at),
+                        chrono::DateTime::parse_from_rfc3339(started_at),
+                    ) {
+                        (Ok(plan_at), Ok(started_at)) => plan_at >= started_at,
+                        _ => false,
+                    }
+                }
+                (_, None) => true,
+                (None, Some(_)) => false,
+            };
+            same_turn && after_latest_start
         });
+        if let Some(timestamp) = valid_timestamp.filter(|_| belongs_to_latest_turn) {
+            let steps = plan
+                .steps
+                .into_iter()
+                .map(|step| json!({"step": step.title, "status": step.status}))
+                .collect::<Vec<_>>();
+            events.push(HexaEvent {
+                event_id: uuid::Uuid::new_v4().to_string(),
+                session_id: thread_id.to_string(),
+                provider: "codex".to_string(),
+                provider_thread_id: Some(thread_id.to_string()),
+                turn_id: plan.turn_id,
+                timestamp: timestamp.clone(),
+                kind: HexaEventKind::PlanUpdated,
+                payload: json!({
+                    "explanation": plan.explanation,
+                    "plan": steps,
+                    "recovered": true,
+                }),
+                sensitivity: HexaSensitivity::Private,
+            });
+        }
     }
-    if turn_completed {
-        events.push(HexaEvent {
-            event_id: uuid::Uuid::new_v4().to_string(),
-            session_id: thread_id.to_string(),
-            provider: "codex".to_string(),
-            provider_thread_id: Some(thread_id.to_string()),
-            turn_id: None,
-            timestamp: chrono::Utc::now().to_rfc3339(),
-            kind: HexaEventKind::TurnCompleted,
-            payload: json!({"status": "completed", "recovered": true}),
-            sensitivity: HexaSensitivity::Private,
-        });
+    if let Some(lifecycle) = lifecycle {
+        if let Some(timestamp) = lifecycle
+            .timestamp
+            .filter(|timestamp| chrono::DateTime::parse_from_rfc3339(timestamp).is_ok())
+        {
+            let (kind, status) = match lifecycle.status {
+                crate::transcript_reader::CodexTurnLifecycleStatus::Started => {
+                    (HexaEventKind::TurnStarted, "working")
+                }
+                crate::transcript_reader::CodexTurnLifecycleStatus::Completed => {
+                    (HexaEventKind::TurnCompleted, "completed")
+                }
+                crate::transcript_reader::CodexTurnLifecycleStatus::Failed => {
+                    (HexaEventKind::TurnFailed, "failed")
+                }
+                crate::transcript_reader::CodexTurnLifecycleStatus::Interrupted => {
+                    (HexaEventKind::TurnInterrupted, "interrupted")
+                }
+            };
+            events.push(HexaEvent {
+                event_id: uuid::Uuid::new_v4().to_string(),
+                session_id: thread_id.to_string(),
+                provider: "codex".to_string(),
+                provider_thread_id: Some(thread_id.to_string()),
+                turn_id: lifecycle.turn_id.clone(),
+                timestamp,
+                kind,
+                payload: json!({
+                    "turn_id": lifecycle.turn_id,
+                    "status": status,
+                    "recovered": true,
+                }),
+                sensitivity: HexaSensitivity::Private,
+            });
+        }
     }
+    events.sort_by(|left, right| left.timestamp.cmp(&right.timestamp));
     Ok(events)
 }
 
@@ -1107,6 +1300,20 @@ fn canonical_codex_transcript(path: &Path, home_dir: &Path) -> Option<PathBuf> {
         .ok()
         .filter(|metadata| metadata.is_file())?;
     Some(transcript)
+}
+
+fn transcript_revision(path: &Path) -> Result<TranscriptRevision, String> {
+    let metadata = std::fs::metadata(path).map_err(|error| error.to_string())?;
+    let modified_millis = metadata
+        .modified()
+        .ok()
+        .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default();
+    Ok(TranscriptRevision {
+        bytes: metadata.len(),
+        modified_millis,
+    })
 }
 
 fn sync_watched_codex_event(
@@ -1715,7 +1922,7 @@ if ($second.Contains('"method":"turn/start"')) {
     }
 
     #[test]
-    fn recovery_does_not_complete_a_recent_plan_after_an_error() {
+    fn recovery_preserves_a_failed_turn_without_completing_its_plan() {
         let directory = tempfile::tempdir().unwrap();
         let transcript = directory.path().join("rollout.jsonl");
         std::fs::write(
@@ -1733,18 +1940,26 @@ if ($second.Contains('"method":"turn/start"')) {
 
         let events = recovered_codex_plan_events("thread-real", &transcript).unwrap();
 
-        assert_eq!(events.len(), 1);
+        assert_eq!(events.len(), 2);
         assert_eq!(events[0].kind, HexaEventKind::PlanUpdated);
+        assert_eq!(events[1].kind, HexaEventKind::TurnFailed);
+        assert_eq!(events[1].timestamp, "2026-07-18T04:19:14Z");
     }
 
     #[test]
-    fn recovery_does_not_complete_an_older_persisted_plan_after_failure_or_abort() {
+    fn recovery_preserves_failure_or_abort_without_a_recent_plan() {
         let directory = tempfile::tempdir().unwrap();
         let transcript = directory.path().join("rollout.jsonl");
 
-        for terminal in [
-            r#"{"type":"task_complete","error":"model failed"}"#,
-            r#"{"type":"turn_aborted","reason":"interrupted"}"#,
+        for (terminal, expected) in [
+            (
+                r#"{"type":"task_complete","error":"model failed"}"#,
+                HexaEventKind::TurnFailed,
+            ),
+            (
+                r#"{"type":"turn_aborted","reason":"interrupted"}"#,
+                HexaEventKind::TurnInterrupted,
+            ),
         ] {
             std::fs::write(
                 &transcript,
@@ -1756,8 +1971,58 @@ if ($second.Contains('"method":"turn/start"')) {
 
             let events = recovered_codex_plan_events("thread-real", &transcript).unwrap();
 
-            assert!(events.is_empty());
+            assert_eq!(events.len(), 1);
+            assert_eq!(events[0].kind, expected);
         }
+    }
+
+    #[test]
+    fn recovery_never_treats_a_timestamp_less_plan_as_new_work() {
+        let directory = tempfile::tempdir().unwrap();
+        let transcript = directory.path().join("rollout.jsonl");
+        std::fs::write(
+            &transcript,
+            concat!(
+                "{\"type\":\"response_item\",\"payload\":{\"type\":\"function_call\",",
+                "\"name\":\"update_plan\",\"arguments\":\"{\\\"plan\\\":[",
+                "{\\\"step\\\":\\\"Old work\\\",\\\"status\\\":\\\"in_progress\\\"}]}\"}}\n"
+            ),
+        )
+        .unwrap();
+
+        let events = recovered_codex_plan_events("thread-real", &transcript).unwrap();
+
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn recovery_keeps_a_newer_active_turn_and_drops_the_previous_turn_plan() {
+        let directory = tempfile::tempdir().unwrap();
+        let transcript = directory.path().join("rollout.jsonl");
+        std::fs::write(
+            &transcript,
+            concat!(
+                "{\"timestamp\":\"2026-07-18T04:10:00Z\",\"type\":\"event_msg\",",
+                "\"payload\":{\"type\":\"task_started\",\"turn_id\":\"turn-old\"}}\n",
+                "{\"timestamp\":\"2026-07-18T04:11:00Z\",\"type\":\"response_item\",",
+                "\"payload\":{\"type\":\"function_call\",\"name\":\"update_plan\",",
+                "\"arguments\":\"{\\\"plan\\\":[{\\\"step\\\":\\\"Old work\\\",",
+                "\\\"status\\\":\\\"in_progress\\\"}]}\",",
+                "\"internal_chat_message_metadata_passthrough\":{\"turn_id\":\"turn-old\"}}}\n",
+                "{\"timestamp\":\"2026-07-18T04:12:00Z\",\"type\":\"event_msg\",",
+                "\"payload\":{\"type\":\"task_complete\",\"turn_id\":\"turn-old\"}}\n",
+                "{\"timestamp\":\"2026-07-18T04:20:00Z\",\"type\":\"event_msg\",",
+                "\"payload\":{\"type\":\"task_started\",\"turn_id\":\"turn-current\"}}\n"
+            ),
+        )
+        .unwrap();
+
+        let events = recovered_codex_plan_events("thread-real", &transcript).unwrap();
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].kind, HexaEventKind::TurnStarted);
+        assert_eq!(events[0].turn_id.as_deref(), Some("turn-current"));
+        assert_eq!(events[0].timestamp, "2026-07-18T04:20:00Z");
     }
 
     #[test]
@@ -1810,9 +2075,93 @@ if ($second.Contains('"method":"turn/start"')) {
         });
         let events = thread_list_events(&response);
         let mut attempted = HashSet::new();
+        let watched = HashSet::new();
 
-        assert!(should_sync_listed_watch(&mut attempted, &events[0]));
-        assert!(!should_sync_listed_watch(&mut attempted, &events[1]));
+        assert!(should_sync_listed_watch(
+            &mut attempted,
+            &watched,
+            &events[0]
+        ));
+        assert!(!should_sync_listed_watch(
+            &mut attempted,
+            &watched,
+            &events[1]
+        ));
+    }
+
+    #[test]
+    fn exact_watched_threads_bypass_workspace_deduplication() {
+        let response = json!({
+            "data": [
+                {"id": "thread-unrelated", "cwd": "/workspace/loop"},
+                {"id": "thread-watch-a", "cwd": "/workspace/loop"},
+                {"id": "thread-watch-b", "cwd": "/workspace/loop"}
+            ]
+        });
+        let events = thread_list_events(&response);
+        let watched = HashSet::from(["thread-watch-a".to_string(), "thread-watch-b".to_string()]);
+        let mut attempted = HashSet::new();
+
+        assert!(should_sync_listed_watch(
+            &mut attempted,
+            &watched,
+            &events[0]
+        ));
+        assert!(should_sync_listed_watch(
+            &mut attempted,
+            &watched,
+            &events[1]
+        ));
+        assert!(should_sync_listed_watch(
+            &mut attempted,
+            &watched,
+            &events[2]
+        ));
+    }
+
+    #[test]
+    fn legacy_codex_provider_names_remain_refresh_compatible() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut store = HexaWatchStore::load_or_create(directory.path()).unwrap();
+        let session = store
+            .register(HexaWatchRegisterRequest {
+                session_id: Some("legacy-codex-watch".to_string()),
+                agent: "codex".to_string(),
+                name: None,
+                provider: Some("openai".to_string()),
+                workspace: Some("/workspace/humhum".to_string()),
+                goal: None,
+            })
+            .unwrap();
+
+        assert!(watched_session_is_codex(&session));
+    }
+
+    #[test]
+    fn periodic_refresh_includes_only_pollable_codex_watches() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut store = HexaWatchStore::load_or_create(directory.path()).unwrap();
+        let mut session = store
+            .register(HexaWatchRegisterRequest {
+                session_id: Some("codex-watch".to_string()),
+                agent: "codex".to_string(),
+                name: None,
+                provider: Some("codex".to_string()),
+                workspace: Some("/workspace/humhum".to_string()),
+                goal: None,
+            })
+            .unwrap();
+        let now = chrono::Utc::now();
+
+        session.status = HexaWatchStatus::Idle;
+        assert!(watched_codex_session_is_pollable(&session, now));
+
+        session.status = HexaWatchStatus::Completed;
+        assert!(!watched_codex_session_is_pollable(&session, now));
+
+        session.status = HexaWatchStatus::Working;
+        session.updated_at = (now - chrono::Duration::minutes(31)).to_rfc3339();
+        assert!(!watched_codex_session_is_pollable(&session, now));
     }
 
     #[tokio::test]

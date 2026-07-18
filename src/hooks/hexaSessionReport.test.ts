@@ -248,6 +248,35 @@ describe("Hexa session report", () => {
     expect(resolveSelectedSession(groups, "stale-inferred", now)?.session_id).toBe("stale-inferred");
   });
 
+  it("recomputes an automatic selection after the previously live watch expires", () => {
+    const soonStale = run("soon-stale", "/repo", {
+      status: "working",
+      updated_at: "2026-07-18T04:00:00Z",
+      planning_capability: "inferred",
+    });
+    const valid = run("valid-history", "/repo", {
+      status: "completed",
+      updated_at: "2026-07-18T04:20:00Z",
+      planning_capability: "native",
+    });
+    const groups = groupWatchedSessions([soonStale, valid]);
+
+    expect(
+      resolveSelectedSession(
+        groups,
+        null,
+        new Date("2026-07-18T04:10:00Z").getTime(),
+      )?.session_id,
+    ).toBe("soon-stale");
+    expect(
+      resolveSelectedSession(
+        groups,
+        null,
+        new Date("2026-07-18T04:40:01Z").getTime(),
+      )?.session_id,
+    ).toBe("valid-history");
+  });
+
   it("uses the three user-facing review labels", () => {
     expect(reviewLabel("satisfied")).toBe("满意");
     expect(reviewLabel("average")).toBe("一般");
