@@ -7,19 +7,22 @@ import {
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Minus, X } from "lucide-react";
 import { useTranslation } from "../../lib/i18n/react";
+import "../../styles/hub-character-rooms.css";
+import { HubNavigationItem } from "./HubNavigation";
+import { HubRoom, type HubRoomId } from "./HubRoom";
 
 const HumiModule = lazy(() => import("./HumiModule").then((m) => ({ default: m.HumiModule })));
 const HexaModule = lazy(() => import("./HexaModule").then((m) => ({ default: m.HexaModule })));
 const KnowledgeModule = lazy(() => import("./KnowledgeModule").then((m) => ({ default: m.KnowledgeModule })));
 const HushModule = lazy(() => import("./HushModule").then((m) => ({ default: m.HushModule })));
 
-type Module = "humi" | "hype" | "hush" | "hexa";
+type Module = HubRoomId;
 
-const MODULES: { id: Module; icon: string; labelKey: string }[] = [
-  { id: "humi", icon: "H", labelKey: "hub.nav.humi" },
-  { id: "hype", icon: "Y", labelKey: "hub.nav.hype" },
-  { id: "hush", icon: "S", labelKey: "hub.nav.hush" },
-  { id: "hexa", icon: "X", labelKey: "hub.nav.hexa" },
+const MODULES: { id: Module; labelKey: string }[] = [
+  { id: "humi", labelKey: "hub.nav.humi" },
+  { id: "hype", labelKey: "hub.nav.hype" },
+  { id: "hush", labelKey: "hub.nav.hush" },
+  { id: "hexa", labelKey: "hub.nav.hexa" },
 ];
 
 type HubWindowControlsProps = {
@@ -90,7 +93,7 @@ export function HubLayout() {
   };
 
   return (
-    <div className="hub-panel">
+    <div className="hub-panel" data-active-room={active}>
       {/* Title bar — draggable */}
       <div
         className="hub-titlebar"
@@ -110,28 +113,28 @@ export function HubLayout() {
 
       <div className="hub-body">
         {/* Sidebar */}
-        <nav className="hub-sidebar">
+        <nav className="hub-sidebar" aria-label={t("hub.title")}>
           {MODULES.map((m) => (
-            <button
+            <HubNavigationItem
               key={m.id}
-              className={`hub-sidebar-item ${active === m.id ? "active" : ""}`}
-              onClick={() => setActive(m.id)}
-              title={t(m.labelKey)}
-            >
-              <span className="hub-sidebar-icon">{m.icon}</span>
-              <span className="hub-sidebar-label">{t(m.labelKey)}</span>
-            </button>
+              room={m.id}
+              label={t(m.labelKey)}
+              active={active === m.id}
+              onSelect={() => setActive(m.id)}
+            />
           ))}
         </nav>
 
         {/* Content */}
         <main className="hub-content">
-          <Suspense fallback={<div className="hub-loading" />}>
-            {active === "humi" && <HumiModule />}
-            {active === "hexa" && <HexaModule />}
-            {active === "hype" && <KnowledgeModule />}
-            {active === "hush" && <HushModule />}
-          </Suspense>
+          <HubRoom room={active}>
+            <Suspense fallback={<div className="hub-loading" />}>
+              {active === "humi" && <HumiModule />}
+              {active === "hexa" && <HexaModule />}
+              {active === "hype" && <KnowledgeModule />}
+              {active === "hush" && <HushModule />}
+            </Suspense>
+          </HubRoom>
         </main>
       </div>
     </div>

@@ -1,0 +1,134 @@
+.hub-room {
+  position: relative;
+  min-height: 100%;
+  isolation: isolate;
+}
+
+.hub-room-background {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0.2;
+  pointer-events: none;
+  user-select: none;
+}
+
+.hub-room[data-room="hush"] .hub-room-background,
+.hub-room[data-room="hexa"] .hub-room-background {
+  object-position: right center;
+}
+
+.hub-room-content {
+  position: relative;
+  min-height: 100%;
+}
+
+.hub-nav-item {
+  position: relative;
+  min-height: 58px;
+  border-radius: 8px;
+}
+
+.hub-nav-symbol-stack {
+  position: relative;
+  display: inline-grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+}
+
+.hub-nav-symbol {
+  display: inline-grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 8px;
+  color: #53657b;
+}
+
+.hub-nav-symbol svg {
+  flex: none;
+}
+
+.hub-nav-state-dot {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 6px;
+  height: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.92);
+  border-radius: 50%;
+  background: #94a3b8;
+  box-sizing: border-box;
+}
+
+.hub-nav-item-humi .hub-nav-state-dot { background: #63bdcf; }
+.hub-nav-item-hype .hub-nav-state-dot { background: #f59e0b; }
+.hub-nav-item-hush .hub-nav-state-dot { background: #8d7ddf; }
+.hub-nav-item-hexa .hub-nav-state-dot { background: #f2c94c; }
+.hub-nav-item-hexa.active .hub-nav-state-dot { background: #3b82f6; }
+
+.hub-nav-symbol-hype {
+  position: relative;
+}
+
+.hub-nav-hype-icon {
+  position: absolute;
+  transition: opacity 160ms ease;
+}
+
+.hub-nav-hype-icon:not(.is-active) {
+  opacity: 0;
+}
+
+.hub-nav-symbol-hush svg {
+  animation: hub-hush-peek 2.8s ease-in-out infinite;
+}
+
+.hub-nav-symbol-hexa {
+  color: #111827;
+}
+
+.hub-nav-item-hexa:hover .hub-nav-symbol-hexa,
+.hub-nav-item-hexa.active .hub-nav-symbol-hexa {
+  transform: rotate(-10deg);
+}
+
+.hub-nav-item:hover,
+.hub-nav-item.active {
+  transform: none;
+}
+
+.hub-nav-item:focus-visible {
+  outline: 2px solid rgba(109, 106, 222, 0.68);
+  outline-offset: 2px;
+}
+
+@keyframes hub-hush-peek {
+  0%,
+  42%,
+  46%,
+  50%,
+  100% {
+    transform: translateX(0) scaleY(1);
+  }
+
+  44%,
+  48% {
+    transform: translateX(-4px) scaleY(0.12);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hub-nav-item,
+  .hub-nav-symbol,
+  .hub-nav-hype-icon,
+  .hub-nav-symbol-hush svg {
+    animation: none;
+    transition: none;
+  }
+}
