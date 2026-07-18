@@ -25,6 +25,14 @@ function renderNavigationItem(
   );
 }
 
+function getStyleRule(selector: string) {
+  const ruleStart = characterRoomStyles.indexOf(`${selector} {`);
+  expect(ruleStart, `Missing style rule for ${selector}`).toBeGreaterThanOrEqual(0);
+  const declarationsStart = characterRoomStyles.indexOf("{", ruleStart) + 1;
+  const ruleEnd = characterRoomStyles.indexOf("}", declarationsStart);
+  return characterRoomStyles.slice(declarationsStart, ruleEnd);
+}
+
 describe("HubNavigationItem", () => {
   it("uses a microphone for Humi", () => {
     expect(renderNavigationItem("humi")).toContain("lucide-mic-vocal");
@@ -90,6 +98,23 @@ describe("HubNavigationItem", () => {
 
     expect(html).not.toContain("<img");
     expect(html).not.toContain("hub-navigation-monogram");
+  });
+});
+
+describe("Humi conversation room styles", () => {
+  it("caps visible structural corner radii at 8px", () => {
+    const structuralSelectors = [
+      ".humi-message-row-user .humi-message",
+      ".humi-composer",
+      ".humi-composer-send",
+      ".humi-details-panel",
+    ];
+
+    for (const selector of structuralSelectors) {
+      const radiusMatch = getStyleRule(selector).match(/border-radius:\s*(\d+)px/);
+      expect(radiusMatch, `Missing pixel radius for ${selector}`).not.toBeNull();
+      expect(Number(radiusMatch?.[1]), selector).toBeLessThanOrEqual(8);
+    }
   });
 });
 
