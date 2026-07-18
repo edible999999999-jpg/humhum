@@ -209,6 +209,29 @@ impl CodexBridgeState {
             .unwrap_or_default()
     }
 
+    pub async fn refresh_watched_sessions(&self, app: &tauri::AppHandle) -> Result<(), String> {
+        let transport = self
+            .transport
+            .read()
+            .await
+            .clone()
+            .ok_or_else(|| "Codex bridge is not connected".to_string())?;
+        let listed = transport
+            .request(
+                "thread/list",
+                json!({
+                    "limit": 50,
+                    "archived": false,
+                    "sortKey": "updated_at",
+                    "sortDirection": "desc"
+                }),
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+        self.sync_listed_threads(app, &listed);
+        Ok(())
+    }
+
     pub fn remote_control(&self) -> CodexRemoteControlState {
         self.remote_control
             .read()
@@ -577,32 +600,7 @@ impl CodexBridgeState {
             )
             .await
             .map_err(|error| error.to_string())?;
-        let home_dir = dirs::home_dir();
-        let mut attempted_watch_workspaces = HashSet::new();
-        for (event, transcript_path) in thread_list_entries(&listed) {
-            let thread_id = event.session_id.clone();
-            let sync_watch = should_sync_listed_watch(&mut attempted_watch_workspaces, &event);
-            let watched = self.apply_event_with_watch(app, event, sync_watch);
-            if !watched {
-                continue;
-            }
-            let Some(path) = transcript_path
-                .as_deref()
-                .and_then(|path| canonical_codex_transcript(path, home_dir.as_deref()?))
-            else {
-                continue;
-            };
-            match recovered_codex_plan_events(&thread_id, &path) {
-                Ok(events) => {
-                    for recovered_event in events {
-                        self.apply_event(app, recovered_event);
-                    }
-                }
-                Err(error) => {
-                    log::warn!("Could not recover existing Codex plan for Hexa: {error}")
-                }
-            }
-        }
+        self.sync_listed_threads(app, &listed);
 
         *self.transport.write().await = Some(transport.clone());
         self.set_health(
@@ -665,6 +663,35 @@ impl CodexBridgeState {
         Err("app-server stopped".to_string())
     }
 
+    fn sync_listed_threads(&self, app: &tauri::AppHandle, listed: &Value) {
+        let home_dir = dirs::home_dir();
+        let mut attempted_watch_workspaces = HashSet::new();
+        for (event, transcript_path) in thread_list_entries(listed) {
+            let thread_id = event.session_id.clone();
+            let sync_watch = should_sync_listed_watch(&mut attempted_watch_workspaces, &event);
+            let watched = self.apply_event_with_watch(app, event, sync_watch);
+            if !watched {
+                continue;
+            }
+            let Some(path) = transcript_path
+                .as_deref()
+                .and_then(|path| canonical_codex_transcript(path, home_dir.as_deref()?))
+            else {
+                continue;
+            };
+            match recovered_codex_plan_events(&thread_id, &path) {
+                Ok(events) => {
+                    for recovered_event in events {
+                        self.apply_event(app, recovered_event);
+                    }
+                }
+                Err(error) => {
+                    log::warn!("Could not recover existing Codex plan for Hexa: {error}")
+                }
+            }
+        }
+    }
+
     fn apply_event(&self, app: &tauri::AppHandle, event: HexaEvent) -> bool {
         self.apply_event_with_watch(app, event, true)
     }
@@ -697,7 +724,10 @@ impl CodexBridgeState {
                     }
                     watched = store.sessions().iter().any(|session| {
                         session.session_id == event.session_id
-                            && session.status != crate::hexa_watch_store::HexaWatchStatus::Completed
+                            || session
+                                .previous_session_ids
+                                .iter()
+                                .any(|previous| previous == &event.session_id)
                     });
                 }
             }
@@ -793,7 +823,8 @@ fn thread_list_entries(response: &Value) -> Vec<(HexaEvent, Option<PathBuf>)> {
         .into_iter()
         .flatten()
         .filter_map(|thread| {
-            let event = normalize_codex_message("thread/started", json!({"thread": thread}))?;
+            let mut event = normalize_codex_message("thread/started", json!({"thread": thread}))?;
+            event.payload["listed"] = Value::Bool(true);
             let transcript_path = string_at(thread, "path").map(PathBuf::from);
             Some((event, transcript_path))
         })
@@ -1087,13 +1118,54 @@ fn sync_watched_codex_event(
         .sessions()
         .iter()
         .any(|session| session.session_id == event.session_id);
-    let Some(bound) =
+    let Some(mut bound) =
         store.bind_provider_thread("codex", projection.workspace.as_deref(), &event.session_id)?
     else {
         return Ok(None);
     };
 
+    if event.kind == HexaEventKind::SessionStarted
+        && event
+            .payload
+            .get("listed")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    {
+        if bound.status == HexaWatchStatus::Starting {
+            return store
+                .update(HexaWatchUpdateRequest {
+                    session_id: event.session_id.clone(),
+                    status: HexaWatchStatus::Idle,
+                    current_step: bound.current_step.clone(),
+                    blocked_reason: None,
+                    need_user: Some(false),
+                    confidence: bound.confidence.clone(),
+                    goal: None,
+                })
+                .map(|updated| updated.or((!was_bound).then_some(bound)));
+        }
+        return Ok((!was_bound).then_some(bound));
+    }
+
+    if matches!(
+        bound.status,
+        HexaWatchStatus::Completed | HexaWatchStatus::Idle
+    ) && matches!(
+        event.kind,
+        HexaEventKind::TurnStarted | HexaEventKind::PlanUpdated
+    ) {
+        if let Some(resumed) = store.resume_session_for_new_work(
+            &event.session_id,
+            &event.timestamp,
+            projection.current_activity.clone(),
+        )? {
+            bound = resumed;
+        }
+    }
     if let Some(request) = codex_plan_sync_request(event) {
+        if bound.status == HexaWatchStatus::Completed {
+            return Ok(Some(bound));
+        }
         return store.sync_plan(request).map(Some);
     }
     if bound.status != HexaWatchStatus::Completed {
@@ -1402,6 +1474,109 @@ if ($second.Contains('"method":"turn/start"')) {
         assert_eq!(
             watch_store.sessions()[0].previous_session_ids,
             ["temporary-watch-id"]
+        );
+    }
+
+    #[test]
+    fn listed_thread_does_not_idle_an_existing_working_watch() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut watch_store = HexaWatchStore::load_or_create(directory.path()).unwrap();
+        watch_store
+            .register(HexaWatchRegisterRequest {
+                session_id: Some("thread-real".to_string()),
+                agent: "codex".to_string(),
+                name: Some("HUMHUM 主开发会话".to_string()),
+                provider: Some("codex".to_string()),
+                workspace: Some("/workspace/humhum".to_string()),
+                goal: Some("持续监督同一个 Codex 会话".to_string()),
+            })
+            .unwrap();
+        watch_store
+            .update(HexaWatchUpdateRequest {
+                session_id: "thread-real".to_string(),
+                status: HexaWatchStatus::Working,
+                current_step: Some("正在执行新计划".to_string()),
+                blocked_reason: None,
+                need_user: Some(false),
+                confidence: Some("agent-bound".to_string()),
+                goal: None,
+            })
+            .unwrap();
+        let listed = thread_list_events(&json!({
+            "data": [{
+                "id": "thread-real",
+                "cwd": "/workspace/humhum",
+                "name": "HUMHUM 主开发会话",
+                "preview": "继续工作"
+            }]
+        }));
+        let event = listed.into_iter().next().unwrap();
+        let mut projections = HexaProjectionStore::default();
+        projections.apply(&event);
+
+        sync_watched_codex_event(
+            &mut watch_store,
+            &event,
+            projections.session("thread-real").unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            watch_store.sessions()[0].status,
+            crate::hexa_watch_store::HexaWatchStatus::Working
+        );
+    }
+
+    #[test]
+    fn newer_turn_reactivates_a_completed_bound_watch() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut watch_store = HexaWatchStore::load_or_create(directory.path()).unwrap();
+        watch_store
+            .register(HexaWatchRegisterRequest {
+                session_id: Some("thread-real".to_string()),
+                agent: "codex".to_string(),
+                name: Some("HUMHUM 主开发会话".to_string()),
+                provider: Some("codex".to_string()),
+                workspace: Some("/workspace/humhum".to_string()),
+                goal: Some("持续监督同一个 Codex 会话".to_string()),
+            })
+            .unwrap();
+        let completed = watch_store
+            .update(HexaWatchUpdateRequest {
+                session_id: "thread-real".to_string(),
+                status: HexaWatchStatus::Completed,
+                current_step: Some("上一轮完成".to_string()),
+                blocked_reason: None,
+                need_user: Some(false),
+                confidence: Some("agent-bound".to_string()),
+                goal: None,
+            })
+            .unwrap()
+            .unwrap();
+        let mut started = normalize_codex_message(
+            "turn/started",
+            json!({
+                "threadId": "thread-real",
+                "turn": {"id": "turn-new"}
+            }),
+        )
+        .unwrap();
+        started.timestamp = (chrono::DateTime::parse_from_rfc3339(&completed.updated_at).unwrap()
+            + chrono::Duration::seconds(1))
+        .to_rfc3339();
+        let mut projections = HexaProjectionStore::default();
+        projections.apply(&started);
+
+        sync_watched_codex_event(
+            &mut watch_store,
+            &started,
+            projections.session("thread-real").unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            watch_store.sessions()[0].status,
+            crate::hexa_watch_store::HexaWatchStatus::Working
         );
     }
 

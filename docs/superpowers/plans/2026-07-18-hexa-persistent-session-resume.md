@@ -4,7 +4,7 @@
 
 **Goal:** Make an existing Hexa watch resume when its bound Codex thread starts newer work, without letting expired inferred watches become the default report.
 
-**Architecture:** Add a timestamp-gated resume operation to `HexaWatchStore` and call it from the Codex bridge only for new turn/plan evidence. Adjust frontend report selection so expired active-looking records do not outrank valid sessions.
+**Architecture:** Add a timestamp-gated resume operation to `HexaWatchStore` and call it from the Codex bridge only for new turn/plan evidence. Active idle watches use the existing 20-second refresh to ask the bridge for matching transcript changes. Adjust frontend report selection so expired active-looking records do not outrank valid sessions.
 
 **Tech Stack:** Rust, Tauri, TypeScript, React, Vitest
 
@@ -27,7 +27,7 @@
 
 **Interfaces:**
 - Consumes: `HexaWatchedSession`, `HexaEvent`, and RFC 3339 timestamps.
-- Produces: `HexaWatchStore::resume_completed_session(session_id, event_timestamp, current_step)`.
+- Produces: `HexaWatchStore::resume_session_for_new_work(session_id, event_timestamp, current_step)`.
 
 - [ ] **Step 1: Write failing store and bridge tests**
 
@@ -107,13 +107,45 @@ npx vitest run src/hooks/hexaSessionReport.test.ts
 
 Expected: PASS.
 
-### Task 3: Verify and package
+### Task 3: Refresh active idle watches
+
+**Files:**
+- Modify: `src/hooks/hexaRefreshPolicy.ts`
+- Modify: `src/hooks/useHexaData.ts`
+- Modify: `src-tauri/src/commands.rs`
+- Modify: `src-tauri/src/lib.rs`
+- Test: `src/hooks/hexaRefreshPolicy.test.ts`
+
+**Interfaces:**
+- Consumes: the existing 20-second watched-session timer and connected Codex transport.
+- Produces: `refresh_hexa_watched_agents` and idle-watch polling.
+
+- [ ] **Step 1: Write the failing idle-watch refresh test**
+
+Assert that an `idle` watched run remains pollable while completed and expired
+runs do not.
+
+- [ ] **Step 2: Add the bridge-backed refresh command**
+
+Factor startup thread-list recovery into a reusable bridge method, expose it
+through `refresh_hexa_watched_agents`, and call that command only from initial
+and active-watch refreshes.
+
+- [ ] **Step 3: Run refresh and bridge tests**
+
+```bash
+npx vitest run src/hooks/hexaRefreshPolicy.test.ts
+CARGO_TARGET_DIR=/private/tmp/humhum-hexa-complete-current/src-tauri/target \
+  cargo test --manifest-path src-tauri/Cargo.toml codex_bridge::tests --lib
+```
+
+### Task 4: Verify and package
 
 **Files:**
 - Verify all changed files.
 
 **Interfaces:**
-- Consumes: completed Tasks 1 and 2.
+- Consumes: completed Tasks 1 through 3.
 - Produces: tested release commit and locally installed application.
 
 - [ ] **Step 1: Run full tests**
@@ -144,4 +176,3 @@ git commit -m "fix(hexa): resume persistent Codex watches"
 
 Replace `/Applications/HumHum.app` atomically, restart it, and verify the bound
 session has a fresh update time and verifiable work items.
-

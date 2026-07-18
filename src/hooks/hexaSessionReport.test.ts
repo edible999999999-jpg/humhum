@@ -220,13 +220,32 @@ describe("Hexa session report", () => {
       run("latest-live", "/repo", { updated_at: "2026-07-15T04:00:00Z" }),
     ];
     const groups = groupWatchedSessions(watched);
+    const now = new Date("2026-07-15T04:01:00Z").getTime();
 
-    expect(resolveSelectedSession(groups, null)?.session_id).toBe("latest-live");
-    expect(resolveSelectedSession(groups, "deleted")?.session_id).toBe("latest-live");
+    expect(resolveSelectedSession(groups, null, now)?.session_id).toBe("latest-live");
+    expect(resolveSelectedSession(groups, "deleted", now)?.session_id).toBe("latest-live");
     expect(tabCounts(watched, [{ source: "hook" }, { source: "codex_bridge" }])).toEqual({
       active: 2,
       scanned: 2,
     });
+  });
+
+  it("does not let an expired inferred watch replace a valid default report", () => {
+    const stale = run("stale-inferred", "/repo", {
+      status: "working",
+      updated_at: "2000-01-01T00:00:00Z",
+      planning_capability: "inferred",
+    });
+    const valid = run("valid-history", "/repo", {
+      status: "completed",
+      updated_at: "2026-07-18T04:00:00Z",
+      planning_capability: "native",
+    });
+    const groups = groupWatchedSessions([stale, valid]);
+    const now = new Date("2026-07-18T05:00:00Z").getTime();
+
+    expect(resolveSelectedSession(groups, null, now)?.session_id).toBe("valid-history");
+    expect(resolveSelectedSession(groups, "stale-inferred", now)?.session_id).toBe("stale-inferred");
   });
 
   it("uses the three user-facing review labels", () => {

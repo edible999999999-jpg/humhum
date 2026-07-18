@@ -6,7 +6,7 @@ type WatchedAgentLike = {
   runs: Array<{ status: string; updated_at: string }>;
 };
 
-const ACTIVE_WATCHED_STATUSES = new Set(["starting", "working", "waiting", "blocked"]);
+const ACTIVE_WATCHED_STATUSES = new Set(["starting", "working", "waiting", "idle", "blocked"]);
 
 export function hasPollableWatchedRun(
   agents: WatchedAgentLike[],

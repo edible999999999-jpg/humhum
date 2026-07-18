@@ -21,6 +21,9 @@ describe("Hexa refresh policy", () => {
       runs: [{ status: "working", updated_at: "2026-07-17T11:45:00Z" }],
     }], now)).toBe(true);
     expect(hasPollableWatchedRun([{
+      runs: [{ status: "idle", updated_at: "2026-07-15T09:00:00Z" }],
+    }], now)).toBe(true);
+    expect(hasPollableWatchedRun([{
       runs: [{ status: "waiting", updated_at: "2026-07-17T11:29:59Z" }],
     }], now)).toBe(false);
     expect(hasPollableWatchedRun([{

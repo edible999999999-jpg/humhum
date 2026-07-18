@@ -800,7 +800,7 @@ export function useHexaData() {
         invoke<AgentStats[]>("get_agent_stats"),
         invoke<HexaReadout[]>("get_hexa_readouts"),
         invoke<HexaBridgeSession[]>("get_hexa_bridge_sessions"),
-        invoke<HexaWatchedAgent[]>("get_hexa_watched_agents"),
+        invoke<HexaWatchedAgent[]>("refresh_hexa_watched_agents"),
         invoke<CodexBridgeHealth>("get_codex_bridge_health"),
         invoke<QueuedIntervention[]>("get_intervention_queue"),
       ]);
@@ -928,7 +928,7 @@ export function useHexaData() {
         setWatchedAgents((current) => [...current]);
         return;
       }
-      const watched = await invoke<HexaWatchedAgent[]>("get_hexa_watched_agents");
+      const watched = await invoke<HexaWatchedAgent[]>("refresh_hexa_watched_agents");
       watchedAgentsRef.current = watched;
       watchedExpiryRenderedRef.current = false;
       setWatchedAgents(watched);

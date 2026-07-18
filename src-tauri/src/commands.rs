@@ -354,6 +354,22 @@ pub async fn get_hexa_watched_agents(
 }
 
 #[tauri::command]
+pub async fn refresh_hexa_watched_agents(
+    bridge: State<'_, Arc<CodexBridgeState>>,
+    state: State<'_, Arc<std::sync::Mutex<HexaWatchStore>>>,
+    app: AppHandle,
+) -> Result<Vec<HexaWatchedAgent>, String> {
+    if let Err(error) = bridge.refresh_watched_sessions(&app).await {
+        log::warn!("Could not refresh watched Codex sessions: {error}");
+    }
+    let mut store = state
+        .lock()
+        .map_err(|error| format!("Lock error: {error}"))?;
+    store.reload_from_disk()?;
+    Ok(store.agents())
+}
+
+#[tauri::command]
 pub async fn mutate_hexa_session_audit(
     state: State<'_, Arc<std::sync::Mutex<HexaWatchStore>>>,
     app: AppHandle,

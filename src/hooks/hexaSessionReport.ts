@@ -8,6 +8,7 @@ import type {
   HexaWorkItem,
   HexaWorkItemStatus,
 } from "./useHexaData";
+import { watchedSessionIsExpired } from "./hexaPlanningCapability";
 
 export interface HexaSessionGroup {
   key: string;
@@ -261,10 +262,15 @@ export function buildHexaSessionReport(
 export function resolveSelectedSession(
   groups: HexaSessionGroup[],
   selectedSessionId: string | null,
+  now = Date.now(),
 ): HexaWatchedSession | null {
   const sessions = groups.flatMap((group) => group.sessions);
+  const eligible = sessions.filter((session) =>
+    !watchedSessionIsExpired(session.status, session.updated_at, now)
+  );
   return sessions.find((session) => session.session_id === selectedSessionId)
-    ?? sessions.find((session) => session.status !== "completed")
+    ?? eligible.find((session) => session.status !== "completed")
+    ?? eligible[0]
     ?? sessions[0]
     ?? null;
 }

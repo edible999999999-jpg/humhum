@@ -13,7 +13,8 @@ zero verifiable work items.
 The watch remains bound to the same Codex thread. A newer `TurnStarted` or
 `PlanUpdated` event reactivates a completed watch as `working`; an old replayed
 event does not. Startup recovery may inspect a completed watched thread so a
-plan written after the previous Hexa completion is not missed.
+plan written after the previous Hexa completion is not missed. The same
+recovery is reused by the active-watch refresh.
 
 Expired inferred watches remain available as history, but they are not treated
 as active when Hexa chooses the default report.
@@ -39,7 +40,10 @@ as active when Hexa chooses the default report.
    plan normally.
 4. Successful turn completion returns the watch to `idle` and completes only
    active native-plan items.
-5. The frontend chooses a recent active report first, then a non-expired idle or
+5. An `idle` watch remains actively monitored every 20 seconds. Each refresh
+   asks the Codex bridge to list current threads and recover only matching
+   watched transcripts; unmonitored and expired records do not trigger polling.
+6. The frontend chooses a recent active report first, then a non-expired idle or
    completed report; an expired working placeholder never wins by default.
 
 ## Error handling
@@ -54,5 +58,6 @@ not complete active work items.
 - An older recovered plan does not reactivate a completed watch.
 - A newer plan reactivates and replaces the current Codex plan.
 - Startup considers an exact completed watch eligible for transcript recovery.
+- An idle watched session continues the existing 20-second active-watch refresh.
+- Refreshing the thread list does not downgrade a working watch to idle.
 - Default report selection skips an expired inferred watch.
-
