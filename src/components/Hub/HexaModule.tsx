@@ -83,7 +83,7 @@ function scoreColor(score: number): string {
   return "#f87171";
 }
 
-function MetricCard({
+function MetricSummaryItem({
   label,
   value,
   tone,
@@ -91,26 +91,14 @@ function MetricCard({
 }: {
   label: string;
   value: string | number;
-  tone: string;
+  tone: "progress" | "attention" | "complete" | "alert";
   detail: string;
 }) {
   return (
-    <div
-      style={{
-        minWidth: 0,
-        padding: 12,
-        borderRadius: 8,
-        background: "rgba(255,255,255,0.025)",
-        border: `1px solid ${tone}30`,
-      }}
-    >
-      <div style={{ color: tone, fontSize: 22, lineHeight: 1, fontWeight: 850 }}>{value}</div>
-      <div style={{ color: "rgba(255,255,255,0.58)", fontSize: 11, fontWeight: 750, marginTop: 6 }}>
-        {label}
-      </div>
-      <div style={{ color: "rgba(255,255,255,0.28)", fontSize: 10, marginTop: 3, lineHeight: 1.35 }}>
-        {detail}
-      </div>
+    <div className="hexa-metric-summary-item" data-tone={tone}>
+      <strong>{value}</strong>
+      <span>{label}</span>
+      <small>{detail}</small>
     </div>
   );
 }
@@ -280,7 +268,8 @@ export function HexaMobilePairingCard({
   const qrVisible = pairing
     ? shouldShowMobilePairingQr(state.pairing_active, pairing.expires_at, nowMs)
     : false;
-  const actionLabel = qrVisible ? "刷新配对二维码" : "生成配对二维码";
+  const pairingExpanded = qrVisible && Boolean(pairing?.android_setup);
+  const actionLabel = pairingExpanded ? "刷新配对二维码" : "生成配对二维码";
 
   const refreshPairing = async () => {
     setBusy(true);
@@ -295,10 +284,14 @@ export function HexaMobilePairingCard({
   };
 
   return (
-    <aside className="hexa-mobile-quick-card" aria-label="Hexa 手机连接">
-      {qrVisible && pairing?.android_setup ? (
-        <div className="hexa-mobile-quick-layout">
-          <div className="hexa-mobile-quick-qr" aria-label="Hexa 手机配对二维码">
+    <aside
+      className="hexa-mobile-pairing"
+      aria-label="Hexa 手机连接"
+      data-expanded={pairingExpanded ? "true" : "false"}
+    >
+      {pairingExpanded && pairing?.android_setup ? (
+        <div className="hexa-mobile-pairing-panel">
+          <div className="hexa-mobile-pairing-qr" aria-label="Hexa 手机配对二维码">
             <QRCodeSVG
               value={pairing.android_setup}
               size={120}
@@ -309,15 +302,18 @@ export function HexaMobilePairingCard({
               title="HUMHUM Android 安全配对"
             />
           </div>
-          <div className="hexa-mobile-quick-copy">
-            <div className="hexa-mobile-quick-title">在手机查看 Hexa</div>
-            <div className="hexa-mobile-quick-detail">Android HUMHUM 扫码连接</div>
-            <div className="hexa-mobile-quick-status">
+          <div className="hexa-mobile-pairing-copy">
+            <div className="hexa-mobile-pairing-title">
+              <Smartphone size={16} />
+              <span>在手机查看 Hexa</span>
+            </div>
+            <div className="hexa-mobile-pairing-detail">Android HUMHUM 扫码连接</div>
+            <div className="hexa-mobile-pairing-status">
               {pairing.network === "tailnet" ? "Tailnet" : "同一 Wi-Fi"} · {pairing.scope === "control" ? "可控制" : "只读"} · 剩余 {Math.max(1, Math.ceil(secondsRemaining / 60))} 分钟
             </div>
             <button
               type="button"
-              className="hexa-mobile-quick-action"
+              className="hexa-mobile-pairing-action"
               aria-label={actionLabel}
               title={actionLabel}
               disabled={busy}
@@ -329,20 +325,20 @@ export function HexaMobilePairingCard({
           </div>
         </div>
       ) : (
-        <div className="hexa-mobile-quick-empty">
-          <div className="hexa-mobile-quick-icon"><Smartphone size={21} /></div>
-          <div className="hexa-mobile-quick-copy">
-            <div className="hexa-mobile-quick-title">在手机查看 Hexa</div>
-            <div className="hexa-mobile-quick-detail">
+        <div className="hexa-mobile-affordance">
+          <Smartphone size={17} aria-hidden="true" />
+          <div className="hexa-mobile-affordance-copy">
+            <strong>在手机查看 Hexa</strong>
+            <span>
               {error ?? (state.paired_devices > 0
                 ? `已连接 ${state.paired_devices} 台设备，也可以重新配对`
                 : "生成二维码后，用 Android HUMHUM 扫描")}
-            </div>
-            <div className="hexa-mobile-quick-status">默认只读 · 同一 Wi-Fi · 5 分钟有效</div>
+            </span>
+            <small>默认只读 · 同一 Wi-Fi · 5 分钟有效</small>
           </div>
           <button
             type="button"
-            className="hexa-mobile-quick-action"
+            className="hexa-mobile-pairing-action"
             aria-label={actionLabel}
             title={actionLabel}
             disabled={busy}
@@ -353,7 +349,7 @@ export function HexaMobilePairingCard({
           </button>
         </div>
       )}
-      {error && qrVisible && <div className="hexa-mobile-quick-error">{error}</div>}
+      {error && pairingExpanded && <div className="hexa-mobile-pairing-error">{error}</div>}
     </aside>
   );
 }
@@ -367,7 +363,7 @@ function StatusBadge({ item }: { item: HexaSupervisorSession }) {
         alignItems: "center",
         gap: 6,
         padding: "4px 8px",
-        borderRadius: 999,
+        borderRadius: 6,
         background: `${color}16`,
         border: `1px solid ${color}38`,
         color,
@@ -405,7 +401,7 @@ function NeedFitBar({ item }: { item: HexaSupervisorSession }) {
       <div
         style={{
           height: 7,
-          borderRadius: 999,
+          borderRadius: 4,
           background: "rgba(255,255,255,0.06)",
           overflow: "hidden",
         }}
@@ -414,7 +410,7 @@ function NeedFitBar({ item }: { item: HexaSupervisorSession }) {
           style={{
             width: `${item.recent_need_score}%`,
             height: "100%",
-            borderRadius: 999,
+            borderRadius: 4,
             background: color,
             boxShadow: `0 0 12px ${color}55`,
           }}
@@ -532,7 +528,7 @@ function SessionCard({
                   color: "#34d399",
                   background: "rgba(52,211,153,0.1)",
                   border: "1px solid rgba(52,211,153,0.24)",
-                  borderRadius: 999,
+                  borderRadius: 6,
                   padding: "4px 8px",
                   fontSize: 10,
                   fontWeight: 850,
@@ -553,7 +549,7 @@ function SessionCard({
                   color: "#facc15",
                   background: "rgba(250,204,21,0.1)",
                   border: "1px solid rgba(250,204,21,0.24)",
-                  borderRadius: 999,
+                  borderRadius: 6,
                   padding: "4px 8px",
                   fontSize: 10,
                   fontWeight: 850,
@@ -755,7 +751,7 @@ function SessionCard({
                 color: "#f59e0b",
                 background: "rgba(245,158,11,0.09)",
                 border: "1px solid rgba(245,158,11,0.22)",
-                borderRadius: 999,
+                borderRadius: 6,
                 padding: "3px 8px",
                 fontSize: 10,
                 fontWeight: 750,
@@ -1723,16 +1719,19 @@ export function HexaModule() {
   };
 
   return (
-    <div className="hub-module">
+    <div className="hub-module hexa-room-module">
       <div className="hexa-heading-row">
-        <div>
+        <div className="hexa-heading-copy">
           <h2 className="hub-module-title" style={{ marginBottom: 4 }}>Hexa 会话监督</h2>
           <p className="hub-module-desc">
             主动监控每一轮目标、进度和结果；自动扫描只负责发现，不混入可信结论。
           </p>
-          <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 7, color: "#7b8ba0", fontSize: 10 }}>
-            <span style={{ width: 6, height: 6, borderRadius: "50%", background: bridgeHealth.status === "connected" ? "#22c55e" : bridgeHealth.status === "starting" ? "#facc15" : "#f87171" }} />
-            {bridgeHealth.message}
+          <div className="hexa-bridge-health" role="status">
+            <span
+              className={`hexa-bridge-health-dot is-${bridgeHealth.status}`}
+              aria-hidden="true"
+            />
+            <span>{bridgeHealth.message}</span>
           </div>
         </div>
         <HexaMobilePairingCard
@@ -1789,12 +1788,12 @@ export function HexaModule() {
           )}
         />
       ) : (
-        <section style={{ display: "grid", gap: 14 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10 }}>
-            <MetricCard label="活跃会话" value={active.length} tone="#22c55e" detail={`${workingCount} 个正在推进`} />
-            <MetricCard label="需要关注" value={attentionCount} tone="#f59e0b" detail={`${pendingCount} 个等待确认`} />
-            <MetricCard label="最近完成" value={recentCompleted.length} tone="#38bdf8" detail="保留最近 6 个复盘样本" />
-            <MetricCard label="告警信号" value={alerts.length} tone="#f87171" detail="停滞、循环、低进展" />
+        <section className="hexa-scanned-section">
+          <div className="hexa-metric-summary" aria-label="自动扫描摘要">
+            <MetricSummaryItem label="活跃会话" value={active.length} tone="progress" detail={`${workingCount} 个正在推进`} />
+            <MetricSummaryItem label="需要关注" value={attentionCount} tone="attention" detail={`${pendingCount} 个等待确认`} />
+            <MetricSummaryItem label="最近完成" value={recentCompleted.length} tone="complete" detail="保留最近 6 个复盘样本" />
+            <MetricSummaryItem label="告警信号" value={alerts.length} tone="alert" detail="停滞、循环、低进展" />
           </div>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
           <div

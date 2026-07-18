@@ -58,7 +58,7 @@ export function HexaActiveMonitor({
   };
 
   return (
-    <section className="hexa-active-monitor">
+    <section className="hexa-active-monitor" aria-label="Hexa 主动监控工作台">
       <div className="hexa-active-toolbar">
         <div>
           <strong>主动监控会话</strong>
@@ -114,6 +114,7 @@ export function HexaActiveMonitor({
                         key={session.session_id}
                         type="button"
                         className={`hexa-session-nav-item ${isSelected ? "selected" : ""}`}
+                        aria-current={isSelected ? "true" : undefined}
                         onClick={() => setSelectedSessionId(session.session_id)}
                       >
                         <span
@@ -124,7 +125,9 @@ export function HexaActiveMonitor({
                           <strong>{session.name}</strong>
                           <span>{problem}</span>
                         </span>
-                        <small>{connectionLabel ? `${connectionLabel} · ${watchedSessionAge(session.updated_at)}` : watchedSessionAge(session.updated_at)}</small>
+                        <small className="hexa-session-nav-meta">
+                          {connectionLabel ? `${connectionLabel} · ${watchedSessionAge(session.updated_at)}` : watchedSessionAge(session.updated_at)}
+                        </small>
                       </button>
                     );
                   })}
@@ -132,7 +135,7 @@ export function HexaActiveMonitor({
               );
             })}
           </nav>
-          <div className="hexa-session-report-pane">
+          <div className="hexa-session-report-pane" aria-label="选中会话监督报告">
             {selected && (
               <HexaSessionReportView
                 session={selected}
