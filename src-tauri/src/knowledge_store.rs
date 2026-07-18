@@ -933,6 +933,8 @@ fn classify_asset_type(lower_path: &str, filename: &str) -> String {
         || filename.ends_with(".toml");
     if filename == "skill.md" {
         "skill".to_string()
+    } else if filename == "agents.md" {
+        "agent".to_string()
     } else if lower_path.contains("soul") {
         "soul".to_string()
     } else if lower_path.contains("memory") || lower_path.contains("memories") {
@@ -943,10 +945,7 @@ fn classify_asset_type(lower_path: &str, filename: &str) -> String {
         && filename.ends_with(".md")
     {
         "skill".to_string()
-    } else if filename == "agents.md"
-        || lower_path.contains("/agents/")
-        || lower_path.contains("/agent/")
-    {
+    } else if lower_path.contains("/agents/") || lower_path.contains("/agent/") {
         "agent".to_string()
     } else if filename == "claude.md" || filename == ".cursorrules" || lower_path.contains("rules")
     {
@@ -1823,6 +1822,17 @@ mod tests {
                 home.join("Projects"),
                 home,
             ]
+        );
+    }
+
+    #[test]
+    fn agents_md_remains_an_agent_inside_a_skills_tree() {
+        assert_eq!(
+            classify_asset_type(
+                "/Users/test/.agents/skills/custom-helper/AGENTS.md",
+                "AGENTS.md",
+            ),
+            "agent",
         );
     }
 }
