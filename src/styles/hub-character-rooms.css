@@ -725,3 +725,879 @@
     transform: translateX(-12px);
   }
 }
+
+.hush-room-module {
+  min-width: 0;
+  min-height: 100%;
+  color: #29363a;
+}
+
+.hush-heading {
+  margin-bottom: 12px;
+}
+
+.hush-heading .hub-module-kicker {
+  color: #397a6a;
+}
+
+.hush-heading .hub-module-title {
+  margin-bottom: 4px;
+}
+
+.hush-status-area {
+  overflow: hidden;
+  border: 1px solid rgba(69, 113, 101, 0.18);
+  border-radius: 8px;
+  background: rgba(244, 253, 249, 0.68);
+}
+
+.hush-status-area > summary,
+.hush-live-debug > summary {
+  display: grid;
+  min-width: 0;
+  align-items: center;
+  list-style: none;
+  cursor: pointer;
+}
+
+.hush-status-area > summary {
+  min-height: 42px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  padding: 8px 12px;
+}
+
+.hush-status-area > summary::-webkit-details-marker,
+.hush-live-debug > summary::-webkit-details-marker {
+  display: none;
+}
+
+.hush-status-summary-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #315f54;
+  font-size: 12px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.hush-status-summary-meta {
+  min-width: 0;
+  overflow: hidden;
+  color: #637670;
+  font-size: 10px;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hush-status-chevron,
+.hush-live-debug summary svg {
+  color: #6b817a;
+  transition: transform 160ms ease;
+}
+
+.hush-status-area[open] > summary .hush-status-chevron,
+.hush-live-debug[open] > summary svg {
+  transform: rotate(180deg);
+}
+
+.hush-status-content {
+  max-height: min(520px, 70vh);
+  overflow-y: auto;
+  padding: 0 12px 10px;
+  border-top: 1px solid rgba(69, 113, 101, 0.13);
+}
+
+.hush-status-error {
+  padding: 9px 0;
+  color: #b23a53;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.hush-truth-row,
+.hush-status-row,
+.hush-connector-row {
+  min-width: 0;
+  border-bottom: 1px solid rgba(69, 113, 101, 0.12);
+}
+
+.hush-truth-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 11px 0;
+}
+
+.hush-truth-row > div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.hush-truth-row strong {
+  color: #29363a;
+  font-size: 12px;
+}
+
+.hush-truth-row span,
+.hush-status-row-copy > span {
+  color: #64766f;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.hush-truth-count {
+  flex: 0 0 auto;
+  color: #b35d24 !important;
+  font-weight: 750;
+}
+
+.hush-status-section {
+  padding-top: 10px;
+}
+
+.hush-status-section-title {
+  margin-bottom: 3px;
+  color: #65766f;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.hush-connector-list {
+  display: grid;
+}
+
+.hush-connector-row {
+  display: grid;
+  min-height: 58px;
+  grid-template-columns: 62px minmax(0, 1fr) 32px 46px;
+  gap: 9px;
+  align-items: center;
+  padding: 7px 0;
+}
+
+.hush-connector-row > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.hush-connector-row strong {
+  color: #35463f;
+  font-size: 11px;
+}
+
+.hush-connector-row div > span,
+.hush-connector-row small {
+  overflow: hidden;
+  color: #6b7d76;
+  font-size: 9px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hush-connector-row code,
+.hush-status-row-copy code,
+.hush-live-debug-toolbar code {
+  min-width: 0;
+  overflow: hidden;
+  color: #7c8c86;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hush-connector-state {
+  color: #8b9a95;
+  font-size: 9px;
+  font-weight: 700;
+  text-align: right;
+}
+
+.hush-connector-state.is-active {
+  color: #2d7960;
+}
+
+.hush-status-row {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  padding: 11px 0;
+}
+
+.hush-state-dot {
+  width: 8px;
+  height: 8px;
+  margin-top: 3px;
+  border-radius: 50%;
+  background: #9aa8a3;
+}
+
+.hush-state-dot.is-running,
+.hush-state-dot.is-ready {
+  background: #2f8a67;
+}
+
+.hush-state-dot.is-syncing,
+.hush-state-dot.is-starting {
+  background: #347fca;
+}
+
+.hush-state-dot.is-permission_required,
+.hush-state-dot.is-source_missing,
+.hush-state-dot.is-authentication_required,
+.hush-state-dot.is-not_installed {
+  background: #cb762e;
+}
+
+.hush-state-dot.is-error {
+  background: #c44e62;
+}
+
+.hush-status-row-copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.hush-status-row-copy > strong {
+  color: #35463f;
+  font-size: 11px;
+}
+
+.hush-status-secondary {
+  color: #82918c !important;
+  font-size: 9px !important;
+}
+
+.hush-source-labels,
+.hush-contact-sources {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 7px;
+}
+
+.hush-platform-label {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  color: #64748b;
+  font-size: 9px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.hush-platform-label > span {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  border-radius: 50%;
+  background: #82918c;
+}
+
+.hush-platform-label.is-dingtalk {
+  color: #236fb3;
+}
+
+.hush-platform-label.is-dingtalk > span {
+  background: #2f83d1;
+}
+
+.hush-platform-label.is-wechat {
+  color: #237b4d;
+}
+
+.hush-platform-label.is-wechat > span {
+  background: #2b9b60;
+}
+
+.hush-status-action,
+.hush-icon-button {
+  display: inline-flex;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(69, 113, 101, 0.2);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #3b6e60;
+  cursor: pointer;
+}
+
+.hush-status-action {
+  gap: 6px;
+  padding: 0 9px;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.hush-icon-button {
+  width: 32px;
+  flex: 0 0 32px;
+  padding: 0;
+}
+
+.hush-status-action:hover:not(:disabled),
+.hush-icon-button:hover:not(:disabled) {
+  border-color: rgba(47, 138, 103, 0.42);
+  background: #fff;
+  color: #236f55;
+}
+
+.hush-status-action:disabled,
+.hush-icon-button:disabled {
+  color: #aab5b1;
+  cursor: default;
+  opacity: 0.65;
+}
+
+.hush-icon-button.is-danger {
+  color: #a84454;
+}
+
+.hush-status-action:focus-visible,
+.hush-icon-button:focus-visible,
+.hush-filter-control button:focus-visible,
+.hush-contact-select:focus-visible,
+.hush-star-button:focus-visible,
+.hush-status-area > summary:focus-visible,
+.hush-live-debug > summary:focus-visible {
+  outline: 2px solid rgba(47, 131, 209, 0.55);
+  outline-offset: 2px;
+}
+
+.hush-status-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.hush-auto-sync {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: 6px;
+  color: #536960;
+  font-size: 10px;
+}
+
+.hush-auto-sync input {
+  accent-color: #2f8a67;
+}
+
+.hush-sync-report {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  padding-top: 5px;
+  color: #62756d;
+  font-size: 9px;
+}
+
+.hush-sync-report strong {
+  width: 100%;
+  color: #a85e25;
+}
+
+.hush-status-action .is-spinning {
+  animation: hush-spin 850ms linear 120;
+}
+
+.hush-live-debug {
+  border-bottom: 1px solid rgba(69, 113, 101, 0.12);
+}
+
+.hush-live-debug > summary {
+  min-height: 36px;
+  grid-template-columns: minmax(0, 1fr) auto 16px;
+  gap: 8px;
+  color: #536960;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.hush-live-debug > summary span:nth-child(2) {
+  color: #82918c;
+  font-weight: 500;
+}
+
+.hush-live-debug-content {
+  padding: 0 0 8px 18px;
+}
+
+.hush-live-debug-toolbar {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) 32px 32px;
+  gap: 6px;
+  align-items: center;
+  padding: 5px 0 7px;
+}
+
+.hush-live-list {
+  display: grid;
+}
+
+.hush-live-row {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  gap: 4px 8px;
+  padding: 6px 0;
+  border-top: 1px solid rgba(69, 113, 101, 0.09);
+  color: #536960;
+  font-size: 10px;
+}
+
+.hush-live-row > span:not(.hush-platform-label) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hush-live-row small {
+  grid-column: 2 / -1;
+  color: #a85e25;
+}
+
+.hush-live-empty {
+  padding: 8px 0;
+  color: #82918c;
+  font-size: 10px;
+}
+
+.hush-inbox-toolbar {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 14px 0 8px;
+}
+
+.hush-filter-control {
+  display: inline-flex;
+  max-width: 100%;
+  flex-wrap: wrap;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid rgba(69, 113, 101, 0.17);
+  border-radius: 8px;
+  background: rgba(244, 253, 249, 0.66);
+}
+
+.hush-filter-control button {
+  min-height: 30px;
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #65776f;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.hush-filter-control button.is-active {
+  background: rgba(255, 255, 255, 0.96);
+  color: #a75620;
+  box-shadow: 0 1px 4px rgba(67, 91, 82, 0.08);
+}
+
+.hush-conversation-count {
+  color: #6f817a;
+  font-size: 10px;
+}
+
+.hush-inbox-workspace {
+  display: grid;
+  min-width: 0;
+  height: clamp(430px, calc(100vh - 248px), 620px);
+  grid-template-columns: minmax(210px, 34%) minmax(0, 1fr);
+  overflow: hidden;
+  border-top: 1px solid rgba(69, 113, 101, 0.17);
+  border-bottom: 1px solid rgba(69, 113, 101, 0.17);
+  background: rgba(251, 255, 253, 0.72);
+}
+
+.hush-conversation-pane,
+.hush-message-pane {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.hush-conversation-pane {
+  border-right: 1px solid rgba(69, 113, 101, 0.14);
+  background: rgba(231, 248, 240, 0.36);
+}
+
+.hush-contact-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.hush-contact-row {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) 36px;
+  align-items: center;
+  border-bottom: 1px solid rgba(69, 113, 101, 0.11);
+  cursor: pointer;
+}
+
+.hush-contact-row:hover {
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.hush-contact-row.is-selected {
+  background: rgba(206, 239, 224, 0.64);
+  box-shadow: inset 3px 0 #4d9b7f;
+}
+
+.hush-contact-select {
+  display: grid;
+  min-width: 0;
+  min-height: 78px;
+  gap: 5px;
+  padding: 10px 7px 10px 12px;
+  border: 0;
+  background: transparent;
+  color: #2f3d39;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.hush-contact-heading {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.hush-contact-heading strong {
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hush-contact-heading time {
+  color: #7e8e88;
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.hush-unread-label,
+.hush-priority-label {
+  font-size: 9px;
+  font-weight: 750;
+}
+
+.hush-unread-label {
+  color: #a95520;
+}
+
+.hush-priority-label {
+  color: #b36a27;
+}
+
+.hush-contact-preview {
+  overflow: hidden;
+  color: #667872;
+  font-size: 10px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hush-contact-row.is-unread .hush-contact-preview {
+  color: #40564e;
+  font-weight: 650;
+}
+
+.hush-star-button {
+  display: inline-grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #91a09b;
+  cursor: pointer;
+}
+
+.hush-star-button:hover {
+  background: rgba(255, 255, 255, 0.74);
+  color: #b9682b;
+}
+
+.hush-star-button.is-active {
+  color: #c56e25;
+}
+
+.hush-message-pane {
+  background: rgba(255, 255, 255, 0.34);
+}
+
+.hush-conversation-detail {
+  min-width: 0;
+  padding: 0 18px 20px;
+}
+
+.hush-conversation-header {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 0 12px;
+  border-bottom: 1px solid rgba(69, 113, 101, 0.13);
+  background: rgba(251, 255, 253, 0.94);
+}
+
+.hush-conversation-header > div {
+  min-width: 0;
+}
+
+.hush-conversation-header h3 {
+  margin: 0 0 5px;
+  overflow: hidden;
+  color: #283733;
+  font-size: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hush-conversation-header > span,
+.hush-conversation-header .hush-contact-sources > span:not(.hush-platform-label) {
+  color: #7c8c86;
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.hush-message-groups {
+  display: grid;
+  gap: 18px;
+  padding-top: 16px;
+}
+
+.hush-message-group {
+  min-width: 0;
+}
+
+.hush-message-group > header {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px 8px;
+  margin-bottom: 5px;
+  color: #71827b;
+  font-size: 9px;
+}
+
+.hush-message-group > header strong {
+  color: #40534c;
+  font-size: 11px;
+}
+
+.hush-message-group > header time {
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.hush-message-lines {
+  padding-left: 10px;
+  border-left: 2px solid rgba(77, 155, 127, 0.24);
+}
+
+.hush-message-line {
+  min-width: 0;
+  padding: 7px 0;
+}
+
+.hush-message-line + .hush-message-line {
+  border-top: 1px solid rgba(69, 113, 101, 0.09);
+}
+
+.hush-message-line p {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: #33443e;
+  font-size: 12px;
+  line-height: 1.58;
+  white-space: pre-wrap;
+}
+
+.hush-message-warning {
+  margin-top: 5px;
+  color: #a95d24;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.hush-message-suggestion {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-left: 2px solid rgba(197, 110, 37, 0.46);
+  border-radius: 0 6px 6px 0;
+  background: rgba(255, 240, 222, 0.56);
+  color: #775234;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.hush-message-suggestion svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.hush-filter-empty,
+.hush-select-empty,
+.hush-empty-state {
+  padding: 32px 18px;
+  color: #788a83;
+  font-size: 11px;
+  text-align: center;
+}
+
+.hush-empty-state .hub-empty-desc {
+  max-width: 420px;
+  margin-right: auto;
+  margin-left: auto;
+}
+
+@keyframes hush-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 800px) {
+  .hush-inbox-workspace {
+    height: auto;
+    min-height: 620px;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .hush-conversation-pane {
+    max-height: 240px;
+    border-right: 0;
+    border-bottom: 1px solid rgba(69, 113, 101, 0.14);
+  }
+
+  .hush-message-pane {
+    min-height: 380px;
+    max-height: 540px;
+  }
+}
+
+@media (max-width: 600px) {
+  .hush-status-area > summary {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 4px 8px;
+  }
+
+  .hush-status-summary-meta {
+    grid-column: 1;
+    grid-row: 2;
+    text-align: left;
+  }
+
+  .hush-status-chevron {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+  }
+
+  .hush-truth-row,
+  .hush-conversation-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .hush-connector-row {
+    grid-template-columns: minmax(0, 1fr) 32px;
+  }
+
+  .hush-connector-row > .hush-platform-label {
+    grid-column: 1;
+  }
+
+  .hush-connector-row > div {
+    grid-column: 1;
+  }
+
+  .hush-connector-row > .hush-icon-button {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+  }
+
+  .hush-connector-state {
+    grid-column: 2;
+    grid-row: 3;
+  }
+
+  .hush-status-row {
+    grid-template-columns: 10px minmax(0, 1fr);
+  }
+
+  .hush-status-row > .hush-status-action,
+  .hush-status-actions {
+    grid-column: 2;
+    justify-content: flex-start;
+  }
+
+  .hush-live-debug-content {
+    padding-left: 0;
+  }
+
+  .hush-live-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .hush-live-row > span:not(.hush-platform-label),
+  .hush-live-row small {
+    grid-column: 1 / -1;
+  }
+
+  .hush-conversation-detail {
+    padding-right: 12px;
+    padding-left: 12px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hush-status-chevron,
+  .hush-live-debug summary svg {
+    transition: none;
+  }
+
+  .hush-status-action .is-spinning {
+    animation: none;
+  }
+}
