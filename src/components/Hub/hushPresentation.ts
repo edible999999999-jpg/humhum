@@ -41,6 +41,11 @@ export interface HushConversationState {
   readThrough: Record<string, string>;
 }
 
+export interface HushPlatformIdentity {
+  key: "dingtalk" | "wechat" | "other";
+  label: string;
+}
+
 const EMPTY_HUSH_CONVERSATION_STATE: HushConversationState = {
   attentionIds: [],
   readThrough: {},
@@ -59,7 +64,10 @@ export function compareHushContacts(
 }
 
 export function getHushConversationIdentity(
-  message: Pick<HushInboxMessage, "platform" | "sender" | "chat" | "source_id" | "raw">,
+  message: Pick<
+    HushInboxMessage,
+    "platform" | "sender" | "chat" | "source_id" | "raw"
+  >,
 ): { id: string; name: string } {
   const isDwsMessage =
     message.source_id?.startsWith("dws:") || message.raw?.source === "dws";
@@ -84,25 +92,17 @@ export function getHushConversationIdentity(
   };
 }
 
-export function groupHushMessages(messages: HushInboxMessage[]): HushMessageGroup[] {
-  const chronological = messages
-    .map((message, index) => ({ message, index }))
-    .sort((a, b) => {
-      const aTime = Date.parse(a.message.received_at);
-      const bTime = Date.parse(b.message.received_at);
-      if (Number.isFinite(aTime) && Number.isFinite(bTime) && aTime !== bTime) {
-        return aTime - bTime;
-      }
-      if (Number.isFinite(aTime) !== Number.isFinite(bTime)) {
-        return Number.isFinite(aTime) ? -1 : 1;
-      }
-      return a.index - b.index;
-    })
-    .map(({ message }) => message);
+export function groupHushMessages(
+  messages: HushInboxMessage[],
+): HushMessageGroup[] {
+  const chronological = orderHushMessages(messages);
 
   return chronological.reduce<HushMessageGroup[]>((groups, message) => {
     const previous = groups[groups.length - 1];
-    if (previous?.sender === message.sender && previous.platform === message.platform) {
+    if (
+      previous?.sender === message.sender &&
+      previous.platform === message.platform
+    ) {
       previous.messages.push(message);
       previous.endedAt = message.received_at;
       return groups;
@@ -125,15 +125,34 @@ export function isHushContactUnread(
   contact: DerivedContact,
   state: HushConversationState,
 ): boolean {
-  const readThrough = state.readThrough[contact.id];
-  if (!readThrough) return true;
+  return getHushUnreadCount(contact, state) > 0;
+}
 
-  const latestTime = Date.parse(contact.lastMessageTime);
-  const readTime = Date.parse(readThrough);
-  if (Number.isFinite(latestTime) && Number.isFinite(readTime)) {
-    return latestTime > readTime;
+export function getHushUnreadCount(
+  contact: DerivedContact,
+  state: HushConversationState,
+): number {
+  const readThrough = state.readThrough[contact.id];
+  if (!readThrough) return contact.messages.length;
+
+  const chronological = orderHushMessages(contact.messages);
+  const readTime = parseHushTimestamp(readThrough);
+  if (readTime !== null) {
+    return chronological.filter((message) => {
+      const messageTime = parseHushTimestamp(message.received_at);
+      return messageTime === null || messageTime > readTime;
+    }).length;
   }
-  return contact.lastMessageTime > readThrough;
+
+  let lastReadIndex = -1;
+  chronological.forEach((message, index) => {
+    if (message.received_at === readThrough) {
+      lastReadIndex = index;
+    }
+  });
+  return lastReadIndex >= 0
+    ? chronological.length - lastReadIndex - 1
+    : chronological.length;
 }
 
 export function filterHushContacts(
@@ -151,7 +170,31 @@ export function filterHushContacts(
   return contacts;
 }
 
-export function parseHushConversationState(raw: string | null): HushConversationState {
+export function resolveHushSelectedContact(
+  contacts: DerivedContact[],
+  selectedId: string | null,
+): DerivedContact | null {
+  return selectedId
+    ? (contacts.find((contact) => contact.id === selectedId) ?? null)
+    : null;
+}
+
+export function getHushPlatformIdentity(
+  platform: string,
+): HushPlatformIdentity {
+  const normalized = platform.toLowerCase();
+  if (normalized.includes("dingtalk") || normalized === "钉钉") {
+    return { key: "dingtalk", label: "钉钉" };
+  }
+  if (normalized.includes("wechat") || normalized === "微信") {
+    return { key: "wechat", label: "WeChat" };
+  }
+  return { key: "other", label: platform };
+}
+
+export function parseHushConversationState(
+  raw: string | null,
+): HushConversationState {
   if (!raw) return { ...EMPTY_HUSH_CONVERSATION_STATE, readThrough: {} };
 
   try {
@@ -180,7 +223,9 @@ export function parseHushConversationState(raw: string | null): HushConversation
   }
 }
 
-export function serializeHushConversationState(state: HushConversationState): string {
+export function serializeHushConversationState(
+  state: HushConversationState,
+): string {
   return JSON.stringify({
     version: 1,
     attentionIds: Array.from(new Set(state.attentionIds)),
@@ -190,4 +235,33 @@ export function serializeHushConversationState(state: HushConversationState): st
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function orderHushMessages(messages: HushInboxMessage[]): HushInboxMessage[] {
+  return messages
+    .map((message, index) => ({ message, index }))
+    .sort((a, b) => {
+      const aTime = parseHushTimestamp(a.message.received_at);
+      const bTime = parseHushTimestamp(b.message.received_at);
+      if (aTime !== null && bTime !== null && aTime !== bTime) {
+        return aTime - bTime;
+      }
+      if ((aTime !== null) !== (bTime !== null)) {
+        return aTime !== null ? -1 : 1;
+      }
+      return a.index - b.index;
+    })
+    .map(({ message }) => message);
+}
+
+function parseHushTimestamp(value: string): number | null {
+  if (
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(
+      value,
+    )
+  ) {
+    return null;
+  }
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }

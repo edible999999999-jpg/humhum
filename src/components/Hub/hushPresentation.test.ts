@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   filterHushContacts,
+  getHushUnreadCount,
   groupHushMessages,
   isHushContactUnread,
   parseHushConversationState,
+  resolveHushSelectedContact,
   serializeHushConversationState,
   type DerivedContact,
   type HushConversationState,
@@ -54,7 +56,11 @@ describe("groupHushMessages", () => {
     ]);
 
     expect(groups).toHaveLength(1);
-    expect(groups[0]!.messages.map(({ id }) => id)).toEqual(["first", "second", "third"]);
+    expect(groups[0]!.messages.map(({ id }) => id)).toEqual([
+      "first",
+      "second",
+      "third",
+    ]);
     expect(groups[0]!.startedAt).toBe("2026-07-18T01:00:00Z");
     expect(groups[0]!.endedAt).toBe("2026-07-18T03:00:00Z");
   });
@@ -88,13 +94,37 @@ describe("groupHushMessages", () => {
       ["成员乙", "wechat"],
     ]);
   });
+
+  it("orders invalid timestamps after valid timestamps and keeps their input order", () => {
+    const groups = groupHushMessages([
+      message("invalid-first", "not-a-time-1"),
+      message("valid-later", "2026-07-18T03:00:00Z"),
+      message("invalid-second", "not-a-time-2"),
+      message("valid-earlier", "2026-07-18T01:00:00Z"),
+    ]);
+
+    expect(
+      groups.flatMap((group) => group.messages.map(({ id }) => id)),
+    ).toEqual([
+      "valid-earlier",
+      "valid-later",
+      "invalid-first",
+      "invalid-second",
+    ]);
+  });
 });
 
 describe("Hush conversation filters", () => {
   const contacts = [
-    contact("attention", "2026-07-18T03:00:00Z"),
-    contact("read", "2026-07-18T02:00:00Z"),
-    contact("unread", "2026-07-18T01:00:00Z"),
+    contact("attention", "2026-07-18T03:00:00Z", [
+      message("attention-message", "2026-07-18T03:00:00Z"),
+    ]),
+    contact("read", "2026-07-18T02:00:00Z", [
+      message("read-message", "2026-07-18T02:00:00Z"),
+    ]),
+    contact("unread", "2026-07-18T01:00:00Z", [
+      message("unread-message", "2026-07-18T01:00:00Z"),
+    ]),
   ];
   const state: HushConversationState = {
     attentionIds: ["attention"],
@@ -105,28 +135,102 @@ describe("Hush conversation filters", () => {
   };
 
   it("filters all, special-attention, and unread contacts without changing order", () => {
-    expect(filterHushContacts(contacts, "all", state).map(({ id }) => id)).toEqual([
-      "attention",
-      "read",
-      "unread",
-    ]);
-    expect(filterHushContacts(contacts, "attention", state).map(({ id }) => id)).toEqual([
-      "attention",
-    ]);
-    expect(filterHushContacts(contacts, "unread", state).map(({ id }) => id)).toEqual([
-      "unread",
-    ]);
+    expect(
+      filterHushContacts(contacts, "all", state).map(({ id }) => id),
+    ).toEqual(["attention", "read", "unread"]);
+    expect(
+      filterHushContacts(contacts, "attention", state).map(({ id }) => id),
+    ).toEqual(["attention"]);
+    expect(
+      filterHushContacts(contacts, "unread", state).map(({ id }) => id),
+    ).toEqual(["unread"]);
   });
 
   it("treats a conversation as unread only when its latest message is after read-through", () => {
     expect(isHushContactUnread(contacts[0]!, state)).toBe(false);
     expect(isHushContactUnread(contacts[2]!, state)).toBe(true);
     expect(
-      isHushContactUnread(contact("newer", "2026-07-18T04:00:00Z"), {
-        attentionIds: [],
-        readThrough: { newer: "2026-07-18T03:00:00Z" },
-      }),
+      isHushContactUnread(
+        contact("newer", "2026-07-18T04:00:00Z", [
+          message("newer-message", "2026-07-18T04:00:00Z"),
+        ]),
+        {
+          attentionIds: [],
+          readThrough: { newer: "2026-07-18T03:00:00Z" },
+        },
+      ),
     ).toBe(true);
+  });
+
+  it("counts zero, one, multiple, or all unread messages", () => {
+    const messages = [
+      message("one", "2026-07-18T01:00:00Z"),
+      message("two", "2026-07-18T02:00:00Z"),
+      message("three", "2026-07-18T03:00:00Z"),
+    ];
+    const counted = contact("counted", "2026-07-18T03:00:00Z", messages);
+
+    expect(
+      getHushUnreadCount(counted, {
+        attentionIds: [],
+        readThrough: { counted: "2026-07-18T03:00:00Z" },
+      }),
+    ).toBe(0);
+    expect(
+      getHushUnreadCount(counted, {
+        attentionIds: [],
+        readThrough: { counted: "2026-07-18T02:00:00Z" },
+      }),
+    ).toBe(1);
+    expect(
+      getHushUnreadCount(counted, {
+        attentionIds: [],
+        readThrough: { counted: "2026-07-18T01:00:00Z" },
+      }),
+    ).toBe(2);
+    expect(
+      getHushUnreadCount(counted, {
+        attentionIds: [],
+        readThrough: {},
+      }),
+    ).toBe(3);
+  });
+
+  it("uses deterministic conservative unread counts for invalid timestamps", () => {
+    const messages = [
+      message("valid-earlier", "2026-07-18T01:00:00Z"),
+      message("invalid-first", "not-a-time-1"),
+      message("valid-later", "2026-07-18T02:00:00Z"),
+      message("invalid-second", "not-a-time-2"),
+    ];
+    const counted = contact("invalid", "not-a-time-2", messages);
+
+    expect(
+      getHushUnreadCount(counted, {
+        attentionIds: [],
+        readThrough: { invalid: "2026-07-18T02:00:00Z" },
+      }),
+    ).toBe(2);
+    expect(
+      getHushUnreadCount(counted, {
+        attentionIds: [],
+        readThrough: { invalid: "not-a-time-1" },
+      }),
+    ).toBe(1);
+    expect(
+      getHushUnreadCount(counted, {
+        attentionIds: [],
+        readThrough: { invalid: "unknown-marker" },
+      }),
+    ).toBe(4);
+  });
+
+  it("resolves selection from all contacts even when the active filter hides it", () => {
+    const selected = contacts[1]!;
+    const unreadContacts = filterHushContacts(contacts, "unread", state);
+
+    expect(unreadContacts).not.toContain(selected);
+    expect(resolveHushSelectedContact(contacts, selected.id)).toBe(selected);
   });
 });
 

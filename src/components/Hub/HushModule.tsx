@@ -17,9 +17,11 @@ import {
   compareHushContacts,
   filterHushContacts,
   getHushConversationIdentity,
+  getHushPlatformIdentity,
+  getHushUnreadCount,
   groupHushMessages,
-  isHushContactUnread,
   parseHushConversationState,
+  resolveHushSelectedContact,
   serializeHushConversationState,
   type DerivedContact,
   type HushConversationState,
@@ -33,7 +35,7 @@ export {
 } from "./hushPresentation";
 
 const TIER_ORDER: string[] = ["family", "friends", "work"];
-const HUSH_CONVERSATION_STATE_KEY = "humhum:hush:conversation-state:v1";
+export const HUSH_CONVERSATION_STATE_KEY = "humhum:hush:conversation-state:v1";
 
 interface HushConnectorStatus {
   id: string;
@@ -504,9 +506,7 @@ export function HushModule() {
     () => filterHushContacts(contacts, filter, conversationState),
     [contacts, conversationState, filter],
   );
-  const selectedContact = selectedId
-    ? (contacts.find((contact) => contact.id === selectedId) ?? null)
-    : null;
+  const selectedContact = resolveHushSelectedContact(contacts, selectedId);
   const healthSource = useMemo(
     () => deriveHushHealthSource(healthSignals),
     [healthSignals],
@@ -617,14 +617,14 @@ export function HushModule() {
             {filteredContacts.length > 0 ? (
               <ul className="hush-contact-list">
                 {filteredContacts.map((contact) => (
-                  <ContactRow
+                  <HushContactRow
                     key={contact.id}
                     contact={contact}
                     selected={selectedId === contact.id}
                     attention={conversationState.attentionIds.includes(
                       contact.id,
                     )}
-                    unread={isHushContactUnread(contact, conversationState)}
+                    unreadCount={getHushUnreadCount(contact, conversationState)}
                     onSelect={() => selectContact(contact)}
                     onToggleAttention={() => toggleAttention(contact.id)}
                   />
@@ -862,7 +862,7 @@ function NotificationBridgePanel({
         </span>
         <div className="hush-source-labels">
           {(status?.supported_apps ?? ["WeChat", "钉钉"]).map((app) => (
-            <PlatformLabel key={app} platform={app} />
+            <HushPlatformLabel key={app} platform={app} />
           ))}
         </div>
       </div>
@@ -1366,7 +1366,7 @@ function LiveInboxPanel({
           <div className="hush-live-list">
             {messages.slice(0, 8).map((message) => (
               <div className="hush-live-row" key={message.id}>
-                <PlatformLabel platform={message.platform} />
+                <HushPlatformLabel platform={message.platform} />
                 <strong>{message.sender}</strong>
                 <span>{message.text}</span>
                 {message.preview_limited && (
@@ -1398,6 +1398,7 @@ function HushConnectorRow({
   onOpen: () => void;
 }) {
   const sourceActive = dwsActive || notificationActive;
+  const connectorIdentity = getHushPlatformIdentity(connector.name);
   const statusLabel = dwsActive
     ? "DWS 已连接"
     : notificationActive
@@ -1410,9 +1411,9 @@ function HushConnectorRow({
 
   return (
     <div className="hush-connector-row">
-      <PlatformLabel platform={connector.id} />
+      <HushPlatformLabel platform={connector.id} />
       <div>
-        <strong>{getPlatformLabel(connector.name)}</strong>
+        <strong>{connectorIdentity.label}</strong>
         <span>
           {statusLabel} · {connector.status}
         </span>
@@ -1428,8 +1429,8 @@ function HushConnectorRow({
         className="hush-icon-button"
         onClick={onOpen}
         disabled={busy || !connector.installed}
-        aria-label={`打开${getPlatformLabel(connector.name)}`}
-        title={`打开${getPlatformLabel(connector.name)}`}
+        aria-label={`打开${connectorIdentity.label}`}
+        title={`打开${connectorIdentity.label}`}
       >
         <ExternalLink size={15} aria-hidden="true" />
       </button>
@@ -1442,22 +1443,23 @@ function HushConnectorRow({
   );
 }
 
-function ContactRow({
+export function HushContactRow({
   contact,
   selected,
   attention,
-  unread,
+  unreadCount,
   onSelect,
   onToggleAttention,
 }: {
   contact: DerivedContact;
   selected: boolean;
   attention: boolean;
-  unread: boolean;
+  unreadCount: number;
   onSelect: () => void;
   onToggleAttention: () => void;
 }) {
   const isPriority = contact.importance >= 4;
+  const unread = unreadCount > 0;
 
   return (
     <li
@@ -1487,9 +1489,16 @@ function ContactRow({
         </span>
         <span className="hush-contact-sources">
           {contact.platforms.map((platform) => (
-            <PlatformLabel key={platform} platform={platform} />
+            <HushPlatformLabel key={platform} platform={platform} />
           ))}
-          {unread && <span className="hush-unread-label">未读</span>}
+          {unread && (
+            <span
+              className="hush-unread-label"
+              aria-label={`${unreadCount} 条未读`}
+            >
+              {unreadCount} 条未读
+            </span>
+          )}
           {isPriority && <span className="hush-priority-label">重点</span>}
         </span>
         <span className="hush-contact-preview">{contact.lastMessage}</span>
@@ -1528,7 +1537,7 @@ function ConversationDetail({ contact }: { contact: DerivedContact }) {
           <h3>{contact.name}</h3>
           <div className="hush-contact-sources">
             {contact.platforms.map((platform) => (
-              <PlatformLabel key={platform} platform={platform} />
+              <HushPlatformLabel key={platform} platform={platform} />
             ))}
             <span>
               {contact.tier} · P{contact.importance}
@@ -1545,7 +1554,7 @@ function ConversationDetail({ contact }: { contact: DerivedContact }) {
           <section className="hush-message-group" key={group.id}>
             <header>
               <strong>{group.sender}</strong>
-              <PlatformLabel platform={group.platform} />
+              <HushPlatformLabel platform={group.platform} />
               {group.chat && <span>{group.chat}</span>}
               <time dateTime={group.startedAt}>
                 {formatGroupTime(group.startedAt, group.endedAt)}
@@ -1579,29 +1588,14 @@ function ConversationDetail({ contact }: { contact: DerivedContact }) {
   );
 }
 
-function PlatformLabel({ platform }: { platform: string }) {
-  const platformKey = getPlatformKey(platform);
+export function HushPlatformLabel({ platform }: { platform: string }) {
+  const identity = getHushPlatformIdentity(platform);
   return (
-    <span className={`hush-platform-label is-${platformKey}`}>
+    <span className={`hush-platform-label is-${identity.key}`}>
       <span aria-hidden="true" />
-      {getPlatformLabel(platform)}
+      {identity.label}
     </span>
   );
-}
-
-function getPlatformKey(platform: string): "dingtalk" | "wechat" | "other" {
-  const normalized = platform.toLowerCase();
-  if (normalized.includes("dingtalk") || normalized === "钉钉")
-    return "dingtalk";
-  if (normalized.includes("wechat") || normalized === "微信") return "wechat";
-  return "other";
-}
-
-function getPlatformLabel(platform: string): string {
-  const key = getPlatformKey(platform);
-  if (key === "dingtalk") return "钉钉";
-  if (key === "wechat") return "WeChat";
-  return platform;
 }
 
 function readStoredConversationState(): HushConversationState {
