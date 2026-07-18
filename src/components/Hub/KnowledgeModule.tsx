@@ -1,6 +1,12 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { RefreshCw, Search } from "lucide-react";
 import type { AgentAsset, AgentRule, AppConfig, KnowledgeData, ObsidianNote, Preference } from "@/types";
+import {
+  filterAgentAssets,
+  getAgentAssetSummary,
+  type AgentAssetScope,
+} from "./knowledgePresentation";
 
 const CATEGORIES = ["coding_style", "tools", "workflow", "communication", "other"];
 
@@ -143,6 +149,7 @@ export function KnowledgeModule() {
   const [vaultPath, setVaultPath] = useState("");
   const [vaultError, setVaultError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [assetScope, setAssetScope] = useState<AgentAssetScope>("mine");
   const [reviewEngine, setReviewEngine] = useState<ReviewEngineState>({
     codex: null,
     hooks: {},
@@ -335,16 +342,33 @@ export function KnowledgeModule() {
 
   const notes = data.obsidian_notes || [];
   const assets = data.agent_assets || [];
+  const normalizedQuery = searchQuery.trim().toLowerCase();
   const filteredNotes = notes.filter((note) => {
-    const query = searchQuery.trim().toLowerCase();
-    if (!query) return true;
+    if (!normalizedQuery) return true;
     return (
-      note.title.toLowerCase().includes(query) ||
-      note.relative_path.toLowerCase().includes(query) ||
-      note.note_type.toLowerCase().includes(query) ||
-      note.excerpt.toLowerCase().includes(query) ||
-      note.tags.some((tag) => tag.toLowerCase().includes(query))
+      note.title.toLowerCase().includes(normalizedQuery) ||
+      note.relative_path.toLowerCase().includes(normalizedQuery) ||
+      note.note_type.toLowerCase().includes(normalizedQuery) ||
+      note.excerpt.toLowerCase().includes(normalizedQuery) ||
+      note.tags.some((tag) => tag.toLowerCase().includes(normalizedQuery))
     );
+  });
+  const filteredPreferences = data.preferences.filter((preference) => {
+    if (!normalizedQuery) return true;
+    return [
+      preference.category,
+      preference.content,
+      preference.source,
+    ].some((value) => value.toLowerCase().includes(normalizedQuery));
+  });
+  const filteredRules = data.agent_rules.filter((rule) => {
+    if (!normalizedQuery) return true;
+    return [
+      rule.agent_id,
+      rule.rule_type,
+      rule.file_path,
+      rule.content,
+    ].some((value) => value.toLowerCase().includes(normalizedQuery));
   });
 
   const typeCounts = notes.reduce<Record<string, number>>((acc, note) => {
@@ -353,29 +377,128 @@ export function KnowledgeModule() {
   }, {});
   const hotCount = notes.filter((note) => note.memory_temperature === "hot").length;
   const coldCount = notes.length - hotCount;
-  const assetTypeCounts = assets.reduce<Record<string, number>>((acc, asset) => {
+  const scopedAssets = filterAgentAssets(assets, assetScope, "");
+  const assetTypeCounts = scopedAssets.reduce<Record<string, number>>((acc, asset) => {
     acc[asset.asset_type] = (acc[asset.asset_type] || 0) + 1;
     return acc;
   }, {});
-  const filteredAssets = assets.filter((asset) => {
-    const query = searchQuery.trim().toLowerCase();
-    if (!query) return true;
-    return (
-      asset.name.toLowerCase().includes(query) ||
-      asset.asset_type.toLowerCase().includes(query) ||
-      asset.agent_id.toLowerCase().includes(query) ||
-      asset.relative_path.toLowerCase().includes(query) ||
-      asset.content.toLowerCase().includes(query) ||
-      asset.tags.some((tag) => tag.toLowerCase().includes(query))
-    );
-  });
+  const filteredAssets = filterAgentAssets(assets, assetScope, searchQuery);
+  const refreshBusy =
+    (activeTab === "assets" && scanningAssets) ||
+    (activeTab === "rules" && scanning) ||
+    (activeTab === "obsidian" && scanningVault);
+  const refreshDisabled =
+    refreshBusy || (activeTab === "obsidian" && !vaultPath.trim());
+  const refreshLabel =
+    activeTab === "assets"
+      ? "扫描 Agent 资产"
+      : activeTab === "rules"
+        ? "扫描 Agent 规则"
+        : activeTab === "obsidian"
+          ? "刷新 Obsidian 索引"
+          : "刷新偏好";
+
+  const handleActiveRefresh = () => {
+    if (activeTab === "assets") {
+      void handleScanAssets();
+    } else if (activeTab === "rules") {
+      void handleScan();
+    } else if (activeTab === "obsidian") {
+      void handleScanVault();
+    } else {
+      void fetchData();
+    }
+  };
 
   return (
-    <div className="hub-module">
-      <h2 className="hub-module-title">Hype — Personal Agent Knowledge Base</h2>
-      <p className="hub-module-desc" style={{ marginBottom: 14 }}>
-        Connect your Obsidian vault, agent rules, preferences, skills, and memories into reusable personal context.
-      </p>
+    <div className="hub-module hype-room-module">
+      <header className="hype-heading">
+        <h2 className="hub-module-title">Hype 知识库</h2>
+        <p className="hub-module-desc">我安装和创建的技能、规则与记忆</p>
+      </header>
+
+      <div className="hype-search-toolbar">
+        <label className="hype-search-field">
+          <Search size={18} strokeWidth={1.8} aria-hidden="true" />
+          <span className="sr-only">搜索 Hype 知识库</span>
+          <input
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            placeholder="搜索技能、规则、偏好与记忆"
+          />
+        </label>
+        <button
+          type="button"
+          className="hype-refresh-button"
+          onClick={handleActiveRefresh}
+          disabled={refreshDisabled}
+          aria-label={refreshLabel}
+          title={refreshLabel}
+        >
+          <RefreshCw
+            size={18}
+            strokeWidth={1.8}
+            className={refreshBusy ? "is-spinning" : undefined}
+            aria-hidden="true"
+          />
+        </button>
+      </div>
+
+      {activeTab === "assets" && (assetError || assetScanSummary) && (
+        <div className={`hype-toolbar-status ${assetError ? "is-error" : ""}`}>
+          {assetError || assetScanSummary}
+        </div>
+      )}
+      {activeTab === "obsidian" && (vaultError || data.obsidian_vault?.last_indexed_at) && (
+        <div className={`hype-toolbar-status ${vaultError ? "is-error" : ""}`}>
+          {vaultError ||
+            `上次索引：${new Date(data.obsidian_vault.last_indexed_at!).toLocaleString()}`}
+        </div>
+      )}
+
+      <div className="hype-primary-controls">
+        <div className="hype-tabs" role="tablist" aria-label="Hype 知识视图">
+          {(["assets", "preferences", "rules", "obsidian"] as Tab[]).map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              role="tab"
+              aria-selected={activeTab === tab}
+              className={activeTab === tab ? "is-active" : undefined}
+              onClick={() => setActiveTab(tab)}
+            >
+              {tab === "assets"
+                ? `我的技能 ${scopedAssets.length}`
+                : tab === "preferences"
+                  ? `我的偏好 ${data.preferences.length}`
+                  : tab === "rules"
+                    ? `我的规则 ${data.agent_rules.length}`
+                    : `记忆 ${notes.length}`}
+            </button>
+          ))}
+        </div>
+
+        {activeTab === "assets" && (
+          <div className="hype-scope-control" aria-label="Agent 资产范围">
+            <button
+              type="button"
+              className={assetScope === "mine" ? "is-active" : undefined}
+              aria-pressed={assetScope === "mine"}
+              onClick={() => setAssetScope("mine")}
+            >
+              我安装和创建的
+            </button>
+            <button
+              type="button"
+              className={assetScope === "all" ? "is-active" : undefined}
+              aria-pressed={assetScope === "all"}
+              onClick={() => setAssetScope("all")}
+            >
+              全部扫描结果
+            </button>
+          </div>
+        )}
+      </div>
 
       <ReviewEnginePanel
         assetsCount={assets.length}
@@ -394,172 +517,83 @@ export function KnowledgeModule() {
         onSaveCustomReviewer={handleSaveCustomReviewer}
       />
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "minmax(0, 1fr) auto",
-          gap: 12,
-          alignItems: "center",
-          padding: 14,
-          borderRadius: 8,
-          background: "linear-gradient(135deg, rgba(148,239,244,0.08), rgba(167,139,250,0.05))",
-          border: "1px solid rgba(148,239,244,0.16)",
-          marginBottom: 14,
-        }}
-      >
-        <div>
-          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.82)", fontWeight: 750 }}>
-            Agent Asset Connector
-          </div>
-          <div style={{ marginTop: 4, fontSize: 11, color: "rgba(255,255,255,0.42)", lineHeight: 1.45 }}>
-            Hype 只负责扫描证据；哪些真的有用，需要借用一个已连接的 AI 助手来判断。
-          </div>
-        </div>
-        <button
-          className="kawaii-save-btn"
-          onClick={() => setActiveTab("assets")}
-          style={{ minWidth: 116, padding: "8px 12px", fontSize: 12 }}
-        >
-          Scan Assets
-        </button>
-      </div>
-
-      {/* Tabs */}
-      <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
-        {(["assets", "preferences", "rules", "obsidian"] as Tab[]).map((tab) => (
-          <button
-            key={tab}
-            className={`kawaii-tab ${activeTab === tab ? "active" : ""}`}
-            onClick={() => setActiveTab(tab)}
-          >
-            {tab === "assets"
-              ? `Assets (${assets.length})`
-              : tab === "preferences"
-                ? `偏好 (${data.preferences.length})`
-                : tab === "rules"
-                  ? `规则 (${data.agent_rules.length})`
-                  : `Obsidian (${notes.length})`}
-          </button>
-        ))}
-      </div>
-
       {/* Agent assets tab */}
       {activeTab === "assets" && (
-        <div>
-          <div
-            style={{
-              padding: 14,
-              borderRadius: 14,
-              background: "rgba(255,255,255,0.025)",
-              border: "1px solid rgba(148,239,244,0.12)",
-              marginBottom: 12,
-            }}
-          >
-            <label className="kawaii-label">Agent asset roots</label>
-            <button
-              onClick={() => setAssetRoots(DEFAULT_ASSET_ROOTS)}
-              className="kawaii-tab"
-              style={{ marginTop: 8, marginBottom: 8, padding: "6px 10px", fontSize: 11 }}
-            >
-              Use recommended roots
-            </button>
-            <textarea
-              value={assetRoots}
-              onChange={(e) => setAssetRoots(e.target.value)}
-              className="kawaii-input"
-              style={{ minHeight: 96, resize: "vertical", marginTop: 8, fontFamily: "monospace", fontSize: 11 }}
-            />
-            <button
-              onClick={handleScanAssets}
-              disabled={scanningAssets}
-              className="kawaii-save-btn"
-              style={{ width: "100%", padding: 9, fontSize: 12, marginTop: 10 }}
-            >
-              {scanningAssets ? "Scanning..." : "Scan and merge skill / agent / soul / memory"}
-            </button>
-            <button
-              onClick={handleDiagnoseAssets}
-              disabled={scanningAssets}
-              className="kawaii-tab"
-              style={{ width: "100%", padding: 8, fontSize: 11, marginTop: 8 }}
-            >
-              Diagnose scan roots
-            </button>
-            {assetError && (
-              <div style={{ marginTop: 8, fontSize: 11, color: "#fb7185" }}>
-                {assetError}
-              </div>
-            )}
-            {assetScanSummary && (
-              <div style={{ marginTop: 8, fontSize: 11, color: "rgba(148,239,244,0.78)", fontWeight: 700 }}>
-                {assetScanSummary}
-              </div>
-            )}
-            {assetDiagnostics.length > 0 && (
-              <div style={{ display: "grid", gap: 6, marginTop: 10 }}>
-                {assetDiagnostics.map((item) => (
-                  <div
-                    key={item.path}
-                    style={{
-                      padding: 8,
-                      borderRadius: 8,
-                      background: "rgba(0,0,0,0.18)",
-                      border: "1px solid rgba(255,255,255,0.08)",
-                      fontSize: 10,
-                      color: "rgba(255,255,255,0.58)",
-                    }}
-                  >
-                    <div style={{ color: item.exists && item.is_dir ? "#94eff4" : "#fb7185", fontWeight: 750 }}>
-                      {item.raw_path} · {item.exists && item.is_dir ? "ready" : "not found"}
-                    </div>
-                    <div style={{ marginTop: 3 }}>
-                      candidates {item.candidate_count} · SKILL.md {item.skill_count}
-                    </div>
-                    {item.sample_paths.length > 0 && (
-                      <div style={{ marginTop: 4, fontFamily: "monospace", opacity: 0.7 }}>
-                        {item.sample_paths.slice(0, 2).map((sample) => (
-                          <div key={sample}>{sample}</div>
-                        ))}
-                      </div>
-                    )}
-                    {item.error && <div style={{ marginTop: 4, color: "#fb7185" }}>{item.error}</div>}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginBottom: 12 }}>
-            <KnowledgeStat label="skills" value={assetTypeCounts.skill || 0} color="#60a5fa" />
-            <KnowledgeStat label="agents" value={assetTypeCounts.agent || 0} color="#a78bfa" />
-            <KnowledgeStat label="memory+soul" value={(assetTypeCounts.memory || 0) + (assetTypeCounts.soul || 0)} color="#fbbf24" />
-          </div>
-
-          <input
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="搜索 skill、agent、soul、memory、rules..."
-            className="kawaii-input"
-            style={{ marginBottom: 10 }}
-          />
-
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
+        <div className="hype-inventory">
+          <div className="hype-inventory-summary">
+            <span>{filteredAssets.length} 项</span>
             {Object.entries(assetTypeCounts).map(([type, count]) => (
-              <span key={type} className="kawaii-badge">
-                {type} {count}
-              </span>
+              <span key={type}>{type} {count}</span>
             ))}
           </div>
 
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div className="hype-asset-list">
+            <div className="hype-asset-list-header" aria-hidden="true">
+              <span>名称</span>
+              <span>来源 / Agent</span>
+              <span>类型</span>
+              <span>更新时间</span>
+            </div>
             {filteredAssets.length === 0 ? (
-              <div style={{ padding: 24, textAlign: "center", color: "rgba(255,255,255,0.25)", fontSize: 13 }}>
-                点击扫描后，Hype 会把本地 Agent 资产合并到这里。
+              <div className="hype-empty-state">
+                {assets.length === 0
+                  ? "刷新后，Hype 会把本地 Agent 资产整理到这里。"
+                  : "当前范围里没有匹配的资产。"}
               </div>
             ) : (
-              filteredAssets.map((asset) => <AgentAssetCard key={asset.id} asset={asset} />)
+              filteredAssets.map((asset) => (
+                <AgentAssetRow key={asset.id} asset={asset} />
+              ))
             )}
           </div>
+
+          <details className="hype-asset-details">
+            <summary>高级扫描设置与诊断</summary>
+            <div className="hype-asset-details-content">
+              <label className="kawaii-label" htmlFor="hype-asset-roots">
+                Agent asset roots
+              </label>
+              <button
+                type="button"
+                onClick={() => setAssetRoots(DEFAULT_ASSET_ROOTS)}
+                className="kawaii-tab"
+              >
+                Use recommended roots
+              </button>
+              <textarea
+                id="hype-asset-roots"
+                value={assetRoots}
+                onChange={(event) => setAssetRoots(event.target.value)}
+                className="kawaii-input"
+              />
+              <button
+                type="button"
+                onClick={handleDiagnoseAssets}
+                disabled={scanningAssets}
+                className="kawaii-tab"
+              >
+                {scanningAssets ? "Diagnosing..." : "Diagnose scan roots"}
+              </button>
+              {assetDiagnostics.length > 0 && (
+                <div className="hype-diagnostics">
+                  {assetDiagnostics.map((item) => (
+                    <div key={item.path} className="hype-diagnostic-row">
+                      <strong className={item.exists && item.is_dir ? "" : "is-error"}>
+                        {item.raw_path} · {item.exists && item.is_dir ? "ready" : "not found"}
+                      </strong>
+                      <span>
+                        candidates {item.candidate_count} · SKILL.md {item.skill_count}
+                      </span>
+                      {item.sample_paths.slice(0, 2).map((sample) => (
+                        <code key={sample}>{sample}</code>
+                      ))}
+                      {item.error && <span className="is-error">{item.error}</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </details>
         </div>
       )}
 
@@ -650,12 +684,12 @@ export function KnowledgeModule() {
 
           {/* Preference list */}
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {data.preferences.length === 0 ? (
+            {filteredPreferences.length === 0 ? (
               <div style={{ padding: 24, textAlign: "center", color: "rgba(255,255,255,0.25)", fontSize: 13 }}>
-                暂无偏好设置，点击上方按钮添加
+                {data.preferences.length === 0 ? "暂无偏好设置，点击上方按钮添加" : "没有匹配的偏好"}
               </div>
             ) : (
-              data.preferences.map((pref) => {
+              filteredPreferences.map((pref) => {
                 const color = CATEGORY_COLORS[pref.category] || "#94eff4";
                 return (
                   <div
@@ -773,33 +807,15 @@ export function KnowledgeModule() {
       {/* Rules tab */}
       {activeTab === "rules" && (
         <div>
-          <button
-            onClick={handleScan}
-            disabled={scanning}
-            style={{
-              width: "100%",
-              padding: "10px",
-              borderRadius: 12,
-              border: "1px solid rgba(148,239,244,0.15)",
-              background: "rgba(148,239,244,0.06)",
-              color: "rgba(148,239,244,0.8)",
-              fontSize: 12,
-              fontWeight: 600,
-              cursor: scanning ? "wait" : "pointer",
-              marginBottom: 12,
-              transition: "all 0.2s",
-            }}
-          >
-            {scanning ? "扫描中..." : "🔍 扫描 Agent 规则文件"}
-          </button>
-
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {data.agent_rules.length === 0 ? (
+            {filteredRules.length === 0 ? (
               <div style={{ padding: 24, textAlign: "center", color: "rgba(255,255,255,0.25)", fontSize: 13 }}>
-                暂无规则，点击扫描发现 CLAUDE.md / .cursorrules 等文件
+                {data.agent_rules.length === 0
+                  ? "点击刷新发现 CLAUDE.md / .cursorrules 等规则文件"
+                  : "没有匹配的规则"}
               </div>
             ) : (
-              data.agent_rules.map((rule) => (
+              filteredRules.map((rule) => (
                 <RuleCard key={rule.id} rule={rule} />
               ))
             )}
@@ -820,23 +836,13 @@ export function KnowledgeModule() {
             }}
           >
             <label className="kawaii-label">Obsidian Vault</label>
-            <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-              <input
-                value={vaultPath}
-                onChange={(e) => setVaultPath(e.target.value)}
-                placeholder="~/Documents/My Vault"
-                className="kawaii-input"
-                style={{ flex: 1, minWidth: 0 }}
-              />
-              <button
-                onClick={handleScanVault}
-                disabled={scanningVault || !vaultPath.trim()}
-                className="kawaii-save-btn"
-                style={{ width: 88, padding: 8, fontSize: 12 }}
-              >
-                {scanningVault ? "刷新中" : "刷新"}
-              </button>
-            </div>
+            <input
+              value={vaultPath}
+              onChange={(e) => setVaultPath(e.target.value)}
+              placeholder="~/Documents/My Vault"
+              className="kawaii-input"
+              style={{ marginTop: 8 }}
+            />
             <div
               style={{
                 marginTop: 8,
@@ -849,11 +855,6 @@ export function KnowledgeModule() {
                 ? `last indexed ${new Date(data.obsidian_vault.last_indexed_at).toLocaleString()}`
                 : "read-only local markdown index"}
             </div>
-            {vaultError && (
-              <div style={{ marginTop: 8, fontSize: 11, color: "#fb7185" }}>
-                {vaultError}
-              </div>
-            )}
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginBottom: 12 }}>
@@ -861,14 +862,6 @@ export function KnowledgeModule() {
             <KnowledgeStat label="cold" value={coldCount} color="#94a3b8" />
             <KnowledgeStat label="tasks" value={notes.reduce((sum, note) => sum + note.tasks.length, 0)} color="#34d399" />
           </div>
-
-          <input
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="搜索标题、tag、类型或摘录..."
-            className="kawaii-input"
-            style={{ marginBottom: 10 }}
-          />
 
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
             {Object.entries(typeCounts).map(([type, count]) => (
@@ -1073,90 +1066,49 @@ function ReviewerPill({ label, ok, detail }: { label: string; ok: boolean; detai
   );
 }
 
-function AgentAssetCard({ asset }: { asset: AgentAsset }) {
+function AgentAssetRow({ asset }: { asset: AgentAsset }) {
   const [expanded, setExpanded] = useState(false);
   const color = ASSET_TYPE_COLORS[asset.asset_type] || "#94eff4";
+  const summary = getAgentAssetSummary(asset);
 
   return (
-    <div
-      style={{
-        padding: 12,
-        borderRadius: 14,
-        background: "rgba(255,255,255,0.02)",
-        border: "1px solid rgba(255,255,255,0.05)",
-        borderLeft: `3px solid ${color}`,
-        cursor: "pointer",
-      }}
-      onClick={() => setExpanded(!expanded)}
-    >
-      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
-        <span style={{ color, fontSize: 11, fontWeight: 800 }}>{asset.asset_type}</span>
-        <span style={{ fontSize: 10, color: "rgba(255,255,255,0.35)" }}>{asset.agent_id}</span>
-        <span style={{ fontSize: 10, color: "rgba(255,255,255,0.22)" }}>{compactHomePath(asset.source)}</span>
-        <div style={{ flex: 1 }} />
-        {asset.modified_at && (
-          <span style={{ fontSize: 10, color: "rgba(255,255,255,0.22)" }}>
-            {new Date(asset.modified_at).toLocaleDateString()}
-          </span>
-        )}
-      </div>
-
-      <div style={{ fontSize: 13, color: "rgba(255,255,255,0.78)", fontWeight: 700 }}>
-        {asset.name}
-      </div>
-      <div
-        style={{
-          marginTop: 4,
-          fontSize: 10,
-          color: "rgba(255,255,255,0.28)",
-          fontFamily: "monospace",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-        }}
+    <div className={`hype-asset-item ${expanded ? "is-expanded" : ""}`}>
+      <button
+        type="button"
+        className="hype-asset-row"
+        onClick={() => setExpanded((value) => !value)}
+        aria-expanded={expanded}
       >
-        {asset.relative_path}
-      </div>
-
-      {asset.tags.length > 0 && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 8 }}>
-          {asset.tags.slice(0, expanded ? 14 : 6).map((tag) => (
-            <span
-              key={tag}
-              style={{
-                padding: "1px 6px",
-                borderRadius: 9999,
-                background: `${color}14`,
-                color,
-                fontSize: 10,
-              }}
-            >
-              #{tag}
-            </span>
-          ))}
-        </div>
-      )}
+        <span className="hype-asset-name">
+          <strong>{asset.name}</strong>
+          <small>{summary}</small>
+        </span>
+        <span className="hype-asset-source">
+          <span>{compactHomePath(asset.source)}</span>
+          <small>{asset.agent_id}</small>
+        </span>
+        <span
+          className="hype-asset-type"
+          style={{ color, backgroundColor: `${color}18` }}
+        >
+          {asset.asset_type}
+        </span>
+        <time dateTime={asset.modified_at || undefined}>
+          {asset.modified_at ? new Date(asset.modified_at).toLocaleString() : "—"}
+        </time>
+      </button>
 
       {expanded && (
-        <div
-          style={{
-            marginTop: 10,
-            padding: 10,
-            borderRadius: 8,
-            background: "rgba(0,0,0,0.24)",
-            border: "1px solid rgba(255,255,255,0.04)",
-            fontSize: 11,
-            color: "rgba(255,255,255,0.52)",
-            fontFamily: "monospace",
-            whiteSpace: "pre-wrap",
-            maxHeight: 320,
-            overflowY: "auto",
-            lineHeight: 1.5,
-          }}
-          className="scrollbar-thin"
-        >
-          <div style={{ color: "rgba(255,255,255,0.3)", marginBottom: 8 }}>{asset.file_path}</div>
-          {asset.content}
+        <div className="hype-asset-expanded">
+          <code>{asset.file_path}</code>
+          {asset.tags.length > 0 && (
+            <div className="hype-asset-tags">
+              {asset.tags.map((tag) => (
+                <span key={tag}>#{tag}</span>
+              ))}
+            </div>
+          )}
+          <pre className="scrollbar-thin">{asset.content}</pre>
         </div>
       )}
     </div>

@@ -29,6 +29,8 @@ function oneLine(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
+export type AgentAssetScope = "mine" | "all";
+
 export function isPersonalAgentAsset(asset: AgentAsset): boolean {
   const path = normalizedAssetPath(asset);
   if (EXCLUDED_AGENT_ASSET_PATHS.some((excluded) => path.includes(excluded))) {
@@ -39,6 +41,34 @@ export function isPersonalAgentAsset(asset: AgentAsset): boolean {
     path.includes("/openai-curated-remote/") ||
     PERSONAL_SKILL_ROOTS.some((root) => path.includes(root))
   );
+}
+
+export function filterAgentAssets(
+  assets: AgentAsset[],
+  scope: AgentAssetScope,
+  query: string,
+): AgentAsset[] {
+  const normalizedQuery = query.trim().toLowerCase();
+
+  return assets.filter((asset) => {
+    if (scope === "mine" && !isPersonalAgentAsset(asset)) {
+      return false;
+    }
+    if (!normalizedQuery) {
+      return true;
+    }
+
+    return [
+      asset.name,
+      asset.content,
+      asset.source,
+      asset.asset_type,
+      asset.agent_id,
+      asset.file_path,
+      asset.relative_path,
+      ...asset.tags,
+    ].some((value) => value.toLowerCase().includes(normalizedQuery));
+  });
 }
 
 export function getAgentAssetSummary(asset: AgentAsset): string {

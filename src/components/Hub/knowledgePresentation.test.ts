@@ -1,8 +1,16 @@
 import { describe, expect, it } from "vitest";
 import type { AgentAsset } from "@/types";
-import { getAgentAssetSummary, isPersonalAgentAsset } from "./knowledgePresentation";
+import {
+  filterAgentAssets,
+  getAgentAssetSummary,
+  isPersonalAgentAsset,
+} from "./knowledgePresentation";
 
-function asset(filePath: string, content = ""): AgentAsset {
+function asset(
+  filePath: string,
+  content = "",
+  overrides: Partial<AgentAsset> = {},
+): AgentAsset {
   return {
     id: `asset:${filePath}`,
     asset_type: "skill",
@@ -13,6 +21,7 @@ function asset(filePath: string, content = ""): AgentAsset {
     source: "/Users/me",
     content,
     tags: [],
+    ...overrides,
   };
 }
 
@@ -71,5 +80,91 @@ describe("getAgentAssetSummary", () => {
     expect(getAgentAssetSummary(asset("/Users/me/.codex/skills/empty/SKILL.md"))).toBe(
       "No description available.",
     );
+  });
+});
+
+describe("filterAgentAssets", () => {
+  const custom = asset(
+    "/Users/me/.codex/skills/release-helper/SKILL.md",
+    "---\ndescription: Keeps launches reversible.\n---\n# Release helper",
+    {
+      name: "Launch Steward",
+      source: "Personal toolbox",
+      tags: ["shipping"],
+    },
+  );
+  const agentsSkill = asset(
+    "/Users/me/.agents/skills/ali-dws-cli/SKILL.md",
+    "Coordinates DingTalk tasks.",
+    {
+      name: "DingTalk Assistant",
+      agent_id: "desk-agent",
+      asset_type: "routine",
+      relative_path: "ali-dws-cli/SKILL.md",
+      source: "/Users/me/.agents/skills",
+      tags: ["collaboration"],
+    },
+  );
+  const superpowers = asset(
+    "/Users/me/.codex/plugins/cache/openai-curated-remote/superpowers/6.1.1/skills/brainstorming/SKILL.md",
+    "Explore intent before implementation.",
+    {
+      name: "Brainstorming",
+      agent_id: "codex",
+      source: "OpenAI curated remote",
+      tags: ["design"],
+    },
+  );
+  const bundled = asset(
+    "/Users/me/.codex/plugins/cache/openai-bundled/browser/skills/control/SKILL.md",
+    "Browser controls",
+    { name: "Bundled Browser" },
+  );
+  const system = asset(
+    "/Users/me/.codex/skills/.system/skill-installer/SKILL.md",
+    "Installs skills",
+    { name: "System Installer" },
+  );
+  const marketplace = asset(
+    "/Users/me/.claude/plugins/marketplaces/official/agents/reviewer.md",
+    "Reviews code",
+    { name: "Marketplace Reviewer" },
+  );
+  const mixedAssets = [
+    custom,
+    agentsSkill,
+    superpowers,
+    bundled,
+    system,
+    marketplace,
+  ];
+
+  it("keeps personal and curated installed assets in mine scope", () => {
+    expect(filterAgentAssets(mixedAssets, "mine", "")).toEqual([
+      custom,
+      agentsSkill,
+      superpowers,
+    ]);
+  });
+
+  it.each([
+    ["name", "launch steward", custom],
+    ["description/content", "launches reversible", custom],
+    ["source", "personal toolbox", custom],
+    ["type", "routine", agentsSkill],
+    ["agent", "DESK-AGENT", agentsSkill],
+    ["path", "ali-dws-cli", agentsSkill],
+    ["tags", "COLLABORATION", agentsSkill],
+  ])("searches asset %s", (_field, query, expected) => {
+    expect(filterAgentAssets(mixedAssets, "mine", `  ${query}  `)).toEqual([
+      expected,
+    ]);
+  });
+
+  it("returns all matching inventory when scope is all", () => {
+    expect(filterAgentAssets(mixedAssets, "all", "")).toEqual(mixedAssets);
+    expect(filterAgentAssets(mixedAssets, "all", "marketplace")).toEqual([
+      marketplace,
+    ]);
   });
 });
