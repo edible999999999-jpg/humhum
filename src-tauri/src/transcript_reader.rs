@@ -163,6 +163,28 @@ pub(crate) fn parse_latest_codex_plan(path: &Path) -> Result<Option<CodexPlanSna
     Ok(latest)
 }
 
+pub(crate) fn latest_codex_turn_completed(path: &Path) -> Result<bool, String> {
+    let recent_lines = read_recent_lines(path)?;
+    let mut completed = false;
+
+    for line in recent_lines {
+        let Ok(value) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        match value
+            .get("payload")
+            .and_then(|payload| payload.get("type"))
+            .and_then(Value::as_str)
+        {
+            Some("task_started") => completed = false,
+            Some("task_complete") => completed = true,
+            _ => {}
+        }
+    }
+
+    Ok(completed)
+}
+
 fn read_recent_lines(path: &Path) -> Result<Vec<String>, String> {
     let mut file = File::open(path).map_err(|error| error.to_string())?;
     let file_len = file.metadata().map_err(|error| error.to_string())?.len();
@@ -387,8 +409,8 @@ fn truncate_text(text: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_latest_codex_plan, parse_transcript_signals, read_recent_lines_from_snapshot,
-        TranscriptMessage, TranscriptRole, MAX_TAIL_BYTES,
+        latest_codex_turn_completed, parse_latest_codex_plan, parse_transcript_signals,
+        read_recent_lines_from_snapshot, TranscriptMessage, TranscriptRole, MAX_TAIL_BYTES,
     };
     use std::fs::OpenOptions;
     use std::io::Write;
@@ -434,6 +456,21 @@ mod tests {
         assert_eq!(plan.steps[1].title, "Fix");
         assert_eq!(plan.steps[1].status, "in_progress");
         assert!(plan.turn_completed_after_plan);
+    }
+
+    #[test]
+    fn latest_codex_turn_completion_is_cleared_by_a_newer_started_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rollout.jsonl");
+        write_lines(
+            &path,
+            &[
+                r#"{"timestamp":"2026-07-18T04:19:14Z","type":"event_msg","payload":{"type":"task_complete"}}"#.to_string(),
+                r#"{"timestamp":"2026-07-18T04:20:00Z","type":"event_msg","payload":{"type":"task_started"}}"#.to_string(),
+            ],
+        );
+
+        assert!(!latest_codex_turn_completed(&path).unwrap());
     }
 
     #[test]

@@ -1017,32 +1017,21 @@ fn recovered_codex_plan_events(
     thread_id: &str,
     transcript_path: &Path,
 ) -> Result<Vec<HexaEvent>, String> {
-    let Some(plan) = crate::transcript_reader::parse_latest_codex_plan(transcript_path)? else {
-        return Ok(Vec::new());
+    let plan = crate::transcript_reader::parse_latest_codex_plan(transcript_path)?;
+    let turn_completed = match plan.as_ref() {
+        Some(plan) => plan.turn_completed_after_plan,
+        None => crate::transcript_reader::latest_codex_turn_completed(transcript_path)?,
     };
-    let timestamp = plan
-        .timestamp
-        .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
-    let steps = plan
-        .steps
-        .into_iter()
-        .map(|step| json!({"step": step.title, "status": step.status}))
-        .collect::<Vec<_>>();
-    let mut events = vec![HexaEvent {
-        event_id: uuid::Uuid::new_v4().to_string(),
-        session_id: thread_id.to_string(),
-        provider: "codex".to_string(),
-        provider_thread_id: Some(thread_id.to_string()),
-        turn_id: None,
-        timestamp: timestamp.clone(),
-        kind: HexaEventKind::PlanUpdated,
-        payload: json!({
-            "explanation": plan.explanation,
-            "plan": steps,
-        }),
-        sensitivity: HexaSensitivity::Private,
-    }];
-    if plan.turn_completed_after_plan {
+    let mut events = Vec::new();
+    if let Some(plan) = plan {
+        let timestamp = plan
+            .timestamp
+            .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
+        let steps = plan
+            .steps
+            .into_iter()
+            .map(|step| json!({"step": step.title, "status": step.status}))
+            .collect::<Vec<_>>();
         events.push(HexaEvent {
             event_id: uuid::Uuid::new_v4().to_string(),
             session_id: thread_id.to_string(),
@@ -1050,6 +1039,22 @@ fn recovered_codex_plan_events(
             provider_thread_id: Some(thread_id.to_string()),
             turn_id: None,
             timestamp,
+            kind: HexaEventKind::PlanUpdated,
+            payload: json!({
+                "explanation": plan.explanation,
+                "plan": steps,
+            }),
+            sensitivity: HexaSensitivity::Private,
+        });
+    }
+    if turn_completed {
+        events.push(HexaEvent {
+            event_id: uuid::Uuid::new_v4().to_string(),
+            session_id: thread_id.to_string(),
+            provider: "codex".to_string(),
+            provider_thread_id: Some(thread_id.to_string()),
+            turn_id: None,
+            timestamp: chrono::Utc::now().to_rfc3339(),
             kind: HexaEventKind::TurnCompleted,
             payload: json!({"status": "completed", "recovered": true}),
             sensitivity: HexaSensitivity::Private,
@@ -1511,6 +1516,27 @@ if ($second.Contains('"method":"turn/start"')) {
         assert_eq!(request.items[0].status, HexaWorkItemStatus::Completed);
         assert_eq!(request.items[1].status, HexaWorkItemStatus::InProgress);
         assert_eq!(events[1].kind, HexaEventKind::TurnCompleted);
+    }
+
+    #[test]
+    fn rebuilds_completion_when_the_plan_is_older_than_the_transcript_tail() {
+        let directory = tempfile::tempdir().unwrap();
+        let transcript = directory.path().join("rollout.jsonl");
+        std::fs::write(
+            &transcript,
+            concat!(
+                "{\"timestamp\":\"2026-07-18T04:17:25Z\",\"type\":\"event_msg\",",
+                "\"payload\":{\"type\":\"task_started\"}}\n",
+                "{\"timestamp\":\"2026-07-18T04:19:14Z\",\"type\":\"event_msg\",",
+                "\"payload\":{\"type\":\"task_complete\"}}\n"
+            ),
+        )
+        .unwrap();
+
+        let events = recovered_codex_plan_events("thread-real", &transcript).unwrap();
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].kind, HexaEventKind::TurnCompleted);
     }
 
     #[test]
