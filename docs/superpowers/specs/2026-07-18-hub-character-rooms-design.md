@@ -103,11 +103,27 @@ confirmation request, or standalone selected item.
 ### Navigation rail
 
 - Keep the 72px rail so current content widths remain stable.
-- Replace `H`, `Y`, `S`, and `X` letter tiles with real mascot portraits.
-- Each item contains portrait, name, and a small theme-color state dot.
+- Replace `H`, `Y`, `S`, and `X` letter tiles with one signature symbol for each
+  mascot. Do not repeat all four portraits in the rail.
+- Humi uses a microphone symbol. While Humi is speaking, a restrained sound-wave
+  state can appear without resizing the button.
+- Hype uses an antenna symbol. Hovering crossfades or springs it into an
+  exclamation mark, reflecting Hype's alert, excited personality.
+- Hush uses a half-hidden eye clipped behind the navigation edge. On hover it
+  slides into view, blinks once, and retreats slightly. The resting state remains
+  shy rather than continuously animated.
+- Hexa uses a black wrench. Hovering can rotate it a few degrees as if tightening
+  something; waiting and active states use the room's yellow/blue accents around
+  the wrench without recoloring the wrench itself.
+- Prefer existing Lucide symbols such as `Mic2`, `Antenna`, `Eye`, and `Wrench`.
+  Do not draw substitute icons with CSS, text glyphs, emoji, or inline SVG.
+- Each item contains the signature symbol, name, and a small theme-color state
+  dot.
 - Active and hover surfaces use an 8px maximum radius and no large shadow.
-- Do not crop the family reference sheet at runtime. Use dedicated portrait
-  assets derived from the approved mascot sources.
+- Full mascot portraits remain available inside each mascot's own room near its
+  title, active response, refresh state, peeking state, or live supervision state.
+- Keep every symbol inside a stable 24px square wrapper. Crossfades, clipping,
+  blinking, and rotation must not move the label or resize the rail.
 
 ### Typography and controls
 
@@ -280,6 +296,14 @@ operational content.
 - Keep ambient movement subtle: slow highlight drift, one small blink, or a
   6-10s breathing cycle.
 - Module switching can crossfade the room background in 160-220ms.
+- Humi's microphone can show one short sound-wave pulse only while listening or
+  speaking.
+- Hype's antenna-to-exclamation transition uses a 140-180ms spring or crossfade
+  and returns cleanly on pointer leave.
+- Hush's half-hidden eye can slide 3-5px into view and blink once on hover. It
+  must not repeatedly peek when the pointer is stationary.
+- Hexa's black wrench can rotate up to 12 degrees on hover and return without
+  changing its footprint.
 - Hush may move a few pixels farther into view when a special-attention
   conversation is selected.
 - Hype may pulse the antenna state once after a completed refresh.
