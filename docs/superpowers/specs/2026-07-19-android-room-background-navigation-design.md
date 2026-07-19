@@ -96,17 +96,33 @@ the role name and purpose.
 ## Typography
 
 Bundle the OFL-licensed Noto Sans SC variable font for consistent Chinese and Latin
-rendering across supported Android devices.
+rendering across supported Android devices. Do not apply one undifferentiated font
+style everywhere: each information level receives its own deliberate size, weight,
+and line height.
+
+| Content | Size | Weight | Line height |
+| --- | ---: | --- | ---: |
+| Room headline | 22sp | Semibold | 30sp |
+| Section title | 17sp | Semibold | 24sp |
+| Primary item title | 16sp | Medium | 23sp |
+| User-facing body | 15sp | Regular | 23sp |
+| Control label | 13sp | Medium | 19sp |
+| Metadata and bottom navigation | 12sp | Medium | 16sp |
+| Health and other headline numbers | 17sp | Semibold, tabular figures | 22sp |
 
 The mobile type system will:
 
-- use Noto Sans SC for all foreground product text;
+- use Noto Sans SC for both Chinese text and the Latin role names so the two scripts
+  do not look like separate interfaces;
+- keep role names in title case and never add artificial tracking or all caps;
 - use regular and medium weights for body and controls;
-- reserve semibold for room and section titles;
-- set letter spacing to zero;
+- reserve semibold for room titles, section titles, and headline values;
+- set letter spacing to zero at every level;
 - disable extra platform font padding;
-- use at least 14sp for user-facing body content;
-- keep metadata at 12sp only when it is secondary and short.
+- never reduce user-facing body content below 15sp;
+- keep 12sp text secondary, short, and nonessential;
+- allow titles to wrap naturally instead of shrinking them to fit;
+- use tabular figures only for comparable numeric summaries, not prose.
 
 The font license is stored with the Android resources. The download-size increase
 is accepted in exchange for consistent CJK rendering.
