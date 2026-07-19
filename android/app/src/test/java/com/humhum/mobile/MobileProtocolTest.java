@@ -93,6 +93,18 @@ public class MobileProtocolTest {
 
         assertEquals(Models.Scope.READ, result.scope());
         assertEquals(null, result.wakeRelay());
+        assertFalse(result.personalContext());
+    }
+
+    @Test
+    public void pairingParsesTheSeparatePersonalContextCapability() throws Exception {
+        Models.PairResult result = MobileProtocol.parsePairResult(new JSONObject()
+                .put("token", "ab".repeat(32))
+                .put("scope", "read")
+                .put("personal_context", true)
+                .toString());
+
+        assertTrue(result.personalContext());
     }
 
     @Test

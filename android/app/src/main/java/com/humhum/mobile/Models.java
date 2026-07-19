@@ -23,20 +23,31 @@ public final class Models {
         private final String token;
         private final Scope scope;
         private final WakeRelayConfig wakeRelay;
+        private final boolean personalContext;
 
         public PairResult(String token, Scope scope) {
-            this(token, scope, null);
+            this(token, scope, null, false);
         }
 
         public PairResult(String token, Scope scope, WakeRelayConfig wakeRelay) {
+            this(token, scope, wakeRelay, false);
+        }
+
+        public PairResult(
+                String token,
+                Scope scope,
+                WakeRelayConfig wakeRelay,
+                boolean personalContext) {
             this.token = token;
             this.scope = scope;
             this.wakeRelay = wakeRelay;
+            this.personalContext = personalContext;
         }
 
         public String token() { return token; }
         public Scope scope() { return scope; }
         public WakeRelayConfig wakeRelay() { return wakeRelay; }
+        public boolean personalContext() { return personalContext; }
     }
 
     public static final class WakeRelayConfig {
@@ -264,5 +275,237 @@ public final class Models {
 
         public int imported() { return imported; }
         public int duplicates() { return duplicates; }
+    }
+
+    public static final class TodayItem {
+        private final String id;
+        private final String title;
+        private final String detail;
+        private final String source;
+        private final String status;
+
+        public TodayItem(String id, String title, String detail, String source, String status) {
+            this.id = id;
+            this.title = title;
+            this.detail = detail;
+            this.source = source;
+            this.status = status;
+        }
+
+        public String id() { return id; }
+        public String title() { return title; }
+        public String detail() { return detail; }
+        public String source() { return source; }
+        public String status() { return status; }
+    }
+
+    public static final class Suggestion {
+        private final String id;
+        private final String title;
+        private final String rationale;
+        private final String source;
+        private final String confidence;
+
+        public Suggestion(
+                String id, String title, String rationale, String source, String confidence) {
+            this.id = id;
+            this.title = title;
+            this.rationale = rationale;
+            this.source = source;
+            this.confidence = confidence;
+        }
+
+        public String id() { return id; }
+        public String title() { return title; }
+        public String rationale() { return rationale; }
+        public String source() { return source; }
+        public String confidence() { return confidence; }
+    }
+
+    public static final class Preference {
+        private final String id;
+        private final String category;
+        private final String content;
+
+        public Preference(String id, String category, String content) {
+            this.id = id;
+            this.category = category;
+            this.content = content;
+        }
+
+        public String id() { return id; }
+        public String category() { return category; }
+        public String content() { return content; }
+    }
+
+    public static final class Habit {
+        private final String id;
+        private final String title;
+        private final String cadence;
+        private final String status;
+
+        public Habit(String id, String title, String cadence, String status) {
+            this.id = id;
+            this.title = title;
+            this.cadence = cadence;
+            this.status = status;
+        }
+
+        public String id() { return id; }
+        public String title() { return title; }
+        public String cadence() { return cadence; }
+        public String status() { return status; }
+    }
+
+    public static final class Memory {
+        private final String id;
+        private final String content;
+        private final String temperature;
+
+        public Memory(String id, String content, String temperature) {
+            this.id = id;
+            this.content = content;
+            this.temperature = temperature;
+        }
+
+        public String id() { return id; }
+        public String content() { return content; }
+        public String temperature() { return temperature; }
+    }
+
+    public static final class KnowledgeItem {
+        private final String id;
+        private final String title;
+        private final String summary;
+        private final String kind;
+
+        public KnowledgeItem(String id, String title, String summary, String kind) {
+            this.id = id;
+            this.title = title;
+            this.summary = summary;
+            this.kind = kind;
+        }
+
+        public String id() { return id; }
+        public String title() { return title; }
+        public String summary() { return summary; }
+        public String kind() { return kind; }
+    }
+
+    public static final class InboxItem {
+        private final String id;
+        private final String sender;
+        private final String platform;
+        private final String preview;
+        private final String receivedAt;
+        private final int importance;
+
+        public InboxItem(
+                String id,
+                String sender,
+                String platform,
+                String preview,
+                String receivedAt,
+                int importance) {
+            this.id = id;
+            this.sender = sender;
+            this.platform = platform;
+            this.preview = preview;
+            this.receivedAt = receivedAt;
+            this.importance = importance;
+        }
+
+        public String id() { return id; }
+        public String sender() { return sender; }
+        public String platform() { return platform; }
+        public String preview() { return preview; }
+        public String receivedAt() { return receivedAt; }
+        public int importance() { return importance; }
+    }
+
+    public static final class AgentItem {
+        private final String id;
+        private final String name;
+        private final String provider;
+        private final String status;
+        private final String currentStep;
+        private final boolean needsUser;
+        private final String updatedAt;
+
+        public AgentItem(
+                String id,
+                String name,
+                String provider,
+                String status,
+                String currentStep,
+                boolean needsUser,
+                String updatedAt) {
+            this.id = id;
+            this.name = name;
+            this.provider = provider;
+            this.status = status;
+            this.currentStep = currentStep;
+            this.needsUser = needsUser;
+            this.updatedAt = updatedAt;
+        }
+
+        public String id() { return id; }
+        public String name() { return name; }
+        public String provider() { return provider; }
+        public String status() { return status; }
+        public String currentStep() { return currentStep; }
+        public boolean needsUser() { return needsUser; }
+        public String updatedAt() { return updatedAt; }
+    }
+
+    public static final class PersonalContext {
+        private final int version;
+        private final String generatedAt;
+        private final String expiresAt;
+        private final List<TodayItem> today;
+        private final List<Suggestion> suggestions;
+        private final List<Preference> preferences;
+        private final List<Habit> habits;
+        private final List<Memory> memories;
+        private final List<KnowledgeItem> knowledge;
+        private final List<InboxItem> inbox;
+        private final List<AgentItem> agents;
+
+        public PersonalContext(
+                int version,
+                String generatedAt,
+                String expiresAt,
+                List<TodayItem> today,
+                List<Suggestion> suggestions,
+                List<Preference> preferences,
+                List<Habit> habits,
+                List<Memory> memories,
+                List<KnowledgeItem> knowledge,
+                List<InboxItem> inbox,
+                List<AgentItem> agents) {
+            this.version = version;
+            this.generatedAt = generatedAt;
+            this.expiresAt = expiresAt;
+            this.today = List.copyOf(today);
+            this.suggestions = List.copyOf(suggestions);
+            this.preferences = List.copyOf(preferences);
+            this.habits = List.copyOf(habits);
+            this.memories = List.copyOf(memories);
+            this.knowledge = List.copyOf(knowledge);
+            this.inbox = List.copyOf(inbox);
+            this.agents = List.copyOf(agents);
+        }
+
+        public int version() { return version; }
+        public String generatedAt() { return generatedAt; }
+        public String expiresAt() { return expiresAt; }
+        public List<TodayItem> today() { return today; }
+        public List<Suggestion> suggestions() { return suggestions; }
+        public List<Preference> preferences() { return preferences; }
+        public List<Habit> habits() { return habits; }
+        public List<Memory> memories() { return memories; }
+        public List<KnowledgeItem> knowledge() { return knowledge; }
+        public List<InboxItem> inbox() { return inbox; }
+        public List<AgentItem> agents() { return agents; }
     }
 }

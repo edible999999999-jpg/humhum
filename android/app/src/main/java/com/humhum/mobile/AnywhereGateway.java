@@ -41,6 +41,13 @@ public final class AnywhereGateway {
         return MobileProtocol.parseSessions(data.toString());
     }
 
+    public Models.PersonalContext personalContext(Models.WakeRelayConfig relay)
+            throws IOException, JSONException, GeneralSecurityException {
+        JSONObject data = request(
+                relay, new JSONObject().put("action", "personal_context"));
+        return MobileProtocol.parsePersonalContext(data.toString());
+    }
+
     public List<Models.ConversationMessage> conversation(
             Models.WakeRelayConfig relay, Models.Session session)
             throws IOException, JSONException, GeneralSecurityException {

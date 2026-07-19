@@ -90,6 +90,22 @@ public class ConnectionStoreTest {
     }
 
     @Test
+    public void persistsPersonalContextAsASeparatePairingCapability() {
+        MemoryStore memory = new MemoryStore();
+        ConnectionStore store = new ConnectionStore(memory);
+        BridgeConfig config = BridgeConfig.parse(
+                "https://192.168.1.20:31276", "A1B2C3D4", "AA".repeat(32), "Xiaomi 14");
+
+        store.save(
+                config,
+                new Models.PairResult(
+                        "ab".repeat(32), Models.Scope.READ, null, true));
+
+        assertTrue(store.load().personalContext());
+        assertEquals("true", memory.values.get("personal_context"));
+    }
+
+    @Test
     public void persistsV2AnywhereRolesWithoutDesktopSecrets() {
         MemoryStore memory = new MemoryStore();
         ConnectionStore store = new ConnectionStore(memory);

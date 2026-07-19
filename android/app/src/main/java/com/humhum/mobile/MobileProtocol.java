@@ -20,6 +20,7 @@ public final class MobileProtocol {
     private static final int MAX_ACTIONS = 20;
     private static final int MAX_CONVERSATION_MESSAGES = 12;
     private static final int MAX_CONVERSATION_TEXT_SCALARS = 500;
+    private static final int MAX_PERSONAL_CONTEXT_BYTES = 256 * 1024;
     private static final Set<String> MESSAGE_PROVIDERS = Set.of("codex", "claude", "claude-code", "opencode");
 
     private final BridgeConfig config;
@@ -57,10 +58,15 @@ public final class MobileProtocol {
         if (response.has("wake_relay")) {
             wakeRelay = parseWakeRelay(response.getJSONObject("wake_relay"));
         }
+        Object personalContextValue = response.opt("personal_context");
+        if (personalContextValue != null && !(personalContextValue instanceof Boolean)) {
+            throw new JSONException("Personal context capability is invalid");
+        }
         return new Models.PairResult(
                 pairedToken,
                 Models.Scope.fromWire(response.optString("scope")),
-                wakeRelay);
+                wakeRelay,
+                personalContextValue instanceof Boolean && (Boolean) personalContextValue);
     }
 
     static Models.WakeRelayConfig parseWakeRelay(JSONObject relay) throws JSONException {
@@ -124,6 +130,10 @@ public final class MobileProtocol {
         return parseSessions(execute(new RequestSpec("GET", "/api/sessions", "", true)));
     }
 
+    public Models.PersonalContext personalContext() throws IOException, JSONException {
+        return parsePersonalContext(execute(personalContextRequest()));
+    }
+
     public Models.EventSignal waitForChange(String cursor) throws IOException, JSONException {
         return parseEventSignal(execute(eventRequest(cursor)));
     }
@@ -170,6 +180,16 @@ public final class MobileProtocol {
 
     static RequestSpec disconnectRequest() {
         return new RequestSpec("DELETE", "/api/device", "", true);
+    }
+
+    static RequestSpec personalContextRequest() {
+        return new RequestSpec(
+                "GET",
+                "/api/personal-context",
+                "",
+                true,
+                8_000,
+                MAX_PERSONAL_CONTEXT_BYTES);
     }
 
     static RequestSpec presenceRequest(PresenceMode mode) throws JSONException {
@@ -305,6 +325,246 @@ public final class MobileProtocol {
                     actions));
         }
         return new Models.SessionPage(scope, sessions, cursor);
+    }
+
+    static Models.PersonalContext parsePersonalContext(String payload) throws JSONException {
+        if (payload == null
+                || payload.getBytes(StandardCharsets.UTF_8).length > MAX_PERSONAL_CONTEXT_BYTES) {
+            throw new JSONException("Personal context response is too large");
+        }
+        JSONObject root = new JSONObject(payload);
+        requireExactKeys(root, Set.of(
+                "version",
+                "generated_at",
+                "expires_at",
+                "today",
+                "suggestions",
+                "preferences",
+                "habits",
+                "memories",
+                "knowledge",
+                "inbox",
+                "agents"));
+        if (strictInteger(root, "version") != 1) {
+            throw new JSONException("Personal context version is invalid");
+        }
+        return new Models.PersonalContext(
+                1,
+                boundedStrict(root, "generated_at", 64),
+                boundedStrict(root, "expires_at", 64),
+                parseToday(strictArray(root, "today"), 5),
+                parseSuggestions(strictArray(root, "suggestions"), 3),
+                parsePreferences(strictArray(root, "preferences"), 8),
+                parseHabits(strictArray(root, "habits"), 8),
+                parseMemories(strictArray(root, "memories"), 6),
+                parseKnowledge(strictArray(root, "knowledge"), 8),
+                parseInbox(strictArray(root, "inbox"), 8),
+                parseAgents(strictArray(root, "agents"), 8));
+    }
+
+    private static List<Models.TodayItem> parseToday(JSONArray array, int maximum)
+            throws JSONException {
+        requireBoundedArray(array, maximum);
+        List<Models.TodayItem> output = new ArrayList<>();
+        for (int index = 0; index < array.length(); index++) {
+            JSONObject item = strictObject(array, index);
+            requireKeys(item, Set.of("id", "title", "source", "status"), Set.of("detail"));
+            output.add(new Models.TodayItem(
+                    boundedStrict(item, "id", 160),
+                    boundedStrict(item, "title", 180),
+                    optionalBounded(item, "detail", 220),
+                    boundedStrict(item, "source", 40),
+                    boundedStrict(item, "status", 24)));
+        }
+        return output;
+    }
+
+    private static List<Models.Suggestion> parseSuggestions(JSONArray array, int maximum)
+            throws JSONException {
+        requireBoundedArray(array, maximum);
+        List<Models.Suggestion> output = new ArrayList<>();
+        for (int index = 0; index < array.length(); index++) {
+            JSONObject item = strictObject(array, index);
+            requireExactKeys(item, Set.of(
+                    "id", "title", "rationale", "source", "confidence"));
+            output.add(new Models.Suggestion(
+                    boundedStrict(item, "id", 160),
+                    boundedStrict(item, "title", 180),
+                    boundedStrict(item, "rationale", 240),
+                    boundedStrict(item, "source", 40),
+                    boundedStrict(item, "confidence", 24)));
+        }
+        return output;
+    }
+
+    private static List<Models.Preference> parsePreferences(JSONArray array, int maximum)
+            throws JSONException {
+        requireBoundedArray(array, maximum);
+        List<Models.Preference> output = new ArrayList<>();
+        for (int index = 0; index < array.length(); index++) {
+            JSONObject item = strictObject(array, index);
+            requireExactKeys(item, Set.of("id", "category", "content"));
+            output.add(new Models.Preference(
+                    boundedStrict(item, "id", 160),
+                    boundedStrict(item, "category", 60),
+                    boundedStrict(item, "content", 240)));
+        }
+        return output;
+    }
+
+    private static List<Models.Habit> parseHabits(JSONArray array, int maximum)
+            throws JSONException {
+        requireBoundedArray(array, maximum);
+        List<Models.Habit> output = new ArrayList<>();
+        for (int index = 0; index < array.length(); index++) {
+            JSONObject item = strictObject(array, index);
+            requireExactKeys(item, Set.of("id", "title", "cadence", "status"));
+            output.add(new Models.Habit(
+                    boundedStrict(item, "id", 160),
+                    boundedStrict(item, "title", 180),
+                    boundedStrict(item, "cadence", 80),
+                    boundedStrict(item, "status", 24)));
+        }
+        return output;
+    }
+
+    private static List<Models.Memory> parseMemories(JSONArray array, int maximum)
+            throws JSONException {
+        requireBoundedArray(array, maximum);
+        List<Models.Memory> output = new ArrayList<>();
+        for (int index = 0; index < array.length(); index++) {
+            JSONObject item = strictObject(array, index);
+            requireExactKeys(item, Set.of("id", "content", "temperature"));
+            output.add(new Models.Memory(
+                    boundedStrict(item, "id", 160),
+                    boundedStrict(item, "content", 260),
+                    boundedStrict(item, "temperature", 24)));
+        }
+        return output;
+    }
+
+    private static List<Models.KnowledgeItem> parseKnowledge(JSONArray array, int maximum)
+            throws JSONException {
+        requireBoundedArray(array, maximum);
+        List<Models.KnowledgeItem> output = new ArrayList<>();
+        for (int index = 0; index < array.length(); index++) {
+            JSONObject item = strictObject(array, index);
+            requireExactKeys(item, Set.of("id", "title", "summary", "kind"));
+            output.add(new Models.KnowledgeItem(
+                    boundedStrict(item, "id", 160),
+                    boundedStrict(item, "title", 180),
+                    boundedStrict(item, "summary", 260),
+                    boundedStrict(item, "kind", 24)));
+        }
+        return output;
+    }
+
+    private static List<Models.InboxItem> parseInbox(JSONArray array, int maximum)
+            throws JSONException {
+        requireBoundedArray(array, maximum);
+        List<Models.InboxItem> output = new ArrayList<>();
+        for (int index = 0; index < array.length(); index++) {
+            JSONObject item = strictObject(array, index);
+            requireExactKeys(item, Set.of(
+                    "id", "sender", "platform", "preview", "received_at", "importance"));
+            int importance = strictInteger(item, "importance");
+            if (importance < 0 || importance > 5) {
+                throw new JSONException("Personal context importance is invalid");
+            }
+            output.add(new Models.InboxItem(
+                    boundedStrict(item, "id", 160),
+                    boundedStrict(item, "sender", 100),
+                    boundedStrict(item, "platform", 40),
+                    boundedStrict(item, "preview", 240),
+                    boundedStrict(item, "received_at", 64),
+                    importance));
+        }
+        return output;
+    }
+
+    private static List<Models.AgentItem> parseAgents(JSONArray array, int maximum)
+            throws JSONException {
+        requireBoundedArray(array, maximum);
+        List<Models.AgentItem> output = new ArrayList<>();
+        for (int index = 0; index < array.length(); index++) {
+            JSONObject item = strictObject(array, index);
+            requireKeys(
+                    item,
+                    Set.of("id", "name", "provider", "status", "needs_user", "updated_at"),
+                    Set.of("current_step"));
+            Object needsUser = item.get("needs_user");
+            if (!(needsUser instanceof Boolean)) {
+                throw new JSONException("Personal context Agent status is invalid");
+            }
+            output.add(new Models.AgentItem(
+                    boundedStrict(item, "id", 160),
+                    boundedStrict(item, "name", 160),
+                    boundedStrict(item, "provider", 40),
+                    boundedStrict(item, "status", 24),
+                    optionalBounded(item, "current_step", 240),
+                    (Boolean) needsUser,
+                    boundedStrict(item, "updated_at", 64)));
+        }
+        return output;
+    }
+
+    private static JSONArray strictArray(JSONObject object, String key) throws JSONException {
+        Object value = object.get(key);
+        if (!(value instanceof JSONArray)) {
+            throw new JSONException("Personal context collection is invalid");
+        }
+        return (JSONArray) value;
+    }
+
+    private static JSONObject strictObject(JSONArray array, int index) throws JSONException {
+        Object value = array.get(index);
+        if (!(value instanceof JSONObject)) {
+            throw new JSONException("Personal context item is invalid");
+        }
+        return (JSONObject) value;
+    }
+
+    private static void requireBoundedArray(JSONArray array, int maximum) throws JSONException {
+        if (array.length() > maximum) {
+            throw new JSONException("Personal context collection is too large");
+        }
+    }
+
+    private static void requireExactKeys(JSONObject object, Set<String> keys)
+            throws JSONException {
+        requireKeys(object, keys, Set.of());
+    }
+
+    private static void requireKeys(
+            JSONObject object, Set<String> required, Set<String> optional) throws JSONException {
+        for (String key : required) {
+            if (!object.has(key)) {
+                throw new JSONException("Personal context item is missing fields");
+            }
+        }
+        java.util.Iterator<String> keys = object.keys();
+        while (keys.hasNext()) {
+            String key = keys.next();
+            if (!required.contains(key) && !optional.contains(key)) {
+                throw new JSONException("Personal context item has unknown fields");
+            }
+        }
+    }
+
+    private static String boundedStrict(JSONObject object, String key, int maximum)
+            throws JSONException {
+        String value = strictString(object, key);
+        int scalars = value.codePointCount(0, value.length());
+        if (value.isBlank() || scalars > maximum) {
+            throw new JSONException("Personal context text is invalid");
+        }
+        return value;
+    }
+
+    private static String optionalBounded(JSONObject object, String key, int maximum)
+            throws JSONException {
+        if (!object.has(key) || object.isNull(key)) return null;
+        return boundedStrict(object, key, maximum);
     }
 
     static List<Models.ConversationMessage> parseConversation(
