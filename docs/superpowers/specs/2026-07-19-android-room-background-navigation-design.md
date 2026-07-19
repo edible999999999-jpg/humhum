@@ -171,8 +171,9 @@ Visual QA captures Humi, Hype, Hush, and Hexa at 390x844 and checks:
 ## Acceptance Criteria
 
 1. The bottom bar is visibly different from the previous mascot-tab design.
-2. No Android navigation or room intro uses `mascot_humi`, `mascot_hype`,
-   `mascot_hush`, or `mascot_hexa`.
+2. No visible Compose navigation or room intro uses `mascot_humi`, `mascot_hype`,
+   `mascot_hush`, or `mascot_hexa`. The hidden legacy compatibility layout may
+   retain those resources until its Java bindings are removed in a separate change.
 3. The four room backgrounds are sourced from the same files used by Mac.
 4. Hush's peeking character remains visible in the mobile crop.
 5. All existing role, privacy, pairing, health, and Agent-control tests pass.
