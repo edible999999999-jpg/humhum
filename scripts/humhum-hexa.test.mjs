@@ -407,3 +407,79 @@ test("requires an explicit structured-plan payload", async () => {
     /--json.*--file/,
   );
 });
+
+test("reports the live watched-session status without shell pipelines", async () => {
+  const root = await mkdtemp(join(tmpdir(), "humhum-hexa-status-"));
+  const home = join(root, "home");
+  const cwd = join(root, "workspace");
+  await mkdir(join(home, ".humhum"), { recursive: true });
+  await mkdir(cwd, { recursive: true });
+  await writeFile(join(home, ".humhum", "local-api-token"), "test-token\n");
+
+  const context = {
+    home,
+    cwd,
+    provider: "hermes",
+    sessionId: "hermes-session-1",
+  };
+  await mkdir(dirname(stateFileFor(context)), { recursive: true });
+  await writeFile(stateFileFor(context), JSON.stringify({
+    session_id: "watched-session-1",
+    provider: "hermes",
+    agent: "hermes",
+    goal: "整理本机 Agent 会话",
+    status: "working",
+  }));
+
+  const calls = [];
+  const lines = [];
+  const liveSession = {
+    session_id: "watched-session-1",
+    provider: "hermes",
+    agent: "hermes",
+    goal: "整理本机 Agent 会话",
+    status: "working",
+    current_step: "正在识别活跃会话",
+    audit: {
+      work_items: [
+        { id: "scan", title: "识别会话", status: "completed" },
+        { id: "report", title: "生成报告", status: "in_progress" },
+        { id: "verify", title: "核对结果", status: "failed" },
+      ],
+      milestones: [{ summary: "完成第一轮扫描" }],
+    },
+  };
+  const fetchImpl = async (url, init) => {
+    calls.push({
+      path: new URL(url).pathname,
+      method: init.method,
+      token: init.headers["x-humhum-token"],
+      body: init.body,
+    });
+    return new Response(JSON.stringify([liveSession]), { status: 200 });
+  };
+
+  const result = await runCli(["status"], {
+    cwd,
+    home,
+    env: { HERMES_SESSION_ID: "hermes-session-1" },
+    fetchImpl,
+    stdout: (line) => lines.push(line),
+  });
+
+  assert.equal(result.session_id, "watched-session-1");
+  assert.deepEqual(calls, [{
+    path: "/hexa/sessions",
+    method: "GET",
+    token: "test-token",
+    body: undefined,
+  }]);
+  assert.deepEqual(lines, [
+    "Hexa status: working",
+    "goal: 整理本机 Agent 会话",
+    "step: 正在识别活跃会话",
+    "work_items: 1/3 completed, 1 failed",
+    "milestones: 1",
+    "session_id: watched-session-1",
+  ]);
+});

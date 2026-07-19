@@ -9,6 +9,7 @@ pub(crate) struct HexaConnectorInstallReport {
 
 const CLI_SOURCE: &str = include_str!("../../scripts/humhum-hexa.mjs");
 const MANAGED_MARKER: &str = "HUMHUM_MANAGED_HEXA_CONNECTOR";
+const SKILL_CONTEXT_MARKER: &str = " __HUMHUM_CONTEXT_ARGS__";
 const SKILL_SOURCE: &str = r#"---
 name: humhum-hexa
 description: Bind an explicitly requested Agent session to HUMHUM Hexa and report its real plan, milestones, blockers, confirmations, and completion from any project.
@@ -27,7 +28,7 @@ HumHum is not another Agent. It records the real work state that an Agent report
 Immediately run:
 
 ```bash
-~/.humhum/bin/humhum-hexa watch "<one-sentence goal>"
+~/.humhum/bin/humhum-hexa watch "<one-sentence goal>" __HUMHUM_CONTEXT_ARGS__
 ```
 
 The connector reads the real provider session ID from the Agent runtime. Do not invent a session ID and do not add HUMHUM files or npm dependencies to the current project.
@@ -48,10 +49,12 @@ Only set a runtime surface when its identity is actually known. In particular, Q
 
 ## Report the plan
 
+Binding only declares the goal. It is not a completed Hexa report. Immediately after `watch`, report the structured plan or explicitly report that the capability is unavailable. Do not stop after printing the watched session ID.
+
 If this Agent exposes a structured plan, report every real work item immediately after binding and whenever the plan changes:
 
 ```bash
-~/.humhum/bin/humhum-hexa plan --json '{"items":[{"id":"stable-id","title":"user-readable task","status":"pending","depends_on":[]}]}'
+~/.humhum/bin/humhum-hexa plan --json '{"items":[{"id":"stable-id","title":"user-readable task","status":"pending","depends_on":[]}]}' __HUMHUM_CONTEXT_ARGS__
 ```
 
 Allowed statuses are `pending`, `in_progress`, `completed`, and `failed`. Keep IDs stable. Do not fabricate work items from tool-call counts or prose.
@@ -59,7 +62,7 @@ Allowed statuses are `pending`, `in_progress`, `completed`, and `failed`. Keep I
 If this Agent cannot provide a structured plan, report that capability honestly:
 
 ```bash
-~/.humhum/bin/humhum-hexa plan --capability unavailable --json '{"items":[]}'
+~/.humhum/bin/humhum-hexa plan --capability unavailable --json '{"items":[]}' __HUMHUM_CONTEXT_ARGS__
 ```
 
 Then tell the user plainly that this Agent integration cannot expose structured work items. This is an Agent capability limitation, not a HUMHUM or Hexa failure.
@@ -69,7 +72,7 @@ Then tell the user plainly that this Agent integration cannot expose structured 
 At meaningful milestones, plan changes, blockers, and user-confirmation points, run:
 
 ```bash
-~/.humhum/bin/humhum-hexa update "<current progress>"
+~/.humhum/bin/humhum-hexa update "<current progress>" __HUMHUM_CONTEXT_ARGS__
 ```
 
 Before asking the user for a decision while work remains, explicitly publish the waiting state first:
@@ -91,7 +94,7 @@ Before and after a long-running phase that may take more than 30 minutes, send a
 When the task is genuinely complete, run:
 
 ```bash
-~/.humhum/bin/humhum-hexa complete "<result summary>" --result unverified --evidence-label "<evidence>" --evidence-location "<path or command>"
+~/.humhum/bin/humhum-hexa complete "<result summary>" --result unverified --evidence-label "<evidence>" --evidence-location "<path or command>" __HUMHUM_CONTEXT_ARGS__
 ```
 
 Agent completion is unverified until evidence or user acceptance exists. An Agent may only report `unverified`, `failed`, or `superseded` through `/hexa/goal/result`; it must never mark itself `verified` or `accepted`. Never invent test results, evidence, or user acceptance.
@@ -99,8 +102,18 @@ Agent completion is unverified until evidence or user acceptance exists. An Agen
 If the user asks to stop supervision, run:
 
 ```bash
-~/.humhum/bin/humhum-hexa unwatch
+~/.humhum/bin/humhum-hexa unwatch __HUMHUM_CONTEXT_ARGS__
 ```
+
+## Check supervision safely
+
+To verify registration or inspect the current summary, run:
+
+```bash
+~/.humhum/bin/humhum-hexa status __HUMHUM_CONTEXT_ARGS__
+```
+
+Use this managed status command instead of calling `/hexa/*` with `curl`, piping a response into Python, or asking the user to approve an improvised verification command.
 "#;
 
 const SKILL_TARGETS: &[(&str, &str, &str)] = &[
@@ -122,7 +135,17 @@ const SKILL_TARGETS: &[(&str, &str, &str)] = &[
         ".config/opencode",
         ".config/opencode/skills/humhum-hexa/SKILL.md",
     ),
+    ("hermes", ".hermes", ".hermes/skills/humhum-hexa/SKILL.md"),
 ];
+
+fn skill_source(provider: &str) -> String {
+    let context = if provider == "hermes" {
+        r#" --provider hermes --agent hermes --session-id "${HERMES_SESSION_ID}""#
+    } else {
+        ""
+    };
+    SKILL_SOURCE.replace(SKILL_CONTEXT_MARKER, context)
+}
 
 pub(crate) fn ensure_installed(home: &Path) -> Result<HexaConnectorInstallReport, String> {
     let cli = home.join(".humhum/bin/humhum-hexa");
@@ -200,7 +223,7 @@ pub(crate) fn ensure_installed(home: &Path) -> Result<HexaConnectorInstallReport
                 format!("could not create {} skill directory: {error}", provider)
             })?;
         }
-        fs::write(&target, SKILL_SOURCE)
+        fs::write(&target, skill_source(provider))
             .map_err(|error| format!("could not install {} Hexa skill: {error}", provider))?;
         report
             .installed_skills
@@ -220,6 +243,7 @@ mod tests {
         let home = temp.path();
         fs::create_dir_all(home.join(".codex")).unwrap();
         fs::create_dir_all(home.join(".claude")).unwrap();
+        fs::create_dir_all(home.join(".hermes")).unwrap();
         let unmanaged = home.join(".qoder/skills/humhum-hexa/SKILL.md");
         fs::create_dir_all(unmanaged.parent().unwrap()).unwrap();
         fs::write(&unmanaged, "user owned").unwrap();
@@ -257,16 +281,36 @@ mod tests {
             assert!(source.contains("/hexa/goal/result"));
             assert!(source.contains("unverified"));
             assert!(source.contains("Never invent test results"));
+            assert!(!source.contains("__HUMHUM_CONTEXT_ARGS__"));
         }
+        let hermes_source =
+            fs::read_to_string(home.join(".hermes/skills/humhum-hexa/SKILL.md")).unwrap();
+        assert!(hermes_source.contains("humhum-hexa status"));
+        assert!(hermes_source.contains("--provider hermes"));
+        assert!(hermes_source.contains("${HERMES_SESSION_ID}"));
+        assert!(hermes_source.contains(
+            r#"humhum-hexa status --provider hermes --agent hermes --session-id "${HERMES_SESSION_ID}""#
+        ));
+        let complete_command = hermes_source
+            .lines()
+            .find(|line| line.contains("humhum-hexa complete"))
+            .unwrap();
+        assert!(complete_command.contains("--result unverified"));
+        assert!(complete_command.contains("--provider hermes"));
+        assert!(complete_command.contains(r#"--session-id "${HERMES_SESSION_ID}""#));
+        assert!(!hermes_source.contains(r#""--provider"#));
+        assert!(!hermes_source.contains("status--provider"));
+        assert!(!hermes_source.contains("__HUMHUM_CONTEXT_ARGS__"));
+        assert!(!hermes_source.contains("curl "));
         assert_eq!(fs::read_to_string(&unmanaged).unwrap(), "user owned");
         assert!(report
             .warnings
             .iter()
             .any(|warning| warning.contains("qoder")));
-        assert_eq!(report.installed_skills.len(), 2);
+        assert_eq!(report.installed_skills.len(), 3);
 
         let second = ensure_installed(home).unwrap();
-        assert_eq!(second.installed_skills.len(), 2);
+        assert_eq!(second.installed_skills.len(), 3);
         assert_eq!(fs::read_to_string(&unmanaged).unwrap(), "user owned");
     }
 

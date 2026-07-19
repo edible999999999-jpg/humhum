@@ -169,6 +169,7 @@ async fn handle_request(
         ("GET", "/pending") => handle_pending(pending).await,
         ("POST", "/respond") => handle_respond(req, pending).await,
         ("GET", "/knowledge") => handle_knowledge_query(req, app_handle).await,
+        ("GET", "/hexa/sessions") => handle_hexa_sessions(app_handle).await,
         ("POST", "/hexa/register") => handle_hexa_register(req, app_handle).await,
         ("POST", "/hexa/update") => handle_hexa_update(req, app_handle).await,
         ("POST", "/hexa/plan") => handle_hexa_plan(req, app_handle).await,
@@ -942,6 +943,34 @@ async fn handle_knowledge_query(
     };
 
     Ok(json_response(StatusCode::OK, &result))
+}
+
+async fn handle_hexa_sessions(
+    app_handle: tauri::AppHandle,
+) -> Result<Response<Full<Bytes>>, Infallible> {
+    let sessions = {
+        let store = app_handle.state::<Arc<std::sync::Mutex<HexaWatchStore>>>();
+        let mut store = match store.lock() {
+            Ok(store) => store,
+            Err(error) => {
+                return Ok(json_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &serde_json::json!({"error": format!("lock error: {error}")}),
+                ));
+            }
+        };
+        if let Err(error) = store.reload_from_disk() {
+            return Ok(json_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &serde_json::json!({"error": format!("could not load watched sessions: {error}")}),
+            ));
+        }
+        store.sessions()
+    };
+    Ok(json_response(
+        StatusCode::OK,
+        &serde_json::to_value(sessions).unwrap_or_default(),
+    ))
 }
 
 async fn handle_hexa_register(

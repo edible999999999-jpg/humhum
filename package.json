@@ -25,6 +25,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "hexa:watch": "node scripts/humhum-hexa.mjs watch",
+    "hexa:status": "node scripts/humhum-hexa.mjs status",
     "hexa:update": "node scripts/humhum-hexa.mjs update",
     "hexa:plan": "node scripts/humhum-hexa.mjs plan",
     "hexa:complete": "node scripts/humhum-hexa.mjs complete",
