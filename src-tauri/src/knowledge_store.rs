@@ -9,8 +9,15 @@ use std::path::{Path, PathBuf};
 
 const MAX_OBSIDIAN_NOTES: usize = 2000;
 const MAX_AGENT_ASSETS: usize = 8000;
+const MAX_AGENT_RULE_FILES: usize = 2000;
+const MAX_AGENT_RULE_DEPTH: usize = 4;
 const MAX_MARKDOWN_BYTES: u64 = 512 * 1024;
 const MAX_ASSET_BYTES: u64 = 384 * 1024;
+const AGENT_RULE_SCAN_PATHS: [(&str, &str, &str); 3] = [
+    ("claude-code", "CLAUDE.md", "CLAUDE.md"),
+    ("cursor", ".cursorrules", ".cursorrules"),
+    ("codex", "AGENTS.md", "AGENTS.md"),
+];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Preference {
@@ -21,7 +28,7 @@ pub struct Preference {
     pub priority: u8,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AgentRule {
     pub id: String,
     pub agent_id: String,
@@ -196,12 +203,37 @@ impl KnowledgeStore {
         }
     }
 
-    /// Load preferences and memory from the Markdown vault, making the vault the
-    /// source of truth for these two collections. Other collections
-    /// (agent_rules, agent_assets, obsidian_notes) stay in knowledge.json.
+    /// Merge Markdown vault records into the JSON snapshot. Vault files win
+    /// same-id conflicts, while JSON-only records survive an empty or partial
+    /// vault for backward compatibility.
     fn load_vault(&mut self) {
-        self.data.preferences = self.read_preferences_from_vault();
-        self.data.memory_items = self.read_memory_from_vault();
+        for pref in self.read_preferences_from_vault() {
+            if let Some(existing) = self
+                .data
+                .preferences
+                .iter_mut()
+                .find(|existing| existing.id == pref.id)
+            {
+                *existing = pref;
+            } else {
+                self.data.preferences.push(pref);
+            }
+        }
+        self.data.preferences.sort_by(|a, b| a.id.cmp(&b.id));
+
+        for item in self.read_memory_from_vault() {
+            if let Some(existing) = self
+                .data
+                .memory_items
+                .iter_mut()
+                .find(|existing| existing.id == item.id)
+            {
+                *existing = item;
+            } else {
+                self.data.memory_items.push(item);
+            }
+        }
+        self.data.memory_items.sort_by(|a, b| a.id.cmp(&b.id));
     }
 
     fn read_preferences_from_vault(&self) -> Vec<Preference> {
@@ -292,6 +324,7 @@ impl KnowledgeStore {
         } else {
             self.data.preferences.push(pref);
         }
+        self.save();
     }
 
     pub fn save_memory(&mut self, item: MemoryItem) {
@@ -301,6 +334,7 @@ impl KnowledgeStore {
         } else {
             self.data.memory_items.push(item);
         }
+        self.save();
     }
 
     pub fn delete_preference(&mut self, id: &str) -> bool {
@@ -310,6 +344,7 @@ impl KnowledgeStore {
         if removed {
             let path = self.preferences_dir().join(format!("{}.md", slugify(id)));
             let _ = std::fs::remove_file(path);
+            self.save();
         }
         removed
     }
@@ -451,47 +486,79 @@ impl KnowledgeStore {
 
     pub fn scan_agent_rules(&mut self) -> Vec<AgentRule> {
         let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-        let mut found: Vec<AgentRule> = Vec::new();
-
-        let scan_paths: Vec<(&str, &str, &str)> = vec![
-            ("claude-code", "CLAUDE.md", "CLAUDE.md"),
-            ("cursor", ".cursorrules", ".cursorrules"),
-            ("codex", "AGENTS.md", "AGENTS.md"),
-        ];
-
         let search_dirs = agent_rule_search_dirs(&home, dirs::desktop_dir(), dirs::document_dir());
+        self.scan_agent_rules_in(&search_dirs)
+    }
 
-        for dir in &search_dirs {
-            for (agent_id, filename, rule_type) in &scan_paths {
-                if let Ok(entries) = std::fs::read_dir(dir) {
-                    for entry in entries.flatten() {
-                        let path = entry.path();
-                        let rule_file = path.join(filename);
-                        if rule_file.exists() {
-                            if let Ok(content) = std::fs::read_to_string(&rule_file) {
-                                let id = format!("{}:{}", agent_id, rule_file.to_string_lossy());
-                                if !self.data.agent_rules.iter().any(|r| r.id == id) {
-                                    let rule = AgentRule {
-                                        id: id.clone(),
-                                        agent_id: agent_id.to_string(),
-                                        rule_type: rule_type.to_string(),
-                                        file_path: rule_file.to_string_lossy().to_string(),
-                                        content: truncate_content(&content, 2000),
-                                    };
-                                    found.push(rule.clone());
-                                    self.data.agent_rules.push(rule);
-                                }
-                            }
-                        }
+    fn scan_agent_rules_in(&mut self, search_dirs: &[PathBuf]) -> Vec<AgentRule> {
+        let mut found = Vec::new();
+        let mut scanned_roots = Vec::new();
+
+        for dir in search_dirs {
+            if std::fs::read_dir(dir).is_err() {
+                continue;
+            }
+            scanned_roots.push(dir.clone());
+
+            for rule_file in collect_agent_rule_files(dir, agent_rule_scan_depth(dir, search_dirs))
+            {
+                let Some((agent_id, _, rule_type)) =
+                    AGENT_RULE_SCAN_PATHS.iter().find(|(_, filename, _)| {
+                        rule_file.file_name().is_some_and(|name| name == *filename)
+                    })
+                else {
+                    continue;
+                };
+                if let Ok(content) = std::fs::read_to_string(&rule_file) {
+                    let id = format!("{}:{}", agent_id, rule_file.to_string_lossy());
+                    if !found.iter().any(|rule: &AgentRule| rule.id == id) {
+                        found.push(AgentRule {
+                            id,
+                            agent_id: agent_id.to_string(),
+                            rule_type: rule_type.to_string(),
+                            file_path: rule_file.to_string_lossy().to_string(),
+                            content: truncate_content(&content, 2000),
+                        });
                     }
                 }
             }
         }
 
-        if !found.is_empty() {
+        let mut changed = Vec::new();
+        let mut reconciled = Vec::with_capacity(self.data.agent_rules.len() + found.len());
+
+        for existing in std::mem::take(&mut self.data.agent_rules) {
+            // A refresh only owns legacy scan-shaped rules beneath roots it could read.
+            if is_scanned_agent_rule_in_roots(&existing, &scanned_roots) {
+                if let Some(current) = found.iter().find(|rule| rule.id == existing.id) {
+                    if current != &existing {
+                        changed.push(current.clone());
+                    }
+                    reconciled.push(current.clone());
+                    continue;
+                }
+
+                if matches!(Path::new(&existing.file_path).try_exists(), Ok(false)) {
+                    changed.push(existing);
+                    continue;
+                }
+            }
+
+            reconciled.push(existing);
+        }
+
+        for rule in found {
+            if !reconciled.iter().any(|existing| existing.id == rule.id) {
+                changed.push(rule.clone());
+                reconciled.push(rule);
+            }
+        }
+
+        self.data.agent_rules = reconciled;
+        if !changed.is_empty() {
             self.save();
         }
-        found
+        changed
     }
 
     pub fn scan_agent_assets(
@@ -831,6 +898,78 @@ fn agent_rule_search_dirs(
     search_dirs
 }
 
+fn is_scanned_agent_rule_in_roots(rule: &AgentRule, scanned_roots: &[PathBuf]) -> bool {
+    let path = Path::new(&rule.file_path);
+    let Some((agent_id, _, rule_type)) = AGENT_RULE_SCAN_PATHS
+        .iter()
+        .find(|(_, filename, _)| path.file_name().is_some_and(|name| name == *filename))
+    else {
+        return false;
+    };
+
+    if rule.agent_id != *agent_id
+        || rule.rule_type != *rule_type
+        || rule.id != format!("{}:{}", agent_id, rule.file_path)
+    {
+        return false;
+    }
+
+    scanned_roots.iter().any(|root| path.starts_with(root))
+}
+
+fn agent_rule_scan_depth(root: &Path, search_dirs: &[PathBuf]) -> usize {
+    if search_dirs
+        .iter()
+        .any(|candidate| candidate != root && candidate.starts_with(root))
+    {
+        1
+    } else {
+        MAX_AGENT_RULE_DEPTH
+    }
+}
+
+fn collect_agent_rule_files(root: &Path, max_depth: usize) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    let mut queue = VecDeque::from([(root.to_path_buf(), 0usize)]);
+
+    while let Some((dir, depth)) = queue.pop_front() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            if path.is_dir() {
+                if depth < max_depth && !name.starts_with('.') && !should_skip_agent_rule_dir(&name)
+                {
+                    queue.push_back((path, depth + 1));
+                }
+                continue;
+            }
+
+            if AGENT_RULE_SCAN_PATHS
+                .iter()
+                .any(|(_, filename, _)| path.file_name().is_some_and(|name| name == *filename))
+            {
+                files.push(path);
+                if files.len() >= MAX_AGENT_RULE_FILES {
+                    return files;
+                }
+            }
+        }
+    }
+
+    files
+}
+
+fn should_skip_agent_rule_dir(name: &str) -> bool {
+    should_skip_dir(name)
+        || matches!(
+            name.to_ascii_lowercase().as_str(),
+            "applications" | "library" | "movies" | "music" | "pictures" | "public"
+        )
+}
+
 fn resolve_agent_asset_roots_with_home(roots: Option<Vec<String>>, home: &Path) -> Vec<PathBuf> {
     let raw_roots = roots.unwrap_or_else(default_agent_asset_root_strings);
 
@@ -840,7 +979,7 @@ fn resolve_agent_asset_roots_with_home(roots: Option<Vec<String>>, home: &Path) 
         if trimmed.is_empty() {
             continue;
         }
-        let path = expand_home(trimmed, &home);
+        let path = expand_home(trimmed, home);
         if !paths.iter().any(|existing| existing == &path) {
             paths.push(path);
         }
@@ -957,13 +1096,7 @@ fn is_agent_asset_file(path: &Path) -> bool {
         .and_then(|name| name.to_str())
         .unwrap_or("")
         .to_lowercase();
-    let ext = path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .unwrap_or("")
-        .to_lowercase();
-
-    matches!(
+    if matches!(
         filename.as_str(),
         "agent.md"
             | "agents.md"
@@ -974,11 +1107,25 @@ fn is_agent_asset_file(path: &Path) -> bool {
             | "soul.md"
             | "rules.md"
             | ".cursorrules"
-            | "settings.json"
-            | "config.json"
-    ) || matches!(ext.as_str(), "md" | "yaml" | "yml" | "json" | "toml")
+            | "preference.md"
+            | "preferences.md"
+            | "user.md"
+    ) {
+        return true;
+    }
+
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
         && [
-            "agent", "skill", "soul", "memory", "rules", ".codex", ".claude", ".agents", ".pi",
+            "/agent/",
+            "/agents/",
+            "/memory/",
+            "/memories/",
+            "/preference/",
+            "/preferences/",
+            "/rules/",
+            "/soul/",
         ]
         .iter()
         .any(|needle| lower.contains(needle))
@@ -1062,6 +1209,17 @@ fn classify_asset_type(lower_path: &str, filename: &str) -> String {
         || filename.ends_with(".toml");
     if filename == "skill.md" {
         "skill".to_string()
+    } else if filename == "agents.md" || filename == "agent.md" {
+        "agent".to_string()
+    } else if filename == "preference.md"
+        || filename == "preferences.md"
+        || filename == "user.md"
+        || filename.starts_with("feedback_")
+        || filename.starts_with("feedback-")
+        || lower_path.contains("/preference/")
+        || lower_path.contains("/preferences/")
+    {
+        "preference".to_string()
     } else if lower_path.contains("soul") {
         "soul".to_string()
     } else if lower_path.contains("memory") || lower_path.contains("memories") {
@@ -1749,6 +1907,10 @@ mod tests {
 
         let md = root.join("vault").join("preferences").join("pref-42.md");
         assert!(md.exists(), "preference markdown file should exist");
+        let persisted: KnowledgeData =
+            serde_json::from_str(&std::fs::read_to_string(root.join("knowledge.json")).unwrap())
+                .unwrap();
+        assert_eq!(persisted.preferences.len(), 1);
 
         // A fresh store reads the vault as source of truth.
         let reloaded = store_at(&root);
@@ -1796,6 +1958,10 @@ mod tests {
 
         let md = root.join("vault").join("memory").join("mem-1.md");
         assert!(md.exists());
+        let persisted: KnowledgeData =
+            serde_json::from_str(&std::fs::read_to_string(root.join("knowledge.json")).unwrap())
+                .unwrap();
+        assert_eq!(persisted.memory_items.len(), 1);
 
         let reloaded = store_at(&root);
         let items = &reloaded.get_all().memory_items;
@@ -2093,6 +2259,274 @@ mod tests {
             );
         }
 
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn scan_agent_rules_reconciles_added_modified_and_deleted_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let scan_root = root.join("scan-root");
+        let other_scan_root = root.join("other-scan-root");
+        let unavailable_scan_root = root.join("unavailable-scan-root");
+        let project = scan_root.join("project");
+        let other_project = other_scan_root.join("other-project");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(&other_project).unwrap();
+
+        let rule_path = project.join("AGENTS.md");
+        let other_rule_path = other_project.join("CLAUDE.md");
+        std::fs::write(&rule_path, "initial rule").unwrap();
+        std::fs::write(&other_rule_path, "other root rule").unwrap();
+
+        let rule_id = format!("codex:{}", rule_path.to_string_lossy());
+        let other_rule_id = format!("claude-code:{}", other_rule_path.to_string_lossy());
+        let unavailable_rule_path = unavailable_scan_root.join("project").join("AGENTS.md");
+        let unavailable_rule_id = format!("codex:{}", unavailable_rule_path.to_string_lossy());
+        let manual_rule_id = "manual-rule".to_string();
+
+        let mut store = store_at(root);
+        store.save_preference(Preference {
+            id: "pref-1".into(),
+            category: "style".into(),
+            content: "keep preference".into(),
+            source: "manual".into(),
+            priority: 3,
+        });
+        store.save_memory(MemoryItem {
+            id: "memory-1".into(),
+            agent_id: "codex".into(),
+            content: "keep memory".into(),
+            temperature: "warm".into(),
+        });
+        store.data.agent_rules.push(AgentRule {
+            id: manual_rule_id.clone(),
+            agent_id: "custom".into(),
+            rule_type: "manual".into(),
+            file_path: rule_path.to_string_lossy().into_owned(),
+            content: "keep manual rule".into(),
+        });
+        store.data.agent_rules.push(AgentRule {
+            id: unavailable_rule_id.clone(),
+            agent_id: "codex".into(),
+            rule_type: "AGENTS.md".into(),
+            file_path: unavailable_rule_path.to_string_lossy().into_owned(),
+            content: "keep rule from unavailable root".into(),
+        });
+
+        let scan_roots = vec![scan_root, other_scan_root, unavailable_scan_root];
+        let added = store.scan_agent_rules_in(&scan_roots);
+        let added_content = store
+            .get_all()
+            .agent_rules
+            .iter()
+            .find(|rule| rule.id == rule_id)
+            .map(|rule| rule.content.clone());
+
+        std::fs::write(&rule_path, "updated rule").unwrap();
+        let modified = store.scan_agent_rules_in(&scan_roots);
+        let modified_content = store
+            .get_all()
+            .agent_rules
+            .iter()
+            .find(|rule| rule.id == rule_id)
+            .map(|rule| rule.content.clone());
+
+        std::fs::remove_file(&rule_path).unwrap();
+        let deleted = store.scan_agent_rules_in(&scan_roots);
+        let deleted_rule_remains = store
+            .get_all()
+            .agent_rules
+            .iter()
+            .any(|rule| rule.id == rule_id);
+
+        assert_eq!(added_content.as_deref(), Some("initial rule"));
+        assert_eq!(
+            (modified_content.as_deref(), deleted_rule_remains),
+            (Some("updated rule"), false)
+        );
+        assert!(added.iter().any(|rule| rule.id == rule_id));
+        assert!(modified.iter().any(|rule| rule.id == rule_id));
+        assert!(deleted.iter().any(|rule| rule.id == rule_id));
+        assert!(store
+            .get_all()
+            .agent_rules
+            .iter()
+            .any(|rule| rule.id == manual_rule_id));
+        assert!(store
+            .get_all()
+            .agent_rules
+            .iter()
+            .any(|rule| rule.id == other_rule_id));
+        assert!(store
+            .get_all()
+            .agent_rules
+            .iter()
+            .any(|rule| rule.id == unavailable_rule_id));
+
+        let reloaded = store_at(root);
+        assert_eq!(reloaded.get_all().preferences.len(), 1);
+        assert_eq!(reloaded.get_all().preferences[0].content, "keep preference");
+        assert_eq!(reloaded.get_all().memory_items.len(), 1);
+        assert_eq!(reloaded.get_all().memory_items[0].content, "keep memory");
+        assert!(reloaded
+            .get_all()
+            .agent_rules
+            .iter()
+            .any(|rule| rule.id == manual_rule_id));
+        assert!(reloaded
+            .get_all()
+            .agent_rules
+            .iter()
+            .any(|rule| rule.id == other_rule_id));
+        assert!(reloaded
+            .get_all()
+            .agent_rules
+            .iter()
+            .any(|rule| rule.id == unavailable_rule_id));
+        assert!(!reloaded
+            .get_all()
+            .agent_rules
+            .iter()
+            .any(|rule| rule.id == rule_id));
+    }
+
+    #[test]
+    fn agents_md_remains_an_agent_inside_a_skills_tree() {
+        assert_eq!(
+            classify_asset_type(
+                "/Users/test/.agents/skills/custom-helper/AGENTS.md",
+                "AGENTS.md",
+            ),
+            "agent",
+        );
+    }
+
+    #[test]
+    fn only_skill_md_is_classified_as_a_skill() {
+        assert_eq!(
+            classify_asset_type(
+                "/Users/test/.agents/skills/custom-helper/SKILL.md",
+                "SKILL.md",
+            ),
+            "skill",
+        );
+        assert_ne!(
+            classify_asset_type(
+                "/Users/test/.agents/skills/custom-helper/references/usage.md",
+                "usage.md",
+            ),
+            "skill",
+        );
+        assert_ne!(
+            classify_asset_type(
+                "/Users/test/.agents/skills/custom-helper/package.json",
+                "package.json",
+            ),
+            "skill",
+        );
+    }
+
+    #[test]
+    fn asset_collection_rejects_json_session_and_config_files() {
+        assert!(!is_agent_asset_file(Path::new(
+            "/Users/test/.qoder/projects/session/task.json"
+        )));
+        assert!(!is_agent_asset_file(Path::new(
+            "/Users/test/.agents/skills/custom-helper/package.json"
+        )));
+        assert!(is_agent_asset_file(Path::new(
+            "/Users/test/.agents/skills/custom-helper/SKILL.md"
+        )));
+        assert!(is_agent_asset_file(Path::new(
+            "/Users/test/.qoder/memories/project/decision.md"
+        )));
+        assert!(is_agent_asset_file(Path::new(
+            "/Users/test/.qoderwork/awareness/main/USER.md"
+        )));
+    }
+
+    #[test]
+    fn learned_user_feedback_is_classified_as_preference() {
+        assert_eq!(
+            classify_asset_type(
+                "/Users/test/.claude/projects/project/memory/feedback_chinese_response.md",
+                "feedback_chinese_response.md",
+            ),
+            "preference",
+        );
+        assert_eq!(
+            classify_asset_type("/Users/test/.qoderwork/awareness/main/USER.md", "USER.md",),
+            "preference",
+        );
+    }
+
+    #[test]
+    fn scan_agent_rules_finds_rules_in_nested_projects() {
+        let temp = tempfile::tempdir().unwrap();
+        let scan_root = temp.path().join("Desktop");
+        let project = scan_root.join("workspace").join("nested-project");
+        std::fs::create_dir_all(&project).unwrap();
+        let rule_path = project.join("AGENTS.md");
+        std::fs::write(&rule_path, "nested rule").unwrap();
+
+        let mut store = store_at(temp.path());
+        store.scan_agent_rules_in(&[scan_root]);
+
+        assert!(store
+            .get_all()
+            .agent_rules
+            .iter()
+            .any(|rule| rule.file_path == rule_path.to_string_lossy()));
+    }
+
+    #[test]
+    fn parent_rule_root_uses_a_shallow_scan_when_child_roots_are_explicit() {
+        let home = PathBuf::from("/Users/test");
+        let search_dirs = vec![
+            home.join("Desktop"),
+            home.join("Documents"),
+            home.join("Projects"),
+            home.clone(),
+        ];
+
+        assert_eq!(agent_rule_scan_depth(&home, &search_dirs), 1);
+        assert_eq!(
+            agent_rule_scan_depth(&home.join("Desktop"), &search_dirs),
+            MAX_AGENT_RULE_DEPTH,
+        );
+    }
+
+    #[test]
+    fn existing_json_preferences_and_memories_survive_an_empty_vault() {
+        let root = temp_root("empty-vault-fallback");
+        std::fs::create_dir_all(root.join("vault")).unwrap();
+        let legacy = KnowledgeData {
+            preferences: vec![Preference {
+                id: "pref-existing".into(),
+                category: "communication".into(),
+                content: "请使用中文".into(),
+                source: "legacy".into(),
+                priority: 4,
+            }],
+            memory_items: vec![MemoryItem {
+                id: "memory-existing".into(),
+                agent_id: "codex".into(),
+                content: "正在构建 HUMHUM".into(),
+                temperature: "hot".into(),
+            }],
+            ..Default::default()
+        };
+        std::fs::write(
+            root.join("knowledge.json"),
+            serde_json::to_string_pretty(&legacy).unwrap(),
+        )
+        .unwrap();
+
+        let store = store_at(&root);
+
+        assert_eq!(store.get_all().preferences.len(), 1);
+        assert_eq!(store.get_all().memory_items.len(), 1);
         let _ = std::fs::remove_dir_all(&root);
     }
 }

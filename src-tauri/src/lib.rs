@@ -11,6 +11,7 @@ mod event_bus;
 mod git_changes;
 mod hermes_plugin;
 mod hexa_connector;
+mod hexa_goal_store;
 mod hexa_protocol;
 mod hexa_watch_store;
 mod hook_server;
@@ -168,6 +169,21 @@ pub fn run() {
                     }
                 };
                 app.manage(Arc::new(std::sync::Mutex::new(hexa_watch_store)));
+
+                // Development goals are persisted independently so a goal-store
+                // failure never prevents the existing watched-session monitor.
+                let hexa_goal_store = match hexa_goal_store::HexaGoalStore::load_or_create(
+                    &hexa_watch_dir,
+                ) {
+                    Ok(store) => store,
+                    Err(error) => {
+                        log::warn!(
+                            "Could not load Hexa goal store; goal reads and mutations remain unavailable until retry succeeds: {error}"
+                        );
+                        hexa_goal_store::HexaGoalStore::unavailable_at(&hexa_watch_dir)
+                    }
+                };
+                app.manage(Arc::new(std::sync::Mutex::new(hexa_goal_store)));
             } else {
                 return Err(std::io::Error::other("Could not determine home directory").into());
             }
@@ -322,6 +338,11 @@ pub fn run() {
             commands::get_hexa_watched_agents,
             commands::refresh_hexa_watched_agents,
             commands::get_hexa_watched_sessions,
+            commands::get_hexa_development_goals,
+            commands::link_hexa_goal_attempt,
+            commands::update_hexa_attempt_result,
+            commands::accept_hexa_goal_attempt,
+            commands::delete_hexa_development_goal,
             commands::mutate_hexa_session_audit,
             commands::sync_hexa_session_plan,
             commands::delete_hexa_watched_session,

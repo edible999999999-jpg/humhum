@@ -20,6 +20,8 @@ description: Bind an explicitly requested Agent session to HUMHUM Hexa and repor
 
 Use this skill only when the user explicitly asks to put the current session under Hexa supervision, for example “重点监控这个会话”, “加入 Hexa”, “让 Hexa 看着这轮”, or “watch this session”.
 
+HumHum is not another Agent. It records the real work state that an Agent reports and presents it to the user; it does not make decisions, invent progress, or replace the Agent's reasoning.
+
 ## Bind the real session
 
 Immediately run:
@@ -28,7 +30,21 @@ Immediately run:
 ~/.humhum/bin/humhum-hexa watch "<one-sentence goal>"
 ```
 
-The connector reads the real session identity from the Agent runtime. Do not invent a session ID and do not add HUMHUM files or npm dependencies to the current project.
+The connector reads the real provider session ID from the Agent runtime. Do not invent a session ID and do not add HUMHUM files or npm dependencies to the current project.
+
+The ordinary `watch` command preserves the existing single-session report. When the user explicitly asks to create a development goal for multiple Agent attempts or comparison, create one with:
+
+```bash
+~/.humhum/bin/humhum-hexa watch "<one-sentence goal>" --link-goal --success-criteria "<criterion one>|<criterion two>"
+```
+
+When this work belongs to a development goal already shown by Hexa, reuse its exact ID; do not fuzzy-match titles:
+
+```bash
+~/.humhum/bin/humhum-hexa watch "<one-sentence goal>" --goal-id "<goal-id>"
+```
+
+Only set a runtime surface when its identity is actually known. In particular, Qoder must use one of `--surface qoder_ide`, `--surface qoder_cli`, or `--surface qoder_worker` only when that exact runtime is known. Do not infer IDE versus CLI from a workspace path. With `--link-goal` or `--goal-id`, the `watch` command records the attempt through `/hexa/goal/link` without rolling back an already watched session if the goal link fails.
 
 ## Report the plan
 
@@ -56,13 +72,29 @@ At meaningful milestones, plan changes, blockers, and user-confirmation points, 
 ~/.humhum/bin/humhum-hexa update "<current progress>"
 ```
 
+Before asking the user for a decision while work remains, explicitly publish the waiting state first:
+
+```bash
+~/.humhum/bin/humhum-hexa update --status waiting --need-user --blocked-reason "<decision needed>"
+```
+
+After the user responds, immediately return the session to work:
+
+```bash
+~/.humhum/bin/humhum-hexa update "<current progress>" --status working
+```
+
+A conversational question alone is not a Hexa confirmation signal.
+
 Before and after a long-running phase that may take more than 30 minutes, send an update so Hexa does not correctly classify the silent session as disconnected. Do not create a background polling loop.
 
 When the task is genuinely complete, run:
 
 ```bash
-~/.humhum/bin/humhum-hexa complete "<verified result>"
+~/.humhum/bin/humhum-hexa complete "<result summary>" --result unverified --evidence-label "<evidence>" --evidence-location "<path or command>"
 ```
+
+Agent completion is unverified until evidence or user acceptance exists. An Agent may only report `unverified`, `failed`, or `superseded` through `/hexa/goal/result`; it must never mark itself `verified` or `accepted`. Never invent test results, evidence, or user acceptance.
 
 If the user asks to stop supervision, run:
 
@@ -211,6 +243,20 @@ mod tests {
             let source = fs::read_to_string(home.join(path)).unwrap();
             assert!(source.contains("HUMHUM_MANAGED_HEXA_CONNECTOR"));
             assert!(source.contains("humhum-hexa plan"));
+            assert!(source.contains("HumHum is not another Agent"));
+            assert!(source.contains("real provider session ID"));
+            assert!(source.contains("--surface qoder_ide"));
+            assert!(source.contains("--surface qoder_cli"));
+            assert!(source.contains("--surface qoder_worker"));
+            assert!(source.contains("--goal-id"));
+            assert!(source.contains("--link-goal"));
+            assert!(source.contains("do not fuzzy-match titles"));
+            assert!(source.contains("--status waiting --need-user --blocked-reason"));
+            assert!(source.contains("--status working"));
+            assert!(source.contains("/hexa/goal/link"));
+            assert!(source.contains("/hexa/goal/result"));
+            assert!(source.contains("unverified"));
+            assert!(source.contains("Never invent test results"));
         }
         assert_eq!(fs::read_to_string(&unmanaged).unwrap(), "user owned");
         assert!(report

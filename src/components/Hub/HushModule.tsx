@@ -1,18 +1,52 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import {
+  ChevronDown,
+  ExternalLink,
+  LogIn,
+  MessageCircle,
+  RefreshCw,
+  Search,
+  Settings,
+  ShieldCheck,
+  Star,
+  Trash2,
+} from "lucide-react";
 import { useTranslation } from "../../lib/i18n/react";
+import {
+  compareHushContacts,
+  filterHushContacts,
+  filterHushContactsByName,
+  formatHushMessageText,
+  getHushChatScope,
+  getHushConversationScope,
+  getHushConversationScopeLabel,
+  getHushConversationIdentity,
+  getLatestHushMessage,
+  getHushPlatformIdentity,
+  getHushPriorityLabel,
+  getHushUnreadCount,
+  getVisibleHushSuggestedReply,
+  groupHushMessages,
+  migrateHushConversationState,
+  parseHushConversationState,
+  resolveHushSelectedContact,
+  serializeHushConversationState,
+  sortHushContactsByAttention,
+  type DerivedContact,
+  type HushConversationState,
+  type HushFilter,
+  type HushInboxMessage,
+} from "./hushPresentation";
 
-const PLATFORM_ICONS: Record<string, string> = {
-  wechat: "💬",
-  dingtalk: "🔷",
-  feishu: "🪶",
-  telegram: "✈️",
-  x: "𝕏",
-  facetime: "📱",
-};
+export {
+  compareHushContacts,
+  getHushConversationIdentity,
+} from "./hushPresentation";
 
 const TIER_ORDER: string[] = ["family", "friends", "work"];
+export const HUSH_CONVERSATION_STATE_KEY = "humhum:hush:conversation-state:v1";
 
 interface HushConnectorStatus {
   id: string;
@@ -25,23 +59,9 @@ interface HushConnectorStatus {
   bridge_mode: string;
 }
 
-interface HushInboxMessage {
-  id: string;
-  platform: string;
-  sender: string;
-  chat?: string | null;
-  text: string;
-  tier: string;
-  importance: number;
-  suggested_reply?: string | null;
-  received_at: string;
-  source_id?: string | null;
-  preview_limited?: boolean;
-  raw?: Record<string, unknown>;
-}
-
 interface NotificationBridgeStatus {
-  state: "starting" | "running" | "permission_required" | "source_missing" | "error";
+  state:
+    "starting" | "running" | "permission_required" | "source_missing" | "error";
   message: string;
   last_scan_at: string | null;
   supported_apps: string[];
@@ -58,7 +78,11 @@ interface HushInboxSummary {
 export interface HushHealthSignal {
   device_id: string;
   source_id: string;
-  kind: "health.steps.daily" | "health.resting_heart_rate.daily" | "health.sleep.daily" | string;
+  kind:
+    | "health.steps.daily"
+    | "health.resting_heart_rate.daily"
+    | "health.sleep.daily"
+    | string;
   started_at: string;
   ended_at: string;
   value: number;
@@ -68,7 +92,10 @@ export interface HushHealthSignal {
   quality: "trusted" | "device_estimate" | string;
 }
 
-type HushHealthMetric = Pick<HushHealthSignal, "value" | "unit" | "captured_at" | "ended_at" | "quality">;
+type HushHealthMetric = Pick<
+  HushHealthSignal,
+  "value" | "unit" | "captured_at" | "ended_at" | "quality"
+>;
 
 export interface HushHealthSourceSummary {
   state: "empty" | "partial" | "stale" | "ready";
@@ -103,10 +130,15 @@ function parseHealthDate(value: string): number | null {
   return Number.isFinite(timestamp) ? timestamp : null;
 }
 
-function newerHealthMetric(current: HushHealthMetric | null, candidate: HushHealthSignal): HushHealthMetric {
+function newerHealthMetric(
+  current: HushHealthMetric | null,
+  candidate: HushHealthSignal,
+): HushHealthMetric {
   if (!current) return candidate;
-  const currentTime = parseHealthDate(current.ended_at) ?? Number.NEGATIVE_INFINITY;
-  const candidateTime = parseHealthDate(candidate.ended_at) ?? Number.NEGATIVE_INFINITY;
+  const currentTime =
+    parseHealthDate(current.ended_at) ?? Number.NEGATIVE_INFINITY;
+  const candidateTime =
+    parseHealthDate(candidate.ended_at) ?? Number.NEGATIVE_INFINITY;
   if (candidateTime > currentTime) return candidate;
   if (candidateTime < currentTime) return current;
   return (parseHealthDate(candidate.captured_at) ?? Number.NEGATIVE_INFINITY) >
@@ -117,7 +149,9 @@ function newerHealthMetric(current: HushHealthMetric | null, candidate: HushHeal
 
 function canonicalHealthDay(startedAt: string): string | null {
   const day = startedAt.slice(0, 10);
-  return /^\d{4}-\d{2}-\d{2}$/.test(day) && parseHealthDate(startedAt) !== null ? day : null;
+  return /^\d{4}-\d{2}-\d{2}$/.test(day) && parseHealthDate(startedAt) !== null
+    ? day
+    : null;
 }
 
 export function deriveHushHealthSource(
@@ -128,11 +162,19 @@ export function deriveHushHealthSource(
   const deviceIds = new Set<string>();
 
   for (const signal of signals) {
-    const metricKey = HEALTH_METRIC_KEYS[signal.kind as keyof typeof HEALTH_METRIC_KEYS];
+    const metricKey =
+      HEALTH_METRIC_KEYS[signal.kind as keyof typeof HEALTH_METRIC_KEYS];
     const localDate = canonicalHealthDay(signal.started_at);
     const endedAt = parseHealthDate(signal.ended_at);
     const capturedAt = parseHealthDate(signal.captured_at);
-    if (!metricKey || !localDate || endedAt === null || capturedAt === null || !Number.isFinite(signal.value)) continue;
+    if (
+      !metricKey ||
+      !localDate ||
+      endedAt === null ||
+      capturedAt === null ||
+      !Number.isFinite(signal.value)
+    )
+      continue;
     deviceIds.add(signal.device_id);
     const groupKey = `${signal.device_id}\u0000${localDate}`;
     const group = groups.get(groupKey) ?? {
@@ -144,19 +186,29 @@ export function deriveHushHealthSource(
     };
     group.latestEndedAt = Math.max(group.latestEndedAt, endedAt);
     group.lastSyncAt = Math.max(group.lastSyncAt, capturedAt);
-    group.metrics[metricKey] = newerHealthMetric(group.metrics[metricKey], signal);
+    group.metrics[metricKey] = newerHealthMetric(
+      group.metrics[metricKey],
+      signal,
+    );
     groups.set(groupKey, group);
   }
 
-  const selected = Array.from(groups.values()).sort((a, b) =>
-    b.latestEndedAt - a.latestEndedAt ||
-    b.lastSyncAt - a.lastSyncAt ||
-    a.deviceId.localeCompare(b.deviceId) ||
-    a.localDate.localeCompare(b.localDate),
+  const selected = Array.from(groups.values()).sort(
+    (a, b) =>
+      b.latestEndedAt - a.latestEndedAt ||
+      b.lastSyncAt - a.lastSyncAt ||
+      a.deviceId.localeCompare(b.deviceId) ||
+      a.localDate.localeCompare(b.localDate),
   )[0];
 
-  const metrics = selected?.metrics ?? { steps: null, restingHeartRate: null, sleep: null };
-  const isStale = selected !== undefined && now.getTime() - selected.latestEndedAt > 48 * 60 * 60 * 1000;
+  const metrics = selected?.metrics ?? {
+    steps: null,
+    restingHeartRate: null,
+    sleep: null,
+  };
+  const isStale =
+    selected !== undefined &&
+    now.getTime() - selected.latestEndedAt > 48 * 60 * 60 * 1000;
   const isPartial = Object.values(metrics).some((metric) => metric === null);
   const state: HushHealthSourceSummary["state"] = !selected
     ? "empty"
@@ -174,58 +226,9 @@ export function deriveHushHealthSource(
     metrics,
   };
 }
-
-interface DerivedContact {
-  id: string;
-  name: string;
-  tier: string;
-  platforms: string[];
-  lastMessage: string;
-  lastMessageTime: string;
-  importance: number;
-  messages: HushInboxMessage[];
-}
-
-export function compareHushContacts(
-  a: Pick<DerivedContact, "importance" | "lastMessageTime">,
-  b: Pick<DerivedContact, "importance" | "lastMessageTime">,
-): number {
-  const aTime = Date.parse(a.lastMessageTime);
-  const bTime = Date.parse(b.lastMessageTime);
-  const timeDifference =
-    (Number.isFinite(bTime) ? bTime : Number.NEGATIVE_INFINITY) -
-    (Number.isFinite(aTime) ? aTime : Number.NEGATIVE_INFINITY);
-  return timeDifference || b.importance - a.importance;
-}
-
-export function getHushConversationIdentity(
-  message: Pick<HushInboxMessage, "platform" | "sender" | "chat" | "source_id" | "raw">,
-): { id: string; name: string } {
-  const isDwsMessage =
-    message.source_id?.startsWith("dws:") || message.raw?.source === "dws";
-  if (isDwsMessage) {
-    const conversationId =
-      typeof message.raw?.conversation_id === "string"
-        ? message.raw.conversation_id.trim()
-        : "";
-    const chatName = message.chat?.trim() ?? "";
-    const conversationKey = conversationId || chatName;
-    if (conversationKey) {
-      return {
-        id: `${message.platform}:conversation:${conversationKey}`,
-        name: chatName || message.sender,
-      };
-    }
-  }
-
-  return {
-    id: `${message.platform}:${message.sender}`,
-    name: message.sender,
-  };
-}
-
 interface DwsHushStatus {
-  state: "not_installed" | "authentication_required" | "ready" | "syncing" | "error";
+  state:
+    "not_installed" | "authentication_required" | "ready" | "syncing" | "error";
   message: string;
   executable_source: "standalone" | "wukong" | null;
   executable_path: string | null;
@@ -251,23 +254,35 @@ interface DwsSyncReport {
 export function HushModule() {
   const { t } = useTranslation();
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [filter, setFilter] = useState<HushFilter>("all");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [conversationState, setConversationState] =
+    useState<HushConversationState>(readStoredConversationState);
   const [connectors, setConnectors] = useState<HushConnectorStatus[]>([]);
   const [inbox, setInbox] = useState<HushInboxSummary | null>(null);
   const [healthSignals, setHealthSignals] = useState<HushHealthSignal[]>([]);
-  const [healthAvailability, setHealthAvailability] = useState<HushHealthAvailability>("loading");
-  const [notificationBridge, setNotificationBridge] = useState<NotificationBridgeStatus | null>(null);
+  const [healthAvailability, setHealthAvailability] =
+    useState<HushHealthAvailability>("loading");
+  const [notificationBridge, setNotificationBridge] =
+    useState<NotificationBridgeStatus | null>(null);
   const [dwsStatus, setDwsStatus] = useState<DwsHushStatus | null>(null);
   const [dwsReport, setDwsReport] = useState<DwsSyncReport | null>(null);
-  const [dingTalkSyncing, setDingTalkSyncing] = useState(false);
-  const [dingTalkLoggingIn, setDingTalkLoggingIn] = useState(false);
-  const [dingTalkAutoUpdating, setDingTalkAutoUpdating] = useState(false);
+  const [dwsSyncing, setDwsSyncing] = useState(false);
+  const [dwsLoggingIn, setDwsLoggingIn] = useState(false);
+  const [dwsAutoUpdating, setDwsAutoUpdating] = useState(false);
   const [connectorError, setConnectorError] = useState<string | null>(null);
   const [healthClearFailed, setHealthClearFailed] = useState(false);
   const [openingConnector, setOpeningConnector] = useState<string | null>(null);
   const [confirmingHealthClear, setConfirmingHealthClear] = useState(false);
   const [clearingHealth, setClearingHealth] = useState(false);
   const [pendingHealthClearCount, setPendingHealthClearCount] = useState(0);
-  const [lastHealthClearCount, setLastHealthClearCount] = useState<number | null>(null);
+  const [lastHealthClearCount, setLastHealthClearCount] = useState<
+    number | null
+  >(null);
+
+  useEffect(() => {
+    writeStoredConversationState(conversationState);
+  }, [conversationState]);
 
   const fetchConnectors = useCallback(async () => {
     try {
@@ -333,7 +348,9 @@ export function HushModule() {
 
   const fetchNotificationBridge = useCallback(async () => {
     try {
-      const status = await invoke<NotificationBridgeStatus>("get_hush_notification_bridge_status");
+      const status = await invoke<NotificationBridgeStatus>(
+        "get_hush_notification_bridge_status",
+      );
       setNotificationBridge(status);
     } catch (error) {
       setNotificationBridge({
@@ -386,18 +403,21 @@ export function HushModule() {
     }
   }, []);
 
-  const openConnector = useCallback(async (connectorId: string) => {
-    setOpeningConnector(connectorId);
-    setConnectorError(null);
-    try {
-      await invoke("open_hush_connector", { connectorId });
-      await fetchConnectors();
-    } catch (error) {
-      setConnectorError(String(error));
-    } finally {
-      setOpeningConnector(null);
-    }
-  }, [fetchConnectors]);
+  const openConnector = useCallback(
+    async (connectorId: string) => {
+      setOpeningConnector(connectorId);
+      setConnectorError(null);
+      try {
+        await invoke("open_hush_connector", { connectorId });
+        await fetchConnectors();
+      } catch (error) {
+        setConnectorError(String(error));
+      } finally {
+        setOpeningConnector(null);
+      }
+    },
+    [fetchConnectors],
+  );
 
   const clearInbox = useCallback(async () => {
     await invoke("clear_hush_inbox");
@@ -420,8 +440,8 @@ export function HushModule() {
     }
   }, []);
 
-  const syncDingTalk = useCallback(async () => {
-    setDingTalkSyncing(true);
+  const syncDws = useCallback(async () => {
+    setDwsSyncing(true);
     setConnectorError(null);
     try {
       const report = await invoke<DwsSyncReport>("sync_hush_dws");
@@ -431,12 +451,12 @@ export function HushModule() {
       setConnectorError(String(error));
       await fetchDwsStatus();
     } finally {
-      setDingTalkSyncing(false);
+      setDwsSyncing(false);
     }
   }, [fetchDwsStatus, fetchInbox]);
 
-  const loginDingTalk = useCallback(async () => {
-    setDingTalkLoggingIn(true);
+  const loginDws = useCallback(async () => {
+    setDwsLoggingIn(true);
     setConnectorError(null);
     try {
       await invoke("open_hush_dws_login");
@@ -444,34 +464,47 @@ export function HushModule() {
     } catch (error) {
       setConnectorError(String(error));
     } finally {
-      setDingTalkLoggingIn(false);
+      setDwsLoggingIn(false);
     }
   }, [fetchDwsStatus]);
 
-  const setDingTalkAutoSync = useCallback(async (enabled: boolean) => {
-    setDingTalkAutoUpdating(true);
+  const setDwsAutoSync = useCallback(async (enabled: boolean) => {
+    setDwsAutoUpdating(true);
     setConnectorError(null);
     try {
-      const status = await invoke<DwsHushStatus>("set_hush_dws_auto_sync", { enabled });
+      const status = await invoke<DwsHushStatus>("set_hush_dws_auto_sync", {
+        enabled,
+      });
       setDwsStatus(status);
     } catch (error) {
       setConnectorError(String(error));
     } finally {
-      setDingTalkAutoUpdating(false);
+      setDwsAutoUpdating(false);
     }
   }, []);
 
   const contacts = useMemo<DerivedContact[]>(() => {
-    const messages = inbox?.messages ?? [];
     const map = new Map<string, DerivedContact>();
-    for (const message of messages) {
+    for (const message of inbox?.messages ?? []) {
       const identity = getHushConversationIdentity(message);
+      const readableMessage: HushInboxMessage = {
+        ...message,
+        text: formatHushMessageText(message.text) || "非文本消息",
+        ...(message.suggested_reply !== undefined
+          ? {
+              suggested_reply: message.suggested_reply
+                ? formatHushMessageText(message.suggested_reply)
+                : message.suggested_reply,
+            }
+          : {}),
+      };
       const existing = map.get(identity.id);
       if (existing) {
-        existing.messages.push(message);
-        if (message.received_at > existing.lastMessageTime) {
-          existing.lastMessage = message.text;
-          existing.lastMessageTime = message.received_at;
+        existing.messages.push(readableMessage);
+        for (const legacyId of identity.legacyIds) {
+          if (!existing.legacyIds.includes(legacyId)) {
+            existing.legacyIds.push(legacyId);
+          }
         }
         existing.importance = Math.max(existing.importance, message.importance);
         if (!existing.platforms.includes(message.platform)) {
@@ -480,263 +513,418 @@ export function HushModule() {
       } else {
         map.set(identity.id, {
           id: identity.id,
+          legacyIds: identity.legacyIds,
           name: identity.name,
           tier: TIER_ORDER.includes(message.tier) ? message.tier : "work",
           platforms: [message.platform],
-          lastMessage: message.text,
+          lastMessage: readableMessage.text,
           lastMessageTime: message.received_at,
           importance: message.importance,
-          messages: [message],
+          messages: [readableMessage],
         });
       }
     }
-    return Array.from(map.values()).sort(compareHushContacts);
+    return Array.from(map.values())
+      .map((contact) => {
+        const latestMessage = getLatestHushMessage(contact.messages);
+        if (!latestMessage) return contact;
+        return {
+          ...contact,
+          lastMessage: latestMessage.text,
+          lastMessageTime: latestMessage.received_at,
+        };
+      })
+      .sort(compareHushContacts);
   }, [inbox]);
 
-  const selectedContact = selectedId
-    ? contacts.find((c) => c.id === selectedId) ?? null
-    : null;
-  const healthSource = useMemo(() => deriveHushHealthSource(healthSignals), [healthSignals]);
+  useEffect(() => {
+    setConversationState((current) =>
+      migrateHushConversationState(current, contacts),
+    );
+  }, [contacts]);
+
+  const displayContacts = useMemo(
+    () => sortHushContactsByAttention(contacts, conversationState),
+    [contacts, conversationState],
+  );
+
+  const filteredContacts = useMemo(() => {
+    const scoped = filterHushContacts(
+      displayContacts,
+      filter,
+      conversationState,
+    );
+    return filterHushContactsByName(scoped, searchQuery);
+  }, [conversationState, displayContacts, filter, searchQuery]);
+
+  useEffect(() => {
+    const searching = searchQuery.trim().length > 0;
+    const selectableContacts = searching ? filteredContacts : displayContacts;
+    const firstContact = selectableContacts[0];
+    if (!firstContact) {
+      setSelectedId(null);
+      return;
+    }
+    if (
+      !selectedId ||
+      !selectableContacts.some((contact) => contact.id === selectedId)
+    ) {
+      setSelectedId(firstContact.id);
+    }
+  }, [displayContacts, filteredContacts, searchQuery, selectedId]);
+
+  const selectedContact = resolveHushSelectedContact(contacts, selectedId);
+  const healthSource = useMemo(
+    () => deriveHushHealthSource(healthSignals),
+    [healthSignals],
+  );
+
+  const selectContact = useCallback((contact: DerivedContact) => {
+    setSelectedId(contact.id);
+    setConversationState((current) => ({
+      ...current,
+      readThrough: {
+        ...current.readThrough,
+        [contact.id]: contact.lastMessageTime,
+      },
+    }));
+  }, []);
+
+  const toggleAttention = useCallback((contactId: string) => {
+    setConversationState((current) => {
+      const isAttention = current.attentionIds.includes(contactId);
+      return {
+        ...current,
+        attentionIds: isAttention
+          ? current.attentionIds.filter((id) => id !== contactId)
+          : [...current.attentionIds, contactId],
+      };
+    });
+  }, []);
 
   return (
-    <div className="hub-module">
-      <div className="hub-module-heading">
-        <span className="hub-module-kicker">{t("hub.role.hush")}</span>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-          <h2 className="hub-module-title" style={{ margin: 0 }}>{t("hub.hush.title")}</h2>
-          <span
-            style={{
-              fontSize: 9,
-              padding: "2px 6px",
-              borderRadius: 9999,
-              background: "rgba(148,239,244,0.08)",
-              border: "1px solid rgba(148,239,244,0.18)",
-              color: "#94eff4",
-              fontWeight: 700,
-            }}
-          >
-            Local-first bridge
-          </span>
+    <div className="hub-module hush-room-module">
+      <header className="hush-room-header">
+        <div className="hush-room-identity">
+          <h2>Hush 收件箱</h2>
+          <span>{filteredContacts.length} 个会话</span>
         </div>
-        <p className="hub-module-desc">
-          {t("hub.hush.desc")}
-        </p>
-      </div>
-
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-          gap: 10,
-          marginBottom: 14,
-        }}
-      >
-        {connectors.map((connector) => (
-          <HushConnectorCard
-            key={connector.id}
-            connector={connector}
-            notificationActive={notificationBridge?.state === "running"}
-            dwsActive={connector.id === "dingtalk" && Boolean(dwsStatus?.authenticated)}
-            busy={openingConnector === connector.id}
-            onOpen={() => openConnector(connector.id)}
+        <label className="hush-search-field">
+          <Search size={16} strokeWidth={1.8} aria-hidden="true" />
+          <input
+            type="search"
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            placeholder="搜索单聊或群聊名称"
+            aria-label="搜索单聊或群聊名称"
           />
-        ))}
-      </div>
-      {connectorError && (
-        <div style={{ marginBottom: 12, fontSize: 11, color: "#fb7185", lineHeight: 1.5 }}>
-          {connectorError}
+        </label>
+        <button
+          type="button"
+          className="hush-header-refresh"
+          onClick={() => void fetchInbox()}
+          aria-label="刷新 Hush 会话"
+          title="刷新"
+        >
+          <RefreshCw size={16} strokeWidth={1.8} aria-hidden="true" />
+        </button>
+        <div className="hush-filter-control" aria-label="消息筛选">
+          {(
+            [
+              ["all", "全部"],
+              ["attention", "特别关注"],
+              ["unread", "未读"],
+            ] as const
+          ).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              className={filter === value ? "is-active" : ""}
+              aria-pressed={filter === value}
+              onClick={() => setFilter(value)}
+            >
+              {label}
+            </button>
+          ))}
         </div>
-      )}
-      <NotificationBridgePanel status={notificationBridge} onOpenSettings={openFullDiskAccess} />
-      <HushTruthPanel inbox={inbox} bridge={notificationBridge} dwsStatus={dwsStatus} />
+      </header>
 
-      <HushHealthSourcePanel
-        summary={healthSource}
-        availability={healthAvailability}
-        confirmingClear={confirmingHealthClear}
-        clearCount={pendingHealthClearCount}
-        lastClearCount={lastHealthClearCount}
-        clearing={clearingHealth}
-        clearFailed={healthClearFailed}
-        onRequestClear={() => {
+      <HushStatusArea
+        connectors={connectors}
+        connectorError={connectorError}
+        notificationBridge={notificationBridge}
+        dwsStatus={dwsStatus}
+        dwsReport={dwsReport}
+        inbox={inbox}
+        openingConnector={openingConnector}
+        dwsSyncing={dwsSyncing}
+        dwsLoggingIn={dwsLoggingIn}
+        dwsAutoUpdating={dwsAutoUpdating}
+        healthSource={healthSource}
+        healthSignalsCount={healthSignals.length}
+        healthAvailability={healthAvailability}
+        confirmingHealthClear={confirmingHealthClear}
+        pendingHealthClearCount={pendingHealthClearCount}
+        lastHealthClearCount={lastHealthClearCount}
+        clearingHealth={clearingHealth}
+        healthClearFailed={healthClearFailed}
+        onOpenConnector={openConnector}
+        onOpenSettings={openFullDiskAccess}
+        onSyncDws={syncDws}
+        onLoginDws={loginDws}
+        onAutoSyncChange={setDwsAutoSync}
+        onRefreshInbox={fetchInbox}
+        onClearInbox={clearInbox}
+        onRequestHealthClear={() => {
           setPendingHealthClearCount(healthSignals.length);
           setHealthClearFailed(false);
           setConfirmingHealthClear(true);
         }}
-        onCancelClear={() => {
+        onCancelHealthClear={() => {
           setConfirmingHealthClear(false);
           setHealthClearFailed(false);
         }}
-        onConfirmClear={clearHealthSignals}
+        onConfirmHealthClear={clearHealthSignals}
       />
 
-      <DingTalkDwsPanel
-        status={dwsStatus}
-        report={dwsReport}
-        syncing={dingTalkSyncing}
-        loggingIn={dingTalkLoggingIn}
-        autoUpdating={dingTalkAutoUpdating}
-        onSync={syncDingTalk}
-        onLogin={loginDingTalk}
-        onAutoSyncChange={setDingTalkAutoSync}
-      />
+      <div className="hush-inbox-toolbar">
+        <span className="hush-conversation-count">
+          {filteredContacts.length} 个会话
+        </span>
+      </div>
 
-      <LiveInboxPanel inbox={inbox} onRefresh={fetchInbox} onClear={clearInbox} />
+      <img
+        className="hush-peek-character"
+        src="/mascots/avatars/hush-peek.png"
+        alt=""
+        aria-hidden="true"
+      />
 
       {contacts.length === 0 ? (
-        <div
-          style={{
-            padding: 36,
-            textAlign: "center",
-            borderRadius: 16,
-            background: "rgba(255,255,255,0.62)",
-            border: "1px dashed rgba(116,143,165,0.18)",
-          }}
-        >
+        <div className="hush-empty-state">
           <div className="hub-empty-title">{t("hub.hush.emptyTitle")}</div>
-          <div className="hub-empty-desc" style={{ maxWidth: 380, margin: "6px auto 0" }}>
-            {t("hub.hush.emptyDesc")}
-          </div>
+          <div className="hub-empty-desc">{t("hub.hush.emptyDesc")}</div>
         </div>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "220px 1fr", gap: 12, minHeight: 400 }}>
-          {/* Contact list (real, aggregated from inbox) */}
-          <div
-            style={{
-              borderRadius: 14,
-              background: "rgba(255,255,255,0.55)",
-              border: "1px solid rgba(116,143,165,0.14)",
-              overflowY: "auto",
-              maxHeight: 500,
-            }}
-            className="scrollbar-thin"
-          >
-            {contacts.map((contact) => (
-              <ContactRow
-                key={contact.id}
-                contact={contact}
-                selected={selectedId === contact.id}
-                onClick={() => setSelectedId(contact.id)}
+        <div className="hush-inbox-workspace">
+          <aside className="hush-conversation-pane" aria-label="会话列表">
+            {filteredContacts.length > 0 ? (
+              <ul className="hush-contact-list">
+                {filteredContacts.map((contact) => (
+                  <HushContactRow
+                    key={contact.id}
+                    contact={contact}
+                    selected={selectedId === contact.id}
+                    attention={conversationState.attentionIds.includes(
+                      contact.id,
+                    )}
+                    unreadCount={getHushUnreadCount(contact, conversationState)}
+                    onSelect={() => selectContact(contact)}
+                    onToggleAttention={() => toggleAttention(contact.id)}
+                  />
+                ))}
+              </ul>
+            ) : (
+              <div className="hush-filter-empty">当前筛选下没有会话</div>
+            )}
+          </aside>
+
+          <section className="hush-message-pane" aria-label="消息记录">
+            {selectedContact ? (
+              <ConversationDetail
+                contact={selectedContact}
+                attention={conversationState.attentionIds.includes(
+                  selectedContact.id,
+                )}
+              />
+            ) : (
+              <div className="hush-select-empty">
+                <div className="hub-empty-title">
+                  {t("hub.hush.selectContactTitle")}
+                </div>
+                <div className="hub-empty-desc">
+                  {t("hub.hush.selectContactDesc")}
+                </div>
+              </div>
+            )}
+          </section>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function HushStatusArea({
+  connectors,
+  connectorError,
+  notificationBridge,
+  dwsStatus,
+  dwsReport,
+  inbox,
+  openingConnector,
+  dwsSyncing,
+  dwsLoggingIn,
+  dwsAutoUpdating,
+  healthSource,
+  healthSignalsCount,
+  healthAvailability,
+  confirmingHealthClear,
+  pendingHealthClearCount,
+  lastHealthClearCount,
+  clearingHealth,
+  healthClearFailed,
+  onOpenConnector,
+  onOpenSettings,
+  onSyncDws,
+  onLoginDws,
+  onAutoSyncChange,
+  onRefreshInbox,
+  onClearInbox,
+  onRequestHealthClear,
+  onCancelHealthClear,
+  onConfirmHealthClear,
+}: {
+  connectors: HushConnectorStatus[];
+  connectorError: string | null;
+  notificationBridge: NotificationBridgeStatus | null;
+  dwsStatus: DwsHushStatus | null;
+  dwsReport: DwsSyncReport | null;
+  inbox: HushInboxSummary | null;
+  openingConnector: string | null;
+  dwsSyncing: boolean;
+  dwsLoggingIn: boolean;
+  dwsAutoUpdating: boolean;
+  healthSource: HushHealthSourceSummary;
+  healthSignalsCount: number;
+  healthAvailability: HushHealthAvailability;
+  confirmingHealthClear: boolean;
+  pendingHealthClearCount: number;
+  lastHealthClearCount: number | null;
+  clearingHealth: boolean;
+  healthClearFailed: boolean;
+  onOpenConnector: (connectorId: string) => void;
+  onOpenSettings: () => void;
+  onSyncDws: () => void;
+  onLoginDws: () => void;
+  onAutoSyncChange: (enabled: boolean) => void;
+  onRefreshInbox: () => void;
+  onClearInbox: () => void;
+  onRequestHealthClear: () => void;
+  onCancelHealthClear: () => void;
+  onConfirmHealthClear: () => void;
+}) {
+  const notificationReady = notificationBridge?.state === "running";
+  const dingTalkReady = Boolean(dwsStatus?.authenticated);
+
+  return (
+    <details className="hush-status-area">
+      <summary>
+        <span className="hush-status-summary-title">
+          <ShieldCheck size={15} aria-hidden="true" />
+          <span>连接与状态</span>
+        </span>
+        <span className="hush-status-summary-meta">
+          钉钉{dingTalkReady ? "已连接" : "未连接"} · WeChat
+          {notificationReady ? "已监听" : "未监听"} · {inbox?.total ?? 0} 条消息
+        </span>
+        <ChevronDown
+          className="hush-status-chevron"
+          size={16}
+          aria-hidden="true"
+        />
+      </summary>
+
+      <div className="hush-status-content">
+        {connectorError && (
+          <div className="hush-status-error">{connectorError}</div>
+        )}
+        <HushTruthPanel
+          inbox={inbox}
+          bridge={notificationBridge}
+          dwsStatus={dwsStatus}
+        />
+        <HushHealthSourcePanel
+          summary={healthSource}
+          availability={healthAvailability}
+          confirmingClear={confirmingHealthClear}
+          clearCount={pendingHealthClearCount || healthSignalsCount}
+          lastClearCount={lastHealthClearCount}
+          clearing={clearingHealth}
+          clearFailed={healthClearFailed}
+          onRequestClear={onRequestHealthClear}
+          onCancelClear={onCancelHealthClear}
+          onConfirmClear={onConfirmHealthClear}
+        />
+        <div className="hush-status-section">
+          <div className="hush-status-section-title">消息来源</div>
+          <div className="hush-connector-list">
+            {connectors.map((connector) => (
+              <HushConnectorRow
+                key={connector.id}
+                connector={connector}
+                notificationActive={notificationReady}
+                dwsActive={connector.id === "dingtalk" && dingTalkReady}
+                busy={openingConnector === connector.id}
+                onOpen={() => onOpenConnector(connector.id)}
               />
             ))}
           </div>
-
-          {/* Detail panel */}
-          <div
-            style={{
-              borderRadius: 14,
-              background: "rgba(255,255,255,0.55)",
-              border: "1px solid rgba(116,143,165,0.14)",
-              padding: 16,
-              overflowY: "auto",
-              maxHeight: 500,
-            }}
-            className="scrollbar-thin"
-          >
-            {selectedContact ? (
-              <div className="animate-bounce-in">
-                {/* Contact header */}
-                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
-                  <div>
-                    <div style={{ fontSize: 15, fontWeight: 700, color: "#263241" }}>
-                      {selectedContact.name}
-                    </div>
-                    <div style={{ display: "flex", gap: 4, marginTop: 2, alignItems: "center" }}>
-                      {selectedContact.platforms.map((p) => (
-                        <span key={p} style={{ fontSize: 12 }} title={p}>
-                          {PLATFORM_ICONS[p] || p}
-                        </span>
-                      ))}
-                      <span style={{ fontSize: 10, color: "#94a3b8", marginLeft: 4 }}>
-                        {selectedContact.tier} · P{selectedContact.importance}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Messages */}
-                <div style={{ marginBottom: 16 }}>
-                  <div style={{ fontSize: 10, fontWeight: 600, color: "#94a3b8", marginBottom: 8, textTransform: "uppercase" }}>
-                    {t("hub.hush.messages")}
-                  </div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                    {selectedContact.messages.map((msg) => (
-                      <div
-                        key={msg.id}
-                        style={{
-                          padding: "8px 10px",
-                          borderRadius: 10,
-                          background: "rgba(255,255,255,0.7)",
-                          border: "1px solid rgba(116,143,165,0.12)",
-                        }}
-                      >
-                        <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 3 }}>
-                          <span style={{ fontSize: 11, fontWeight: 600, color: "#475569" }}>
-                            {msg.sender}
-                          </span>
-                          <span style={{ fontSize: 9, color: "#94a3b8" }}>
-                            {PLATFORM_ICONS[msg.platform] || msg.platform}
-                            {msg.chat ? ` · ${msg.chat}` : ""}
-                          </span>
-                          {msg.source_id?.startsWith("dws:") && (
-                            <span style={{ fontSize: 8, fontWeight: 800, color: "#0f6d78", border: "1px solid rgba(15,109,120,0.2)", borderRadius: 4, padding: "1px 4px" }}>
-                              DWS
-                            </span>
-                          )}
-                        </div>
-                        <div style={{ fontSize: 12, color: "#334155", lineHeight: 1.5 }}>
-                          {msg.text}
-                        </div>
-                        {msg.preview_limited && (
-                          <div style={{ marginTop: 5, fontSize: 10, color: "#b7791f", lineHeight: 1.4 }}>
-                            {t("hub.hush.bridge.limitedPreview")}
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Suggested replies (from backend, latest message) */}
-                {(() => {
-                  const withReply = [...selectedContact.messages]
-                    .reverse()
-                    .find((m) => m.suggested_reply && !m.preview_limited);
-                  if (!withReply?.suggested_reply) return null;
-                  return (
-                    <div>
-                      <div style={{ fontSize: 10, fontWeight: 600, color: "#94a3b8", marginBottom: 8, textTransform: "uppercase" }}>
-                        {t("hub.hush.suggestedReplies")}
-                      </div>
-                      <button
-                        style={{
-                          width: "100%",
-                          padding: "8px 12px",
-                          borderRadius: 10,
-                          background: "rgba(148,239,244,0.12)",
-                          border: "1px solid rgba(116,143,165,0.16)",
-                          color: "#0f6d78",
-                          fontSize: 12,
-                          textAlign: "left",
-                          cursor: "pointer",
-                          transition: "all 0.2s",
-                        }}
-                      >
-                        {withReply.suggested_reply}
-                      </button>
-                    </div>
-                  );
-                })()}
-              </div>
-            ) : (
-              <div style={{ padding: 40, textAlign: "center" }}>
-                <div className="hub-empty-title">{t("hub.hush.selectContactTitle")}</div>
-                <div className="hub-empty-desc">{t("hub.hush.selectContactDesc")}</div>
-              </div>
-            )}
-          </div>
         </div>
-      )}
+        <NotificationBridgePanel
+          status={notificationBridge}
+          onOpenSettings={onOpenSettings}
+        />
+        <DwsPanel
+          status={dwsStatus}
+          report={dwsReport}
+          syncing={dwsSyncing}
+          loggingIn={dwsLoggingIn}
+          autoUpdating={dwsAutoUpdating}
+          onSync={onSyncDws}
+          onLogin={onLoginDws}
+          onAutoSyncChange={onAutoSyncChange}
+        />
+        <LiveInboxPanel
+          inbox={inbox}
+          onRefresh={onRefreshInbox}
+          onClear={onClearInbox}
+        />
+      </div>
+    </details>
+  );
+}
+
+function HushTruthPanel({
+  inbox,
+  bridge,
+  dwsStatus,
+}: {
+  inbox: HushInboxSummary | null;
+  bridge: NotificationBridgeStatus | null;
+  dwsStatus: DwsHushStatus | null;
+}) {
+  const dwsActive =
+    dwsStatus?.authenticated &&
+    ["ready", "syncing", "error"].includes(dwsStatus.state);
+  const notificationActive = bridge?.state === "running";
+  const state = dwsActive
+    ? "钉钉消息已连接"
+    : notificationActive
+      ? "本地通知已连接"
+      : "消息源尚未连接";
+  const detail = dwsActive
+    ? "Hush 通过本机 DWS 只读同步钉钉群聊和私聊，不发送或回复消息。"
+    : notificationActive
+      ? "Hush 正在读取 macOS 投递的 WeChat 和钉钉通知预览，不访问私有聊天数据库。"
+      : "登录钉钉 DWS 后即可同步最近 24 小时的群聊和私聊。";
+
+  return (
+    <div className="hush-truth-row">
+      <div>
+        <strong>{state}</strong>
+        <span>{detail}</span>
+      </div>
+      <span className="hush-truth-count">{inbox?.total ?? 0} 条已接入</span>
     </div>
   );
 }
@@ -750,56 +938,40 @@ function NotificationBridgePanel({
 }) {
   const { t } = useTranslation();
   const state = status?.state ?? "starting";
-  const stateColor = state === "running" ? "#15803d" : state === "starting" ? "#64748b" : "#b45309";
   const lastScan = status?.last_scan_at
-    ? new Date(status.last_scan_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+    ? new Date(status.last_scan_at).toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      })
     : null;
 
   return (
-    <div
-      style={{
-        marginBottom: 14,
-        padding: "11px 13px",
-        display: "flex",
-        alignItems: "center",
-        gap: 12,
-        borderRadius: 8,
-        background: "rgba(255,255,255,0.58)",
-        border: "1px solid rgba(116,143,165,0.16)",
-      }}
-    >
-      <span
-        aria-hidden="true"
-        style={{
-          width: 8,
-          height: 8,
-          flex: "0 0 auto",
-          borderRadius: "50%",
-          background: stateColor,
-          boxShadow: `0 0 0 3px ${stateColor}20`,
-        }}
-      />
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          <span style={{ fontSize: 12, fontWeight: 850, color: "#334155" }}>
-            {t("hub.hush.bridge.title")}
-          </span>
-          <span style={{ fontSize: 10, fontWeight: 800, color: stateColor }}>
-            {t(`hub.hush.bridge.${state}`)}
-          </span>
-          {(status?.supported_apps ?? ["WeChat", "钉钉"]).map((app) => (
-            <span key={app} style={{ fontSize: 9, color: "#64748b" }}>
-              {app === "DingTalk" ? "钉钉" : app}
-            </span>
-          ))}
-        </div>
-        <div style={{ marginTop: 3, fontSize: 10, color: "#64748b", lineHeight: 1.4 }}>
+    <div className="hush-status-row">
+      <span className={`hush-state-dot is-${state}`} aria-hidden="true" />
+      <div className="hush-status-row-copy">
+        <strong>
+          {t("hub.hush.bridge.title")} · {t(`hub.hush.bridge.${state}`)}
+        </strong>
+        <span>
           {t(`hub.hush.bridge.${state}Desc`)}
-          {lastScan ? ` · ${t("hub.hush.bridge.lastScan", { time: lastScan })}` : ""}
+          {lastScan
+            ? ` · ${t("hub.hush.bridge.lastScan", { time: lastScan })}`
+            : ""}
+        </span>
+        <div className="hush-source-labels">
+          {(status?.supported_apps ?? ["WeChat", "钉钉"]).map((app) => (
+            <HushPlatformLabel key={app} platform={app} />
+          ))}
         </div>
       </div>
       {state === "permission_required" && (
-        <button className="kawaii-tab" onClick={onOpenSettings} style={{ fontSize: 10, padding: "5px 9px" }}>
+        <button
+          type="button"
+          className="hush-status-action"
+          onClick={onOpenSettings}
+        >
+          <Settings size={14} aria-hidden="true" />
           {t("hub.hush.bridge.openSettings")}
         </button>
       )}
@@ -807,85 +979,27 @@ function NotificationBridgePanel({
   );
 }
 
-function HushTruthPanel({
-  inbox,
-  bridge,
-  dwsStatus,
-}: {
-  inbox: HushInboxSummary | null;
-  bridge: NotificationBridgeStatus | null;
-  dwsStatus: DwsHushStatus | null;
-}) {
-  const dwsActive = dwsStatus?.authenticated && ["ready", "syncing", "error"].includes(dwsStatus.state);
-  const notificationActive = bridge?.state === "running";
-  const state = dwsActive
-    ? "钉钉消息已连接"
-    : notificationActive
-      ? "本地通知已连接"
-      : "消息源尚未连接";
-  const detail = dwsActive
-    ? "Hush 通过本机 DWS 只读同步钉钉群聊和私聊，不发送或回复消息。"
-    : notificationActive
-      ? "Hush 正在读取 macOS 投递的微信和钉钉通知预览，不访问私有聊天数据库。"
-      : "登录钉钉 DWS 后即可同步最近 24 小时的群聊和私聊。";
-
-  return (
-    <div
-      style={{
-        marginBottom: 14,
-        padding: 14,
-        borderRadius: 18,
-        background: "linear-gradient(135deg, rgba(255,255,255,0.9), rgba(232,248,247,0.82))",
-        border: "1px solid rgba(116,143,165,0.14)",
-        boxShadow: "0 12px 34px rgba(90,115,150,0.1)",
-        color: "#334155",
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 12, color: "#6d6ade", fontWeight: 900, marginBottom: 4 }}>
-            Hush connection truth
-          </div>
-          <div style={{ fontSize: 18, color: "#263241", fontWeight: 900, lineHeight: 1.2 }}>
-            {state}
-          </div>
-          <div style={{ marginTop: 6, fontSize: 12, color: "#64748b", lineHeight: 1.55 }}>
-            {detail}
-          </div>
-        </div>
-        <div
-          style={{
-            minWidth: 124,
-            padding: 10,
-            borderRadius: 15,
-            background: "rgba(255,255,255,0.7)",
-            border: "1px solid rgba(116,143,165,0.12)",
-          }}
-        >
-          <div style={{ fontSize: 9, color: "#94a3b8", fontWeight: 850, textTransform: "uppercase" }}>
-            approved inbox
-          </div>
-          <div style={{ marginTop: 4, fontSize: 22, color: "#334155", fontWeight: 900 }}>
-            {inbox?.total ?? 0}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function formatHealthDate(value: string | null, includeTime = false): string {
   if (!value) return "";
-  const date = new Date(/^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T12:00:00` : value);
+  const date = new Date(
+    /^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T12:00:00` : value,
+  );
   if (Number.isNaN(date.getTime())) return "";
   return includeTime
-    ? date.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
+    ? date.toLocaleString([], {
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
     : date.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
 function formatHealthMetric(metric: HushHealthMetric | null): string | null {
   if (!metric) return null;
-  const value = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(metric.value);
+  const value = new Intl.NumberFormat(undefined, {
+    maximumFractionDigits: 0,
+  }).format(metric.value);
   if (metric.unit === "count") return value;
   if (metric.unit === "bpm") return `${value} bpm`;
   if (metric.unit === "minutes") return `${value} min`;
@@ -917,21 +1031,35 @@ export function HushHealthSourcePanel({
 }) {
   const { t } = useTranslation();
   const displayState = availability === "ready" ? summary.state : availability;
-  const statusColor = displayState === "ready"
-    ? "#15803d"
-    : displayState === "empty" || displayState === "loading"
-      ? "#64748b"
-      : displayState === "stale"
-        ? "#b45309"
-        : displayState === "unavailable"
-          ? "#b91c1c"
-          : "#0f766e";
+  const statusColor =
+    displayState === "ready"
+      ? "#15803d"
+      : displayState === "empty" || displayState === "loading"
+        ? "#64748b"
+        : displayState === "stale"
+          ? "#b45309"
+          : displayState === "unavailable"
+            ? "#b91c1c"
+            : "#0f766e";
   const stateLabel = t(`hub.hush.health.state.${displayState}`);
-  const hasReadableHealth = availability === "ready" && summary.state !== "empty";
+  const hasReadableHealth =
+    availability === "ready" && summary.state !== "empty";
   const metrics = [
-    { key: "steps", label: t("hub.hush.health.steps"), metric: summary.metrics.steps },
-    { key: "heart", label: t("hub.hush.health.restingHeartRate"), metric: summary.metrics.restingHeartRate },
-    { key: "sleep", label: t("hub.hush.health.sleep"), metric: summary.metrics.sleep },
+    {
+      key: "steps",
+      label: t("hub.hush.health.steps"),
+      metric: summary.metrics.steps,
+    },
+    {
+      key: "heart",
+      label: t("hub.hush.health.restingHeartRate"),
+      metric: summary.metrics.restingHeartRate,
+    },
+    {
+      key: "sleep",
+      label: t("hub.hush.health.sleep"),
+      metric: summary.metrics.sleep,
+    },
   ];
 
   return (
@@ -960,30 +1088,72 @@ export function HushHealthSourcePanel({
           }}
         />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <h3 style={{ margin: 0, fontSize: 13, fontWeight: 850, color: "#1f3d3a" }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              flexWrap: "wrap",
+            }}
+          >
+            <h3
+              style={{
+                margin: 0,
+                fontSize: 13,
+                fontWeight: 850,
+                color: "#1f3d3a",
+              }}
+            >
               {t("hub.hush.health.title")}
             </h3>
             <span style={{ fontSize: 10, fontWeight: 800, color: statusColor }}>
               {stateLabel}
             </span>
           </div>
-          <p style={{ margin: "4px 0 0", fontSize: 11, color: "#52716c", lineHeight: 1.5 }}>
+          <p
+            style={{
+              margin: "4px 0 0",
+              fontSize: 11,
+              color: "#52716c",
+              lineHeight: 1.5,
+            }}
+          >
             {t(`hub.hush.health.desc.${displayState}`)}
           </p>
         </div>
       </div>
 
       {availability === "unavailable" ? (
-        <div style={{ marginTop: 12, fontSize: 11, color: "#9a3412", lineHeight: 1.5 }}>
+        <div
+          style={{
+            marginTop: 12,
+            fontSize: 11,
+            color: "#9a3412",
+            lineHeight: 1.5,
+          }}
+        >
           {t("hub.hush.health.unavailableHint")}
         </div>
       ) : availability === "loading" ? (
-        <div style={{ marginTop: 12, fontSize: 11, color: "#52716c", lineHeight: 1.5 }}>
+        <div
+          style={{
+            marginTop: 12,
+            fontSize: 11,
+            color: "#52716c",
+            lineHeight: 1.5,
+          }}
+        >
           {t("hub.hush.health.loadingHint")}
         </div>
       ) : summary.state === "empty" ? (
-        <div style={{ marginTop: 12, fontSize: 11, color: "#52716c", lineHeight: 1.5 }}>
+        <div
+          style={{
+            marginTop: 12,
+            fontSize: 11,
+            color: "#52716c",
+            lineHeight: 1.5,
+          }}
+        >
           {t("hub.hush.health.emptyHint")}
         </div>
       ) : (
@@ -1007,55 +1177,130 @@ export function HushHealthSourcePanel({
                     borderLeft: "2px solid rgba(45, 212, 191, 0.38)",
                   }}
                 >
-                  <div style={{ fontSize: 10, color: "#5d7c76", fontWeight: 750 }}>{label}</div>
-                  <div style={{ marginTop: 3, fontSize: 15, color: value ? "#1f3d3a" : "#7b928e", fontWeight: 850 }}>
+                  <div
+                    style={{ fontSize: 10, color: "#5d7c76", fontWeight: 750 }}
+                  >
+                    {label}
+                  </div>
+                  <div
+                    style={{
+                      marginTop: 3,
+                      fontSize: 15,
+                      color: value ? "#1f3d3a" : "#7b928e",
+                      fontWeight: 850,
+                    }}
+                  >
                     {value ?? t("hub.hush.health.unavailable")}
                   </div>
                 </div>
               );
             })}
           </div>
-          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 10, fontSize: 10, color: "#52716c" }}>
-            <span>{t("hub.hush.health.latestDate", { date: formatHealthDate(summary.localDate) })}</span>
+          <div
+            style={{
+              display: "flex",
+              gap: 12,
+              flexWrap: "wrap",
+              marginTop: 10,
+              fontSize: 10,
+              color: "#52716c",
+            }}
+          >
+            <span>
+              {t("hub.hush.health.latestDate", {
+                date: formatHealthDate(summary.localDate),
+              })}
+            </span>
             <span>{t("hub.hush.health.sourceDevice")}</span>
-            <span>{t("hub.hush.health.recordedDevices", { count: summary.deviceCount })}</span>
-            <span>{t("hub.hush.health.lastSync", { time: formatHealthDate(summary.lastSync, true) })}</span>
+            <span>
+              {t("hub.hush.health.recordedDevices", {
+                count: summary.deviceCount,
+              })}
+            </span>
+            <span>
+              {t("hub.hush.health.lastSync", {
+                time: formatHealthDate(summary.lastSync, true),
+              })}
+            </span>
           </div>
         </>
       )}
 
       {clearFailed && (
-        <div role="status" style={{ marginTop: 10, fontSize: 10, color: "#b45309" }}>
+        <div
+          role="status"
+          style={{ marginTop: 10, fontSize: 10, color: "#b45309" }}
+        >
           {t("hub.hush.health.clearError")}
         </div>
       )}
 
       {lastClearCount !== null && (
-        <div role="status" style={{ marginTop: 10, fontSize: 10, color: "#15803d", fontWeight: 750 }}>
+        <div
+          role="status"
+          style={{
+            marginTop: 10,
+            fontSize: 10,
+            color: "#15803d",
+            fontWeight: 750,
+          }}
+        >
           {t("hub.hush.health.clearSuccess", { count: lastClearCount })}
         </div>
       )}
 
       {hasReadableHealth && (
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 10,
+            marginTop: 12,
+            flexWrap: "wrap",
+          }}
+        >
           {confirmingClear ? (
             <>
               <span style={{ fontSize: 11, color: "#7c2d12", fontWeight: 750 }}>
                 {t("hub.hush.health.clearConfirm", { count: clearCount })}
               </span>
               <div style={{ display: "flex", gap: 7 }}>
-                <button className="kawaii-tab" type="button" disabled={clearing} onClick={onCancelClear} style={{ fontSize: 10, padding: "5px 9px" }}>
+                <button
+                  className="kawaii-tab"
+                  type="button"
+                  disabled={clearing}
+                  onClick={onCancelClear}
+                  style={{ fontSize: 10, padding: "5px 9px" }}
+                >
                   {t("hub.common.cancel")}
                 </button>
-                <button className="kawaii-tab" type="button" disabled={clearing} onClick={onConfirmClear} style={{ fontSize: 10, padding: "5px 9px", color: "#b91c1c" }}>
-                  {clearing ? t("hub.hush.health.clearing") : t("hub.hush.health.clearConfirmAction", { count: clearCount })}
+                <button
+                  className="kawaii-tab"
+                  type="button"
+                  disabled={clearing}
+                  onClick={onConfirmClear}
+                  style={{ fontSize: 10, padding: "5px 9px", color: "#b91c1c" }}
+                >
+                  {clearing
+                    ? t("hub.hush.health.clearing")
+                    : t("hub.hush.health.clearConfirmAction", {
+                        count: clearCount,
+                      })}
                 </button>
               </div>
             </>
           ) : (
             <>
-              <span style={{ fontSize: 10, color: "#52716c" }}>{t("hub.hush.health.localOnly")}</span>
-              <button className="kawaii-tab" type="button" onClick={onRequestClear} style={{ fontSize: 10, padding: "5px 9px", color: "#b45309" }}>
+              <span style={{ fontSize: 10, color: "#52716c" }}>
+                {t("hub.hush.health.localOnly")}
+              </span>
+              <button
+                className="kawaii-tab"
+                type="button"
+                onClick={onRequestClear}
+                style={{ fontSize: 10, padding: "5px 9px", color: "#b45309" }}
+              >
                 {t("hub.hush.health.clear")}
               </button>
             </>
@@ -1066,7 +1311,7 @@ export function HushHealthSourcePanel({
   );
 }
 
-function DingTalkDwsPanel({
+function DwsPanel({
   status,
   report,
   syncing,
@@ -1094,18 +1339,12 @@ function DingTalkDwsPanel({
     syncing: "同步中",
     error: "需要处理",
   };
-  const stateColor = state === "ready"
-    ? "#15803d"
-    : state === "syncing"
-      ? "#2563eb"
-      : state === "not_installed" || state === "authentication_required"
-        ? "#b45309"
-        : "#be123c";
-  const sourceLabel = status?.executable_source === "standalone"
-    ? "独立 DWS"
-    : status?.executable_source === "wukong"
-      ? "悟空内置 DWS"
-      : "尚未发现 DWS";
+  const sourceLabel =
+    status?.executable_source === "standalone"
+      ? "独立 DWS"
+      : status?.executable_source === "wukong"
+        ? "悟空内置 DWS"
+        : "尚未发现 DWS";
   const canSync = Boolean(status?.authenticated) && !isSyncing;
   const syncLabel = status?.pending_sync
     ? "继续同步"
@@ -1117,98 +1356,62 @@ function DingTalkDwsPanel({
     : "尚未同步";
 
   return (
-    <div
-      style={{
-        marginBottom: 14,
-        padding: 14,
-        borderRadius: 8,
-        background: "rgba(255,255,255,0.64)",
-        border: "1px solid rgba(116,143,165,0.16)",
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
-        <span
-          aria-hidden="true"
-          style={{
-            width: 8,
-            height: 8,
-            marginTop: 5,
-            flex: "0 0 auto",
-            borderRadius: "50%",
-            background: stateColor,
-            boxShadow: `0 0 0 3px ${stateColor}20`,
-          }}
-        />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <span style={{ fontSize: 13, fontWeight: 850, color: "#263241" }}>
-              钉钉消息同步
-            </span>
-            <span style={{ fontSize: 10, fontWeight: 800, color: stateColor }}>
-              {stateLabel[state]}
-            </span>
-            <span style={{ fontSize: 9, color: "#64748b" }}>{sourceLabel}</span>
+    <div className="hush-status-row hush-dingtalk-row">
+      <span className={`hush-state-dot is-${state}`} aria-hidden="true" />
+      <div className="hush-status-row-copy">
+        <strong>钉钉消息同步 · {stateLabel[state]}</strong>
+        <span>{status?.message ?? "正在检查本机钉钉 DWS"}</span>
+        <span className="hush-status-secondary">
+          {sourceLabel} · 上次成功：{lastSuccess}
+        </span>
+        {status?.executable_path && (
+          <code title={status.executable_path}>{status.executable_path}</code>
+        )}
+        <label className="hush-auto-sync">
+          <input
+            type="checkbox"
+            checked={status?.auto_sync_enabled ?? false}
+            disabled={!status?.authenticated || autoUpdating}
+            onChange={(event) => onAutoSyncChange(event.target.checked)}
+          />
+          每 {status?.sync_interval_minutes ?? 5} 分钟自动同步
+        </label>
+        {report && (
+          <div className="hush-sync-report">
+            <span>会话 {report.conversations}</span>
+            <span>已检查 {report.examined_messages}</span>
+            <span>新增 {report.imported_messages}</span>
+            <span>重复 {report.duplicate_messages}</span>
+            {report.partial && <strong>本轮已到安全上限，可继续同步。</strong>}
           </div>
-          <div style={{ marginTop: 4, fontSize: 11, color: "#64748b", lineHeight: 1.5 }}>
-            {status?.message ?? "正在检查本机钉钉 DWS"}
-          </div>
-          <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-            <span style={{ fontSize: 10, color: "#64748b" }}>上次成功：{lastSuccess}</span>
-            <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 10, color: "#475569", cursor: status?.authenticated ? "pointer" : "not-allowed" }}>
-              <input
-                type="checkbox"
-                checked={status?.auto_sync_enabled ?? false}
-                disabled={!status?.authenticated || autoUpdating}
-                onChange={(event) => onAutoSyncChange(event.target.checked)}
-              />
-              每 {status?.sync_interval_minutes ?? 5} 分钟自动同步
-            </label>
-          </div>
-        </div>
-        <div style={{ display: "flex", gap: 7, flexWrap: "wrap", justifyContent: "flex-end" }}>
-          {state === "authentication_required" && (
-            <button
-              className="kawaii-tab"
-              onClick={onLogin}
-              disabled={loggingIn}
-              style={{ fontSize: 10, padding: "6px 10px" }}
-            >
-              {loggingIn ? "等待登录..." : "登录钉钉"}
-            </button>
-          )}
-          <button
-            className="kawaii-tab"
-            onClick={onSync}
-            disabled={!canSync}
-            style={{ fontSize: 10, padding: "6px 10px", opacity: canSync ? 1 : 0.5 }}
-          >
-            {isSyncing ? "同步中..." : syncLabel}
-          </button>
-        </div>
+        )}
       </div>
-
-      {report && (
-        <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid rgba(116,143,165,0.12)" }}>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10 }}>
-            {[
-              ["会话", report.conversations],
-              ["已检查", report.examined_messages],
-              ["新增", report.imported_messages],
-              ["重复", report.duplicate_messages],
-            ].map(([label, value]) => (
-              <div key={label} style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 16, fontWeight: 850, color: "#334155" }}>{value}</div>
-                <div style={{ fontSize: 9, color: "#94a3b8" }}>{label}</div>
-              </div>
-            ))}
-          </div>
-          {report.partial && (
-            <div style={{ marginTop: 8, fontSize: 10, color: "#b45309", lineHeight: 1.45 }}>
-              本轮已到安全上限，进度已保存；点击“继续同步”会从当前游标接着读取。
-            </div>
-          )}
-        </div>
-      )}
+      <div className="hush-status-actions">
+        {state === "authentication_required" && (
+          <button
+            type="button"
+            className="hush-status-action"
+            onClick={onLogin}
+            disabled={loggingIn}
+          >
+            <LogIn size={14} aria-hidden="true" />
+            {loggingIn ? "等待登录..." : "登录钉钉"}
+          </button>
+        )}
+        <button
+          type="button"
+          className="hush-status-action"
+          onClick={onSync}
+          disabled={!canSync}
+        >
+          <RefreshCw
+            className={isSyncing ? "is-spinning" : ""}
+            size={14}
+            aria-hidden="true"
+          />
+          {isSyncing ? "同步中..." : syncLabel}
+        </button>
+      </div>
     </div>
   );
 }
@@ -1224,98 +1427,73 @@ function LiveInboxPanel({
 }) {
   const { t } = useTranslation();
   const messages = inbox?.messages ?? [];
+
   return (
-    <div
-      style={{
-        marginBottom: 14,
-        padding: 14,
-        borderRadius: 16,
-        background: "linear-gradient(135deg, rgba(148,239,244,0.06), rgba(255,255,255,0.018))",
-        border: "1px solid rgba(148,239,244,0.14)",
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-        <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 13, fontWeight: 850, color: "rgba(255,255,255,0.86)" }}>
-            Live message inbox
-          </div>
-          <div style={{ marginTop: 2, fontSize: 10, color: "rgba(255,255,255,0.38)" }}>
-            {t("hub.hush.inbox.approvedOnly")}
-          </div>
+    <details className="hush-live-debug">
+      <summary>
+        <span>本地收件箱调试</span>
+        <span>
+          {inbox?.total ?? 0} 条 · 优先 {inbox?.unread_priority ?? 0}
+        </span>
+        <ChevronDown size={14} aria-hidden="true" />
+      </summary>
+      <div className="hush-live-debug-content">
+        <div className="hush-live-debug-toolbar">
+          <code>http://127.0.0.1:31275/hush/inbox</code>
+          <button
+            type="button"
+            className="hush-icon-button"
+            onClick={onRefresh}
+            aria-label="刷新本地收件箱"
+            title="刷新本地收件箱"
+          >
+            <RefreshCw size={15} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className="hush-icon-button is-danger"
+            onClick={onClear}
+            aria-label="清空本地收件箱"
+            title="清空本地收件箱"
+          >
+            <Trash2 size={15} aria-hidden="true" />
+          </button>
         </div>
-        <button className="kawaii-tab" onClick={onRefresh} style={{ fontSize: 10, padding: "5px 9px" }}>
-          Refresh
-        </button>
-        <button className="kawaii-tab" onClick={onClear} style={{ fontSize: 10, padding: "5px 9px" }}>
-          Clear
-        </button>
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 8, marginBottom: 10 }}>
-        <MiniInboxStat label="messages" value={inbox?.total ?? 0} />
-        <MiniInboxStat label="priority" value={inbox?.unread_priority ?? 0} />
-        <MiniInboxStat label="family" value={inbox?.by_tier.family ?? 0} />
-        <MiniInboxStat label="work" value={inbox?.by_tier.work ?? 0} />
-      </div>
-
-      {messages.length === 0 ? (
-        <div style={{ padding: 14, borderRadius: 8, background: "rgba(255,255,255,0.018)", color: "rgba(255,255,255,0.34)", fontSize: 11, lineHeight: 1.55 }}>
-          {t("hub.hush.inbox.emptyLive")}
-        </div>
-      ) : (
-        <div style={{ display: "grid", gap: 8, maxHeight: 220, overflowY: "auto" }} className="scrollbar-thin">
-          {messages.slice(0, 8).map((message) => (
-            <div
-              key={message.id}
-              style={{
-                padding: 10,
-                borderRadius: 12,
-                background: message.importance >= 4 ? "rgba(251,191,36,0.07)" : "rgba(255,255,255,0.022)",
-                border: `1px solid ${message.importance >= 4 ? "rgba(251,191,36,0.16)" : "rgba(255,255,255,0.05)"}`,
-              }}
-            >
-              <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 4 }}>
-                <span style={{ fontSize: 10, color: "#94eff4", fontWeight: 850 }}>{message.platform}</span>
-                {message.source_id?.startsWith("dws:") && (
-                  <span style={{ fontSize: 8, fontWeight: 800, color: "#94eff4", border: "1px solid rgba(148,239,244,0.24)", borderRadius: 4, padding: "1px 4px" }}>
-                    DWS
-                  </span>
-                )}
-                <span style={{ fontSize: 12, color: "rgba(255,255,255,0.78)", fontWeight: 780 }}>{message.sender}</span>
-                {message.chat && <span style={{ fontSize: 10, color: "rgba(255,255,255,0.34)" }}>{message.chat}</span>}
-                <span style={{ marginLeft: "auto", fontSize: 10, color: "rgba(255,255,255,0.32)" }}>
-                  {message.tier} · P{message.importance}
-                </span>
-              </div>
-              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.68)", lineHeight: 1.5 }}>{message.text}</div>
-              {message.preview_limited && (
-                <div style={{ marginTop: 5, fontSize: 10, color: "#fbbf24", lineHeight: 1.4 }}>
-                  {t("hub.hush.bridge.limitedPreview")}
+        {messages.length === 0 ? (
+          <div className="hush-live-empty">暂无本地消息。</div>
+        ) : (
+          <div className="hush-live-list">
+            {messages.slice(0, 8).map((message) => {
+              const suggestedReply = getVisibleHushSuggestedReply(message);
+              const scope = getHushChatScope(message);
+              return (
+                <div className="hush-live-row" key={message.id}>
+                  <HushPlatformLabel platform={message.platform} />
+                  <strong>{message.sender}</strong>
+                  <span>{formatHushMessageText(message.text) || "非文本消息"}</span>
+                  <small className="hush-conversation-scope" data-scope={scope}>
+                    {getHushConversationScopeLabel([message])}
+                  </small>
+                  {message.preview_limited && (
+                    <small>{t("hub.hush.bridge.limitedPreview")}</small>
+                  )}
+                  {suggestedReply && (
+                    <small>
+                      建议回复：
+                      {formatHushMessageText(suggestedReply)}
+                    </small>
+                  )}
                 </div>
-              )}
-              {message.suggested_reply && !message.preview_limited && (
-                <div style={{ marginTop: 6, fontSize: 11, color: "rgba(148,239,244,0.72)", lineHeight: 1.45 }}>
-                  Suggested: {message.suggested_reply}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </details>
   );
 }
 
-function MiniInboxStat({ label, value }: { label: string; value: number }) {
-  return (
-    <div style={{ padding: 8, borderRadius: 10, background: "rgba(0,0,0,0.18)", border: "1px solid rgba(255,255,255,0.05)" }}>
-      <div style={{ fontSize: 16, fontWeight: 850, color: "rgba(255,255,255,0.86)" }}>{value}</div>
-      <div style={{ fontSize: 9, color: "rgba(255,255,255,0.32)", textTransform: "uppercase" }}>{label}</div>
-    </div>
-  );
-}
-
-function HushConnectorCard({
+function HushConnectorRow({
   connector,
   notificationActive,
   dwsActive,
@@ -1328,121 +1506,269 @@ function HushConnectorCard({
   busy: boolean;
   onOpen: () => void;
 }) {
-  const icon = connector.id === "dingtalk" ? "🔷" : "💬";
   const sourceActive = dwsActive || notificationActive;
-  const statusColor = sourceActive ? "#34d399" : connector.bridge_ready ? "#34d399" : connector.installed ? "#fbbf24" : "#fb7185";
-  const statusLabel = dwsActive ? "DWS 已连接" : notificationActive ? "Notification bridge active" : connector.bridge_ready ? "Message bridge ready" : connector.installed ? "App launch ready" : "Not installed";
+  const connectorIdentity = getHushPlatformIdentity(connector.name);
+  const statusLabel = dwsActive
+    ? "DWS 已连接"
+    : notificationActive
+      ? "通知桥已启用"
+      : connector.bridge_ready
+        ? "消息桥已就绪"
+        : connector.installed
+          ? "应用可打开"
+          : "未安装";
 
   return (
-    <div
-      style={{
-        padding: 12,
-        borderRadius: 14,
-        background: connector.installed ? "rgba(148,239,244,0.035)" : "rgba(255,255,255,0.018)",
-        border: `1px solid ${connector.installed ? "rgba(148,239,244,0.12)" : "rgba(255,255,255,0.06)"}`,
-      }}
+    <div className="hush-connector-row">
+      <HushPlatformLabel platform={connector.id} />
+      <div>
+        <strong>{connectorIdentity.label}</strong>
+        <span>
+          {statusLabel} · {connector.status}
+        </span>
+        <small>
+          {connector.bridge_mode} · {connector.next_step}
+        </small>
+        {connector.app_path && (
+          <code title={connector.app_path}>{connector.app_path}</code>
+        )}
+      </div>
+      <button
+        type="button"
+        className="hush-icon-button"
+        onClick={onOpen}
+        disabled={busy || !connector.installed}
+        aria-label={`打开${connectorIdentity.label}`}
+        title={`打开${connectorIdentity.label}`}
+      >
+        <ExternalLink size={15} aria-hidden="true" />
+      </button>
+      <span
+        className={`hush-connector-state ${sourceActive ? "is-active" : ""}`}
+      >
+        {sourceActive ? "已连接" : "未连接"}
+      </span>
+    </div>
+  );
+}
+
+export function HushContactRow({
+  contact,
+  selected,
+  attention,
+  unreadCount,
+  onSelect,
+  onToggleAttention,
+}: {
+  contact: DerivedContact;
+  selected: boolean;
+  attention: boolean;
+  unreadCount: number;
+  onSelect: () => void;
+  onToggleAttention: () => void;
+}) {
+  const priorityLabel = attention
+    ? "特别关注"
+    : contact.importance >= 4
+      ? "重点"
+      : null;
+  const unread = unreadCount > 0;
+  const primarySource = getHushPlatformIdentity(contact.platforms[0] ?? "");
+
+  return (
+    <li
+      className={[
+        "hush-contact-row",
+        selected ? "is-selected" : "",
+        unread ? "is-unread" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+      onClick={onSelect}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-        <span style={{ fontSize: 18 }}>{icon}</span>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 13, fontWeight: 800, color: "rgba(255,255,255,0.8)" }}>
-            {connector.name}
-          </div>
-          <div style={{ fontSize: 10, color: statusColor, marginTop: 2, fontWeight: 800 }}>
-            {statusLabel}
+      <button
+        type="button"
+        className="hush-contact-select"
+        aria-current={selected ? "true" : undefined}
+        onClick={(event) => {
+          event.stopPropagation();
+          onSelect();
+        }}
+      >
+        <span
+          className={`hush-source-avatar is-${primarySource.key}`}
+          aria-hidden="true"
+        >
+          <MessageCircle size={18} strokeWidth={1.8} />
+        </span>
+        <span className="hush-contact-copy">
+          <span className="hush-contact-heading">
+            <strong>{contact.name}</strong>
+            <time dateTime={contact.lastMessageTime}>
+              {formatTime(contact.lastMessageTime)}
+            </time>
+          </span>
+          <span className="hush-contact-sources">
+            {contact.platforms.map((platform) => (
+              <HushPlatformLabel key={platform} platform={platform} />
+            ))}
+            {unread && (
+              <span
+                className="hush-unread-label"
+                aria-label={`${unreadCount} 条未读`}
+              >
+                {unreadCount} 条未读
+              </span>
+            )}
+            {priorityLabel && (
+              <span className="hush-priority-label">{priorityLabel}</span>
+            )}
+          </span>
+          <span className="hush-contact-preview">{contact.lastMessage}</span>
+        </span>
+      </button>
+      <button
+        type="button"
+        className={`hush-star-button ${attention ? "is-active" : ""}`}
+        aria-label={
+          attention ? `取消特别关注${contact.name}` : `特别关注${contact.name}`
+        }
+        aria-pressed={attention}
+        title={attention ? "取消特别关注" : "特别关注"}
+        onClick={(event) => {
+          event.stopPropagation();
+          onToggleAttention();
+        }}
+      >
+        <Star
+          size={16}
+          fill={attention ? "currentColor" : "none"}
+          aria-hidden="true"
+        />
+      </button>
+    </li>
+  );
+}
+
+function ConversationDetail({
+  contact,
+  attention,
+}: {
+  contact: DerivedContact;
+  attention: boolean;
+}) {
+  const { t } = useTranslation();
+  const groups = groupHushMessages(contact.messages);
+  const conversationScope = getHushConversationScope(contact.messages);
+
+  return (
+    <div className="hush-conversation-detail">
+      <header className="hush-conversation-header">
+        <div>
+          <h3>{contact.name}</h3>
+          <div className="hush-contact-sources">
+            {contact.platforms.map((platform) => (
+              <HushPlatformLabel key={platform} platform={platform} />
+            ))}
+            <span>
+              {contact.tier} · {getHushPriorityLabel(contact.importance, attention)}
+            </span>
+            <span
+              className="hush-conversation-scope"
+              data-scope={conversationScope}
+            >
+              {getHushConversationScopeLabel(contact.messages)}
+            </span>
           </div>
         </div>
-        <button
-          onClick={onOpen}
-          disabled={busy || !connector.installed}
-          style={{
-            border: "1px solid rgba(255,255,255,0.08)",
-            borderRadius: 999,
-            background: connector.installed ? "rgba(148,239,244,0.1)" : "rgba(255,255,255,0.03)",
-            color: connector.installed ? "#94eff4" : "rgba(255,255,255,0.25)",
-            fontSize: 10,
-            fontWeight: 800,
-            padding: "6px 10px",
-            cursor: connector.installed ? "pointer" : "not-allowed",
-          }}
-        >
-          {busy ? "Opening..." : "Open"}
-        </button>
-      </div>
-      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.38)", lineHeight: 1.45 }}>
-        {connector.status}
-      </div>
-      <div style={{ marginTop: 6, fontSize: 9, color: "rgba(148,239,244,0.58)", fontWeight: 800 }}>
-        Mode: {connector.bridge_mode}
-      </div>
-      <div style={{ marginTop: 6, fontSize: 9, color: "rgba(255,255,255,0.24)", lineHeight: 1.4 }}>
-        {connector.next_step}
+        <span>
+          {groups.length} 组 · {contact.messages.length} 条
+        </span>
+      </header>
+
+      <div className="hush-message-groups">
+        {groups.map((group) => (
+          <section className="hush-message-group" key={group.id}>
+            <header>
+              <strong>{group.sender}</strong>
+              <HushPlatformLabel platform={group.platform} />
+              {group.chat && <span>{group.chat}</span>}
+              <time dateTime={group.startedAt}>
+                {formatGroupTime(group.startedAt, group.endedAt)}
+              </time>
+            </header>
+            <div className="hush-message-lines">
+              {group.messages.map((message) => {
+                const suggestedReply = getVisibleHushSuggestedReply(message);
+                return (
+                  <div className="hush-message-line" key={message.id}>
+                    <p>{message.text}</p>
+                    {message.preview_limited && (
+                      <div className="hush-message-warning">
+                        {t("hub.hush.bridge.limitedPreview")}
+                      </div>
+                    )}
+                    {suggestedReply && (
+                      <div className="hush-message-suggestion">
+                        <MessageCircle size={13} aria-hidden="true" />
+                        <span>
+                          {t("hub.hush.suggestedReplies")}：
+                          {suggestedReply}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        ))}
       </div>
     </div>
   );
 }
 
-function ContactRow({
-  contact,
-  selected,
-  onClick,
-}: {
-  contact: DerivedContact;
-  selected: boolean;
-  onClick: () => void;
-}) {
-  const isPriority = contact.importance >= 4;
-  const timeLabel = formatTime(contact.lastMessageTime);
-
+export function HushPlatformLabel({ platform }: { platform: string }) {
+  const identity = getHushPlatformIdentity(platform);
   return (
-    <div
-      onClick={onClick}
-      style={{
-        padding: "8px 12px",
-        cursor: "pointer",
-        display: "flex",
-        alignItems: "center",
-        gap: 8,
-        background: selected ? "rgba(148,239,244,0.14)" : "transparent",
-        borderLeft: selected ? "2px solid rgba(52,178,190,0.6)" : "2px solid transparent",
-        transition: "all 0.15s",
-      }}
-    >
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <span style={{ fontSize: 12, fontWeight: 600, color: "#334155" }}>
-            {contact.name}
-          </span>
-          {isPriority && (
-            <span style={{
-              width: 5, height: 5, borderRadius: "50%", background: "#f59e0b",
-              boxShadow: "0 0 4px rgba(245,158,11,0.6)",
-            }} />
-          )}
-        </div>
-        <div style={{
-          fontSize: 10, color: "#94a3b8",
-          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-        }}>
-          {contact.lastMessage}
-        </div>
-      </div>
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
-        <span style={{ fontSize: 9, color: "#94a3b8" }}>
-          {timeLabel}
-        </span>
-        <div style={{ display: "flex", gap: 2 }}>
-          {contact.platforms.map((p) => (
-            <span key={p} style={{ fontSize: 8 }}>{PLATFORM_ICONS[p] || p}</span>
-          ))}
-        </div>
-      </div>
-    </div>
+    <span className={`hush-platform-label is-${identity.key}`}>
+      <span aria-hidden="true" />
+      {identity.label}
+    </span>
   );
+}
+
+function readStoredConversationState(): HushConversationState {
+  if (typeof window === "undefined") return parseHushConversationState(null);
+  try {
+    return parseHushConversationState(
+      window.localStorage.getItem(HUSH_CONVERSATION_STATE_KEY),
+    );
+  } catch {
+    return parseHushConversationState(null);
+  }
+}
+
+function writeStoredConversationState(state: HushConversationState): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(
+      HUSH_CONVERSATION_STATE_KEY,
+      serializeHushConversationState(state),
+    );
+  } catch {
+    // The inbox remains usable when local storage is unavailable.
+  }
 }
 
 function formatTime(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function formatGroupTime(startedAt: string, endedAt: string): string {
+  const started = formatTime(startedAt);
+  const ended = formatTime(endedAt);
+  return started === ended ? started : `${started} - ${ended}`;
 }

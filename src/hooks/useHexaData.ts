@@ -15,10 +15,12 @@ import {
   applyWatchedLifecycle,
   partitionSupervisorSessions,
   resolveOrderedWatchRefresh,
+  resolveWatchRefresh,
   resolveWatchedLifecycleAlerts,
   type WatchDataState,
   type WatchRefresh,
 } from "./hexaWatchState";
+import type { HexaDevelopmentGoal } from "./hexaGoalMonitoring";
 import {
   excludePassiveHistorySessions,
   mergeHexaSessions,
@@ -776,6 +778,7 @@ export function useHexaData() {
   });
   const [mobilePairing, setMobilePairing] = useState<MobilePairingInfo | null>(null);
   const [queuedInterventions, setQueuedInterventions] = useState<QueuedIntervention[]>([]);
+  const [developmentGoals, setDevelopmentGoals] = useState<HexaDevelopmentGoal[]>([]);
   const watchedAgentsRef = useRef<HexaWatchedAgent[]>([]);
   const watchedExpiryRenderedRef = useRef(false);
   const sessionDataRef = useRef<HexaSession[]>([]);
@@ -789,7 +792,14 @@ export function useHexaData() {
     state: "loading",
     error: null,
   });
+  const goalRefreshRef = useRef<WatchRefresh<HexaDevelopmentGoal[]>>({
+    data: null,
+    state: "loading",
+    error: null,
+  });
   const [watchDataState, setWatchDataState] = useState<WatchDataState>("loading");
+  const [goalDataState, setGoalDataState] = useState<WatchDataState>("loading");
+  const goalRefreshGenerationRef = useRef(0);
 
   const fetchSnapshot = useCallback(async () => {
     const requestGeneration = ++refreshGenerationRef.current;
@@ -890,6 +900,22 @@ export function useHexaData() {
     [fetchSnapshot],
   );
 
+  const fetchGoalData = useMemo(
+    () => createCoalescedRefresh(async () => {
+      const requestGeneration = ++goalRefreshGenerationRef.current;
+      const [goalResult] = await Promise.allSettled([
+        invoke<HexaDevelopmentGoal[]>("get_hexa_development_goals"),
+      ]);
+      const goalRefresh = resolveWatchRefresh(goalRefreshRef.current, goalResult);
+      if (requestGeneration !== goalRefreshGenerationRef.current) return;
+
+      goalRefreshRef.current = goalRefresh;
+      setGoalDataState(goalRefresh.state);
+      if (goalRefresh.data) setDevelopmentGoals(goalRefresh.data);
+    }),
+    [],
+  );
+
   const fetchLiveState = useMemo(
     () => createCoalescedRefresh(async () => {
       const [activeResult, watchedResult, healthResult, queueResult] = await Promise.allSettled([
@@ -938,6 +964,7 @@ export function useHexaData() {
 
   useEffect(() => {
     fetchSessions();
+    fetchGoalData();
     const watchedTimer = window.setInterval(fetchWatchedState, WATCHED_REFRESH_INTERVAL_MS);
 
     const unlistenHook = listen("humhum://hook-event", () => {
@@ -948,6 +975,7 @@ export function useHexaData() {
     });
     const unlistenBridgeSession = listen("humhum://hexa-session-changed", fetchLiveState);
     const unlistenBridgeHealth = listen("humhum://codex-bridge-health", fetchLiveState);
+    const unlistenGoalChanged = listen("humhum://hexa-goal-changed", fetchGoalData);
     const unlistenRemoteControl = listen<CodexRemoteControlState>(
       "humhum://codex-remote-control-changed",
       (event) => setRemoteControl(event.payload),
@@ -959,9 +987,10 @@ export function useHexaData() {
       unlistenTimeout.then((fn) => fn());
       unlistenBridgeSession.then((fn) => fn());
       unlistenBridgeHealth.then((fn) => fn());
+      unlistenGoalChanged.then((fn) => fn());
       unlistenRemoteControl.then((fn) => fn());
     };
-  }, [fetchLiveState, fetchSessions, fetchWatchedState]);
+  }, [fetchGoalData, fetchLiveState, fetchSessions, fetchWatchedState]);
 
   useEffect(() => {
     if (!mobilePairing) return;
@@ -989,6 +1018,10 @@ export function useHexaData() {
   const retryHexaData = useCallback(async () => {
     await fetchSessions();
   }, [fetchSessions]);
+
+  const retryGoalData = useCallback(async () => {
+    await fetchGoalData();
+  }, [fetchGoalData]);
 
   const sendCodexMessage = useCallback(async (threadId: string, message: string) => {
     try {
@@ -1148,6 +1181,27 @@ export function useHexaData() {
     await fetchSessions();
   }, [fetchSessions]);
 
+  const acceptGoalAttempt = useCallback(async (goalId: string, sessionId: string) => {
+    const updated = await invoke<HexaDevelopmentGoal>("accept_hexa_goal_attempt", {
+      request: { goal_id: goalId, session_id: sessionId },
+    });
+    setDevelopmentGoals((current) => {
+      const next = current.map((goal) => goal.id === updated.id ? updated : goal);
+      goalRefreshRef.current = { data: next, state: "ready", error: null };
+      return next;
+    });
+    setGoalDataState("ready");
+    return updated;
+  }, []);
+
+  const deleteDevelopmentGoal = useCallback(async (goalId: string) => {
+    const updated = await invoke<HexaDevelopmentGoal[]>("delete_hexa_development_goal", { goalId });
+    goalRefreshRef.current = { data: updated, state: "ready", error: null };
+    setDevelopmentGoals(updated);
+    setGoalDataState("ready");
+    return updated;
+  }, []);
+
   const mutateHexaSessionAudit = useCallback(async (request: HexaAuditMutationRequest) => {
     try {
       return await invoke<HexaWatchedSession>("mutate_hexa_session_audit", { request });
@@ -1170,6 +1224,9 @@ export function useHexaData() {
     alerts,
     watchDataState,
     retryHexaData,
+    developmentGoals,
+    goalDataState,
+    retryGoalData,
     bridgeHealth,
     remoteControl,
     remotePairing,
@@ -1199,6 +1256,8 @@ export function useHexaData() {
     revokeMobileDevice,
     configureMobileRelay,
     deleteWatchedSession,
+    acceptGoalAttempt,
+    deleteDevelopmentGoal,
     mutateHexaSessionAudit,
   };
 }

@@ -1,6 +1,20 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { AgentAsset, AgentRule, AppConfig, KnowledgeData, ObsidianNote, Preference } from "@/types";
+import { RefreshCw, Search } from "lucide-react";
+import type {
+  AgentAsset,
+  AgentRule,
+  AppConfig,
+  KnowledgeData,
+  MemoryItem,
+  ObsidianNote,
+  Preference,
+} from "@/types";
+import {
+  filterAgentAssets,
+  getAgentAssetSummary,
+  type AgentAssetScope,
+} from "./knowledgePresentation";
 
 const CATEGORIES = ["coding_style", "tools", "workflow", "communication", "other"];
 
@@ -27,6 +41,7 @@ const ASSET_TYPE_COLORS: Record<string, string> = {
   agent: "#a78bfa",
   soul: "#fb7185",
   memory: "#fbbf24",
+  preference: "#fb923c",
   rule: "#34d399",
   config: "#94eff4",
   note: "#cbd5e1",
@@ -41,7 +56,190 @@ const DEFAULT_ASSET_ROOTS = [
   "~/.pi",
 ].join("\n");
 
-type Tab = "assets" | "preferences" | "rules" | "obsidian";
+function parseAssetRoots(value: string): string[] {
+  return value
+    .split(/\n|,/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function matchesAssetQuery(asset: AgentAsset, normalizedQuery: string): boolean {
+  if (!normalizedQuery) return true;
+  return [
+    asset.name,
+    asset.display_name_zh || "",
+    asset.summary_zh || "",
+    asset.content,
+    asset.source,
+    asset.asset_type,
+    asset.agent_id,
+    asset.file_path,
+    asset.relative_path,
+    ...asset.tags,
+  ].some((value) => value.toLowerCase().includes(normalizedQuery));
+}
+
+function matchesNoteQuery(note: ObsidianNote, normalizedQuery: string): boolean {
+  if (!normalizedQuery) return true;
+  return [
+    note.title,
+    note.relative_path,
+    note.note_type,
+    note.excerpt,
+    ...note.tags,
+  ].some((value) => value.toLowerCase().includes(normalizedQuery));
+}
+
+function isRuleAsset(asset: AgentAsset): boolean {
+  const pathParts = asset.file_path.replaceAll("\\", "/").split("/");
+  const filename = pathParts[pathParts.length - 1]?.toLowerCase();
+  return (
+    asset.asset_type === "rule" ||
+    filename === "agents.md" ||
+    filename === "agent.md" ||
+    filename === "claude.md" ||
+    filename === ".cursorrules"
+  );
+}
+
+export type KnowledgeTab = "assets" | "preferences" | "rules" | "memory";
+
+export type KnowledgeOperationStatus = {
+  kind: "busy" | "success" | "error";
+  message: string;
+};
+
+type KnowledgeRefreshActions = Record<
+  KnowledgeTab,
+  () => void | Promise<void>
+>;
+
+type KnowledgeOperationMessages<T> = {
+  busy: string;
+  success: string | ((result: T) => string);
+  error: string;
+};
+
+export async function dispatchKnowledgeRefresh(
+  activeTab: KnowledgeTab,
+  actions: KnowledgeRefreshActions,
+): Promise<void> {
+  await actions[activeTab]();
+}
+
+export async function runKnowledgeOperation<T>(
+  action: () => Promise<T>,
+  onStatusChange: (status: KnowledgeOperationStatus) => void,
+  messages: KnowledgeOperationMessages<T>,
+): Promise<boolean> {
+  onStatusChange({ kind: "busy", message: messages.busy });
+  try {
+    const result = await action();
+    onStatusChange({
+      kind: "success",
+      message:
+        typeof messages.success === "function"
+          ? messages.success(result)
+          : messages.success,
+    });
+    return true;
+  } catch (error) {
+    onStatusChange({
+      kind: "error",
+      message: `${messages.error}：${String(error)}`,
+    });
+    return false;
+  }
+}
+
+export function KnowledgeLoadGate({
+  loading,
+  error,
+  onRetry,
+}: {
+  loading: boolean;
+  error: string | null;
+  onRetry: () => void;
+}) {
+  if (loading) {
+    return (
+      <div
+        className="hub-loading"
+        role="status"
+        aria-live="polite"
+        aria-label="正在读取 Hype 知识库"
+      />
+    );
+  }
+
+  return (
+    <div className="hype-load-error" role="alert" aria-live="assertive">
+      <strong>Hype 暂时无法读取知识库</strong>
+      <span>{error || "读取知识库失败"}</span>
+      <button type="button" onClick={onRetry}>
+        重试
+      </button>
+    </div>
+  );
+}
+
+export function KnowledgeSearchToolbar({
+  query,
+  onQueryChange,
+  onRefresh,
+  refreshBusy,
+  refreshDisabled,
+  refreshLabel,
+  status,
+}: {
+  query: string;
+  onQueryChange: (value: string) => void;
+  onRefresh: () => void;
+  refreshBusy: boolean;
+  refreshDisabled: boolean;
+  refreshLabel: string;
+  status: KnowledgeOperationStatus | null;
+}) {
+  return (
+    <>
+      <div className="hype-search-toolbar">
+        <label className="hype-search-field">
+          <Search size={18} strokeWidth={1.8} aria-hidden="true" />
+          <span className="sr-only">搜索 Hype 知识库</span>
+          <input
+            value={query}
+            onChange={(event) => onQueryChange(event.target.value)}
+            placeholder="搜索技能、规则、偏好与记忆"
+          />
+        </label>
+        <button
+          type="button"
+          className="hype-refresh-button"
+          onClick={onRefresh}
+          disabled={refreshDisabled}
+          aria-label={refreshLabel}
+          title={refreshLabel}
+        >
+          <RefreshCw
+            size={18}
+            strokeWidth={1.8}
+            className={refreshBusy ? "is-spinning" : undefined}
+            aria-hidden="true"
+          />
+        </button>
+      </div>
+      {status && (
+        <div
+          className={`hype-toolbar-status ${status.kind === "error" ? "is-error" : ""}`}
+          role={status.kind === "error" ? "alert" : "status"}
+          aria-live={status.kind === "error" ? "assertive" : "polite"}
+        >
+          {status.message}
+        </div>
+      )}
+    </>
+  );
+}
 
 interface CodexBridgeHealth {
   status: "starting" | "connected" | "codex_missing" | "unsupported" | "disconnected" | "error";
@@ -126,7 +324,12 @@ type AgentAssetRootDiagnostic = {
 
 export function KnowledgeModule() {
   const [data, setData] = useState<KnowledgeData | null>(null);
-  const [activeTab, setActiveTab] = useState<Tab>("assets");
+  const [knowledgeLoading, setKnowledgeLoading] = useState(true);
+  const [knowledgeLoadError, setKnowledgeLoadError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<KnowledgeTab>("assets");
+  const [operationStatus, setOperationStatus] = useState<
+    (KnowledgeOperationStatus & { tab: KnowledgeTab }) | null
+  >(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
   const [scanningAssets, setScanningAssets] = useState(false);
@@ -138,7 +341,7 @@ export function KnowledgeModule() {
   const [vaultPath, setVaultPath] = useState("");
   const [vaultError, setVaultError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
-  const [assetView, setAssetView] = useState<"skills" | "all">("skills");
+  const [assetScope, setAssetScope] = useState<AgentAssetScope>("mine");
   const [reviewEngine, setReviewEngine] = useState<ReviewEngineState>({
     codex: null,
     hooks: {},
@@ -158,12 +361,18 @@ export function KnowledgeModule() {
   const [showForm, setShowForm] = useState(false);
 
   const fetchData = useCallback(async () => {
+    setKnowledgeLoading(true);
     try {
       const result = await invoke<KnowledgeData>("get_knowledge");
       setData(result);
       setVaultPath(result.obsidian_vault?.path || "");
-    } catch {
-      // ignore
+      setKnowledgeLoadError(null);
+      return result;
+    } catch (error) {
+      setKnowledgeLoadError(`读取知识库失败：${String(error)}`);
+      throw error;
+    } finally {
+      setKnowledgeLoading(false);
     }
   }, []);
 
@@ -183,8 +392,8 @@ export function KnowledgeModule() {
   }, []);
 
   useEffect(() => {
-    fetchData();
-    fetchReviewEngine();
+    void fetchData().catch(() => undefined);
+    void fetchReviewEngine();
   }, [fetchData, fetchReviewEngine]);
 
   const handleSave = async () => {
@@ -199,24 +408,56 @@ export function KnowledgeModule() {
     });
     setNewContent("");
     setShowForm(false);
-    fetchData();
+    await fetchData();
   };
 
   const handleDelete = async (id: string) => {
     await invoke("delete_preference", { id });
-    fetchData();
+    await fetchData();
   };
 
   const handleScan = async () => {
     setScanning(true);
     try {
-      const found = await invoke<AgentRule[]>("scan_agent_rules");
-      if (found.length > 0) {
-        fetchData();
-      }
+      await runKnowledgeOperation(
+        async () => {
+          await invoke<AgentRule[]>("scan_agent_rules");
+          await invoke<AgentAsset[]>("scan_agent_assets", {
+            roots: parseAssetRoots(assetRoots),
+          });
+          const refreshed = await fetchData();
+          return (
+            refreshed.agent_rules.length +
+            refreshed.agent_assets.filter(isRuleAsset).length
+          );
+        },
+        (status) => setOperationStatus({ ...status, tab: "rules" }),
+        {
+          busy: "正在扫描 Agent 规则...",
+          success: (count) => `规则已刷新，共载入 ${count} 条。`,
+          error: "扫描 Agent 规则失败",
+        },
+      );
     } finally {
       setScanning(false);
     }
+  };
+
+  const handleRefreshPreferences = async () => {
+    await runKnowledgeOperation(
+      async () => {
+        await invoke<AgentAsset[]>("scan_agent_assets", {
+          roots: parseAssetRoots(assetRoots),
+        });
+        return fetchData();
+      },
+      (status) => setOperationStatus({ ...status, tab: "preferences" }),
+      {
+        busy: "正在扫描偏好...",
+        success: "偏好已刷新。",
+        error: "刷新偏好失败",
+      },
+    );
   };
 
   const handleScanAssets = async () => {
@@ -224,12 +465,9 @@ export function KnowledgeModule() {
     setAssetError(null);
     setAssetScanSummary(null);
     try {
-      const roots = assetRoots
-        .split(/\n|,/)
-        .map((item) => item.trim())
-        .filter(Boolean);
+      const roots = parseAssetRoots(assetRoots);
       const found = await invoke<AgentAsset[]>("scan_agent_assets", { roots });
-      const skillCount = found.filter((asset) => asset.asset_type === "skill").length;
+      const skillCount = filterAgentAssets(found, "all", "").length;
       const agentCount = found.filter((asset) => asset.asset_type === "agent").length;
       setAssetScanSummary(`已整理 ${found.length} 项本地知识 · ${skillCount} 个个人技能 · ${agentCount} 个 Agent 配置`);
       await fetchData();
@@ -245,10 +483,7 @@ export function KnowledgeModule() {
     setAssetError(null);
     setAssetScanSummary(null);
     try {
-      const roots = assetRoots
-        .split(/\n|,/)
-        .map((item) => item.trim())
-        .filter(Boolean);
+      const roots = parseAssetRoots(assetRoots);
       const diagnostics = await invoke<AgentAssetRootDiagnostic[]>("diagnose_agent_asset_roots", { roots });
       const candidates = diagnostics.reduce((sum, item) => sum + item.candidate_count, 0);
       const skills = diagnostics.reduce((sum, item) => sum + item.skill_count, 0);
@@ -261,13 +496,39 @@ export function KnowledgeModule() {
     }
   };
 
-  const handleScanVault = async () => {
+  const handleRefreshMemory = async () => {
     setScanningVault(true);
     setVaultError(null);
     try {
-      const path = vaultPath.trim() || null;
-      await invoke<ObsidianNote[]>("scan_obsidian_vault", { path });
-      fetchData();
+      await runKnowledgeOperation(
+        async () => {
+          await invoke<AgentAsset[]>("scan_agent_assets", {
+            roots: parseAssetRoots(assetRoots),
+          });
+          if (vaultPath.trim()) {
+            await invoke<ObsidianNote[]>("scan_obsidian_vault", {
+              path: vaultPath.trim(),
+            });
+          }
+          const refreshed = await fetchData();
+          return (
+            refreshed.memory_items.length +
+            refreshed.agent_assets.filter(
+              (asset) =>
+                asset.asset_type === "memory" || asset.asset_type === "soul",
+            ).length +
+            refreshed.obsidian_notes.filter((note) =>
+              ["memory", "daily", "project_context"].includes(note.note_type),
+            ).length
+          );
+        },
+        (status) => setOperationStatus({ ...status, tab: "memory" }),
+        {
+          busy: "正在刷新本地记忆...",
+          success: (count) => `记忆已刷新，共载入 ${count} 条。`,
+          error: "刷新记忆失败",
+        },
+      );
     } catch (error) {
       setVaultError(String(error));
     } finally {
@@ -322,268 +583,312 @@ export function KnowledgeModule() {
       priority: newPriority,
     });
     setEditing(null);
-    fetchData();
+    await fetchData();
   };
 
   if (!data) {
-    return <div className="hub-loading" />;
+    return (
+      <KnowledgeLoadGate
+        loading={knowledgeLoading}
+        error={knowledgeLoadError}
+        onRetry={() => {
+          void fetchData().catch(() => undefined);
+        }}
+      />
+    );
   }
 
   const notes = data.obsidian_notes || [];
   const assets = data.agent_assets || [];
-  const filteredNotes = notes.filter((note) => {
-    const query = searchQuery.trim().toLowerCase();
-    if (!query) return true;
-    return (
-      note.title.toLowerCase().includes(query) ||
-      note.relative_path.toLowerCase().includes(query) ||
-      note.note_type.toLowerCase().includes(query) ||
-      note.excerpt.toLowerCase().includes(query) ||
-      note.tags.some((tag) => tag.toLowerCase().includes(query))
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+  const preferenceAssets = assets.filter(
+    (asset) => asset.asset_type === "preference",
+  );
+  const canonicalRulePaths = new Set(
+    data.agent_rules.map((rule) => rule.file_path),
+  );
+  const discoveredRuleAssets = assets.filter(
+    (asset) => isRuleAsset(asset) && !canonicalRulePaths.has(asset.file_path),
+  );
+  const memoryAssets = assets.filter(
+    (asset) =>
+      asset.asset_type === "memory" || asset.asset_type === "soul",
+  );
+  const preferenceNotes = notes.filter(
+    (note) => note.note_type === "preference",
+  );
+  const ruleNotes = notes.filter((note) => note.note_type === "rule");
+  const memoryNotes = notes.filter((note) =>
+    ["memory", "daily", "project_context"].includes(note.note_type),
+  );
+
+  const filteredPreferences = data.preferences.filter((preference) => {
+    if (!normalizedQuery) return true;
+    return [
+      preference.category,
+      preference.content,
+      preference.source,
+    ].some((value) => value.toLowerCase().includes(normalizedQuery));
+  });
+  const filteredRules = data.agent_rules.filter((rule) => {
+    if (!normalizedQuery) return true;
+    return [
+      rule.agent_id,
+      rule.rule_type,
+      rule.file_path,
+      rule.content,
+    ].some((value) => value.toLowerCase().includes(normalizedQuery));
+  });
+  const filteredMemoryItems = data.memory_items.filter((item) => {
+    if (!normalizedQuery) return true;
+    return [item.agent_id, item.temperature, item.content].some((value) =>
+      value.toLowerCase().includes(normalizedQuery),
     );
   });
+  const filteredPreferenceAssets = preferenceAssets.filter((asset) =>
+    matchesAssetQuery(asset, normalizedQuery),
+  );
+  const filteredRuleAssets = discoveredRuleAssets.filter((asset) =>
+    matchesAssetQuery(asset, normalizedQuery),
+  );
+  const filteredMemoryAssets = memoryAssets.filter((asset) =>
+    matchesAssetQuery(asset, normalizedQuery),
+  );
+  const filteredPreferenceNotes = preferenceNotes.filter((note) =>
+    matchesNoteQuery(note, normalizedQuery),
+  );
+  const filteredRuleNotes = ruleNotes.filter((note) =>
+    matchesNoteQuery(note, normalizedQuery),
+  );
+  const filteredMemoryNotes = memoryNotes.filter((note) =>
+    matchesNoteQuery(note, normalizedQuery),
+  );
 
-  const typeCounts = notes.reduce<Record<string, number>>((acc, note) => {
+  const typeCounts = memoryNotes.reduce<Record<string, number>>((acc, note) => {
     acc[note.note_type] = (acc[note.note_type] || 0) + 1;
     return acc;
   }, {});
-  const hotCount = notes.filter((note) => note.memory_temperature === "hot").length;
-  const coldCount = notes.length - hotCount;
-  const assetTypeCounts = assets.reduce<Record<string, number>>((acc, asset) => {
+  const hotCount =
+    data.memory_items.filter((item) => item.temperature === "hot").length +
+    memoryAssets.filter((asset) => asset.tags.includes("hot")).length +
+    memoryNotes.filter((note) => note.memory_temperature === "hot").length;
+  const memoryCount =
+    data.memory_items.length + memoryAssets.length + memoryNotes.length;
+  const coldCount = memoryCount - hotCount;
+  const preferenceCount =
+    data.preferences.length + preferenceAssets.length + preferenceNotes.length;
+  const ruleCount =
+    data.agent_rules.length + discoveredRuleAssets.length + ruleNotes.length;
+  const configuredAssetRoots = parseAssetRoots(assetRoots);
+  const scopedAssets = filterAgentAssets(
+    assets,
+    assetScope,
+    "",
+    configuredAssetRoots,
+  );
+  const assetTypeCounts = scopedAssets.reduce<Record<string, number>>((acc, asset) => {
     acc[asset.asset_type] = (acc[asset.asset_type] || 0) + 1;
     return acc;
   }, {});
-  const filteredAssets = assets.filter((asset) => {
-    if (assetView === "skills" && asset.asset_type !== "skill") return false;
-    const query = searchQuery.trim().toLowerCase();
-    if (!query) return true;
-    return (
-      asset.name.toLowerCase().includes(query) ||
-      asset.asset_type.toLowerCase().includes(query) ||
-      asset.agent_id.toLowerCase().includes(query) ||
-      asset.relative_path.toLowerCase().includes(query) ||
-      asset.content.toLowerCase().includes(query) ||
-      (asset.display_name_zh || "").toLowerCase().includes(query) ||
-      (asset.summary_zh || "").toLowerCase().includes(query) ||
-      asset.tags.some((tag) => tag.toLowerCase().includes(query))
-    );
-  });
-  const personalSkills = assets.filter((asset) => asset.asset_type === "skill");
-  const createdSkillCount = personalSkills.filter((asset) => asset.ownership === "created").length;
-  const installedSkillCount = personalSkills.filter((asset) => asset.ownership === "installed").length;
-  const usedSkillCount = personalSkills.filter((asset) => asset.ownership === "used").length;
+  const filteredAssets = filterAgentAssets(
+    assets,
+    assetScope,
+    searchQuery,
+    configuredAssetRoots,
+  );
+  const operationBusy =
+    operationStatus?.tab === activeTab && operationStatus.kind === "busy";
+  const refreshBusy =
+    (activeTab === "assets" && scanningAssets) ||
+    (activeTab === "rules" && scanning) ||
+    (activeTab === "memory" && scanningVault) ||
+    operationBusy;
+  const refreshDisabled = refreshBusy;
+  const refreshLabel =
+    activeTab === "assets"
+      ? "扫描本地技能"
+      : activeTab === "rules"
+        ? "扫描 Agent 规则"
+        : activeTab === "memory"
+          ? "刷新本地记忆"
+          : "刷新偏好";
+
+  const toolbarStatus: KnowledgeOperationStatus | null =
+    activeTab === "assets"
+      ? scanningAssets
+        ? { kind: "busy", message: "正在扫描 Agent 资产..." }
+        : assetError
+          ? { kind: "error", message: assetError }
+          : assetScanSummary
+            ? { kind: "success", message: assetScanSummary }
+            : null
+      : activeTab === "memory"
+        ? scanningVault
+          ? { kind: "busy", message: "正在刷新本地记忆..." }
+          : vaultError
+            ? { kind: "error", message: vaultError }
+            : operationStatus?.tab === activeTab
+              ? operationStatus
+              : null
+        : operationStatus?.tab === activeTab
+          ? operationStatus
+          : null;
+
+  const handleActiveRefresh = () => {
+    void dispatchKnowledgeRefresh(activeTab, {
+      assets: handleScanAssets,
+      preferences: handleRefreshPreferences,
+      rules: handleScan,
+      memory: handleRefreshMemory,
+    });
+  };
 
   return (
-    <div className="hub-module">
-      <h2 className="hub-module-title">Hype — Personal Agent Knowledge Base</h2>
-      <p className="hub-module-desc" style={{ marginBottom: 14 }}>
-        Connect your Obsidian vault, agent rules, preferences, skills, and memories into reusable personal context.
-      </p>
-
-      <ReviewEnginePanel
-        assetsCount={assets.length}
-        reviewEngine={reviewEngine}
-        busy={reviewBusy}
-        message={reviewMessage}
-        showAdvanced={showAdvancedReview}
-        piUrl={piUrl}
-        piModel={piModel}
-        piToken={piToken}
-        onToggleAdvanced={() => setShowAdvancedReview((value) => !value)}
-        onPiUrlChange={setPiUrl}
-        onPiModelChange={setPiModel}
-        onPiTokenChange={setPiToken}
-        onStartCodexReview={handleStartCodexReview}
-        onSaveCustomReviewer={handleSaveCustomReviewer}
-      />
-
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "minmax(0, 1fr) auto",
-          gap: 12,
-          alignItems: "center",
-          padding: 14,
-          borderRadius: 8,
-          background: "linear-gradient(135deg, rgba(148,239,244,0.08), rgba(167,139,250,0.05))",
-          border: "1px solid rgba(148,239,244,0.16)",
-          marginBottom: 14,
-        }}
-      >
-        <div>
-          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.82)", fontWeight: 750 }}>
-            我的 Agent 知识
-          </div>
-          <div style={{ marginTop: 4, fontSize: 11, color: "rgba(255,255,255,0.42)", lineHeight: 1.45 }}>
-            Hype 只负责扫描证据；哪些真的有用，需要借用一个已连接的 AI 助手来判断。
+    <div className="hub-module hype-room-module">
+      <header className="hype-heading hype-room-header">
+        <div className="hype-room-identity">
+          <img
+            src="/mascots/avatars/hype-avatar.png"
+            alt=""
+            aria-hidden="true"
+          />
+          <div>
+            <h2 className="hub-module-title"><span>Hype</span> 知识库</h2>
+            <p className="hub-module-desc">我安装和创建的</p>
           </div>
         </div>
-        <button
-          className="kawaii-save-btn"
-          onClick={() => setActiveTab("assets")}
-          style={{ minWidth: 116, padding: "8px 12px", fontSize: 12 }}
-        >
-          查看我的技能
-        </button>
-      </div>
+        <KnowledgeSearchToolbar
+          query={searchQuery}
+          onQueryChange={setSearchQuery}
+          onRefresh={handleActiveRefresh}
+          refreshBusy={refreshBusy}
+          refreshDisabled={refreshDisabled}
+          refreshLabel={refreshLabel}
+          status={toolbarStatus}
+        />
+      </header>
 
-      {/* Tabs */}
-      <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
-        {(["assets", "preferences", "rules", "obsidian"] as Tab[]).map((tab) => (
-          <button
-            key={tab}
-            className={`kawaii-tab ${activeTab === tab ? "active" : ""}`}
-            onClick={() => setActiveTab(tab)}
-          >
-            {tab === "assets"
-              ? `我的技能 (${personalSkills.length})`
-              : tab === "preferences"
-                ? `偏好 (${data.preferences.length})`
-                : tab === "rules"
-                  ? `规则 (${data.agent_rules.length})`
-                  : `Obsidian (${notes.length})`}
-          </button>
-        ))}
+      <div className="hype-primary-controls">
+        <div className="hype-tabs" role="tablist" aria-label="Hype 知识视图">
+          {(["assets", "preferences", "rules", "memory"] as KnowledgeTab[]).map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              role="tab"
+              aria-selected={activeTab === tab}
+              className={activeTab === tab ? "is-active" : undefined}
+              onClick={() => setActiveTab(tab)}
+            >
+              {tab === "assets"
+                ? `我的技能 ${scopedAssets.length}`
+                : tab === "preferences"
+                  ? `我的偏好 ${preferenceCount}`
+                  : tab === "rules"
+                    ? `我的规则 ${ruleCount}`
+                    : `我的记忆 ${memoryCount}`}
+            </button>
+          ))}
+        </div>
+
+        {activeTab === "assets" && (
+          <div className="hype-scope-control" aria-label="Agent 资产范围">
+            <button
+              type="button"
+              className={assetScope === "mine" ? "is-active" : undefined}
+              aria-pressed={assetScope === "mine"}
+              onClick={() => setAssetScope("mine")}
+            >
+              我安装和创建的
+            </button>
+            <button
+              type="button"
+              className={assetScope === "all" ? "is-active" : undefined}
+              aria-pressed={assetScope === "all"}
+              onClick={() => setAssetScope("all")}
+            >
+              全部扫描结果
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Agent assets tab */}
       {activeTab === "assets" && (
-        <div>
-          <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
-            <button
-              type="button"
-              className={`kawaii-tab ${assetView === "skills" ? "active" : ""}`}
-              onClick={() => setAssetView("skills")}
-            >
-              我的技能
-            </button>
-            <button
-              type="button"
-              className={`kawaii-tab ${assetView === "all" ? "active" : ""}`}
-              onClick={() => setAssetView("all")}
-            >
-              全部知识
-            </button>
-          </div>
-
-          <input
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder={assetView === "skills" ? "搜索技能名称或中文用途..." : "搜索技能、规则、记忆或配置..."}
-            className="kawaii-input"
-            aria-label={assetView === "skills" ? "搜索我的技能" : "搜索全部知识"}
-          />
-          <div style={{ marginTop: 6, marginBottom: 10, fontSize: 10, color: "rgba(255,255,255,0.32)" }}>
-            {searchQuery.trim() ? `找到 ${filteredAssets.length} 项结果` : `共 ${filteredAssets.length} 项`}
-          </div>
-
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 8, marginBottom: 12 }}>
-            <KnowledgeStat label="我的技能" value={personalSkills.length} color="#60a5fa" />
-            <KnowledgeStat label="我创建的" value={createdSkillCount} color="#34d399" />
-            <KnowledgeStat label="已安装" value={installedSkillCount} color="#a78bfa" />
-            <KnowledgeStat label="会话用过" value={usedSkillCount} color="#f59e0b" />
-          </div>
-
-          <div
-            style={{
-              padding: 14,
-              borderRadius: 14,
-              background: "rgba(255,255,255,0.025)",
-              border: "1px solid rgba(148,239,244,0.12)",
-              marginBottom: 12,
-            }}
-          >
-            <label className="kawaii-label">补充扫描目录</label>
-            <button
-              onClick={() => setAssetRoots(DEFAULT_ASSET_ROOTS)}
-              className="kawaii-tab"
-              style={{ marginTop: 8, marginBottom: 8, padding: "6px 10px", fontSize: 11 }}
-            >
-              恢复推荐目录
-            </button>
-            <textarea
-              value={assetRoots}
-              onChange={(e) => setAssetRoots(e.target.value)}
-              className="kawaii-input"
-              style={{ minHeight: 96, resize: "vertical", marginTop: 8, fontFamily: "monospace", fontSize: 11 }}
-            />
-            <button
-              onClick={handleScanAssets}
-              disabled={scanningAssets}
-              className="kawaii-save-btn"
-              style={{ width: "100%", padding: 9, fontSize: 12, marginTop: 10 }}
-            >
-              {scanningAssets ? "正在整理..." : "刷新我的技能与本地知识"}
-            </button>
-            <button
-              onClick={handleDiagnoseAssets}
-              disabled={scanningAssets}
-              className="kawaii-tab"
-              style={{ width: "100%", padding: 8, fontSize: 11, marginTop: 8 }}
-            >
-              检查扫描目录
-            </button>
-            {assetError && (
-              <div style={{ marginTop: 8, fontSize: 11, color: "#fb7185" }}>
-                {assetError}
-              </div>
-            )}
-            {assetScanSummary && (
-              <div style={{ marginTop: 8, fontSize: 11, color: "rgba(148,239,244,0.78)", fontWeight: 700 }}>
-                {assetScanSummary}
-              </div>
-            )}
-            {assetDiagnostics.length > 0 && (
-              <div style={{ display: "grid", gap: 6, marginTop: 10 }}>
-                {assetDiagnostics.map((item) => (
-                  <div
-                    key={item.path}
-                    style={{
-                      padding: 8,
-                      borderRadius: 8,
-                      background: "rgba(0,0,0,0.18)",
-                      border: "1px solid rgba(255,255,255,0.08)",
-                      fontSize: 10,
-                      color: "rgba(255,255,255,0.58)",
-                    }}
-                  >
-                    <div style={{ color: item.exists && item.is_dir ? "#94eff4" : "#fb7185", fontWeight: 750 }}>
-                      {item.raw_path} · {item.exists && item.is_dir ? "可读取" : "未找到"}
-                    </div>
-                    <div style={{ marginTop: 3 }}>
-                      候选文件 {item.candidate_count} · 技能文件 {item.skill_count}
-                    </div>
-                    {item.sample_paths.length > 0 && (
-                      <div style={{ marginTop: 4, fontFamily: "monospace", opacity: 0.7 }}>
-                        {item.sample_paths.slice(0, 2).map((sample) => (
-                          <div key={sample}>{sample}</div>
-                        ))}
-                      </div>
-                    )}
-                    {item.error && <div style={{ marginTop: 4, color: "#fb7185" }}>{item.error}</div>}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
+        <div className="hype-inventory">
+          <div className="hype-inventory-summary">
+            <span>{filteredAssets.length} 项</span>
             {Object.entries(assetTypeCounts).map(([type, count]) => (
-              <span key={type} className="kawaii-badge">
-                {type} {count}
-              </span>
+              <span key={type}>{type} {count}</span>
             ))}
           </div>
 
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div className="hype-asset-list">
+            <div className="hype-asset-list-header" aria-hidden="true">
+              <span>名称</span>
+              <span>来源 / Agent</span>
+              <span>类型</span>
+              <span>更新时间</span>
+            </div>
             {filteredAssets.length === 0 ? (
-              <div style={{ padding: 24, textAlign: "center", color: "rgba(255,255,255,0.25)", fontSize: 13 }}>
-                {assetView === "skills" ? "点击刷新后，Hype 会整理你创建和明确安装的技能。" : "点击刷新后，Hype 会整理本地 Agent 知识。"}
+              <div className="hype-empty-state">
+                {assets.length === 0
+                  ? "刷新后，Hype 会把本地 Agent 资产整理到这里。"
+                  : "当前范围里没有匹配的资产。"}
               </div>
             ) : (
-              filteredAssets.map((asset) => <AgentAssetCard key={asset.id} asset={asset} />)
+              filteredAssets.map((asset) => (
+                <AgentAssetRow key={asset.id} asset={asset} />
+              ))
             )}
           </div>
+
+          <details className="hype-asset-details">
+            <summary>高级扫描设置与诊断</summary>
+            <div className="hype-asset-details-content">
+              <label className="kawaii-label" htmlFor="hype-asset-roots">
+                Agent asset roots
+              </label>
+              <button
+                type="button"
+                onClick={() => setAssetRoots(DEFAULT_ASSET_ROOTS)}
+                className="kawaii-tab"
+              >
+                Use recommended roots
+              </button>
+              <textarea
+                id="hype-asset-roots"
+                value={assetRoots}
+                onChange={(event) => setAssetRoots(event.target.value)}
+                className="kawaii-input"
+              />
+              <button
+                type="button"
+                onClick={handleDiagnoseAssets}
+                disabled={scanningAssets}
+                className="kawaii-tab"
+              >
+                {scanningAssets ? "Diagnosing..." : "Diagnose scan roots"}
+              </button>
+              {assetDiagnostics.length > 0 && (
+                <div className="hype-diagnostics">
+                  {assetDiagnostics.map((item) => (
+                    <div key={item.path} className="hype-diagnostic-row">
+                      <strong className={item.exists && item.is_dir ? "" : "is-error"}>
+                        {item.raw_path} · {item.exists && item.is_dir ? "ready" : "not found"}
+                      </strong>
+                      <span>
+                        candidates {item.candidate_count} · SKILL.md {item.skill_count}
+                      </span>
+                      {item.sample_paths.slice(0, 2).map((sample) => (
+                        <code key={sample}>{sample}</code>
+                      ))}
+                      {item.error && <span className="is-error">{item.error}</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </details>
         </div>
       )}
 
@@ -597,7 +902,7 @@ export function KnowledgeModule() {
               style={{
                 width: "100%",
                 padding: "10px",
-                borderRadius: 12,
+                borderRadius: 8,
                 border: "1px dashed rgba(148,239,244,0.2)",
                 background: "rgba(148,239,244,0.04)",
                 color: "rgba(148,239,244,0.7)",
@@ -617,7 +922,7 @@ export function KnowledgeModule() {
             <div
               style={{
                 padding: 14,
-                borderRadius: 14,
+                borderRadius: 8,
                 background: "rgba(255,255,255,0.025)",
                 border: "1px solid rgba(148,239,244,0.15)",
                 marginBottom: 12,
@@ -659,7 +964,7 @@ export function KnowledgeModule() {
                     flex: 1,
                     padding: 8,
                     fontSize: 12,
-                    borderRadius: 9999,
+                    borderRadius: 8,
                     border: "1px solid rgba(255,255,255,0.06)",
                     background: "rgba(255,255,255,0.03)",
                     color: "rgba(255,255,255,0.4)",
@@ -674,21 +979,24 @@ export function KnowledgeModule() {
 
           {/* Preference list */}
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {data.preferences.length === 0 ? (
+            {filteredPreferences.length === 0 &&
+            filteredPreferenceAssets.length === 0 &&
+            filteredPreferenceNotes.length === 0 ? (
               <div style={{ padding: 24, textAlign: "center", color: "rgba(255,255,255,0.25)", fontSize: 13 }}>
-                暂无偏好设置，点击上方按钮添加
+                {preferenceCount === 0 ? "暂无偏好，点击刷新扫描或手动添加" : "没有匹配的偏好"}
               </div>
             ) : (
-              data.preferences.map((pref) => {
+              <>
+                {filteredPreferences.map((pref) => {
                 const color = CATEGORY_COLORS[pref.category] || "#94eff4";
                 return (
                   <div
                     key={pref.id}
                     style={{
                       padding: 12,
-                      borderRadius: 14,
-                      background: "rgba(255,255,255,0.02)",
-                      border: "1px solid rgba(255,255,255,0.05)",
+                      borderRadius: 8,
+                      background: "rgba(255,255,255,0.62)",
+                      border: "1px solid rgba(116,143,165,0.16)",
                       borderLeft: `3px solid ${color}`,
                     }}
                   >
@@ -696,7 +1004,7 @@ export function KnowledgeModule() {
                       <span
                         style={{
                           padding: "1px 6px",
-                          borderRadius: 9999,
+                          borderRadius: 8,
                           background: `${color}15`,
                           color,
                           fontSize: 10,
@@ -705,7 +1013,7 @@ export function KnowledgeModule() {
                       >
                         {pref.category}
                       </span>
-                      <span style={{ fontSize: 10, color: "rgba(255,255,255,0.2)" }}>
+                      <span style={{ fontSize: 10, color: "#8290a3" }}>
                         via {pref.source}
                       </span>
                       <div style={{ flex: 1 }} />
@@ -725,8 +1033,8 @@ export function KnowledgeModule() {
                                 background:
                                   p <= pref.priority
                                     ? `${color}30`
-                                    : "rgba(255,255,255,0.04)",
-                                color: p <= pref.priority ? color : "rgba(255,255,255,0.2)",
+                                    : "rgba(116,143,165,0.08)",
+                                color: p <= pref.priority ? color : "#8290a3",
                                 fontSize: 9,
                                 cursor: "pointer",
                               }}
@@ -740,7 +1048,7 @@ export function KnowledgeModule() {
                           onClick={() => setEditing(pref.id)}
                           style={{
                             fontSize: 10,
-                            color: "rgba(255,255,255,0.25)",
+                            color: "#7b8798",
                             cursor: "pointer",
                           }}
                         >
@@ -756,7 +1064,7 @@ export function KnowledgeModule() {
                           borderRadius: "50%",
                           border: "none",
                           background: "transparent",
-                          color: "rgba(255,255,255,0.15)",
+                          color: "#94a3b8",
                           fontSize: 11,
                           cursor: "pointer",
                           display: "flex",
@@ -767,12 +1075,20 @@ export function KnowledgeModule() {
                         ×
                       </button>
                     </div>
-                    <div style={{ fontSize: 13, color: "rgba(255,255,255,0.7)", lineHeight: 1.5 }}>
+                    <div style={{ fontSize: 13, color: "#4f5e70", lineHeight: 1.5 }}>
                       {pref.content}
                     </div>
                   </div>
                 );
-              })
+                })}
+                <KnowledgeAssetSection
+                  title="本地偏好文件"
+                  assets={filteredPreferenceAssets}
+                />
+                {filteredPreferenceNotes.map((note) => (
+                  <ObsidianNoteCard key={note.id} note={note} />
+                ))}
+              </>
             )}
           </div>
 
@@ -781,7 +1097,7 @@ export function KnowledgeModule() {
             style={{
               marginTop: 16,
               padding: "8px 12px",
-              borderRadius: 10,
+              borderRadius: 8,
               background: "rgba(255,255,255,0.015)",
               border: "1px solid rgba(255,255,255,0.03)",
               fontSize: 11,
@@ -797,102 +1113,41 @@ export function KnowledgeModule() {
       {/* Rules tab */}
       {activeTab === "rules" && (
         <div>
-          <button
-            onClick={handleScan}
-            disabled={scanning}
-            style={{
-              width: "100%",
-              padding: "10px",
-              borderRadius: 12,
-              border: "1px solid rgba(148,239,244,0.15)",
-              background: "rgba(148,239,244,0.06)",
-              color: "rgba(148,239,244,0.8)",
-              fontSize: 12,
-              fontWeight: 600,
-              cursor: scanning ? "wait" : "pointer",
-              marginBottom: 12,
-              transition: "all 0.2s",
-            }}
-          >
-            {scanning ? "扫描中..." : "🔍 扫描 Agent 规则文件"}
-          </button>
-
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {data.agent_rules.length === 0 ? (
+            {filteredRules.length === 0 &&
+            filteredRuleAssets.length === 0 &&
+            filteredRuleNotes.length === 0 ? (
               <div style={{ padding: 24, textAlign: "center", color: "rgba(255,255,255,0.25)", fontSize: 13 }}>
-                暂无规则，点击扫描发现 CLAUDE.md / .cursorrules 等文件
+                {ruleCount === 0
+                  ? "点击刷新发现 AGENTS.md / CLAUDE.md / .cursorrules 等规则文件"
+                  : "没有匹配的规则"}
               </div>
             ) : (
-              data.agent_rules.map((rule) => (
-                <RuleCard key={rule.id} rule={rule} />
-              ))
+              <>
+                {filteredRules.map((rule) => (
+                  <RuleCard key={rule.id} rule={rule} />
+                ))}
+                <KnowledgeAssetSection
+                  title="本地规则文件"
+                  assets={filteredRuleAssets}
+                />
+                {filteredRuleNotes.map((note) => (
+                  <ObsidianNoteCard key={note.id} note={note} />
+                ))}
+              </>
             )}
           </div>
         </div>
       )}
 
-      {/* Obsidian tab */}
-      {activeTab === "obsidian" && (
+      {/* Memory tab */}
+      {activeTab === "memory" && (
         <div>
-          <div
-            style={{
-              padding: 14,
-              borderRadius: 14,
-              background: "rgba(255,255,255,0.025)",
-              border: "1px solid rgba(148,239,244,0.12)",
-              marginBottom: 12,
-            }}
-          >
-            <label className="kawaii-label">Obsidian Vault</label>
-            <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-              <input
-                value={vaultPath}
-                onChange={(e) => setVaultPath(e.target.value)}
-                placeholder="~/Documents/My Vault"
-                className="kawaii-input"
-                style={{ flex: 1, minWidth: 0 }}
-              />
-              <button
-                onClick={handleScanVault}
-                disabled={scanningVault || !vaultPath.trim()}
-                className="kawaii-save-btn"
-                style={{ width: 88, padding: 8, fontSize: 12 }}
-              >
-                {scanningVault ? "刷新中" : "刷新"}
-              </button>
-            </div>
-            <div
-              style={{
-                marginTop: 8,
-                fontSize: 10,
-                color: "rgba(255,255,255,0.25)",
-                fontFamily: "monospace",
-              }}
-            >
-              {data.obsidian_vault?.last_indexed_at
-                ? `last indexed ${new Date(data.obsidian_vault.last_indexed_at).toLocaleString()}`
-                : "read-only local markdown index"}
-            </div>
-            {vaultError && (
-              <div style={{ marginTop: 8, fontSize: 11, color: "#fb7185" }}>
-                {vaultError}
-              </div>
-            )}
-          </div>
-
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginBottom: 12 }}>
-            <KnowledgeStat label="hot" value={hotCount} color="#fbbf24" />
-            <KnowledgeStat label="cold" value={coldCount} color="#94a3b8" />
-            <KnowledgeStat label="tasks" value={notes.reduce((sum, note) => sum + note.tasks.length, 0)} color="#34d399" />
+            <KnowledgeStat label="热记忆" value={hotCount} color="#fbbf24" />
+            <KnowledgeStat label="冷记忆" value={coldCount} color="#94a3b8" />
+            <KnowledgeStat label="待办" value={memoryNotes.reduce((sum, note) => sum + note.tasks.length, 0)} color="#34d399" />
           </div>
-
-          <input
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="搜索标题、tag、类型或摘录..."
-            className="kawaii-input"
-            style={{ marginBottom: 10 }}
-          />
 
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
             {Object.entries(typeCounts).map(([type, count]) => (
@@ -903,18 +1158,124 @@ export function KnowledgeModule() {
           </div>
 
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {filteredNotes.length === 0 ? (
+            {filteredMemoryItems.length === 0 &&
+            filteredMemoryAssets.length === 0 &&
+            filteredMemoryNotes.length === 0 ? (
               <div style={{ padding: 24, textAlign: "center", color: "rgba(255,255,255,0.25)", fontSize: 13 }}>
-                {notes.length === 0 ? "配置 vault 路径后刷新索引" : "没有匹配的笔记"}
+                {memoryCount === 0 ? "点击刷新扫描本地 Agent 记忆，也可接入 Obsidian" : "没有匹配的记忆"}
               </div>
             ) : (
-              filteredNotes.map((note) => (
-                <ObsidianNoteCard key={note.id} note={note} />
-              ))
+              <>
+                {filteredMemoryItems.map((item) => (
+                  <MemoryItemCard key={item.id} item={item} />
+                ))}
+                <KnowledgeAssetSection
+                  title="本地 Agent 记忆"
+                  assets={filteredMemoryAssets}
+                />
+                {filteredMemoryNotes.map((note) => (
+                  <ObsidianNoteCard key={note.id} note={note} />
+                ))}
+              </>
             )}
           </div>
+
+          <details className="hype-asset-details">
+            <summary>Obsidian 只读索引（可选）</summary>
+            <div className="hype-asset-details-content">
+              <label className="kawaii-label" htmlFor="hype-obsidian-vault">
+                Vault 路径
+              </label>
+              <input
+                id="hype-obsidian-vault"
+                value={vaultPath}
+                onChange={(event) => setVaultPath(event.target.value)}
+                placeholder="~/Documents/My Vault"
+                className="kawaii-input"
+              />
+              <span>
+                {data.obsidian_vault?.last_indexed_at
+                  ? `上次索引：${new Date(data.obsidian_vault.last_indexed_at).toLocaleString()}`
+                  : "仅在刷新时读取 Markdown，不会修改 Vault 内容。"}
+              </span>
+            </div>
+          </details>
         </div>
       )}
+
+      <details className="hype-review-drawer">
+        <summary>上下文整理与 AI 评审</summary>
+        <ReviewEnginePanel
+          assetsCount={assets.length}
+          reviewEngine={reviewEngine}
+          busy={reviewBusy}
+          message={reviewMessage}
+          showAdvanced={showAdvancedReview}
+          piUrl={piUrl}
+          piModel={piModel}
+          piToken={piToken}
+          onToggleAdvanced={() => setShowAdvancedReview((value) => !value)}
+          onPiUrlChange={setPiUrl}
+          onPiModelChange={setPiModel}
+          onPiTokenChange={setPiToken}
+          onStartCodexReview={handleStartCodexReview}
+          onSaveCustomReviewer={handleSaveCustomReviewer}
+        />
+      </details>
+    </div>
+  );
+}
+
+function KnowledgeAssetSection({
+  title,
+  assets,
+}: {
+  title: string;
+  assets: AgentAsset[];
+}) {
+  if (assets.length === 0) return null;
+
+  return (
+    <section className="hype-knowledge-source">
+      <h3>{title}</h3>
+      <div className="hype-asset-list">
+        <div className="hype-asset-list-header" aria-hidden="true">
+          <span>名称</span>
+          <span>来源 / Agent</span>
+          <span>类型</span>
+          <span>更新时间</span>
+        </div>
+        {assets.map((asset) => (
+          <AgentAssetRow key={asset.id} asset={asset} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function MemoryItemCard({ item }: { item: MemoryItem }) {
+  const color = item.temperature === "hot" ? "#fbbf24" : "#94a3b8";
+  return (
+    <div
+      style={{
+        padding: 12,
+        borderRadius: 8,
+        background: "rgba(255,255,255,0.62)",
+        border: "1px solid rgba(116,143,165,0.16)",
+        borderLeft: `3px solid ${color}`,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <span style={{ color, fontSize: 10, fontWeight: 700 }}>
+          {item.temperature === "hot" ? "热记忆" : "冷记忆"}
+        </span>
+        <span style={{ fontSize: 10, color: "#7b8798" }}>
+          {item.agent_id || "HUMHUM"}
+        </span>
+      </div>
+      <div style={{ marginTop: 6, fontSize: 13, color: "#4f5e70", lineHeight: 1.5 }}>
+        {item.content}
+      </div>
     </div>
   );
 }
@@ -924,13 +1285,13 @@ function KnowledgeStat({ label, value, color }: { label: string; value: number; 
     <div
       style={{
         padding: "10px 12px",
-        borderRadius: 10,
-        background: "rgba(255,255,255,0.025)",
-        border: "1px solid rgba(255,255,255,0.05)",
+        borderRadius: 8,
+        background: "rgba(255,255,255,0.62)",
+        border: "1px solid rgba(116,143,165,0.16)",
       }}
     >
       <div style={{ fontSize: 10, color, fontWeight: 700 }}>{label}</div>
-      <div style={{ fontSize: 18, color: "rgba(255,255,255,0.78)", fontWeight: 700 }}>
+      <div style={{ fontSize: 18, color: "#5f6f88", fontWeight: 700 }}>
         {value}
       </div>
     </div>
@@ -1097,11 +1458,12 @@ function ReviewerPill({ label, ok, detail }: { label: string; ok: boolean; detai
   );
 }
 
-function AgentAssetCard({ asset }: { asset: AgentAsset }) {
+function AgentAssetRow({ asset }: { asset: AgentAsset }) {
   const [expanded, setExpanded] = useState(false);
   const color = ASSET_TYPE_COLORS[asset.asset_type] || "#94eff4";
   const isSkill = asset.asset_type === "skill";
   const title = asset.display_name_zh || asset.name;
+  const summary = asset.summary_zh || getAgentAssetSummary(asset);
   const ownershipLabel = asset.ownership === "used"
     ? "会话用过"
     : asset.ownership === "installed"
@@ -1111,97 +1473,45 @@ function AgentAssetCard({ asset }: { asset: AgentAsset }) {
         : "来源待确认";
 
   return (
-    <div
-      style={{
-        padding: 12,
-        borderRadius: 8,
-        background: "rgba(255,255,255,0.02)",
-        border: "1px solid rgba(255,255,255,0.05)",
-        borderLeft: `3px solid ${color}`,
-        cursor: "pointer",
-      }}
-      onClick={() => setExpanded(!expanded)}
-    >
-      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
-        <span style={{ color, fontSize: 11, fontWeight: 800 }}>{isSkill ? ownershipLabel : asset.asset_type}</span>
-        <span style={{ fontSize: 10, color: "rgba(255,255,255,0.35)" }}>{asset.agent_id}</span>
-        <span style={{ fontSize: 10, color: "rgba(255,255,255,0.22)" }}>{compactHomePath(asset.source)}</span>
-        <div style={{ flex: 1 }} />
-        {asset.modified_at && (
-          <span style={{ fontSize: 10, color: "rgba(255,255,255,0.22)" }}>
-            {new Date(asset.modified_at).toLocaleDateString()}
-          </span>
-        )}
-      </div>
-
-      <div style={{ fontSize: 13, color: "rgba(255,255,255,0.78)", fontWeight: 700 }}>
-        {title}
-      </div>
-      {isSkill && asset.display_name_zh && (
-        <div style={{ marginTop: 3, fontSize: 10, color: "rgba(255,255,255,0.34)" }}>
-          原名：{asset.name}
-        </div>
-      )}
-      {isSkill && asset.summary_zh && (
-        <div style={{ marginTop: 6, fontSize: 12, color: "rgba(255,255,255,0.58)", lineHeight: 1.5 }}>
-          {asset.summary_zh}
-        </div>
-      )}
-      {!isSkill && (
-        <div
-          style={{
-            marginTop: 4,
-            fontSize: 10,
-            color: "rgba(255,255,255,0.28)",
-            fontFamily: "monospace",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
+    <div className={`hype-asset-item ${expanded ? "is-expanded" : ""}`}>
+      <button
+        type="button"
+        className="hype-asset-row"
+        onClick={() => setExpanded((value) => !value)}
+        aria-expanded={expanded}
+      >
+        <span className="hype-asset-name">
+          <strong>{title}</strong>
+          <small>
+            {asset.display_name_zh ? `${summary} · 原名：${asset.name}` : summary}
+          </small>
+        </span>
+        <span className="hype-asset-source">
+          <span>{compactHomePath(asset.source)}</span>
+          <small>{asset.agent_id}</small>
+        </span>
+        <span
+          className="hype-asset-type"
+          style={{ color, backgroundColor: `${color}18` }}
         >
-          {asset.relative_path}
-        </div>
-      )}
-
-      {asset.tags.length > 0 && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 8 }}>
-          {asset.tags.slice(0, expanded ? 14 : 6).map((tag) => (
-            <span
-              key={tag}
-              style={{
-                padding: "1px 6px",
-                borderRadius: 9999,
-                background: `${color}14`,
-                color,
-                fontSize: 10,
-              }}
-            >
-              #{tag}
-            </span>
-          ))}
-        </div>
-      )}
+          {isSkill ? ownershipLabel : asset.asset_type}
+        </span>
+        <time dateTime={asset.modified_at || undefined}>
+          {asset.modified_at ? new Date(asset.modified_at).toLocaleString() : "—"}
+        </time>
+      </button>
 
       {expanded && (
-        <div
-          style={{
-            marginTop: 10,
-            padding: 10,
-            borderRadius: 8,
-            background: "rgba(0,0,0,0.24)",
-            border: "1px solid rgba(255,255,255,0.04)",
-            fontSize: 11,
-            color: "rgba(255,255,255,0.52)",
-            fontFamily: "monospace",
-            whiteSpace: "pre-wrap",
-            maxHeight: 320,
-            overflowY: "auto",
-            lineHeight: 1.5,
-          }}
-          className="scrollbar-thin"
-        >
-          <div style={{ color: "rgba(255,255,255,0.3)", marginBottom: 8 }}>{asset.file_path}</div>
-          {asset.content}
+        <div className="hype-asset-expanded">
+          <code>{asset.file_path}</code>
+          {asset.tags.length > 0 && (
+            <div className="hype-asset-tags">
+              {asset.tags.map((tag) => (
+                <span key={tag}>#{tag}</span>
+              ))}
+            </div>
+          )}
+          <pre className="scrollbar-thin">{asset.content}</pre>
         </div>
       )}
     </div>
@@ -1221,9 +1531,9 @@ function ObsidianNoteCard({ note }: { note: ObsidianNote }) {
     <div
       style={{
         padding: 12,
-        borderRadius: 14,
-        background: "rgba(255,255,255,0.02)",
-        border: "1px solid rgba(255,255,255,0.05)",
+        borderRadius: 8,
+        background: "rgba(255,255,255,0.62)",
+        border: "1px solid rgba(116,143,165,0.16)",
         borderLeft: `3px solid ${color}`,
         cursor: "pointer",
       }}
@@ -1234,12 +1544,12 @@ function ObsidianNoteCard({ note }: { note: ObsidianNote }) {
         <span
           style={{
             fontSize: 10,
-            color: note.memory_temperature === "hot" ? "#fbbf24" : "rgba(255,255,255,0.25)",
+            color: note.memory_temperature === "hot" ? "#d89a12" : "#8290a3",
           }}
         >
           {note.memory_temperature}
         </span>
-        <span style={{ fontSize: 10, color: "rgba(255,255,255,0.22)" }}>
+        <span style={{ fontSize: 10, color: "#8290a3" }}>
           {note.source}
         </span>
         <div style={{ flex: 1 }} />
@@ -1250,14 +1560,14 @@ function ObsidianNoteCard({ note }: { note: ObsidianNote }) {
         )}
       </div>
 
-      <div style={{ fontSize: 13, color: "rgba(255,255,255,0.78)", fontWeight: 650 }}>
+      <div style={{ fontSize: 13, color: "#263241", fontWeight: 650 }}>
         {note.title}
       </div>
       <div
         style={{
           marginTop: 4,
           fontSize: 10,
-          color: "rgba(255,255,255,0.28)",
+          color: "#7b8798",
           fontFamily: "monospace",
           overflow: "hidden",
           textOverflow: "ellipsis",
@@ -1268,7 +1578,7 @@ function ObsidianNoteCard({ note }: { note: ObsidianNote }) {
       </div>
 
       {note.excerpt && (
-        <div style={{ marginTop: 8, fontSize: 12, color: "rgba(255,255,255,0.52)", lineHeight: 1.45 }}>
+        <div style={{ marginTop: 8, fontSize: 12, color: "#5f6f88", lineHeight: 1.45 }}>
           {note.excerpt}
         </div>
       )}
@@ -1280,9 +1590,9 @@ function ObsidianNoteCard({ note }: { note: ObsidianNote }) {
               key={tag}
               style={{
                 padding: "1px 6px",
-                borderRadius: 9999,
-                background: "rgba(148,239,244,0.08)",
-                color: "rgba(148,239,244,0.75)",
+                borderRadius: 8,
+                background: "rgba(109,106,222,0.08)",
+                color: "#6d6ade",
                 fontSize: 10,
               }}
             >
@@ -1298,10 +1608,10 @@ function ObsidianNoteCard({ note }: { note: ObsidianNote }) {
             marginTop: 10,
             padding: 10,
             borderRadius: 8,
-            background: "rgba(0,0,0,0.22)",
-            border: "1px solid rgba(255,255,255,0.04)",
+            background: "rgba(246,248,252,0.86)",
+            border: "1px solid rgba(116,143,165,0.12)",
             fontSize: 11,
-            color: "rgba(255,255,255,0.45)",
+            color: "#5f6f88",
             lineHeight: 1.5,
           }}
         >
@@ -1330,9 +1640,9 @@ function RuleCard({ rule }: { rule: AgentRule }) {
     <div
       style={{
         padding: 12,
-        borderRadius: 14,
-        background: "rgba(255,255,255,0.02)",
-        border: "1px solid rgba(255,255,255,0.05)",
+        borderRadius: 8,
+        background: "rgba(255,255,255,0.62)",
+        border: "1px solid rgba(116,143,165,0.16)",
         cursor: "pointer",
       }}
       onClick={() => setExpanded(!expanded)}
@@ -1341,14 +1651,14 @@ function RuleCard({ rule }: { rule: AgentRule }) {
         <span style={{ fontSize: 10, fontWeight: 600, color: "#a78bfa" }}>
           {rule.rule_type}
         </span>
-        <span style={{ fontSize: 10, color: "rgba(255,255,255,0.3)" }}>
+        <span style={{ fontSize: 10, color: "#7b8798" }}>
           {rule.agent_id}
         </span>
       </div>
       <div
         style={{
           fontSize: 11,
-          color: "rgba(255,255,255,0.35)",
+          color: "#5f6f88",
           fontFamily: "monospace",
           marginTop: 4,
           overflow: "hidden",
@@ -1364,9 +1674,9 @@ function RuleCard({ rule }: { rule: AgentRule }) {
             marginTop: 8,
             padding: 10,
             borderRadius: 8,
-            background: "rgba(0,0,0,0.25)",
+            background: "rgba(246,248,252,0.86)",
             fontSize: 11,
-            color: "rgba(255,255,255,0.5)",
+            color: "#4f5e70",
             fontFamily: "monospace",
             whiteSpace: "pre-wrap",
             maxHeight: 300,

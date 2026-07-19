@@ -1,9 +1,19 @@
 import { useState, useEffect, useCallback, useRef, type CSSProperties, type KeyboardEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { useTranslation } from "../../lib/i18n/react";
+import {
+  ArrowUp,
+  ExternalLink,
+  Play,
+  RefreshCw,
+  SlidersHorizontal,
+  Volume2,
+  Wrench,
+} from "lucide-react";
 import type { AppConfig } from "../../types";
 import { createHumiPiRuntime } from "../../lib/pi/runtime";
 import type { HumiPiRuntime } from "../../lib/pi/types";
+import type { HexaDevelopmentGoal, HexaGoalAttempt } from "../../hooks/hexaGoalMonitoring";
+import type { HexaWatchedSession } from "../../hooks/useHexaData";
 
 interface ActiveSession {
   session_id: string;
@@ -13,6 +23,15 @@ interface ActiveSession {
   event_count: number;
   last_event_at: string;
   last_tool_name: string | null;
+}
+
+interface AggregatedStats {
+  total_tokens: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  active_agents: number;
+  total_tool_calls: number;
+  total_sessions: number;
 }
 
 interface HooksStatus {
@@ -125,6 +144,17 @@ interface AgentKernelRole {
   writes: string[];
 }
 
+interface HumiModuleProps {
+  onActivityChange?: (active: boolean) => void;
+  onOpenHexa: (goalId: string | null) => void;
+}
+
+interface HumiHexaAttention {
+  attentionCount: number;
+  failedCount: number;
+  mostUrgentGoal: HexaDevelopmentGoal | null;
+}
+
 const DEFAULT_KERNEL_ROOTS = [
   "~/.codex/skills",
   "~/.codex/plugins/cache",
@@ -176,9 +206,113 @@ function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promi
   });
 }
 
-export function HumiModule() {
-  const { t } = useTranslation();
+function timestamp(value: string | null | undefined): number {
+  if (!value) return 0;
+  const parsed = new Date(value).getTime();
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function attemptIsComplete(
+  attempt: HexaGoalAttempt,
+  session: HexaWatchedSession | undefined,
+): boolean {
+  return attempt.completed_at !== null || session?.status === "completed";
+}
+
+function summarizeHexaAttention(
+  goals: HexaDevelopmentGoal[],
+  watchedSessions: HexaWatchedSession[],
+): HumiHexaAttention {
+  const sessionsById = new Map(
+    watchedSessions.map((session) => [session.session_id, session]),
+  );
+  const linkedSessionIds = new Set(
+    goals.flatMap((goal) => goal.attempts.map((attempt) => attempt.session_id)),
+  );
+  const candidates: Array<{
+    goal: HexaDevelopmentGoal | null;
+    failedCount: number;
+    priority: number;
+    updatedAt: string;
+  }> = goals.flatMap((goal) => {
+    if (goal.accepted_attempt_id) return [];
+
+    const failedCount = goal.attempts.filter(
+      (attempt) => attempt.result_status === "failed",
+    ).length;
+    const hasLiveBlocker = goal.attempts.some((attempt) => {
+      const session = sessionsById.get(attempt.session_id);
+      return session?.status === "blocked" || session?.status === "waiting";
+    });
+    const hasCompletedUnverified = goal.attempts.some((attempt) => {
+      const session = sessionsById.get(attempt.session_id);
+      return (
+        attempt.result_status === "unverified" &&
+        attemptIsComplete(attempt, session)
+      );
+    });
+    const allAttemptsComplete =
+      goal.attempts.length > 0 &&
+      goal.attempts.every((attempt) =>
+        attemptIsComplete(attempt, sessionsById.get(attempt.session_id)),
+      );
+
+    if (
+      failedCount === 0 &&
+      !hasLiveBlocker &&
+      !hasCompletedUnverified &&
+      !allAttemptsComplete
+    ) {
+      return [];
+    }
+
+    return [{
+      goal,
+      failedCount,
+      priority:
+        failedCount > 0
+          ? 0
+          : hasLiveBlocker
+            ? 1
+            : hasCompletedUnverified
+              ? 2
+              : 3,
+      updatedAt: goal.updated_at,
+    }];
+  });
+  for (const session of watchedSessions) {
+    if (
+      linkedSessionIds.has(session.session_id) ||
+      (session.status !== "blocked" && session.status !== "waiting")
+    ) {
+      continue;
+    }
+    candidates.push({
+      goal: null,
+      failedCount: 0,
+      priority: 1,
+      updatedAt: session.updated_at,
+    });
+  }
+  candidates.sort((left, right) =>
+    left.priority - right.priority ||
+    timestamp(right.updatedAt) - timestamp(left.updatedAt)
+  );
+
+  return {
+    attentionCount: candidates.length,
+    failedCount: candidates.reduce(
+      (total, candidate) => total + candidate.failedCount,
+      0,
+    ),
+    mostUrgentGoal: candidates[0]?.goal ?? null,
+  };
+}
+
+export function HumiModule({ onActivityChange, onOpenHexa }: HumiModuleProps) {
   const [sessions, setSessions] = useState<ActiveSession[]>([]);
+  const [developmentGoals, setDevelopmentGoals] = useState<HexaDevelopmentGoal[]>([]);
+  const [hexaWatchedSessions, setHexaWatchedSessions] = useState<HexaWatchedSession[]>([]);
   const [hooksStatus, setHooksStatus] = useState<HooksStatus>({});
   const [piStatus, setPiStatus] = useState<PiInstallStatus | null>(null);
   const [qoderStatus, setQoderStatus] = useState<QoderAcpStatus | null>(null);
@@ -192,6 +326,10 @@ export function HumiModule() {
   const [humiProgress, setHumiProgress] = useState("Humi 正在等你说话");
   const [chatMessages, setChatMessages] = useState<HumiChatMessage[]>(loadHumiChatMessages);
   const [agentKernelStatus, setAgentKernelStatus] = useState<AgentKernelStatus | null>(null);
+  const [stats, setStats] = useState<AggregatedStats | null>(null);
+  const [operationsLoading, setOperationsLoading] = useState(false);
+  const [operationsMessage, setOperationsMessage] = useState<string | null>(null);
+  const [ttsPreviewing, setTtsPreviewing] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
   const piRuntimeRef = useRef<HumiPiRuntime | null>(null);
   const [kernelPrompt, setKernelPrompt] = useState(
@@ -214,6 +352,28 @@ export function HumiModule() {
     } catch {
       // ignore
     }
+  }, []);
+
+  const fetchStats = useCallback(async () => {
+    try {
+      const data = await invoke<AggregatedStats>("get_stats");
+      setStats(data);
+    } catch {
+      // Stats stay optional when local analytics are disabled.
+    }
+  }, []);
+
+  const fetchHexaAttention = useCallback(async () => {
+    const [goalsResult, sessionsResult] = await Promise.allSettled([
+      invoke<HexaDevelopmentGoal[]>("get_hexa_development_goals"),
+      invoke<HexaWatchedSession[]>("get_hexa_watched_sessions"),
+    ]);
+    setDevelopmentGoals(
+      goalsResult.status === "fulfilled" ? goalsResult.value : [],
+    );
+    setHexaWatchedSessions(
+      sessionsResult.status === "fulfilled" ? sessionsResult.value : [],
+    );
   }, []);
 
   const fetchKernelStatus = useCallback(async () => {
@@ -246,9 +406,19 @@ export function HumiModule() {
     fetchSessions();
     fetchHooksStatus();
     fetchKernelStatus();
-    const interval = setInterval(fetchSessions, 5000);
+    fetchStats();
+    fetchHexaAttention();
+    const interval = setInterval(() => {
+      void fetchSessions();
+      void fetchHexaAttention();
+    }, 5000);
     return () => clearInterval(interval);
-  }, [fetchSessions, fetchHooksStatus, fetchKernelStatus]);
+  }, [fetchHexaAttention, fetchSessions, fetchHooksStatus, fetchKernelStatus, fetchStats]);
+
+  useEffect(() => {
+    const interval = setInterval(fetchStats, 15_000);
+    return () => clearInterval(interval);
+  }, [fetchStats]);
 
   useEffect(() => {
     if (!kernelSession || ["stopped", "error"].includes(kernelSession.state)) return;
@@ -263,6 +433,12 @@ export function HumiModule() {
   useEffect(() => {
     sessionStorage.setItem(HUMI_CHAT_STORAGE_KEY, JSON.stringify(chatMessages));
   }, [chatMessages]);
+
+  useEffect(() => {
+    onActivityChange?.(kernelLoading);
+  }, [kernelLoading, onActivityChange]);
+
+  useEffect(() => () => onActivityChange?.(false), [onActivityChange]);
 
   const startPiKernel = useCallback(async () => {
     setKernelLoading(true);
@@ -371,195 +547,458 @@ export function HumiModule() {
     }
   }, [fetchSessions, kernelSession]);
 
+  const refreshOperations = useCallback(async () => {
+    setOperationsLoading(true);
+    setOperationsMessage(null);
+    await Promise.all([
+      fetchSessions(),
+      fetchHooksStatus(),
+      fetchKernelStatus(),
+      fetchStats(),
+      fetchHexaAttention(),
+    ]);
+    setOperationsLoading(false);
+  }, [fetchHexaAttention, fetchHooksStatus, fetchKernelStatus, fetchSessions, fetchStats]);
+
+  const focusSession = useCallback(async (session: ActiveSession) => {
+    setOperationsMessage(null);
+    try {
+      await invoke("focus_agent_session", { sessionId: session.session_id });
+    } catch (error) {
+      setOperationsMessage(`无法打开会话：${String(error)}`);
+    }
+  }, []);
+
+  const toggleAutoConfirm = useCallback(async () => {
+    if (!appConfig) return;
+    const updated: AppConfig = {
+      ...appConfig,
+      ui: {
+        ...appConfig.ui,
+        auto_confirm: !appConfig.ui.auto_confirm,
+      },
+    };
+    setAppConfig(updated);
+    setOperationsMessage(null);
+    try {
+      await invoke("save_config", { newConfig: updated });
+    } catch (error) {
+      setAppConfig(appConfig);
+      setOperationsMessage(`自动确认设置失败：${String(error)}`);
+    }
+  }, [appConfig]);
+
+  const previewTts = useCallback(async () => {
+    if (!appConfig || ttsPreviewing) return;
+    setTtsPreviewing(true);
+    setOperationsMessage(null);
+    try {
+      const base64Data = await invoke<string>("synthesize_system_speech", {
+        text: "Humi 正在为你播报 Agent 的最新进展。",
+        voice: appConfig.tts.voice,
+        speed: appConfig.tts.speed,
+      });
+      await invoke("play_audio", { base64Data });
+    } catch (error) {
+      setOperationsMessage(`TTS 试听失败：${String(error)}`);
+    } finally {
+      setTtsPreviewing(false);
+    }
+  }, [appConfig, ttsPreviewing]);
+
+  const hexaAttention = summarizeHexaAttention(
+    developmentGoals,
+    hexaWatchedSessions,
+  );
+
   return (
-    <div className="hub-module">
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          minHeight: "min(720px, calc(100vh - 72px))",
-          background: "transparent",
-          color: "#263241",
-        }}
-      >
-        <header style={{ display: "flex", alignItems: "center", gap: 10, width: "min(820px, 100%)", margin: "0 auto", minHeight: 52, padding: "4px 0" }}>
-          <img
-            src="/mascots/humi-sprite-v1.png"
-            alt="Humi"
-            width={38}
-            height={38}
-            style={{ objectFit: "contain", borderRadius: 8, flexShrink: 0 }}
-          />
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 14, fontWeight: 850, color: "#263241" }}>Humi</div>
-            <div style={{ fontSize: 10, color: "#8290a3", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{humiProgress}</div>
-          </div>
-          <div style={{ flex: 1 }} />
-          <button onClick={() => setShowDetails((value) => !value)} aria-label="Toggle details" style={{ ...warmButtonStyle(false), padding: "6px 10px", fontSize: 11 }}>
-            {showDetails ? "收起" : "详情"}
-          </button>
-        </header>
-
-        <div style={{ flex: 1, width: "min(820px, 100%)", margin: "0 auto", overflowY: "auto", padding: "24px 0", display: "flex", flexDirection: "column", gap: 18 }}>
-          {chatMessages.map((message) => (
-            <div key={message.id} style={{ display: "flex", justifyContent: message.role === "user" ? "flex-end" : "flex-start" }}>
-              <div style={{ maxWidth: "min(720px, 88%)", padding: message.role === "user" ? "10px 14px" : "2px 0", borderRadius: 14, background: message.role === "user" ? "rgba(109,106,222,0.12)" : "transparent", color: "#2d3748", fontSize: 14, lineHeight: 1.75, whiteSpace: "pre-wrap" }}>
-                {message.text}
-              </div>
-            </div>
-          ))}
-          {kernelLoading && <div style={{ color: "#8290a3", fontSize: 13 }}>{humiProgress}…</div>}
-        </div>
-
-        <div style={{ width: "min(820px, 100%)", margin: "0 auto", padding: "10px 0 14px" }}>
-          <div style={{ display: "flex", gap: 8, alignItems: "flex-end", border: "1px solid rgba(116,143,165,0.2)", borderRadius: 12, background: "rgba(255,255,255,0.9)", padding: "8px 8px 8px 12px", boxShadow: "0 4px 18px rgba(61, 82, 108, 0.06)" }}>
-            <textarea value={kernelPrompt} onChange={(e) => setKernelPrompt(e.target.value)} onKeyDown={handleComposerKeyDown} placeholder="和 Humi 聊聊" rows={1} style={{ ...warmInputStyle, flex: 1, minHeight: 30, maxHeight: 120, resize: "vertical", border: 0, padding: "5px 0", background: "transparent", boxShadow: "none" }} />
-            <button onClick={() => void askHumi()} disabled={kernelLoading || !kernelPrompt.trim()} aria-label="Send message" style={{ width: 32, height: 32, border: 0, borderRadius: 10, background: kernelLoading || !kernelPrompt.trim() ? "rgba(116,143,165,0.12)" : "#6d6ade", color: kernelLoading || !kernelPrompt.trim() ? "#9aa6b6" : "#fff", fontSize: 18, lineHeight: 1, cursor: kernelLoading || !kernelPrompt.trim() ? "default" : "pointer" }}>↑</button>
-          </div>
-        </div>
-
-        {showDetails && (
-          <div
-            style={{
-              marginTop: 12,
-              padding: 12,
-              borderRadius: 16,
-              background: "rgba(255,255,255,0.48)",
-              border: "1px dashed rgba(116,143,165,0.22)",
-            }}
-          >
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
-              <KernelStatusCard
-                name="Pi Agent"
-                ok={!!appConfig?.pi.token}
-                detail={appConfig?.pi.token ? appConfig.pi.model_name : "请先配置 Token"}
-                note="Bundled ReAct runtime"
-              />
-              <KernelStatusCard
-                name="Qoder ACP"
-                ok={!!qoderStatus?.acp_supported}
-                detail={
-                  qoderStatus?.installed
-                    ? qoderStatus.acp_supported
-                      ? "ACP exposed"
-                      : "CLI detected, ACP not exposed"
-                    : qoderStatus?.error || "not installed"
-                }
-                note={qoderStatus?.version || "Watcher fallback"}
-              />
-            </div>
-            <input
-              value={kernelCwd}
-              onChange={(e) => setKernelCwd(e.target.value)}
-              placeholder="Working directory"
-              style={detailsInputStyle}
-            />
-            <textarea
-              value={kernelRoots}
-              onChange={(e) => setKernelRoots(e.target.value)}
-              placeholder="Agent asset roots, one per line"
-              rows={4}
-              style={{ ...detailsInputStyle, resize: "vertical", minHeight: 76, fontFamily: "monospace", marginTop: 8 }}
-            />
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
-              <button
-                onClick={fetchKernelStatus}
-                disabled={kernelLoading}
-                style={warmButtonStyle(false)}
-              >
-                Check kernel
-              </button>
-              <button
-                onClick={startPiKernel}
-                disabled={kernelLoading || !piStatus?.installed || (!!kernelSession && kernelSession.state !== "stopped")}
-                style={warmButtonStyle(false)}
-              >
-                Legacy CLI
-              </button>
-              <button
-                onClick={sendPiTask}
-                disabled={kernelLoading || !kernelSession || ["stopped", "error"].includes(kernelSession.state)}
-                style={warmButtonStyle(false)}
-              >
-                Send Task
-              </button>
-              <button
-                onClick={stopPiKernel}
-                disabled={kernelLoading || !kernelSession || kernelSession.state === "stopped"}
-                style={warmButtonStyle(false)}
-              >
-                Stop
-              </button>
-            </div>
-            {qoderStatus?.hint && (
-              <div style={{ fontSize: 10, color: "#7b8798", lineHeight: 1.5, marginTop: 8 }}>
-                {qoderStatus.hint}
-              </div>
-            )}
-            {agentKernelStatus && <AgentKernelStatusView status={agentKernelStatus} />}
-            {localKernelResult && (
-              <div style={{ marginTop: 10 }}>
-                {(localKernelResult.top_tools.length > 0 ||
-                  localKernelResult.top_skills.length > 0 ||
-                  localKernelResult.agent_knowledge.length > 0 ||
-                  localKernelResult.operational_tools.length > 0) && (
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 10 }}>
-                    <InsightList title="Skill knowledge" items={localKernelResult.top_skills} />
-                    <InsightList title="Agent knowledge" items={localKernelResult.agent_knowledge} />
-                    <InsightList title="Non-builtin tools" items={localKernelResult.top_tools} />
-                    <InsightList title="Operation tools" items={localKernelResult.operational_tools} />
-                  </div>
+    <div className="hub-module humi-room-module">
+      <div className="humi-workspace">
+        <div className="humi-conversation humi-conversation-stage">
+          <div className="humi-transcript">
+            {chatMessages.map((message) => (
+              <div key={message.id} className={`humi-message-row humi-message-row-${message.role}`}>
+                {message.role === "assistant" && (
+                  <img
+                    className="humi-message-avatar"
+                    src="/mascots/humi-sprite-v1.png"
+                    alt=""
+                    aria-hidden="true"
+                  />
                 )}
-                <div style={{ marginTop: 8, fontSize: 10, color: "#64748b", lineHeight: 1.55 }}>
-                  {localKernelResult.summary}
+                <div className="humi-message">
+                  {message.text}
                 </div>
-                {localKernelResult.agent_reply?.steps?.length ? (
-                  <AgentTrace steps={localKernelResult.agent_reply.steps} />
-                ) : null}
-                <ContextPacketView context={localKernelResult.context_packet} />
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
-                  {Object.entries(localKernelResult.type_counts).map(([kind, count]) => (
-                    <span key={kind} style={kernelPillStyle}>
-                      {kind} {count}
-                    </span>
-                  ))}
-                </div>
-                <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
-                  {localKernelResult.suggested_actions.map((action) => (
-                    <div key={action} style={{ fontSize: 10, color: "#64748b", lineHeight: 1.45 }}>
-                      - {action}
-                    </div>
-                  ))}
-                </div>
-                <div style={{ marginTop: 8, fontSize: 9, color: "#94a3b8", fontFamily: "monospace" }}>
-                  memory: {localKernelResult.memory_path}
-                </div>
+              </div>
+            ))}
+            {kernelLoading && (
+              <div className="humi-message-row humi-message-row-assistant">
+                <img
+                  className="humi-message-avatar is-listening"
+                  src="/mascots/humi-sprite-v1.png"
+                  alt=""
+                  aria-hidden="true"
+                />
+                <div className="humi-loading-message">{humiProgress}…</div>
               </div>
             )}
           </div>
-        )}
 
-        {kernelMessage && (
-          <div style={{ marginTop: 10, fontSize: 10, color: "#fca5a5", lineHeight: 1.5 }}>
-            {kernelMessage}
+          <div className="humi-composer-shell">
+            <div className="humi-composer">
+              <button
+                type="button"
+                className={`humi-composer-tool ${showDetails ? "is-active" : ""}`}
+                onClick={() => setShowDetails((value) => !value)}
+                aria-label={showDetails ? "收起 Humi 详情" : "打开 Humi 详情"}
+                title={showDetails ? "收起详情" : "详情"}
+              >
+                <SlidersHorizontal size={17} strokeWidth={1.9} aria-hidden="true" />
+              </button>
+              <textarea className="humi-composer-input" value={kernelPrompt} onChange={(e) => setKernelPrompt(e.target.value)} onKeyDown={handleComposerKeyDown} placeholder="和 Humi 聊聊" rows={1} style={{ ...warmInputStyle, flex: 1, minHeight: 30, maxHeight: 120, resize: "vertical", border: 0, padding: "5px 0", background: "transparent", boxShadow: "none" }} />
+              <button className="humi-composer-send" onClick={() => void askHumi()} disabled={kernelLoading || !kernelPrompt.trim()} aria-label="Send message"><ArrowUp size={17} strokeWidth={2.3} aria-hidden="true" /></button>
+            </div>
           </div>
-        )}
-      </div>
 
-      {showDetails && (
-        <RuntimeDetails
+          {showDetails && (
+            <div className="humi-details-panel">
+              <div className="humi-details-status-grid">
+                <KernelStatusCard
+                  name="Pi Agent"
+                  ok={!!appConfig?.pi.token}
+                  detail={appConfig?.pi.token ? appConfig.pi.model_name : "请先配置 Token"}
+                  note="Bundled ReAct runtime"
+                />
+                <KernelStatusCard
+                  name="Qoder ACP"
+                  ok={!!qoderStatus?.acp_supported}
+                  detail={
+                    qoderStatus?.installed
+                      ? qoderStatus.acp_supported
+                        ? "ACP exposed"
+                        : "CLI detected, ACP not exposed"
+                      : qoderStatus?.error || "not installed"
+                  }
+                  note={qoderStatus?.version || "Watcher fallback"}
+                />
+              </div>
+              <input
+                value={kernelCwd}
+                onChange={(e) => setKernelCwd(e.target.value)}
+                placeholder="Working directory"
+                style={detailsInputStyle}
+              />
+              <textarea
+                value={kernelRoots}
+                onChange={(e) => setKernelRoots(e.target.value)}
+                placeholder="Agent asset roots, one per line"
+                rows={4}
+                style={{ ...detailsInputStyle, resize: "vertical", minHeight: 76, fontFamily: "monospace", marginTop: 8 }}
+              />
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+                <button
+                  onClick={fetchKernelStatus}
+                  disabled={kernelLoading}
+                  style={warmButtonStyle(false)}
+                >
+                  Check kernel
+                </button>
+                <button
+                  onClick={startPiKernel}
+                  disabled={kernelLoading || !piStatus?.installed || (!!kernelSession && kernelSession.state !== "stopped")}
+                  style={warmButtonStyle(false)}
+                >
+                  Legacy CLI
+                </button>
+                <button
+                  onClick={sendPiTask}
+                  disabled={kernelLoading || !kernelSession || ["stopped", "error"].includes(kernelSession.state)}
+                  style={warmButtonStyle(false)}
+                >
+                  Send Task
+                </button>
+                <button
+                  onClick={stopPiKernel}
+                  disabled={kernelLoading || !kernelSession || kernelSession.state === "stopped"}
+                  style={warmButtonStyle(false)}
+                >
+                  Stop
+                </button>
+              </div>
+              {qoderStatus?.hint && (
+                <div style={{ fontSize: 10, color: "#7b8798", lineHeight: 1.5, marginTop: 8 }}>
+                  {qoderStatus.hint}
+                </div>
+              )}
+              {agentKernelStatus && <AgentKernelStatusView status={agentKernelStatus} />}
+              {localKernelResult && (
+                <div style={{ marginTop: 10 }}>
+                  {(localKernelResult.top_tools.length > 0 ||
+                    localKernelResult.top_skills.length > 0 ||
+                    localKernelResult.agent_knowledge.length > 0 ||
+                    localKernelResult.operational_tools.length > 0) && (
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 10 }}>
+                      <InsightList title="Skill knowledge" items={localKernelResult.top_skills} />
+                      <InsightList title="Agent knowledge" items={localKernelResult.agent_knowledge} />
+                      <InsightList title="Non-builtin tools" items={localKernelResult.top_tools} />
+                      <InsightList title="Operation tools" items={localKernelResult.operational_tools} />
+                    </div>
+                  )}
+                  <div style={{ marginTop: 8, fontSize: 10, color: "#64748b", lineHeight: 1.55 }}>
+                    {localKernelResult.summary}
+                  </div>
+                  {localKernelResult.agent_reply?.steps?.length ? (
+                    <AgentTrace steps={localKernelResult.agent_reply.steps} />
+                  ) : null}
+                  <ContextPacketView context={localKernelResult.context_packet} />
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+                    {Object.entries(localKernelResult.type_counts).map(([kind, count]) => (
+                      <span key={kind} style={kernelPillStyle}>
+                        {kind} {count}
+                      </span>
+                    ))}
+                  </div>
+                  <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
+                    {localKernelResult.suggested_actions.map((action) => (
+                      <div key={action} style={{ fontSize: 10, color: "#64748b", lineHeight: 1.45 }}>
+                        - {action}
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ marginTop: 8, fontSize: 9, color: "#94a3b8", fontFamily: "monospace" }}>
+                    memory: {localKernelResult.memory_path}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {kernelMessage && (
+            <div style={{ marginTop: 10, fontSize: 10, color: "#fca5a5", lineHeight: 1.5 }}>
+              {kernelMessage}
+            </div>
+          )}
+        </div>
+
+        <HumiOperationsRail
           sessions={sessions}
-          hooksStatus={hooksStatus}
-          kernelSession={kernelSession}
-          hookTitle={t("hub.humi.hookStatus")}
-          liveTitle={t("hub.humi.liveSessions")}
-          emptyTitle={t("hub.humi.emptyTitle")}
-          emptyDesc={t("hub.humi.emptyDesc")}
-          noHooks={t("hub.humi.noHooks")}
+          stats={stats}
+          config={appConfig}
+          loading={operationsLoading}
+          ttsPreviewing={ttsPreviewing}
+          message={operationsMessage}
+          hexaAttention={hexaAttention}
+          onRefresh={() => void refreshOperations()}
+          onOpenHexa={() => onOpenHexa(hexaAttention.mostUrgentGoal?.id ?? null)}
+          onFocusSession={(session) => void focusSession(session)}
+          onToggleAutoConfirm={() => void toggleAutoConfirm()}
+          onPreviewTts={() => void previewTts()}
         />
-      )}
+      </div>
     </div>
   );
+}
+
+function HumiOperationsRail({
+  sessions,
+  stats,
+  config,
+  loading,
+  ttsPreviewing,
+  message,
+  hexaAttention,
+  onRefresh,
+  onOpenHexa,
+  onFocusSession,
+  onToggleAutoConfirm,
+  onPreviewTts,
+}: {
+  sessions: ActiveSession[];
+  stats: AggregatedStats | null;
+  config: AppConfig | null;
+  loading: boolean;
+  ttsPreviewing: boolean;
+  message: string | null;
+  hexaAttention: HumiHexaAttention;
+  onRefresh: () => void;
+  onOpenHexa: () => void;
+  onFocusSession: (session: ActiveSession) => void;
+  onToggleAutoConfirm: () => void;
+  onPreviewTts: () => void;
+}) {
+  const autoConfirm = config?.ui.auto_confirm === true;
+  const voiceName = config?.tts.voice
+    ?.replace(/^zh-CN-/, "")
+    .replace(/Neural$/, "");
+
+  return (
+    <aside className="humi-operations" aria-label="Humi 运行状态">
+      <div className="humi-operations-header">
+        <div>
+          <strong>运行状态</strong>
+          <span>{sessions.length > 0 ? `${sessions.length} 个会话在线` : "等待 Agent 会话"}</span>
+        </div>
+        <button
+          type="button"
+          className="humi-icon-button"
+          onClick={onRefresh}
+          disabled={loading}
+          aria-label="刷新 Humi 运行状态"
+          title="刷新"
+        >
+          <RefreshCw
+            size={15}
+            strokeWidth={1.9}
+            className={loading ? "is-spinning" : undefined}
+            aria-hidden="true"
+          />
+        </button>
+      </div>
+
+      <button
+        type="button"
+        className="humi-session-row humi-hexa-summary"
+        onClick={onOpenHexa}
+        aria-label={`${hexaAttention.attentionCount} 个开发目标需要注意，${hexaAttention.failedCount} 个验证失败`}
+      >
+        <Wrench size={15} strokeWidth={1.9} aria-hidden="true" />
+        <span className="humi-session-copy">
+          <strong>{hexaAttention.attentionCount} 个开发目标需要注意</strong>
+          <small>{hexaAttention.failedCount} 个验证失败</small>
+        </span>
+        <ExternalLink size={13} strokeWidth={1.8} aria-hidden="true" />
+      </button>
+
+      <section className="humi-operation-section humi-session-monitor">
+        <div className="humi-operation-heading">
+          <span>实时会话</span>
+          <span>{sessions.length}</span>
+        </div>
+        {sessions.length === 0 ? (
+          <div className="humi-operation-empty">
+            启动 Codex、Claude Code 或其他 Agent 后，会话会自动出现在这里。
+          </div>
+        ) : (
+          <div className="humi-session-list">
+            {sessions.slice(0, 5).map((session) => {
+              const name = session.project_name || session.session_id.slice(0, 8);
+              return (
+                <button
+                  key={session.session_id}
+                  type="button"
+                  className="humi-session-row"
+                  onClick={() => onFocusSession(session)}
+                  aria-label={`打开会话 ${name}`}
+                >
+                  <span
+                    className={`humi-session-dot ${session.status === "active" ? "is-active" : ""}`}
+                    aria-hidden="true"
+                  />
+                  <span className="humi-session-copy">
+                    <strong>{name}</strong>
+                    <small>
+                      {session.client_type} · {formatHumiTimeAgo(session.last_event_at)}
+                    </small>
+                  </span>
+                  <ExternalLink size={13} strokeWidth={1.8} aria-hidden="true" />
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      <section className="humi-operation-section">
+        <div className="humi-operation-heading">
+          <span>自动确认</span>
+          <span className={autoConfirm ? "is-on" : undefined}>
+            {autoConfirm ? "已开启" : "已关闭"}
+          </span>
+        </div>
+        <div className="humi-control-row">
+          <div>
+            <strong>权限请求</strong>
+            <small>对所有会话自动允许</small>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={autoConfirm}
+            aria-label="自动确认所有权限"
+            className={`humi-switch ${autoConfirm ? "is-on" : ""}`}
+            onClick={onToggleAutoConfirm}
+            disabled={!config}
+          >
+            <span />
+          </button>
+        </div>
+      </section>
+
+      <section className="humi-operation-section">
+        <div className="humi-operation-heading">
+          <span>TTS 播报</span>
+          <Volume2 size={14} strokeWidth={1.8} aria-hidden="true" />
+        </div>
+        <div className="humi-control-row">
+          <div>
+            <strong>{config?.tts.provider ? config.tts.provider.toUpperCase() : "读取中"}</strong>
+            <small>
+              {voiceName || "默认声音"}
+              {config ? ` · ${config.tts.speed.toFixed(1)}x` : ""}
+            </small>
+          </div>
+          <button
+            type="button"
+            className="humi-preview-button"
+            aria-label="试听 TTS 播报"
+            title="试听"
+            onClick={onPreviewTts}
+            disabled={!config || ttsPreviewing}
+          >
+            <Play size={13} fill="currentColor" strokeWidth={1.8} aria-hidden="true" />
+          </button>
+        </div>
+      </section>
+
+      <section className="humi-operation-section humi-token-summary">
+        <div className="humi-operation-heading">
+          <span>Token 统计</span>
+          <span>{stats?.active_agents ?? 0} 个 Agent</span>
+        </div>
+        <div className="humi-token-value">
+          <strong>{formatHumiCount(stats?.total_tokens ?? 0)}</strong>
+          <span>Token</span>
+        </div>
+        <div className="humi-token-meta">
+          <span>{stats?.total_sessions ?? 0} 次会话</span>
+          <span>{formatHumiCount(stats?.total_tool_calls ?? 0)} 次工具调用</span>
+        </div>
+      </section>
+
+      {message && <div className="humi-operation-message">{message}</div>}
+    </aside>
+  );
+}
+
+function formatHumiCount(value: number): string {
+  if (value >= 1_000_000_000) return `${trimHumiDecimal(value / 1_000_000_000)}B`;
+  if (value >= 1_000_000) return `${trimHumiDecimal(value / 1_000_000)}M`;
+  if (value >= 1_000) return `${trimHumiDecimal(value / 1_000)}K`;
+  return String(value);
+}
+
+function trimHumiDecimal(value: number): string {
+  return value.toFixed(1).replace(/\.0$/, "");
+}
+
+function formatHumiTimeAgo(value: string): string {
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) return "刚刚";
+  const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
+  if (seconds < 60) return "刚刚";
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟前`;
+  if (seconds < 86_400) return `${Math.floor(seconds / 3600)} 小时前`;
+  return `${Math.floor(seconds / 86_400)} 天前`;
 }
 
 function QuietSignalsStrip({
@@ -595,7 +1034,7 @@ function QuietSignal({ label, value }: { label: string; value: string }) {
     <div
       style={{
         padding: 11,
-        borderRadius: 16,
+        borderRadius: 8,
         background: "rgba(255,255,255,0.72)",
         border: "1px solid rgba(116,143,165,0.12)",
         boxShadow: "0 10px 28px rgba(90,115,150,0.08)",
@@ -657,7 +1096,7 @@ function RuntimeDetails({
                 key={clientId}
                 style={{
                   padding: "4px 10px",
-                  borderRadius: 9999,
+                  borderRadius: 8,
                   border: `1px solid ${connected ? "rgba(52,211,153,0.2)" : "rgba(116,143,165,0.12)"}`,
                   background: connected ? "rgba(223,248,239,0.78)" : "rgba(255,255,255,0.62)",
                   color: connected ? "#15803d" : "#94a3b8",
@@ -699,7 +1138,7 @@ function RuntimeDetails({
                 key={s.session_id}
                 style={{
                   padding: "8px 12px",
-                  borderRadius: 12,
+                  borderRadius: 8,
                   background: "rgba(255,255,255,0.72)",
                   border: "1px solid rgba(116,143,165,0.12)",
                   display: "flex",
@@ -738,7 +1177,7 @@ function RuntimeDetails({
 
 function InsightList({ title, items }: { title: string; items: LocalUsageInsight[] }) {
   return (
-    <div style={{ padding: 9, borderRadius: 12, background: "rgba(255,255,255,0.62)", border: "1px solid rgba(116,143,165,0.12)" }}>
+    <div style={{ padding: 9, borderRadius: 8, background: "rgba(255,255,255,0.62)", border: "1px solid rgba(116,143,165,0.12)" }}>
       <div style={{ fontSize: 10, color: "#64748b", fontWeight: 850, marginBottom: 6 }}>
         {title}
       </div>
@@ -775,7 +1214,7 @@ function WarmInsightCard({ title, body, tint }: { title: string; body: string; t
       style={{
         minHeight: 112,
         padding: 12,
-        borderRadius: 16,
+        borderRadius: 8,
         background: tint,
         border: "1px solid rgba(116,143,165,0.12)",
       }}
@@ -796,7 +1235,7 @@ function AgentTrace({ steps }: { steps: HumiAgentStep[] }) {
       style={{
         marginTop: 10,
         padding: 10,
-        borderRadius: 14,
+        borderRadius: 8,
         background: "rgba(255,255,255,0.58)",
         border: "1px solid rgba(116,143,165,0.12)",
       }}
@@ -831,7 +1270,7 @@ function AgentKernelStatusView({ status }: { status: AgentKernelStatus }) {
       style={{
         marginTop: 10,
         padding: 10,
-        borderRadius: 14,
+        borderRadius: 8,
         background: "rgba(255,255,255,0.58)",
         border: "1px solid rgba(116,143,165,0.12)",
       }}
@@ -875,7 +1314,7 @@ function ContextPacketView({ context }: { context: HumiContextPacket }) {
       style={{
         marginTop: 10,
         padding: 10,
-        borderRadius: 14,
+        borderRadius: 8,
         background: "rgba(255,255,255,0.58)",
         border: "1px solid rgba(116,143,165,0.12)",
       }}
@@ -982,7 +1421,7 @@ function KernelStatusCard({
     <div
       style={{
         padding: 10,
-        borderRadius: 12,
+        borderRadius: 8,
         background: ok ? "rgba(223,248,239,0.8)" : "rgba(255,255,255,0.58)",
         border: `1px solid ${ok ? "rgba(52,211,153,0.18)" : "rgba(116,143,165,0.12)"}`,
       }}
@@ -1007,7 +1446,7 @@ function KernelStatusCard({
 
 const warmInputStyle: CSSProperties = {
   width: "100%",
-  borderRadius: 18,
+  borderRadius: 8,
   border: "1px solid rgba(116,143,165,0.16)",
   background: "rgba(255,255,255,0.76)",
   color: "#263241",
@@ -1019,7 +1458,7 @@ const warmInputStyle: CSSProperties = {
 
 const detailsInputStyle: CSSProperties = {
   width: "100%",
-  borderRadius: 12,
+  borderRadius: 8,
   border: "1px solid rgba(116,143,165,0.14)",
   background: "rgba(255,255,255,0.58)",
   color: "#334155",
@@ -1030,7 +1469,7 @@ const detailsInputStyle: CSSProperties = {
 
 const kernelPillStyle: CSSProperties = {
   padding: "3px 7px",
-  borderRadius: 999,
+  borderRadius: 8,
   border: "1px solid rgba(116,143,165,0.14)",
   background: "rgba(255,255,255,0.62)",
   color: "#64748b",
@@ -1043,7 +1482,7 @@ function warmButtonStyle(primary: boolean): CSSProperties {
     border: `1px solid ${primary ? "rgba(109,106,222,0.26)" : "rgba(116,143,165,0.16)"}`,
     background: primary ? "linear-gradient(135deg, #8d7ddf, #63bdd1)" : "rgba(255,255,255,0.68)",
     color: primary ? "#ffffff" : "#57667a",
-    borderRadius: 999,
+    borderRadius: 8,
     fontSize: 12,
     fontWeight: 800,
     padding: primary ? "9px 16px" : "8px 12px",
@@ -1057,7 +1496,7 @@ function StatCard({ label, value, color }: { label: string; value: number; color
     <div
       style={{
         padding: 12,
-        borderRadius: 14,
+        borderRadius: 8,
         background: "rgba(255,255,255,0.02)",
         border: "1px solid rgba(255,255,255,0.04)",
         textAlign: "center",

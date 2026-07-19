@@ -8,11 +8,22 @@ import { fileURLToPath } from "node:url";
 
 import {
   isMainModule,
+  resolveAgentSurface,
   resolveApiUrl,
   resolveAgentContext,
   runCli,
   stateFileFor,
 } from "./humhum-hexa.mjs";
+
+test("distinguishes explicit Qoder IDE CLI and Worker surfaces", () => {
+  assert.equal(resolveAgentSurface({ surface: "qoder_ide" }, {}, { provider: "qoder" }), "qoder_ide");
+  assert.equal(
+    resolveAgentSurface({}, { HUMHUM_AGENT_SURFACE: "qoder_worker" }, { provider: "qoder" }),
+    "qoder_worker",
+  );
+  assert.equal(resolveAgentSurface({}, {}, { provider: "qoder" }), "unknown");
+  assert.equal(resolveAgentSurface({}, {}, { provider: "qoderwork" }), "qoder_worker");
+});
 
 test("recognizes execution through a symlinked path", async () => {
   const root = await mkdtemp(join(tmpdir(), "humhum-hexa-entry-"));
@@ -119,6 +130,11 @@ test("runs every command from a non-HUMHUM project with per-session state", asyn
           },
         };
       }
+    } else if (path === "/hexa/goal/link") {
+      return new Response(JSON.stringify({ id: body.goal_id ?? "generated-goal" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
     }
     return new Response(JSON.stringify(path === "/hexa/delete" ? { deleted: true } : session), {
       status: 200,
@@ -133,7 +149,16 @@ test("runs every command from a non-HUMHUM project with per-session state", asyn
     stdout: () => {},
   };
 
-  await runCli(["watch", "修好跨项目监控"], options);
+  await runCli([
+    "watch",
+    "修好跨项目监控",
+    "--goal-id",
+    "goal-hush",
+    "--surface",
+    "codex_desktop",
+    "--success-criteria",
+    "npm test 通过|cargo check 通过",
+  ], options);
   await runCli(["update", "正在写测试"], options);
   await runCli([
     "plan",
@@ -166,6 +191,7 @@ test("runs every command from a non-HUMHUM project with per-session state", asyn
   assert.deepEqual(calls.map((call) => call.path), [
     "/hexa/register",
     "/hexa/update",
+    "/hexa/goal/link",
     "/hexa/update",
     "/hexa/plan",
     "/hexa/update",
@@ -173,20 +199,33 @@ test("runs every command from a non-HUMHUM project with per-session state", asyn
     "/hexa/audit",
     "/hexa/update",
     "/hexa/audit",
+    "/hexa/goal/result",
   ]);
   assert.equal(calls.every((call) => call.token === "test-token"), true);
   assert.equal(calls[0].body.session_id, "thread-123");
-  assert.equal(calls[3].body.capability, "reported");
-  assert.equal(calls[3].body.items.length, 2);
-  assert.equal(calls[5].body.action, "upsert_work_item");
-  assert.equal(calls[5].body.work_item.evidence[0].label, "测试通过");
-  assert.equal(calls[6].body.action, "append_milestone");
+  assert.equal(calls[2].body.goal_id, "goal-hush");
+  assert.equal(calls[2].body.surface, "codex_desktop");
+  assert.deepEqual(calls[2].body.success_criteria, ["npm test 通过", "cargo check 通过"]);
+  assert.equal(calls[4].body.capability, "reported");
+  assert.equal(calls[4].body.items.length, 2);
+  assert.equal(calls[6].body.action, "upsert_work_item");
+  assert.equal(calls[6].body.work_item.evidence[0].label, "测试通过");
+  assert.equal(calls[7].body.action, "append_milestone");
   await assert.rejects(
     runCli(["complete", "--blocked-reason", "不能把阻塞当成完成"], options),
     /Usage: humhum-hexa complete/,
   );
-  assert.equal(calls[7].body.status, "completed");
-  assert.equal(calls[8].body.action, "append_milestone");
+  assert.equal(calls[8].body.status, "completed");
+  assert.equal(calls[9].body.action, "append_milestone");
+  assert.equal(calls[10].body.result_status, "unverified");
+  for (const result of ["verified", "accepted"]) {
+    const callsBeforeRejection = calls.length;
+    await assert.rejects(
+      runCli(["complete", "不能自证完成", "--result", result], options),
+      /unverified.*failed.*superseded/,
+    );
+    assert.equal(calls.length, callsBeforeRejection);
+  }
 
   const stateFile = stateFileFor({
     home,
@@ -196,10 +235,120 @@ test("runs every command from a non-HUMHUM project with per-session state", asyn
   });
   const saved = JSON.parse(await readFile(stateFile, "utf8"));
   assert.equal(saved.status, "completed");
+  assert.equal(saved.goal_id, "goal-hush");
+  assert.equal(saved.surface, "codex_desktop");
 
   await runCli(["unwatch"], options);
   assert.equal(calls.at(-1).path, "/hexa/delete");
   await assert.rejects(readFile(stateFile, "utf8"), { code: "ENOENT" });
+});
+
+test("keeps the legacy watch command independent unless goal linking is explicit", async () => {
+  const root = await mkdtemp(join(tmpdir(), "humhum-hexa-independent-"));
+  const home = join(root, "home");
+  const cwd = join(root, "project");
+  await mkdir(join(home, ".humhum"), { recursive: true });
+  await mkdir(cwd, { recursive: true });
+  await writeFile(join(home, ".humhum", "local-api-token"), "test-token\n");
+  const calls = [];
+  const options = {
+    cwd,
+    home,
+    env: { CODEX_THREAD_ID: "legacy-thread" },
+    stdout: () => {},
+    fetchImpl: async (url, init) => {
+      const path = new URL(url).pathname;
+      const body = JSON.parse(init.body);
+      calls.push({ path, body });
+      if (path === "/hexa/goal/link") {
+        return new Response(JSON.stringify({ id: "generated-goal" }), { status: 200 });
+      }
+      return new Response(JSON.stringify({
+        session_id: body.session_id ?? "legacy-thread",
+        provider: "codex",
+        agent: "codex",
+        workspace: cwd,
+        goal: body.goal ?? "保留单会话体验",
+        name: "保留单会话体验",
+        status: body.status ?? "working",
+        audit: { work_items: [], milestones: [] },
+      }), { status: 200 });
+    },
+  };
+
+  await runCli(["watch", "保留单会话体验"], options);
+
+  assert.deepEqual(calls.map((call) => call.path), [
+    "/hexa/register",
+    "/hexa/update",
+  ]);
+  const saved = JSON.parse(await readFile(stateFileFor({
+    home,
+    cwd,
+    provider: "codex",
+    sessionId: "legacy-thread",
+  }), "utf8"));
+  assert.equal(saved.goal_id, undefined);
+
+  calls.length = 0;
+  await runCli(["watch", "建立多 Agent 目标", "--link-goal"], options);
+  assert.deepEqual(calls.map((call) => call.path), [
+    "/hexa/register",
+    "/hexa/update",
+    "/hexa/goal/link",
+  ]);
+  const linked = JSON.parse(await readFile(stateFileFor({
+    home,
+    cwd,
+    provider: "codex",
+    sessionId: "legacy-thread",
+  }), "utf8"));
+  assert.equal(linked.goal_id, "generated-goal");
+});
+
+test("keeps the watched session when goal linking fails", async () => {
+  const root = await mkdtemp(join(tmpdir(), "humhum-hexa-goal-link-"));
+  const home = join(root, "home");
+  const cwd = join(root, "project");
+  await mkdir(join(home, ".humhum"), { recursive: true });
+  await mkdir(cwd, { recursive: true });
+  await writeFile(join(home, ".humhum", "local-api-token"), "test-token\n");
+  const output = [];
+  const options = {
+    cwd,
+    home,
+    env: { CODEX_THREAD_ID: "thread-link-failure" },
+    stdout: (line) => output.push(line),
+    fetchImpl: async (url, init) => {
+      const path = new URL(url).pathname;
+      const body = JSON.parse(init.body);
+      if (path === "/hexa/goal/link") {
+        return new Response(JSON.stringify({ error: "goal store unavailable" }), { status: 503 });
+      }
+      return new Response(JSON.stringify({
+        session_id: body.session_id ?? "thread-link-failure",
+        provider: "codex",
+        agent: "codex",
+        status: body.status ?? "working",
+        goal: body.goal ?? "目标",
+        audit: { work_items: [], milestones: [] },
+      }), { status: 200 });
+    },
+  };
+
+  const watched = await runCli(["watch", "目标", "--goal-id", "goal-unavailable"], options);
+
+  assert.equal(watched.session_id, "thread-link-failure");
+  assert.match(output.join("\n"), /goal linking failed: goal store unavailable/);
+  const saved = JSON.parse(await readFile(stateFileFor({
+    home,
+    cwd,
+    provider: "codex",
+    sessionId: "thread-link-failure",
+  }), "utf8"));
+  assert.equal(saved.session_id, "thread-link-failure");
+  assert.equal(saved.goal_id, undefined);
+  assert.equal(saved.surface, "unknown");
 });
 
 test("reuses the server session for providers without a runtime session id", async () => {

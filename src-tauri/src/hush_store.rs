@@ -16,6 +16,8 @@ pub struct HushInboxMessage {
     pub text: String,
     pub tier: String,
     pub importance: u8,
+    #[serde(default = "default_conversation_kind")]
+    pub conversation_kind: String,
     pub suggested_reply: Option<String>,
     pub received_at: String,
     #[serde(default)]
@@ -48,6 +50,7 @@ pub struct HushInboundPayload {
     pub text: Option<String>,
     pub tier: Option<String>,
     pub importance: Option<u8>,
+    pub conversation_kind: Option<String>,
     pub suggested_reply: Option<String>,
     pub received_at: Option<String>,
     pub source_id: Option<String>,
@@ -144,6 +147,7 @@ impl HushStore {
                 text: None,
                 tier: None,
                 importance: None,
+                conversation_kind: None,
                 suggested_reply: None,
                 received_at: None,
                 source_id: None,
@@ -208,13 +212,14 @@ impl HushStore {
         let importance = parsed
             .importance
             .unwrap_or_else(|| infer_importance(&tier, &text));
-        let suggested_reply = if parsed.preview_limited {
+        let conversation_kind = infer_conversation_kind(parsed.conversation_kind.as_deref(), &raw);
+        let suggested_reply = if parsed.preview_limited || conversation_kind != "direct" {
             None
         } else {
             parsed
                 .suggested_reply
                 .clone()
-                .or_else(|| suggest_reply(&tier, &sender, &text))
+                .or_else(|| suggest_reply(&tier, &text))
         };
 
         let message = HushInboxMessage {
@@ -225,6 +230,7 @@ impl HushStore {
             text,
             tier,
             importance,
+            conversation_kind,
             suggested_reply,
             received_at: parsed
                 .received_at
@@ -244,23 +250,27 @@ impl HushStore {
     }
 
     pub fn summary(&self) -> HushInboxSummary {
+        let messages: Vec<_> = self
+            .messages
+            .iter()
+            .map(normalize_dws_priority_metadata)
+            .collect();
         let mut by_tier = BTreeMap::new();
         let mut by_platform = BTreeMap::new();
-        for message in &self.messages {
+        for message in &messages {
             *by_tier.entry(message.tier.clone()).or_insert(0) += 1;
             *by_platform.entry(message.platform.clone()).or_insert(0) += 1;
         }
 
         HushInboxSummary {
-            total: self.messages.len(),
-            unread_priority: self
-                .messages
+            total: messages.len(),
+            unread_priority: messages
                 .iter()
                 .filter(|message| message.importance >= 4)
                 .count(),
             by_tier,
             by_platform,
-            messages: self.messages.clone(),
+            messages,
         }
     }
 
@@ -335,6 +345,15 @@ fn is_dws_message(message: &HushInboxMessage) -> bool {
         || message.raw.get("source").and_then(Value::as_str) == Some("dws")
 }
 
+fn normalize_dws_priority_metadata(message: &HushInboxMessage) -> HushInboxMessage {
+    let mut normalized = message.clone();
+    if is_dws_message(message) {
+        normalized.tier = infer_tier(&message.sender, message.chat.as_deref(), &message.text);
+        normalized.importance = infer_importance(&normalized.tier, &message.text);
+    }
+    normalized
+}
+
 fn extract_text_from_dingtalk(raw: &Value) -> Option<String> {
     raw.pointer("/text/content")
         .and_then(Value::as_str)
@@ -363,9 +382,11 @@ fn infer_tier(sender: &str, chat: Option<&str>, text: &str) -> String {
         chat.unwrap_or("").to_lowercase(),
         text.to_lowercase()
     );
-    if ["妈妈", "爸爸", "家", "family", "mom", "dad", "parent"]
-        .iter()
-        .any(|needle| combined.contains(needle))
+    if [
+        "妈妈", "爸爸", "家里", "家人", "家庭", "family", "mom", "dad", "parent",
+    ]
+    .iter()
+    .any(|needle| combined.contains(needle))
     {
         "family".to_string()
     } else if [
@@ -397,21 +418,79 @@ fn infer_importance(tier: &str, text: &str) -> u8 {
     }
 }
 
-fn suggest_reply(tier: &str, sender: &str, text: &str) -> Option<String> {
-    if tier == "family" {
-        Some(format!(
-            "我看到了，晚点认真回你。{}",
-            if text.contains("吃") {
-                "我会记得按时吃饭。"
-            } else {
-                ""
-            }
-        ))
-    } else if tier == "work" {
-        Some(format!("收到，我先看一下，稍后同步进展给你。@{}", sender))
-    } else {
-        Some("看到了，我晚点回你～".to_string())
+fn default_conversation_kind() -> String {
+    "unknown".to_string()
+}
+
+fn infer_conversation_kind(explicit: Option<&str>, raw: &Value) -> String {
+    let normalized = explicit
+        .or_else(|| raw.get("conversation_kind").and_then(Value::as_str))
+        .map(str::trim)
+        .map(str::to_lowercase);
+    match normalized.as_deref() {
+        Some("direct" | "single" | "single_chat") => return "direct".to_string(),
+        Some("group" | "group_chat") => return "group".to_string(),
+        _ => {}
     }
+
+    match raw.get("single_chat").and_then(Value::as_bool) {
+        Some(true) => "direct".to_string(),
+        Some(false) => "group".to_string(),
+        None => default_conversation_kind(),
+    }
+}
+
+fn suggest_reply(tier: &str, text: &str) -> Option<String> {
+    let normalized = text.to_lowercase();
+    if normalized.contains("图片消息") {
+        Some("图片收到了，我看一下内容，确认后回复你。".to_string())
+    } else if ["查到吗", "有结果吗", "进展呢", "怎么样了"]
+        .iter()
+        .any(|needle| normalized.contains(needle))
+    {
+        Some("我正在确认，查到明确结果后马上回复你。".to_string())
+    } else if let Some(schedule) = meeting_schedule_prefix(text) {
+        Some(format!(
+            "可以，我先确认一下{}的安排，稍后明确回复你。",
+            schedule
+        ))
+    } else if ["紧急", "马上", "尽快", "urgent", "asap", "blocked"]
+        .iter()
+        .any(|needle| normalized.contains(needle))
+    {
+        Some("收到，我会优先处理，并尽快同步明确进展。".to_string())
+    } else if ["看一下", "确认一下", "review", "检查", "评审"]
+        .iter()
+        .any(|needle| normalized.contains(needle))
+    {
+        Some("收到，我先看一下，整理好结论后明确回复你。".to_string())
+    } else if ["帮忙", "麻烦", "请你", "能否"]
+        .iter()
+        .any(|needle| normalized.contains(needle))
+    {
+        Some("可以，我先处理这件事，完成后把结果回复你。".to_string())
+    } else if normalized.contains('？') || normalized.contains('?') || normalized.contains("可以吗")
+    {
+        Some("可以，我先确认一下具体情况，稍后明确回复你。".to_string())
+    } else if tier == "family" && text.contains('吃') {
+        Some("好，我会记得按时吃饭，也会认真回复你。".to_string())
+    } else if tier == "work" {
+        Some("收到，我会按这条信息推进，有结果后回复你。".to_string())
+    } else {
+        Some("好，我知道了，我确认后回复你。".to_string())
+    }
+}
+
+fn meeting_schedule_prefix(text: &str) -> Option<String> {
+    ["开会", "会议"].iter().find_map(|marker| {
+        let prefix = text
+            .split_once(marker)?
+            .0
+            .trim()
+            .trim_matches(['，', ',', '。', '.', '？', '?', '！', '!']);
+        let length = prefix.chars().count();
+        (length > 0 && length <= 20).then(|| prefix.to_string())
+    })
 }
 
 #[cfg(test)]
@@ -441,6 +520,126 @@ mod tests {
 
         assert_eq!(message.source_id, None);
         assert!(!message.preview_limited);
+        assert_eq!(message.conversation_kind, "unknown");
+    }
+
+    #[test]
+    fn group_messages_never_receive_suggested_replies() {
+        let path = temp_file("group-no-reply");
+        let mut store = HushStore::with_file_path(path.clone());
+        let message = store
+            .add_from_value(json!({
+                "platform": "dingtalk",
+                "sender": "成员甲",
+                "chat": "项目群",
+                "text": "大家下午三点一起评审",
+                "single_chat": false,
+                "suggested_reply": "看到了，我晚点回你",
+                "source_id": "dws:group-message",
+                "source": "dws"
+            }))
+            .unwrap();
+
+        assert_eq!(message.conversation_kind, "group");
+        assert!(message.suggested_reply.is_none());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn direct_messages_receive_content_aware_suggested_replies() {
+        let path = temp_file("direct-reply");
+        let mut store = HushStore::with_file_path(path.clone());
+        let message = store
+            .add_from_value(json!({
+                "platform": "dingtalk",
+                "sender": "成员甲",
+                "chat": "成员甲",
+                "text": "明天下午三点开会可以吗？",
+                "single_chat": true,
+                "source_id": "dws:direct-message",
+                "source": "dws"
+            }))
+            .unwrap();
+
+        assert_eq!(message.conversation_kind, "direct");
+        assert_eq!(
+            message.suggested_reply.as_deref(),
+            Some("可以，我先确认一下明天下午三点的安排，稍后明确回复你。")
+        );
+        assert_ne!(
+            message.suggested_reply.as_deref(),
+            Some("看到了，我晚点回你～")
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn direct_reply_templates_cover_progress_questions_and_images() {
+        assert_eq!(
+            suggest_reply("friends", "怎么样郭师，有查到吗").as_deref(),
+            Some("我正在确认，查到明确结果后马上回复你。")
+        );
+        assert_eq!(
+            suggest_reply(
+                "friends",
+                "图片消息 注意：如需下载使用 dws chat message download-media"
+            )
+            .as_deref(),
+            Some("图片收到了，我看一下内容，确认后回复你。")
+        );
+    }
+
+    #[test]
+    fn expert_team_wording_does_not_turn_work_groups_into_family_messages() {
+        let tier = infer_tier("陶里", Some("Qoder项目群"), "专家团需要评审方案");
+
+        assert_eq!(tier, "work");
+        assert_eq!(infer_importance(&tier, "专家团需要评审方案"), 3);
+    }
+
+    #[test]
+    fn summary_repairs_legacy_dws_priority_metadata_without_changing_content() {
+        let path = temp_file("legacy-dws-priority");
+        let mut store = HushStore::with_file_path(path.clone());
+        store.messages.push(HushInboxMessage {
+            id: "legacy-message".to_string(),
+            platform: "dingtalk".to_string(),
+            sender: "陶里".to_string(),
+            chat: Some("Qoder项目群".to_string()),
+            text: "专家团需要评审方案".to_string(),
+            tier: "family".to_string(),
+            importance: 4,
+            conversation_kind: "group".to_string(),
+            suggested_reply: None,
+            received_at: "2026-07-18T01:00:00Z".to_string(),
+            source_id: Some("dws:legacy-message".to_string()),
+            preview_limited: false,
+            raw: json!({ "source": "dws", "single_chat": false }),
+        });
+
+        let message = store.summary().messages.into_iter().next().unwrap();
+
+        assert_eq!(message.text, "专家团需要评审方案");
+        assert_eq!(message.tier, "work");
+        assert_eq!(message.importance, 3);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn unknown_conversation_types_do_not_receive_suggested_replies() {
+        let path = temp_file("unknown-no-reply");
+        let mut store = HushStore::with_file_path(path.clone());
+        let message = store
+            .add_from_value(json!({
+                "platform": "wechat",
+                "sender": "微信",
+                "text": "请确认一下"
+            }))
+            .unwrap();
+
+        assert_eq!(message.conversation_kind, "unknown");
+        assert!(message.suggested_reply.is_none());
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]

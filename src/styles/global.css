@@ -1478,45 +1478,6 @@ option {
   letter-spacing: 0;
 }
 
-.hub-window-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
-}
-
-.hub-window-control {
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  border: 1px solid rgba(116, 143, 165, 0.14);
-  background: rgba(255, 255, 255, 0.62);
-  color: #94a3b8;
-  font-size: 11px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.2s;
-}
-
-.hub-window-control:focus-visible {
-  outline: 2px solid rgba(139, 125, 223, 0.45);
-  outline-offset: 2px;
-}
-
-.hub-minimize:hover {
-  background: rgba(139, 125, 223, 0.08);
-  border-color: rgba(139, 125, 223, 0.2);
-  color: #8d7ddf;
-}
-
-.hub-close:hover {
-  background: rgba(239, 68, 68, 0.08);
-  border-color: rgba(239, 68, 68, 0.2);
-  color: rgba(252, 165, 165, 0.8);
-}
-
 .hub-body {
   display: flex;
   flex: 1;
@@ -1598,6 +1559,13 @@ option {
 
 .hub-module {
   animation: bounce-in 0.3s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hub-module {
+    animation: none;
+    transition: none;
+  }
 }
 
 .hexa-session-details {

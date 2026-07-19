@@ -27,6 +27,7 @@ import { nativeNotificationKind, shouldSendNativeNotification } from "../../lib/
 import { t } from "../../lib/i18n";
 import { setLanguage } from "../../lib/i18n";
 import { getPathBasename } from "../../lib/path-display";
+import { pointerMovedBeyondDragThreshold } from "./petPointerInteraction";
 import type { PipelineState } from "../../lib/pipeline";
 import type { AppConfig, HookEvent, VoiceCommand, TranscriptEntry } from "../../types";
 
@@ -68,6 +69,7 @@ export function PetView() {
   const [primaryClient, setPrimaryClient] = useState<string | null>(null);
   const { bubbles, burst: burstBubbles } = useBubbleTrail();
   const dragStartPos = useRef({ x: 0, y: 0 });
+  const nativeDragStarted = useRef(false);
   const clickCount = useRef(0);
   const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const configRef = useRef<AppConfig | null>(null);
@@ -457,24 +459,44 @@ export function PetView() {
   }, [latestEvent, setPetState]);
 
   const handleMouseDown = useCallback(
-    async (e: React.MouseEvent) => {
+    (e: React.MouseEvent) => {
       if (e.button !== 0) return;
+      nativeDragStarted.current = false;
       dragStartPos.current = { x: e.clientX, y: e.clientY };
       burstBubbles(e.clientX, e.clientY + 20);
-      try {
-        await appWindow.startDragging();
-      } catch {
-        // Drag might fail
-      }
     },
     [burstBubbles],
   );
 
+  const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    if (
+      e.buttons !== 1 ||
+      nativeDragStarted.current ||
+      !pointerMovedBeyondDragThreshold(dragStartPos.current, {
+        x: e.clientX,
+        y: e.clientY,
+      })
+    ) {
+      return;
+    }
+    nativeDragStarted.current = true;
+    appWindow.startDragging().catch(() => {
+      nativeDragStarted.current = false;
+    });
+  }, []);
+
   const handleMouseUp = useCallback(async (e: React.MouseEvent) => {
     if (e.button !== 0) return;
-    const dx = Math.abs(e.clientX - dragStartPos.current.x);
-    const dy = Math.abs(e.clientY - dragStartPos.current.y);
-    if (dx >= 5 || dy >= 5) return;
+    if (
+      nativeDragStarted.current ||
+      pointerMovedBeyondDragThreshold(dragStartPos.current, {
+        x: e.clientX,
+        y: e.clientY,
+      })
+    ) {
+      nativeDragStarted.current = false;
+      return;
+    }
 
     clickCount.current++;
     if (clickTimer.current) clearTimeout(clickTimer.current);
@@ -593,6 +615,7 @@ export function PetView() {
       <div
         className="relative cursor-grab active:cursor-grabbing pointer-events-auto"
         onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handlePetLeave}
         onContextMenu={handleContextMenu}

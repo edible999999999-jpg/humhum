@@ -1,4 +1,8 @@
 use crate::event_bus::{self, HookEvent, PermissionDecision};
+use crate::hexa_goal_store::{
+    HexaAttemptResultRequest, HexaAttemptResultStatus, HexaGoalAttemptContext, HexaGoalLinkRequest,
+    HexaGoalStore,
+};
 use crate::hexa_watch_store::{
     HexaAuditMutation, HexaAuditMutationRequest, HexaPlanSyncRequest, HexaWatchDeleteRequest,
     HexaWatchRegisterRequest, HexaWatchStore, HexaWatchUpdateRequest,
@@ -25,6 +29,7 @@ use tokio::sync::{oneshot, Mutex};
 use uuid::Uuid;
 
 const MAX_HEXA_AUDIT_BODY_BYTES: usize = 64 * 1024;
+const MAX_HEXA_GOAL_BODY_BYTES: usize = 64 * 1024;
 
 /// Stores a pending permission request with its event info
 pub struct PendingRequest {
@@ -169,6 +174,8 @@ async fn handle_request(
         ("POST", "/hexa/plan") => handle_hexa_plan(req, app_handle).await,
         ("POST", "/hexa/audit") => handle_hexa_audit(req, app_handle).await,
         ("POST", "/hexa/delete") => handle_hexa_delete(req, app_handle).await,
+        ("POST", "/hexa/goal/link") => handle_hexa_goal_link(req, app_handle).await,
+        ("POST", "/hexa/goal/result") => handle_hexa_goal_result(req, app_handle).await,
         ("GET", "/hush/inbox") => handle_hush_inbox_query(app_handle).await,
         ("POST", "/hush/inbox") => handle_hush_inbox_post(req, app_handle).await,
         ("GET", "/mobile/status") => handle_mobile_status(app_handle).await,
@@ -1259,6 +1266,197 @@ async fn handle_hexa_delete(
     ))
 }
 
+async fn read_hexa_goal_body(
+    req: Request<hyper::body::Incoming>,
+) -> Result<Bytes, Response<Full<Bytes>>> {
+    match Limited::new(req.into_body(), MAX_HEXA_GOAL_BODY_BYTES)
+        .collect()
+        .await
+    {
+        Ok(collected) => Ok(collected.to_bytes()),
+        Err(error) => {
+            let (status, message) = if error.downcast_ref::<LengthLimitError>().is_some() {
+                (StatusCode::PAYLOAD_TOO_LARGE, "Hexa goal body is too large")
+            } else {
+                (StatusCode::BAD_REQUEST, "failed to read Hexa goal body")
+            };
+            Err(json_response(
+                status,
+                &serde_json::json!({"error": format!("{message}: {error}")}),
+            ))
+        }
+    }
+}
+
+async fn handle_hexa_goal_link(
+    req: Request<hyper::body::Incoming>,
+    app_handle: tauri::AppHandle,
+) -> Result<Response<Full<Bytes>>, Infallible> {
+    let body = match read_hexa_goal_body(req).await {
+        Ok(body) => body,
+        Err(response) => return Ok(response),
+    };
+    let request: HexaGoalLinkRequest = match serde_json::from_slice(&body) {
+        Ok(value) => value,
+        Err(error) => {
+            return Ok(json_response(
+                StatusCode::BAD_REQUEST,
+                &serde_json::json!({"error": format!("invalid JSON: {error}")}),
+            ));
+        }
+    };
+    let watched_session = {
+        let store = app_handle.state::<Arc<std::sync::Mutex<HexaWatchStore>>>();
+        let mut store = match store.lock() {
+            Ok(store) => store,
+            Err(error) => {
+                return Ok(json_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &serde_json::json!({"error": format!("lock error: {error}")}),
+                ));
+            }
+        };
+        if let Err(error) = store.reload_from_disk() {
+            return Ok(json_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &serde_json::json!({"error": error}),
+            ));
+        }
+        match store
+            .sessions()
+            .into_iter()
+            .find(|session| session.session_id == request.session_id)
+        {
+            Some(session) => session,
+            None => {
+                return Ok(json_response(
+                    StatusCode::NOT_FOUND,
+                    &serde_json::json!({"error": "watched session not found"}),
+                ));
+            }
+        }
+    };
+    let goal = {
+        let store = app_handle.state::<Arc<std::sync::Mutex<HexaGoalStore>>>();
+        let mut store = match store.lock() {
+            Ok(store) => store,
+            Err(error) => {
+                return Ok(json_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &serde_json::json!({"error": format!("lock error: {error}")}),
+                ));
+            }
+        };
+        match store.link_attempt(
+            request,
+            HexaGoalAttemptContext {
+                agent_family: watched_session.agent,
+                workspace: watched_session.workspace,
+            },
+        ) {
+            Ok(goal) => goal,
+            Err(error) => {
+                return Ok(json_response(
+                    hexa_goal_error_status(&error),
+                    &serde_json::json!({"error": error}),
+                ));
+            }
+        }
+    };
+    app_handle
+        .emit("humhum://hexa-goal-changed", &goal)
+        .unwrap_or_else(|error| log::error!("Failed to emit Hexa goal link: {error}"));
+    Ok(json_response(
+        StatusCode::OK,
+        &serde_json::to_value(goal).unwrap_or_default(),
+    ))
+}
+
+async fn handle_hexa_goal_result(
+    req: Request<hyper::body::Incoming>,
+    app_handle: tauri::AppHandle,
+) -> Result<Response<Full<Bytes>>, Infallible> {
+    let body = match read_hexa_goal_body(req).await {
+        Ok(body) => body,
+        Err(response) => return Ok(response),
+    };
+    let mut request: HexaAttemptResultRequest = match serde_json::from_slice(&body) {
+        Ok(value) => value,
+        Err(error) => {
+            return Ok(json_response(
+                StatusCode::BAD_REQUEST,
+                &serde_json::json!({"error": format!("invalid JSON: {error}")}),
+            ));
+        }
+    };
+    if !agent_result_status_allowed(&request.result_status) {
+        return Ok(json_response(
+            StatusCode::FORBIDDEN,
+            &serde_json::json!({
+                "error": "agents can only report unverified, failed, or superseded results"
+            }),
+        ));
+    }
+    normalize_agent_result_evidence(&mut request);
+    let goal = {
+        let store = app_handle.state::<Arc<std::sync::Mutex<HexaGoalStore>>>();
+        let mut store = match store.lock() {
+            Ok(store) => store,
+            Err(error) => {
+                return Ok(json_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &serde_json::json!({"error": format!("lock error: {error}")}),
+                ));
+            }
+        };
+        match store.update_attempt_result(request) {
+            Ok(goal) => goal,
+            Err(error) => {
+                return Ok(json_response(
+                    hexa_goal_error_status(&error),
+                    &serde_json::json!({"error": error}),
+                ));
+            }
+        }
+    };
+    app_handle
+        .emit("humhum://hexa-goal-changed", &goal)
+        .unwrap_or_else(|error| log::error!("Failed to emit Hexa goal result: {error}"));
+    Ok(json_response(
+        StatusCode::OK,
+        &serde_json::to_value(goal).unwrap_or_default(),
+    ))
+}
+
+fn agent_result_status_allowed(status: &HexaAttemptResultStatus) -> bool {
+    matches!(
+        status,
+        HexaAttemptResultStatus::Unverified
+            | HexaAttemptResultStatus::Failed
+            | HexaAttemptResultStatus::Superseded
+    )
+}
+
+fn normalize_agent_result_evidence(request: &mut HexaAttemptResultRequest) {
+    for evidence in &mut request.evidence {
+        evidence.kind = "agent_report".into();
+    }
+}
+
+fn hexa_goal_error_status(error: &str) -> StatusCode {
+    if error.contains("goal not found") || error.contains("goal attempt not found") {
+        StatusCode::NOT_FOUND
+    } else if error.contains("cannot be empty")
+        || error.contains("mismatch")
+        || error.contains("acceptance requires")
+        || error.contains("accepted attempt cannot")
+    {
+        StatusCode::BAD_REQUEST
+    } else {
+        StatusCode::INTERNAL_SERVER_ERROR
+    }
+}
+
 fn json_response(status: StatusCode, body: &Value) -> Response<Full<Bytes>> {
     let json = serde_json::to_string(body).unwrap_or_default();
     Response::builder()
@@ -1454,5 +1652,67 @@ mod hexa_audit_endpoint_tests {
 
         assert!(!hexa_audit_mutation_allowed_over_agent_api(&user_review));
         assert!(hexa_audit_mutation_allowed_over_agent_api(&hexa_review));
+    }
+}
+
+#[cfg(test)]
+mod hexa_goal_endpoint_tests {
+    use super::*;
+    use crate::hexa_goal_store::HexaAttemptResultRequest;
+    use crate::hexa_watch_store::HexaEvidenceInput;
+
+    #[test]
+    fn agent_result_status_allows_only_unverified_failed_and_superseded() {
+        for status in ["unverified", "failed", "superseded"] {
+            let request: HexaAttemptResultRequest = serde_json::from_value(serde_json::json!({
+                "goal_id": "goal-hush",
+                "session_id": "session-codex",
+                "result_status": status,
+                "evidence": []
+            }))
+            .unwrap();
+            assert!(agent_result_status_allowed(&request.result_status));
+        }
+
+        let accepted: HexaAttemptResultRequest = serde_json::from_value(serde_json::json!({
+            "goal_id": "goal-hush",
+            "session_id": "session-codex",
+            "result_status": "accepted",
+            "evidence": []
+        }))
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(&accepted).unwrap()["result_status"],
+            "accepted"
+        );
+        assert!(!agent_result_status_allowed(&accepted.result_status));
+    }
+
+    #[test]
+    fn agent_result_evidence_is_always_downgraded_to_agent_report() {
+        let mut request = HexaAttemptResultRequest {
+            goal_id: "goal-hush".into(),
+            session_id: "session-codex".into(),
+            result_status: HexaAttemptResultStatus::Unverified,
+            evidence: vec![
+                HexaEvidenceInput {
+                    kind: "system_fact".into(),
+                    label: "Agent claims a trusted fact".into(),
+                    location: None,
+                },
+                HexaEvidenceInput {
+                    kind: "test".into(),
+                    label: "Agent claims tests passed".into(),
+                    location: Some("npm test".into()),
+                },
+            ],
+        };
+
+        normalize_agent_result_evidence(&mut request);
+
+        assert!(request
+            .evidence
+            .iter()
+            .all(|evidence| evidence.kind == "agent_report"));
     }
 }
