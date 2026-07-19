@@ -22,6 +22,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.humhum.mobile.MobileRoleDashboard
 import com.humhum.mobile.Models
@@ -110,6 +111,7 @@ private fun CompanionScaffold(
 
 @Composable
 private fun CompanionHeader(state: HumHumUiState, callbacks: HumHumCallbacks) {
+    val compactStatus = state.statusMessage.substringBefore(" · ")
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -124,13 +126,21 @@ private fun CompanionHeader(state: HumHumUiState, callbacks: HumHumCallbacks) {
             color = paletteFor(state.selectedRole).accent,
         )
         Spacer(Modifier.size(8.dp))
-        Text(state.selectedRole.purpose(), style = MaterialTheme.typography.bodyMedium, color = Ink)
-        Spacer(Modifier.weight(1f))
         Text(
-            state.statusMessage,
+            state.selectedRole.purpose(),
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyMedium,
+            color = Ink,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(Modifier.size(6.dp))
+        Text(
+            compactStatus,
             style = MaterialTheme.typography.labelMedium,
             color = if (state.connection == ConnectionStatus.OFFLINE) MaterialTheme.colorScheme.error else Muted,
             maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
         IconButton(onClick = callbacks.onOpenSettings, modifier = Modifier.size(48.dp)) {
             Icon(Icons.Outlined.Settings, contentDescription = "设置", tint = Ink)

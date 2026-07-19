@@ -133,6 +133,28 @@ class HumHumAppTest {
     }
 
     @Test
+    fun everyRoomHeaderKeepsConnectionAndSettingsInsideTheViewport() {
+        var state by mutableStateOf(connectedState())
+        compose.setContent {
+            HumHumApp(state = state, callbacks = HumHumCallbacks())
+        }
+
+        MobileRoleDashboard.Role.entries.forEach { role ->
+            compose.runOnIdle { state = state.copy(selectedRole = role) }
+            val header = compose.onNodeWithTag("companion-header")
+                .fetchSemanticsNode()
+                .boundsInRoot
+            val settings = compose.onNodeWithContentDescription("设置")
+                .fetchSemanticsNode()
+                .boundsInRoot
+
+            compose.onNodeWithText("已连接", substring = true).assertIsDisplayed()
+            compose.onNodeWithContentDescription("设置").assertIsDisplayed()
+            assertTrue("role=$role header=$header settings=$settings", settings.right <= header.right)
+        }
+    }
+
+    @Test
     fun hexaReadScopeNeverShowsApprovalOrFollowUpControls() {
         setContent(
             state = connectedState().copy(
@@ -144,7 +166,7 @@ class HumHumAppTest {
 
         compose.onNodeWithText("允许").assertDoesNotExist()
         compose.onNodeWithText("发送").assertDoesNotExist()
-        compose.onNodeWithText("只读观察").assertIsDisplayed()
+        compose.onNodeWithText("只读观察", substring = true).assertIsDisplayed()
     }
 
     @Test

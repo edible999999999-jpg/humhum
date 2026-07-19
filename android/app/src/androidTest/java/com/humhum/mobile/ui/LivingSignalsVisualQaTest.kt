@@ -126,6 +126,8 @@ class LivingSignalsVisualQaTest {
         scope = Models.Scope.CONTROL,
         selectedRole = selectedRole,
         statusMessage = "已连接 · 本机优先",
+        personalContextAuthorized = true,
+        personalContext = personalContext(),
         healthPermissions = HealthPermissionState(
             granted = HealthPermission.entries.toSet(),
         ),
@@ -140,6 +142,55 @@ class LivingSignalsVisualQaTest {
             freshness = HealthFreshness.FRESH,
             notices = emptyList(),
             enqueuedSignals = 0,
+        ),
+    )
+
+    private fun personalContext() = Models.PersonalContext(
+        1,
+        "2026-07-19T09:00:00Z",
+        "2026-07-20T09:00:00Z",
+        listOf(
+            Models.TodayItem(
+                "goal-1",
+                "完成 Android 房间",
+                "通过构建与视觉检查",
+                "hexa_goal",
+                "active",
+            ),
+        ),
+        listOf(
+            Models.Suggestion(
+                "suggestion-1",
+                "先处理需要确认的 Agent",
+                "有一个会话正在等待",
+                "hexa",
+                "reported",
+            ),
+        ),
+        listOf(Models.Preference("preference-1", "workflow", "先想清楚数据从哪里来")),
+        emptyList(),
+        listOf(Models.Memory("memory-1", "Humi 在手机上保留伴侣功能", "warm")),
+        listOf(Models.KnowledgeItem("skill-1", "数据整理", "把信息变成可复用结构", "skill")),
+        listOf(
+            Models.InboxItem(
+                "message-1",
+                "Peidong",
+                "DingTalk",
+                "UI 已经重新推送",
+                "2026-07-19T08:00:00Z",
+                5,
+            ),
+        ),
+        listOf(
+            Models.AgentItem(
+                "session-1",
+                "Android UI",
+                "Codex",
+                "working",
+                "同步四个角色房间",
+                false,
+                "2026-07-19T08:30:00Z",
+            ),
         ),
     )
 }
