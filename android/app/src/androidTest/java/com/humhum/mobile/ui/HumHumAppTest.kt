@@ -63,10 +63,37 @@ class HumHumAppTest {
         compose.onNodeWithText("完成 Android 房间").assertIsDisplayed()
         compose.onNodeWithText("身体信号").assertIsDisplayed()
         compose.onAllNodesWithTag("role-destination", useUnmergedTree = true).assertCountEquals(4)
+        compose.onAllNodesWithTag("role-navigation-icon", useUnmergedTree = true)
+            .assertCountEquals(4)
+        compose.onAllNodesWithTag("role-navigation-mascot", useUnmergedTree = true)
+            .assertCountEquals(0)
         compose.onNodeWithTag("settings-screen").assertDoesNotExist()
 
         compose.onNodeWithContentDescription("设置").performClick()
         compose.onNodeWithTag("settings-screen").assertIsDisplayed()
+    }
+
+    @Test
+    fun selectingARoomDoesNotMoveNavigationDestinations() {
+        var state by mutableStateOf(connectedState())
+        compose.setContent {
+            HumHumApp(
+                state = state,
+                callbacks = HumHumCallbacks(
+                    onSelectRole = { state = state.copy(selectedRole = it) },
+                ),
+            )
+        }
+        val before = compose.onAllNodesWithTag("role-destination", useUnmergedTree = true)
+            .fetchSemanticsNodes()
+            .map { it.boundsInRoot }
+
+        compose.onNodeWithText("Hush").performClick()
+
+        val after = compose.onAllNodesWithTag("role-destination", useUnmergedTree = true)
+            .fetchSemanticsNodes()
+            .map { it.boundsInRoot }
+        assertEquals(before, after)
     }
 
     @Test

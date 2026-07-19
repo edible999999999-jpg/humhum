@@ -2,29 +2,35 @@ package com.humhum.mobile.ui.components
 
 import androidx.annotation.DrawableRes
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.AccountTree
+import androidx.compose.material.icons.outlined.AutoStories
+import androidx.compose.material.icons.outlined.ChatBubbleOutline
+import androidx.compose.material.icons.outlined.MarkEmailUnread
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import com.humhum.mobile.MobileRoleDashboard
 import com.humhum.mobile.R
 import com.humhum.mobile.ui.theme.Muted
@@ -36,24 +42,29 @@ fun RoleNavigation(
     onSelect: (MobileRoleDashboard.Role) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Row(
+    Surface(
         modifier = modifier
             .fillMaxWidth()
-            .height(64.dp)
-            .background(Color.White)
-            .border(width = 1.dp, color = Color(0xFFE8EAF1))
-            .padding(horizontal = 8.dp, vertical = 4.dp)
+            .height(68.dp)
             .testTag("role-navigation"),
-        horizontalArrangement = Arrangement.SpaceEvenly,
-        verticalAlignment = Alignment.CenterVertically,
+        color = Color.White,
+        shadowElevation = 8.dp,
     ) {
-        MobileRoleDashboard.Role.entries.forEach { role ->
-            RoleDestination(
-                role = role,
-                selected = role == selected,
-                onClick = { onSelect(role) },
-                modifier = Modifier.weight(1f),
-            )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            MobileRoleDashboard.Role.entries.forEach { role ->
+                RoleDestination(
+                    role = role,
+                    selected = role == selected,
+                    onClick = { onSelect(role) },
+                    modifier = Modifier.weight(1f),
+                )
+            }
         }
     }
 }
@@ -66,33 +77,46 @@ private fun RoleDestination(
     modifier: Modifier = Modifier,
 ) {
     val palette = paletteFor(role)
-    val shape = RoundedCornerShape(8.dp)
     Column(
         modifier = modifier
-            .padding(horizontal = 3.dp)
-            .clip(shape)
-            .then(if (selected) Modifier.background(palette.soft) else Modifier)
+            .height(60.dp)
             .clickable(role = Role.Tab, onClick = onClick)
-            .semantics { this.selected = selected }
+            .semantics(mergeDescendants = true) {
+                this.selected = selected
+                contentDescription = "${role.displayName()}：${role.purpose()}"
+            }
             .testTag("role-destination")
-            .padding(vertical = 3.dp),
+            .padding(horizontal = 4.dp, vertical = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
+        verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically),
     ) {
-        RoleMascot(
-            role = role,
+        Box(
+            Modifier
+                .size(width = 24.dp, height = 2.dp)
+                .background(if (selected) palette.accent else Color.Transparent),
+        )
+        Icon(
+            imageVector = iconFor(role),
             contentDescription = null,
-            width = 28.dp,
-            height = 28.dp,
+            tint = if (selected) palette.accent else Muted,
+            modifier = Modifier
+                .size(23.dp)
+                .testTag("role-navigation-icon"),
         )
         Text(
             text = role.displayName(),
             style = MaterialTheme.typography.labelMedium,
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
             color = if (selected) palette.accent else Muted,
             maxLines = 1,
         )
     }
+}
+
+private fun iconFor(role: MobileRoleDashboard.Role): ImageVector = when (role) {
+    MobileRoleDashboard.Role.HUMI -> Icons.Outlined.ChatBubbleOutline
+    MobileRoleDashboard.Role.HYPE -> Icons.Outlined.AutoStories
+    MobileRoleDashboard.Role.HUSH -> Icons.Outlined.MarkEmailUnread
+    MobileRoleDashboard.Role.HEXA -> Icons.Outlined.AccountTree
 }
 
 @DrawableRes
