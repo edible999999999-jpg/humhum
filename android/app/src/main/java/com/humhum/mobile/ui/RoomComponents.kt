@@ -1,7 +1,6 @@
 package com.humhum.mobile.ui
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -19,7 +18,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.humhum.mobile.MobileRoleDashboard
-import com.humhum.mobile.ui.components.RoleMascot
 import com.humhum.mobile.ui.theme.Ink
 import com.humhum.mobile.ui.theme.Line
 import com.humhum.mobile.ui.theme.Muted
@@ -33,42 +31,29 @@ fun RoomIntro(
     modifier: Modifier = Modifier,
 ) {
     val palette = paletteFor(role)
-    Row(
+    Column(
         modifier = modifier
             .fillMaxWidth()
-            .background(palette.soft.copy(alpha = 0.62f))
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+            .padding(horizontal = 16.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        RoleMascot(
-            role = role,
-            contentDescription = role.displayName(),
-            width = 58.dp,
-            height = 66.dp,
+        Text(
+            text = "${role.displayName()} · ${role.purpose()}",
+            style = MaterialTheme.typography.labelLarge,
+            color = palette.accent,
         )
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(3.dp),
-        ) {
-            Text(
-                text = "${role.displayName()} · ${role.purpose()}",
-                style = MaterialTheme.typography.labelMedium,
-                color = palette.accent,
-            )
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleLarge,
-                color = Ink,
-                maxLines = 2,
-            )
-            Text(
-                text = summary,
-                style = MaterialTheme.typography.bodyMedium,
-                color = Muted,
-                maxLines = 2,
-            )
-        }
+        Text(
+            text = title,
+            style = MaterialTheme.typography.headlineMedium,
+            color = Ink,
+            maxLines = 3,
+        )
+        Text(
+            text = summary,
+            style = MaterialTheme.typography.bodyMedium,
+            color = Muted,
+            maxLines = 3,
+        )
     }
 }
 

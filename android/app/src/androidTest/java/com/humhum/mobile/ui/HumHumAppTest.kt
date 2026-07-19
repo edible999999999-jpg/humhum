@@ -182,6 +182,22 @@ class HumHumAppTest {
     }
 
     @Test
+    fun everyRoomUsesOneDecorativeBackgroundAndNoIntroMascot() {
+        var state by mutableStateOf(connectedState())
+        compose.setContent {
+            HumHumApp(state = state, callbacks = HumHumCallbacks())
+        }
+
+        MobileRoleDashboard.Role.entries.forEach { role ->
+            compose.runOnIdle { state = state.copy(selectedRole = role) }
+            compose.onAllNodesWithTag("room-background", useUnmergedTree = true)
+                .assertCountEquals(1)
+            compose.onAllNodesWithTag("room-intro-mascot", useUnmergedTree = true)
+                .assertCountEquals(0)
+        }
+    }
+
+    @Test
     fun hexaReadScopeNeverShowsApprovalOrFollowUpControls() {
         setContent(
             state = connectedState().copy(

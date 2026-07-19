@@ -30,6 +30,7 @@ import com.humhum.mobile.app.ConnectionStatus
 import com.humhum.mobile.app.HealthPermission
 import com.humhum.mobile.app.HumHumUiState
 import com.humhum.mobile.ui.components.RoleNavigation
+import com.humhum.mobile.ui.components.RoleRoomBackground
 import com.humhum.mobile.ui.theme.Canvas
 import com.humhum.mobile.ui.theme.HumHumTheme
 import com.humhum.mobile.ui.theme.Ink
@@ -97,14 +98,20 @@ private fun CompanionScaffold(
             )
         },
     ) { padding ->
-        when (state.selectedRole) {
-            MobileRoleDashboard.Role.HUMI ->
-                HumiRoomScreen(state, callbacks, Modifier.padding(padding))
-            MobileRoleDashboard.Role.HYPE ->
-                HypeRoomScreen(state, Modifier.padding(padding))
-            MobileRoleDashboard.Role.HUSH ->
-                HushRoomScreen(state, Modifier.padding(padding))
-            MobileRoleDashboard.Role.HEXA -> HexaScreen(state, callbacks, Modifier.padding(padding))
+        RoleRoomBackground(
+            role = state.selectedRole,
+            modifier = Modifier.padding(padding),
+        ) {
+            when (state.selectedRole) {
+                MobileRoleDashboard.Role.HUMI ->
+                    HumiRoomScreen(state, callbacks, Modifier.fillMaxSize())
+                MobileRoleDashboard.Role.HYPE ->
+                    HypeRoomScreen(state, Modifier.fillMaxSize())
+                MobileRoleDashboard.Role.HUSH ->
+                    HushRoomScreen(state, Modifier.fillMaxSize())
+                MobileRoleDashboard.Role.HEXA ->
+                    HexaScreen(state, callbacks, Modifier.fillMaxSize())
+            }
         }
     }
 }

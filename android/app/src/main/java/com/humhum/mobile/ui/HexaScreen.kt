@@ -50,7 +50,6 @@ import com.humhum.mobile.ui.theme.HexaSoft
 import com.humhum.mobile.ui.theme.Ink
 import com.humhum.mobile.ui.theme.Line
 import com.humhum.mobile.ui.theme.Muted
-import com.humhum.mobile.ui.components.RoleMascot
 
 @Composable
 fun HexaScreen(

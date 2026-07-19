@@ -2,7 +2,6 @@ package com.humhum.mobile.ui
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -46,7 +45,7 @@ import com.humhum.mobile.ui.theme.HumiSoft
 import com.humhum.mobile.ui.theme.Ink
 import com.humhum.mobile.ui.theme.Line
 import com.humhum.mobile.ui.theme.Muted
-import com.humhum.mobile.ui.components.RoleMascot
+import com.humhum.mobile.ui.components.RoleRoomBackground
 
 @Composable
 fun PairingScreen(
@@ -61,23 +60,22 @@ fun PairingScreen(
     var deviceName by rememberSaveable { mutableStateOf("") }
     val busy = state.connection == ConnectionStatus.SCANNING || state.connection == ConnectionStatus.PAIRING
 
-    Box(modifier = modifier.fillMaxSize()) {
+    RoleRoomBackground(
+        role = MobileRoleDashboard.Role.HUMI,
+        modifier = modifier.fillMaxSize(),
+    ) {
         Column(
             modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Text("HUMHUM", style = MaterialTheme.typography.displaySmall, color = Ink)
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                RoleMascot(
-                    role = MobileRoleDashboard.Role.HUMI,
-                    contentDescription = "Humi",
-                    width = 112.dp,
-                    height = 132.dp,
+            Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                Text("连接这台电脑", style = MaterialTheme.typography.headlineMedium, color = Ink)
+                Text(
+                    "在 Mac 的 Hexa 右上角打开移动访问，然后扫描配对二维码。",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = Muted,
                 )
-                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                    Text("连接这台电脑", style = MaterialTheme.typography.headlineMedium, color = Ink)
-                    Text("在 Mac 的 Hexa 右上角打开移动访问，然后扫描配对二维码。", style = MaterialTheme.typography.bodyLarge, color = Muted)
-                }
             }
             Button(
                 onClick = callbacks.onScanPairing,

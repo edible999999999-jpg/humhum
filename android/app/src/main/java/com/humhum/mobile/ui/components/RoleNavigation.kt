@@ -1,6 +1,5 @@
 package com.humhum.mobile.ui.components
 
-import androidx.annotation.DrawableRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -32,7 +31,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.unit.dp
 import com.humhum.mobile.MobileRoleDashboard
-import com.humhum.mobile.R
 import com.humhum.mobile.ui.theme.Muted
 import com.humhum.mobile.ui.theme.paletteFor
 
@@ -117,12 +115,4 @@ private fun iconFor(role: MobileRoleDashboard.Role): ImageVector = when (role) {
     MobileRoleDashboard.Role.HYPE -> Icons.Outlined.AutoStories
     MobileRoleDashboard.Role.HUSH -> Icons.Outlined.MarkEmailUnread
     MobileRoleDashboard.Role.HEXA -> Icons.Outlined.AccountTree
-}
-
-@DrawableRes
-fun mascotFor(role: MobileRoleDashboard.Role): Int = when (role) {
-    MobileRoleDashboard.Role.HUMI -> R.drawable.mascot_humi
-    MobileRoleDashboard.Role.HYPE -> R.drawable.mascot_hype
-    MobileRoleDashboard.Role.HUSH -> R.drawable.mascot_hush
-    MobileRoleDashboard.Role.HEXA -> R.drawable.mascot_hexa
 }
