@@ -886,6 +886,63 @@
   margin: 14px 0;
 }
 
+.hype-preference-add-button {
+  width: 100%;
+  margin-bottom: 12px;
+  padding: 10px;
+  border: 1px dashed rgba(118, 86, 182, 0.34);
+  border-radius: 8px;
+  background: rgba(244, 239, 252, 0.72);
+  color: #4f3f68;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.hype-preference-add-button:hover {
+  border-color: rgba(118, 86, 182, 0.52);
+  background: rgba(244, 239, 252, 0.94);
+}
+
+.hype-preference-form {
+  margin-bottom: 12px;
+  padding: 14px;
+  border: 1px solid rgba(116, 143, 165, 0.18);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.68);
+}
+
+.hype-preference-form-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.hype-preference-form-actions > button {
+  flex: 1;
+  padding: 8px;
+  font-size: 12px;
+}
+
+.hype-preference-cancel-button {
+  border: 1px solid rgba(116, 143, 165, 0.2);
+  border-radius: 8px;
+  background: rgba(246, 248, 252, 0.9);
+  color: #64748b;
+  cursor: pointer;
+}
+
+.hype-preference-cancel-button:hover {
+  border-color: rgba(116, 143, 165, 0.34);
+  background: #fff;
+}
+
+.hype-preference-empty {
+  padding: 24px;
+  color: #7b8798;
+  font-size: 13px;
+  text-align: center;
+}
+
 .hype-tabs,
 .hype-scope-control {
   display: inline-flex;

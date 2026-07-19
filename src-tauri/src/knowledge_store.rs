@@ -203,37 +203,12 @@ impl KnowledgeStore {
         }
     }
 
-    /// Merge Markdown vault records into the JSON snapshot. Vault files win
-    /// same-id conflicts, while JSON-only records survive an empty or partial
-    /// vault for backward compatibility.
+    /// Load preferences and memory from the Markdown vault, making the vault
+    /// authoritative once it exists. Legacy JSON is migrated before this call;
+    /// keeping JSON-only records here would resurrect files the user deleted.
     fn load_vault(&mut self) {
-        for pref in self.read_preferences_from_vault() {
-            if let Some(existing) = self
-                .data
-                .preferences
-                .iter_mut()
-                .find(|existing| existing.id == pref.id)
-            {
-                *existing = pref;
-            } else {
-                self.data.preferences.push(pref);
-            }
-        }
-        self.data.preferences.sort_by(|a, b| a.id.cmp(&b.id));
-
-        for item in self.read_memory_from_vault() {
-            if let Some(existing) = self
-                .data
-                .memory_items
-                .iter_mut()
-                .find(|existing| existing.id == item.id)
-            {
-                *existing = item;
-            } else {
-                self.data.memory_items.push(item);
-            }
-        }
-        self.data.memory_items.sort_by(|a, b| a.id.cmp(&b.id));
+        self.data.preferences = self.read_preferences_from_vault();
+        self.data.memory_items = self.read_memory_from_vault();
     }
 
     fn read_preferences_from_vault(&self) -> Vec<Preference> {
@@ -2498,8 +2473,8 @@ mod tests {
     }
 
     #[test]
-    fn existing_json_preferences_and_memories_survive_an_empty_vault() {
-        let root = temp_root("empty-vault-fallback");
+    fn deleted_vault_records_do_not_return_from_the_json_snapshot() {
+        let root = temp_root("vault-deletion");
         std::fs::create_dir_all(root.join("vault")).unwrap();
         let legacy = KnowledgeData {
             preferences: vec![Preference {
@@ -2525,8 +2500,14 @@ mod tests {
 
         let store = store_at(&root);
 
-        assert_eq!(store.get_all().preferences.len(), 1);
-        assert_eq!(store.get_all().memory_items.len(), 1);
+        assert!(
+            store.get_all().preferences.is_empty(),
+            "an existing empty vault is authoritative for preferences"
+        );
+        assert!(
+            store.get_all().memory_items.is_empty(),
+            "an existing empty vault is authoritative for memories"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 }

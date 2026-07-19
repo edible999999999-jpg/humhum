@@ -132,6 +132,27 @@ describe("Hype loading and toolbar UI", () => {
     expect(knowledgeModuleSource).toContain("data.memory_items");
     expect(knowledgeModuleSource).toContain("我的记忆");
   });
+
+  it("uses bright-room preference controls instead of legacy white-on-white inline colors", () => {
+    expect(knowledgeModuleSource).toContain(
+      'className="hype-preference-add-button"',
+    );
+    expect(knowledgeModuleSource).toContain(
+      'className="hype-preference-form"',
+    );
+    expect(knowledgeModuleSource).toContain(
+      'className="hype-preference-cancel-button"',
+    );
+    expect(knowledgeModuleSource).toContain(
+      'className="hype-preference-empty"',
+    );
+    expect(characterRoomStyles).toMatch(
+      /\.hype-preference-add-button\s*\{[^}]*color:\s*#4f3f68/,
+    );
+    expect(characterRoomStyles).toMatch(
+      /\.hype-preference-cancel-button\s*\{[^}]*color:\s*#64748b/,
+    );
+  });
 });
 
 describe("Hype responsive and motion styles", () => {

@@ -898,20 +898,9 @@ export function KnowledgeModule() {
           {/* Add button */}
           {!showForm && (
             <button
+              type="button"
+              className="hype-preference-add-button"
               onClick={() => setShowForm(true)}
-              style={{
-                width: "100%",
-                padding: "10px",
-                borderRadius: 8,
-                border: "1px dashed rgba(148,239,244,0.2)",
-                background: "rgba(148,239,244,0.04)",
-                color: "rgba(148,239,244,0.7)",
-                fontSize: 12,
-                fontWeight: 600,
-                cursor: "pointer",
-                marginBottom: 12,
-                transition: "all 0.2s",
-              }}
             >
               + 添加偏好
             </button>
@@ -919,15 +908,7 @@ export function KnowledgeModule() {
 
           {/* Add form */}
           {showForm && (
-            <div
-              style={{
-                padding: 14,
-                borderRadius: 8,
-                background: "rgba(255,255,255,0.025)",
-                border: "1px solid rgba(148,239,244,0.15)",
-                marginBottom: 12,
-              }}
-            >
+            <div className="hype-preference-form">
               <div style={{ marginBottom: 8 }}>
                 <select
                   value={newCategory}
@@ -949,7 +930,7 @@ export function KnowledgeModule() {
                 className="kawaii-input"
                 style={{ minHeight: 60, resize: "vertical", marginBottom: 8 }}
               />
-              <div style={{ display: "flex", gap: 6 }}>
+              <div className="hype-preference-form-actions">
                 <button
                   onClick={handleSave}
                   disabled={!newContent.trim()}
@@ -959,17 +940,9 @@ export function KnowledgeModule() {
                   保存
                 </button>
                 <button
+                  type="button"
+                  className="hype-preference-cancel-button"
                   onClick={() => { setShowForm(false); setNewContent(""); }}
-                  style={{
-                    flex: 1,
-                    padding: 8,
-                    fontSize: 12,
-                    borderRadius: 8,
-                    border: "1px solid rgba(255,255,255,0.06)",
-                    background: "rgba(255,255,255,0.03)",
-                    color: "rgba(255,255,255,0.4)",
-                    cursor: "pointer",
-                  }}
                 >
                   取消
                 </button>
@@ -982,7 +955,7 @@ export function KnowledgeModule() {
             {filteredPreferences.length === 0 &&
             filteredPreferenceAssets.length === 0 &&
             filteredPreferenceNotes.length === 0 ? (
-              <div style={{ padding: 24, textAlign: "center", color: "rgba(255,255,255,0.25)", fontSize: 13 }}>
+              <div className="hype-preference-empty">
                 {preferenceCount === 0 ? "暂无偏好，点击刷新扫描或手动添加" : "没有匹配的偏好"}
               </div>
             ) : (
