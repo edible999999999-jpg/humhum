@@ -168,6 +168,15 @@ export async function runCli(argv, options = {}) {
       body: JSON.stringify(body),
     }));
   };
+  const get = async (path) => {
+    const token = (await readFile(join(home, ".humhum", "local-api-token"), "utf8")).trim();
+    return responseJson(await fetchImpl(`${apiUrl}${path}`, {
+      method: "GET",
+      headers: {
+        "x-humhum-token": token,
+      },
+    }));
+  };
   const readOptionalState = async () => {
     try {
       return JSON.parse(await readFile(stateFile, "utf8"));
@@ -304,7 +313,34 @@ export async function runCli(argv, options = {}) {
     return result;
   }
 
-  throw new Error("Usage: humhum-hexa <watch|update|plan|complete|unwatch>");
+  if (command === "status") {
+    const state = await readState();
+    const sessions = await get("/hexa/sessions");
+    if (!Array.isArray(sessions)) {
+      throw new Error("Hexa returned an invalid watched-session list");
+    }
+    const live = sessions.find((session) =>
+      session?.session_id === state.session_id
+      || session?.previous_session_ids?.includes(state.session_id)
+    );
+    if (!live) {
+      throw new Error("Hexa 中没有找到当前受监控会话，请重新运行 humhum-hexa watch");
+    }
+    await writeState(live);
+    const workItems = Array.isArray(live.audit?.work_items) ? live.audit.work_items : [];
+    const completed = workItems.filter((item) => item.status === "completed").length;
+    const failed = workItems.filter((item) => item.status === "failed").length;
+    const milestones = Array.isArray(live.audit?.milestones) ? live.audit.milestones.length : 0;
+    stdout(`Hexa status: ${live.status ?? "unknown"}`);
+    stdout(`goal: ${live.goal ?? live.name ?? "未报告"}`);
+    stdout(`step: ${live.current_step ?? "等待 Agent 上报进展"}`);
+    stdout(`work_items: ${completed}/${workItems.length} completed, ${failed} failed`);
+    stdout(`milestones: ${milestones}`);
+    stdout(`session_id: ${live.session_id}`);
+    return live;
+  }
+
+  throw new Error("Usage: humhum-hexa <watch|status|update|plan|complete|unwatch>");
 }
 
 export function isMainModule(argvPath, moduleUrl) {
