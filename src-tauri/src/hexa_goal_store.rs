@@ -111,6 +111,7 @@ struct HexaGoalStoreSnapshot {
     goals: HashMap<String, HexaDevelopmentGoal>,
 }
 
+#[derive(Debug)]
 pub struct HexaGoalStore {
     goals: HashMap<String, HexaDevelopmentGoal>,
     storage_path: Option<PathBuf>,
@@ -221,12 +222,21 @@ impl HexaGoalStore {
         &mut self,
         request: HexaAttemptResultRequest,
     ) -> Result<HexaDevelopmentGoal, String> {
+        if request.result_status == HexaAttemptResultStatus::Accepted {
+            return Err("Hexa attempt acceptance requires explicit user acceptance".into());
+        }
         self.reload_from_disk()?;
         let now = chrono::Utc::now().to_rfc3339();
         let mut goals = self.goals.clone();
         let goal = goals
             .get_mut(&request.goal_id)
             .ok_or_else(|| format!("Hexa goal not found: {}", request.goal_id))?;
+        if goal.accepted_attempt_id.as_deref() == Some(request.session_id.as_str()) {
+            return Err(format!(
+                "Hexa accepted attempt cannot be overwritten: {}",
+                request.session_id
+            ));
+        }
         let attempt = goal
             .attempts
             .iter_mut()
@@ -239,10 +249,7 @@ impl HexaGoalStore {
             .collect::<Result<Vec<_>, _>>()?;
         attempt.result_status = request.result_status;
         attempt.evidence = evidence;
-        attempt.completed_at = match &attempt.result_status {
-            HexaAttemptResultStatus::Unverified => None,
-            _ => Some(now.clone()),
-        };
+        attempt.completed_at = Some(now.clone());
         goal.updated_at = now;
         recompute_goal_status(goal);
         let result = goal.clone();
@@ -333,8 +340,34 @@ impl HexaGoalStore {
 }
 
 fn read_goals(storage_path: &Path) -> Result<HashMap<String, HexaDevelopmentGoal>, String> {
-    if !storage_path.exists() {
-        return Ok(HashMap::new());
+    match fs::symlink_metadata(storage_path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            return Err(format!(
+                "Hexa goal store cannot be a symbolic link: {}",
+                storage_path.display()
+            ));
+        }
+        Ok(metadata) if !metadata.file_type().is_file() => {
+            return Err(format!(
+                "Could not read Hexa goal store {}: path is not a regular file",
+                storage_path.display()
+            ));
+        }
+        Ok(_) => crate::local_api_auth::protect_owner_only(storage_path).map_err(|error| {
+            format!(
+                "Could not protect Hexa goal store {}: {error}",
+                storage_path.display()
+            )
+        })?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(HashMap::new());
+        }
+        Err(error) => {
+            return Err(format!(
+                "Could not inspect Hexa goal store {}: {error}",
+                storage_path.display()
+            ));
+        }
     }
     let contents = fs::read_to_string(storage_path).map_err(|error| {
         format!(
@@ -357,14 +390,10 @@ fn recompute_goal_status(goal: &mut HexaDevelopmentGoal) {
         return;
     }
     let has_attempts = !goal.attempts.is_empty();
-    let all_terminal = goal.attempts.iter().all(|attempt| {
-        matches!(
-            attempt.result_status,
-            HexaAttemptResultStatus::Verified
-                | HexaAttemptResultStatus::Failed
-                | HexaAttemptResultStatus::Superseded
-        )
-    });
+    let all_terminal = goal
+        .attempts
+        .iter()
+        .all(|attempt| attempt.completed_at.is_some());
     goal.status = if has_attempts && all_terminal {
         HexaGoalStatus::Waiting
     } else {
@@ -520,6 +549,8 @@ mod tests {
             completed.attempts[0].result_status,
             HexaAttemptResultStatus::Unverified
         );
+        assert!(completed.attempts[0].completed_at.is_some());
+        assert_eq!(completed.status, HexaGoalStatus::Waiting);
 
         let accepted = store
             .accept_attempt(HexaGoalAcceptRequest {
@@ -535,6 +566,97 @@ mod tests {
             accepted.attempts[0].result_status,
             HexaAttemptResultStatus::Accepted
         );
+    }
+
+    #[test]
+    fn update_result_cannot_accept_or_overwrite_the_accepted_attempt() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut store = HexaGoalStore::load_or_create(directory.path()).unwrap();
+        let goal = store
+            .link_attempt(
+                link_request(
+                    Some("goal-hush"),
+                    "session-codex",
+                    HexaAgentSurface::CodexDesktop,
+                ),
+                attempt_context("codex"),
+            )
+            .unwrap();
+
+        let bypass = store.update_attempt_result(HexaAttemptResultRequest {
+            goal_id: goal.id.clone(),
+            session_id: "session-codex".into(),
+            result_status: HexaAttemptResultStatus::Accepted,
+            evidence: vec![],
+        });
+        assert!(bypass.is_err());
+        let unchanged = store.goals()[0].clone();
+        assert_eq!(unchanged.accepted_attempt_id, None);
+        assert_eq!(unchanged.attempts[0].completed_at, None);
+
+        store
+            .accept_attempt(HexaGoalAcceptRequest {
+                goal_id: goal.id.clone(),
+                session_id: "session-codex".into(),
+            })
+            .unwrap();
+        let overwrite = store.update_attempt_result(HexaAttemptResultRequest {
+            goal_id: goal.id,
+            session_id: "session-codex".into(),
+            result_status: HexaAttemptResultStatus::Verified,
+            evidence: vec![],
+        });
+        assert!(overwrite.is_err());
+        let accepted = store.goals()[0].clone();
+        assert_eq!(
+            accepted.accepted_attempt_id.as_deref(),
+            Some("session-codex")
+        );
+        assert_eq!(
+            accepted.attempts[0].result_status,
+            HexaAttemptResultStatus::Accepted
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn goal_storage_rejects_symlinks_and_non_regular_files() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir().unwrap();
+        let target = directory.path().join("goal-target.json");
+        std::fs::write(&target, "{}").unwrap();
+        symlink(&target, directory.path().join("hexa-goals.json")).unwrap();
+
+        let symlink_error = HexaGoalStore::load_or_create(directory.path()).unwrap_err();
+        assert!(symlink_error.contains("symbolic link"));
+
+        std::fs::remove_file(directory.path().join("hexa-goals.json")).unwrap();
+        std::fs::create_dir(directory.path().join("hexa-goals.json")).unwrap();
+        let directory_error = HexaGoalStore::load_or_create(directory.path()).unwrap_err();
+        assert!(directory_error.contains("regular file"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn goal_storage_is_owner_only_on_unix() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        let mut store = HexaGoalStore::load_or_create(directory.path()).unwrap();
+        store
+            .link_attempt(
+                link_request(None, "session-codex", HexaAgentSurface::CodexDesktop),
+                attempt_context("codex"),
+            )
+            .unwrap();
+
+        let mode = std::fs::metadata(directory.path().join("hexa-goals.json"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600);
     }
 
     #[test]
