@@ -5,11 +5,15 @@ import androidx.compose.material3.Typography
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
 import com.humhum.mobile.MobileRoleDashboard
+import com.humhum.mobile.R
 
 val Ink = Color(0xFF243247)
 val Muted = Color(0xFF667085)
@@ -36,53 +40,42 @@ fun paletteFor(role: MobileRoleDashboard.Role): RolePalette = when (role) {
     MobileRoleDashboard.Role.HEXA -> RolePalette(Hexa, HexaSoft, Sky)
 }
 
-private val HumHumTypography = Typography(
-    displaySmall = TextStyle(
-        fontFamily = FontFamily.SansSerif,
-        fontWeight = FontWeight.SemiBold,
-        fontSize = 30.sp,
-        lineHeight = 38.sp,
-    ),
-    headlineMedium = TextStyle(
-        fontFamily = FontFamily.SansSerif,
-        fontWeight = FontWeight.SemiBold,
-        fontSize = 24.sp,
-        lineHeight = 32.sp,
-    ),
-    titleLarge = TextStyle(
-        fontFamily = FontFamily.SansSerif,
-        fontWeight = FontWeight.SemiBold,
-        fontSize = 20.sp,
-        lineHeight = 28.sp,
-    ),
-    titleMedium = TextStyle(
-        fontFamily = FontFamily.SansSerif,
-        fontWeight = FontWeight.SemiBold,
-        fontSize = 16.sp,
-        lineHeight = 23.sp,
-    ),
-    bodyLarge = TextStyle(
-        fontFamily = FontFamily.SansSerif,
-        fontSize = 16.sp,
-        lineHeight = 25.sp,
-    ),
-    bodyMedium = TextStyle(
-        fontFamily = FontFamily.SansSerif,
-        fontSize = 14.sp,
-        lineHeight = 21.sp,
-    ),
-    labelLarge = TextStyle(
-        fontFamily = FontFamily.SansSerif,
-        fontWeight = FontWeight.Medium,
-        fontSize = 14.sp,
-        lineHeight = 20.sp,
-    ),
-    labelMedium = TextStyle(
-        fontFamily = FontFamily.SansSerif,
-        fontWeight = FontWeight.Medium,
-        fontSize = 12.sp,
-        lineHeight = 17.sp,
-    ),
+val HumHumFontFamily = FontFamily(
+    Font(R.font.noto_sans_sc, FontWeight.Normal),
+    Font(R.font.noto_sans_sc, FontWeight.Medium),
+    Font(R.font.noto_sans_sc, FontWeight.SemiBold),
+)
+
+private val NoExtraFontPadding = PlatformTextStyle(includeFontPadding = false)
+
+private fun productTextStyle(
+    weight: FontWeight,
+    size: TextUnit,
+    lineHeight: TextUnit,
+) = TextStyle(
+    fontFamily = HumHumFontFamily,
+    fontWeight = weight,
+    fontSize = size,
+    lineHeight = lineHeight,
+    letterSpacing = 0.sp,
+    platformStyle = NoExtraFontPadding,
+)
+
+internal val HeadlineNumberStyle = productTextStyle(
+    FontWeight.SemiBold,
+    17.sp,
+    22.sp,
+).copy(fontFeatureSettings = "tnum")
+
+internal val HumHumTypography = Typography(
+    displaySmall = productTextStyle(FontWeight.SemiBold, 30.sp, 38.sp),
+    headlineMedium = productTextStyle(FontWeight.SemiBold, 22.sp, 30.sp),
+    titleLarge = productTextStyle(FontWeight.SemiBold, 17.sp, 24.sp),
+    titleMedium = productTextStyle(FontWeight.Medium, 16.sp, 23.sp),
+    bodyLarge = productTextStyle(FontWeight.Normal, 15.sp, 23.sp),
+    bodyMedium = productTextStyle(FontWeight.Normal, 15.sp, 23.sp),
+    labelLarge = productTextStyle(FontWeight.Medium, 13.sp, 19.sp),
+    labelMedium = productTextStyle(FontWeight.Medium, 12.sp, 16.sp),
 )
 
 @Composable

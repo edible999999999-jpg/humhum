@@ -34,6 +34,7 @@ import com.humhum.mobile.health.HealthFreshness
 import com.humhum.mobile.health.HealthSourceState
 import com.humhum.mobile.ui.theme.Humi
 import com.humhum.mobile.ui.theme.Hush
+import com.humhum.mobile.ui.theme.HeadlineNumberStyle
 import com.humhum.mobile.ui.theme.Ink
 import com.humhum.mobile.ui.theme.Line
 import com.humhum.mobile.ui.theme.Muted
@@ -238,7 +239,7 @@ private fun HealthMetricValue(
 ) {
     Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
         Text(label, style = MaterialTheme.typography.labelMedium, color = Muted)
-        Text(value, style = MaterialTheme.typography.titleMedium, color = accent, maxLines = 1)
+        Text(value, style = HeadlineNumberStyle, color = accent, maxLines = 1)
     }
 }
 

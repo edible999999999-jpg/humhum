@@ -6,6 +6,18 @@ import org.junit.Test
 
 class HumHumThemeTest {
     @Test
+    fun mobileTypographyUsesTheDeclaredCjkHierarchy() {
+        assertTrue(HumHumTypography.headlineMedium.fontSize.value == 22f)
+        assertTrue(HumHumTypography.headlineMedium.lineHeight.value == 30f)
+        assertTrue(HumHumTypography.titleLarge.fontSize.value == 17f)
+        assertTrue(HumHumTypography.titleMedium.fontSize.value == 16f)
+        assertTrue(HumHumTypography.bodyMedium.fontSize.value == 15f)
+        assertTrue(HumHumTypography.labelMedium.fontSize.value == 12f)
+        assertTrue(HumHumTypography.bodyMedium.letterSpacing.value == 0f)
+        assertTrue(HeadlineNumberStyle.fontFeatureSettings == "tnum")
+    }
+
+    @Test
     fun roleAccentsMeetWcagAaAgainstWhite() {
         val pairs = mapOf(
             "Humi/white" to (Humi to Color.White),
