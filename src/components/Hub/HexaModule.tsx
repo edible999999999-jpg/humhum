@@ -63,6 +63,12 @@ const HEXA_REGISTER_COMMAND = `~/.humhum/bin/humhum-hexa watch "请把这里改�
 const HEXA_UPDATE_COMMAND = `~/.humhum/bin/humhum-hexa update "我正在推进当前步骤"`;
 const HEXA_DELETE_COMMAND = `~/.humhum/bin/humhum-hexa unwatch`;
 
+interface HermesObserverStatus {
+  detected: boolean;
+  connected: boolean;
+  message: string;
+}
+
 function getClientColor(client: string): string {
   return CLIENT_COLORS[client] || "#94eff4";
 }
@@ -1397,6 +1403,67 @@ function SessionSection({
   );
 }
 
+function HermesObserverCard({
+  status,
+  busy,
+  error,
+  onConnect,
+}: {
+  status: HermesObserverStatus | null;
+  busy: boolean;
+  error: string | null;
+  onConnect: () => Promise<void>;
+}) {
+  if (!status?.detected) return null;
+  const tone = status.connected ? "#22c55e" : "#0f9f8f";
+
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "auto minmax(0, 1fr) auto",
+        alignItems: "center",
+        gap: 10,
+        padding: 10,
+        borderRadius: 8,
+        background: `${tone}0d`,
+        border: `1px solid ${tone}2e`,
+      }}
+    >
+      <ShieldCheck size={18} color={tone} />
+      <div style={{ minWidth: 0 }}>
+        <div style={{ color: "rgba(255,255,255,0.78)", fontSize: 11, fontWeight: 900 }}>
+          Hermes Agent
+        </div>
+        <div
+          role={error ? "alert" : "status"}
+          style={{
+            color: error ? "#f87171" : "rgba(255,255,255,0.4)",
+            fontSize: 10,
+            lineHeight: 1.45,
+            marginTop: 3,
+            overflowWrap: "anywhere",
+          }}
+        >
+          {error ?? status.message}
+        </div>
+      </div>
+      {status.connected ? (
+        <span style={{ color: tone, fontSize: 10, fontWeight: 850 }}>已接入</span>
+      ) : (
+        <button
+          type="button"
+          className="kawaii-toggle-btn connected"
+          disabled={busy}
+          onClick={() => void onConnect()}
+        >
+          {busy ? "正在接入" : "接入 Hexa"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function WatchCommandPanel() {
   const [copied, setCopied] = useState<"register" | "update" | "delete" | null>(null);
   const [expanded, setExpanded] = useState(false);
@@ -1579,12 +1646,31 @@ export function HexaModule() {
   const [autoConfirmSessions, setAutoConfirmSessions] = useState<Set<string>>(new Set());
   const [collapsedAgentGroups, setCollapsedAgentGroups] = useState<Set<string>>(new Set());
   const [activeSection, setActiveSection] = useState<"watched" | "scanned">("watched");
+  const [hermesObserver, setHermesObserver] = useState<HermesObserverStatus | null>(null);
+  const [hermesConnecting, setHermesConnecting] = useState(false);
+  const [hermesError, setHermesError] = useState<string | null>(null);
 
   useEffect(() => {
     void invoke<string[]>("get_auto_confirm_sessions")
       .then((sessions) => setAutoConfirmSessions(new Set(sessions)))
       .catch(() => setAutoConfirmSessions(new Set()));
+    void invoke<HermesObserverStatus>("get_hermes_observer_status")
+      .then(setHermesObserver)
+      .catch(() => setHermesObserver(null));
   }, []);
+
+  const connectHermesObserver = async () => {
+    setHermesConnecting(true);
+    setHermesError(null);
+    try {
+      await invoke("install_hooks_for_client", { clientId: "hermes" });
+      setHermesObserver(await invoke<HermesObserverStatus>("get_hermes_observer_status"));
+    } catch (cause) {
+      setHermesError(String(cause));
+    } finally {
+      setHermesConnecting(false);
+    }
+  };
 
   const toggleAutoConfirm = async (sessionId: string, enabled: boolean) => {
     const sessions = await invoke<string[]>("set_session_auto_confirm", { sessionId, enabled });
@@ -1766,6 +1852,12 @@ export function HexaModule() {
           renderOperations={renderWatchedOperations}
           entryPanel={(
             <div style={{ display: "grid", gap: 10 }}>
+              <HermesObserverCard
+                status={hermesObserver}
+                busy={hermesConnecting}
+                error={hermesError}
+                onConnect={connectHermesObserver}
+              />
               <WatchCommandPanel />
               <RemoteAccessPanel
                 state={remoteControl}

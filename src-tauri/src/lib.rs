@@ -380,6 +380,7 @@ pub fn run() {
             commands::toggle_settings,
             commands::send_notification,
             commands::check_hooks_status,
+            commands::get_hermes_observer_status,
             commands::webview_log,
             commands::proxy_post,
             commands::proxy_post_binary,

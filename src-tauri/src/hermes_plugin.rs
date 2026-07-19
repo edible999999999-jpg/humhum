@@ -1,6 +1,15 @@
 use std::path::Path;
 
 const MARKER: &str = "HUMHUM_HERMES_PLUGIN";
+const PLUGIN_KEY: &str = "humhum";
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct HermesObserverStatus {
+    pub detected: bool,
+    pub connected: bool,
+    pub message: String,
+}
+
 const MANIFEST: &str = r#"# HUMHUM_HERMES_PLUGIN
 name: humhum
 version: 1.0.0
@@ -282,14 +291,18 @@ def register(ctx):
 "#;
 
 pub fn install_at(plugin_dir: &Path) -> Result<(), String> {
+    let config_path = hermes_config_path(plugin_dir)?;
+    let updated_config = update_enabled_plugin(&config_path, true)?;
     std::fs::create_dir_all(plugin_dir)
         .map_err(|error| format!("Could not create Hermes plugin directory: {error}"))?;
     write_atomic(&plugin_dir.join("plugin.yaml"), MANIFEST)?;
     write_atomic(&plugin_dir.join("__init__.py"), PYTHON_SOURCE)?;
+    write_atomic(&config_path, &updated_config)?;
     Ok(())
 }
 
 pub fn uninstall_at(plugin_dir: &Path) -> Result<(), String> {
+    let config_path = hermes_config_path(plugin_dir)?;
     let managed_paths = [
         plugin_dir.join("plugin.yaml"),
         plugin_dir.join("__init__.py"),
@@ -303,6 +316,7 @@ pub fn uninstall_at(plugin_dir: &Path) -> Result<(), String> {
             }
         }
     }
+    let updated_config = update_enabled_plugin(&config_path, false)?;
     for path in managed_paths {
         if path.exists() {
             std::fs::remove_file(path)
@@ -318,19 +332,127 @@ pub fn uninstall_at(plugin_dir: &Path) -> Result<(), String> {
         std::fs::remove_dir(plugin_dir)
             .map_err(|error| format!("Could not remove Hermes plugin directory: {error}"))?;
     }
+    write_atomic(&config_path, &updated_config)?;
     Ok(())
 }
 
 pub fn is_installed_at(plugin_dir: &Path) -> bool {
-    [
+    let files_installed = [
         plugin_dir.join("plugin.yaml"),
         plugin_dir.join("__init__.py"),
     ]
     .iter()
-    .all(|path| std::fs::read_to_string(path).is_ok_and(|source| source.contains(MARKER)))
+    .all(|path| std::fs::read_to_string(path).is_ok_and(|source| source.contains(MARKER)));
+    files_installed
+        && hermes_config_path(plugin_dir)
+            .ok()
+            .is_some_and(|path| config_has_enabled_plugin(&path))
+}
+
+pub fn observer_status_at(home_dir: &Path) -> HermesObserverStatus {
+    let hermes_dir = home_dir.join(".hermes");
+    let plugin_dir = hermes_dir.join("plugins/humhum");
+    let connected = is_installed_at(&plugin_dir);
+    let detected = connected
+        || hermes_dir.join("config.yaml").exists()
+        || hermes_dir.join("sessions").exists()
+        || home_dir.join(".hermes-bundle/wrapper/hermes").exists();
+    let message = if connected {
+        "Hermes 已接入 Hexa；下一轮会话将自动上报"
+    } else if detected {
+        "已检测到本机 Hermes，尚未接入 Hexa"
+    } else {
+        "未检测到本机 Hermes"
+    };
+    HermesObserverStatus {
+        detected,
+        connected,
+        message: message.to_string(),
+    }
+}
+
+fn hermes_config_path(plugin_dir: &Path) -> Result<std::path::PathBuf, String> {
+    let plugins_dir = plugin_dir
+        .parent()
+        .filter(|path| path.file_name().is_some_and(|name| name == "plugins"))
+        .ok_or_else(|| "Hermes plugin must be installed below a plugins directory".to_string())?;
+    let hermes_dir = plugins_dir
+        .parent()
+        .ok_or_else(|| "Could not determine Hermes config directory".to_string())?;
+    Ok(hermes_dir.join("config.yaml"))
+}
+
+fn update_enabled_plugin(config_path: &Path, enable: bool) -> Result<String, String> {
+    ensure_not_symbolic_link(config_path)?;
+    let source = if config_path.exists() {
+        std::fs::read_to_string(config_path)
+            .map_err(|error| format!("Could not read Hermes config: {error}"))?
+    } else {
+        String::new()
+    };
+    let mut config: serde_json::Value = if source.trim().is_empty() {
+        serde_json::json!({})
+    } else {
+        serde_yaml::from_str(&source)
+            .map_err(|error| format!("Could not parse Hermes config: {error}"))?
+    };
+    let root = config
+        .as_object_mut()
+        .ok_or_else(|| "Hermes config root must be a mapping".to_string())?;
+    let plugins = root
+        .entry("plugins")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+        .ok_or_else(|| "Hermes plugins config must be a mapping".to_string())?;
+    let enabled = plugins
+        .entry("enabled")
+        .or_insert_with(|| serde_json::json!([]))
+        .as_array_mut()
+        .ok_or_else(|| "Hermes plugins.enabled must be a list".to_string())?;
+    enabled.retain(|value| value.as_str() != Some(PLUGIN_KEY));
+    if enable {
+        enabled.push(serde_json::Value::String(PLUGIN_KEY.to_string()));
+    }
+    if let Some(disabled) = plugins.get_mut("disabled") {
+        let disabled = disabled
+            .as_array_mut()
+            .ok_or_else(|| "Hermes plugins.disabled must be a list".to_string())?;
+        disabled.retain(|value| value.as_str() != Some(PLUGIN_KEY));
+    }
+    serde_yaml::to_string(&config)
+        .map_err(|error| format!("Could not serialize Hermes config: {error}"))
+}
+
+fn config_has_enabled_plugin(config_path: &Path) -> bool {
+    if ensure_not_symbolic_link(config_path).is_err() {
+        return false;
+    }
+    std::fs::read_to_string(config_path)
+        .ok()
+        .and_then(|source| serde_yaml::from_str::<serde_json::Value>(&source).ok())
+        .and_then(|config| {
+            config
+                .get("plugins")?
+                .get("enabled")?
+                .as_array()
+                .map(|enabled| {
+                    enabled
+                        .iter()
+                        .any(|value| value.as_str() == Some(PLUGIN_KEY))
+                })
+        })
+        .unwrap_or(false)
+}
+
+fn ensure_not_symbolic_link(path: &Path) -> Result<(), String> {
+    if std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+        return Err("Hermes config or plugin file cannot be a symbolic link".to_string());
+    }
+    Ok(())
 }
 
 fn write_atomic(path: &Path, content: &str) -> Result<(), String> {
+    ensure_not_symbolic_link(path)?;
     crate::knowledge_store::write_file_atomically(path, content.as_bytes())
         .map_err(|error| format!("Could not install Hermes plugin: {error}"))
 }
@@ -351,13 +473,21 @@ mod tests {
     fn installs_complete_owned_plugin_and_uninstalls_it() {
         let temp = tempfile::tempdir().unwrap();
         let plugin_dir = temp.path().join("plugins/humhum");
+        std::fs::write(
+            temp.path().join("config.yaml"),
+            "plugins:\n  enabled:\n    - tmcp-dingtalk-platform\n",
+        )
+        .unwrap();
 
         install_at(&plugin_dir).unwrap();
 
         let manifest = std::fs::read_to_string(plugin_dir.join("plugin.yaml")).unwrap();
         let source = std::fs::read_to_string(plugin_dir.join("__init__.py")).unwrap();
+        let config = std::fs::read_to_string(temp.path().join("config.yaml")).unwrap();
         assert!(manifest.contains("HUMHUM_HERMES_PLUGIN"));
         assert!(source.contains("HUMHUM_HERMES_PLUGIN"));
+        assert!(config.contains("tmcp-dingtalk-platform"));
+        assert!(config.contains("humhum"));
         for event in [
             "on_session_start",
             "pre_llm_call",
@@ -383,12 +513,15 @@ mod tests {
 
         uninstall_at(&plugin_dir).unwrap();
         assert!(!plugin_dir.exists());
+        let config = std::fs::read_to_string(temp.path().join("config.yaml")).unwrap();
+        assert!(config.contains("tmcp-dingtalk-platform"));
+        assert!(!config.contains("humhum"));
     }
 
     #[test]
     fn incomplete_plugin_is_not_reported_as_installed() {
         let temp = tempfile::tempdir().unwrap();
-        let plugin_dir = temp.path().join("humhum");
+        let plugin_dir = temp.path().join("plugins/humhum");
         std::fs::create_dir_all(&plugin_dir).unwrap();
         std::fs::write(plugin_dir.join("plugin.yaml"), "# HUMHUM_HERMES_PLUGIN\n").unwrap();
 
@@ -396,9 +529,67 @@ mod tests {
     }
 
     #[test]
+    fn managed_files_without_allow_list_entry_are_not_reported_as_installed() {
+        let temp = tempfile::tempdir().unwrap();
+        let plugin_dir = temp.path().join("plugins/humhum");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+        std::fs::write(plugin_dir.join("plugin.yaml"), MANIFEST).unwrap();
+        std::fs::write(plugin_dir.join("__init__.py"), PYTHON_SOURCE).unwrap();
+        std::fs::write(
+            temp.path().join("config.yaml"),
+            "plugins:\n  enabled:\n    - tmcp-dingtalk-platform\n",
+        )
+        .unwrap();
+
+        assert!(!is_installed_at(&plugin_dir));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn install_refuses_a_symbolic_link_config_without_creating_plugin_files() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().unwrap();
+        let plugin_dir = temp.path().join("plugins/humhum");
+        let external_config = temp.path().join("external-config.yaml");
+        std::fs::write(
+            &external_config,
+            "plugins:\n  enabled:\n    - personal-plugin\n",
+        )
+        .unwrap();
+        symlink(&external_config, temp.path().join("config.yaml")).unwrap();
+
+        let error = install_at(&plugin_dir).unwrap_err();
+
+        assert!(error.contains("symbolic link"));
+        assert!(!plugin_dir.exists());
+        assert_eq!(
+            std::fs::read_to_string(external_config).unwrap(),
+            "plugins:\n  enabled:\n    - personal-plugin\n"
+        );
+    }
+
+    #[test]
+    fn reports_detected_hermes_separately_from_connected_observer() {
+        let temp = tempfile::tempdir().unwrap();
+        let hermes_dir = temp.path().join(".hermes");
+        std::fs::create_dir_all(&hermes_dir).unwrap();
+        std::fs::write(hermes_dir.join("config.yaml"), "plugins:\n  enabled: []\n").unwrap();
+
+        let detected = observer_status_at(temp.path());
+        assert!(detected.detected);
+        assert!(!detected.connected);
+
+        install_at(&hermes_dir.join("plugins/humhum")).unwrap();
+        let connected = observer_status_at(temp.path());
+        assert!(connected.detected);
+        assert!(connected.connected);
+    }
+
+    #[test]
     fn refuses_to_remove_an_unmanaged_plugin() {
         let temp = tempfile::tempdir().unwrap();
-        let plugin_dir = temp.path().join("humhum");
+        let plugin_dir = temp.path().join("plugins/humhum");
         std::fs::create_dir_all(&plugin_dir).unwrap();
         std::fs::write(plugin_dir.join("plugin.yaml"), "name: personal_plugin\n").unwrap();
         std::fs::write(plugin_dir.join("__init__.py"), "print('mine')\n").unwrap();
@@ -413,7 +604,7 @@ mod tests {
     #[test]
     fn generated_plugin_is_valid_python() {
         let temp = tempfile::tempdir().unwrap();
-        let plugin_dir = temp.path().join("humhum");
+        let plugin_dir = temp.path().join("plugins/humhum");
         install_at(&plugin_dir).unwrap();
 
         let output = std::process::Command::new(python_command())
@@ -436,7 +627,7 @@ mod tests {
             "delivery must preserve callback order"
         );
         let temp = tempfile::tempdir().unwrap();
-        let plugin_dir = temp.path().join("humhum");
+        let plugin_dir = temp.path().join("plugins/humhum");
         install_at(&plugin_dir).unwrap();
         let runner = temp.path().join("smoke.py");
         let plugin_path = serde_json::to_string(&plugin_dir.join("__init__.py")).unwrap();

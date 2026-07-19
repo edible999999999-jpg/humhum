@@ -4376,6 +4376,13 @@ pub async fn check_hooks_status() -> Result<Value, String> {
     Ok(Value::Object(statuses))
 }
 
+#[tauri::command]
+pub async fn get_hermes_observer_status(
+) -> Result<crate::hermes_plugin::HermesObserverStatus, String> {
+    let home = dirs::home_dir().ok_or("Cannot determine home directory")?;
+    Ok(crate::hermes_plugin::observer_status_at(&home))
+}
+
 /// Get aggregated usage statistics
 #[tauri::command]
 pub async fn get_stats(
