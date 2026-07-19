@@ -1,6 +1,9 @@
+use crate::skill_index::{
+    chinese_skill_presentation, discover_skill_sources, is_personal_skill_path, SkillSource,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -78,6 +81,12 @@ pub struct AgentAsset {
     pub content: String,
     pub tags: Vec<String>,
     pub modified_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ownership: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name_zh: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary_zh: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -363,6 +372,18 @@ impl KnowledgeStore {
                         || asset.relative_path.to_lowercase().contains(&kw)
                         || asset.content.to_lowercase().contains(&kw)
                         || asset
+                            .display_name_zh
+                            .as_deref()
+                            .unwrap_or_default()
+                            .to_lowercase()
+                            .contains(&kw)
+                        || asset
+                            .summary_zh
+                            .as_deref()
+                            .unwrap_or_default()
+                            .to_lowercase()
+                            .contains(&kw)
+                        || asset
                             .tags
                             .iter()
                             .any(|tag| tag.to_lowercase().contains(&kw))
@@ -477,10 +498,31 @@ impl KnowledgeStore {
         &mut self,
         roots: Option<Vec<String>>,
     ) -> Result<Vec<AgentAsset>, String> {
-        let roots = resolve_agent_asset_roots(roots)?;
+        let home = dirs::home_dir().ok_or_else(|| "Cannot determine home directory".to_string())?;
+        self.scan_agent_assets_with_home(roots, &home)
+    }
+
+    fn scan_agent_assets_with_home(
+        &mut self,
+        roots: Option<Vec<String>>,
+        home: &Path,
+    ) -> Result<Vec<AgentAsset>, String> {
+        let roots = resolve_agent_asset_roots_with_home(roots, home);
+        let skill_sources = discover_skill_sources(home);
+        let mut scan_roots = roots
+            .into_iter()
+            .map(|path| (path, None))
+            .collect::<Vec<(PathBuf, Option<SkillSource>)>>();
+
+        for source in &skill_sources {
+            if !scan_roots.iter().any(|(path, _)| path == &source.root) {
+                scan_roots.push((source.root.clone(), Some(source.clone())));
+            }
+        }
+
         let mut assets = Vec::new();
 
-        for root in roots {
+        for (root, root_skill_source) in scan_roots {
             if !root.exists() || !root.is_dir() {
                 continue;
             }
@@ -499,7 +541,49 @@ impl KnowledgeStore {
                 let Ok(content) = std::fs::read_to_string(&path) else {
                     continue;
                 };
-                assets.push(parse_agent_asset(&root, &path, &content));
+                let mut asset = parse_agent_asset(&root, &path, &content);
+                if root_skill_source.is_some() && asset.asset_type != "skill" {
+                    continue;
+                }
+                if asset.asset_type == "skill" {
+                    if !is_personal_skill_path(&path) {
+                        continue;
+                    }
+                    let matched_source = skill_sources
+                        .iter()
+                        .filter(|source| path.starts_with(&source.root))
+                        .max_by_key(|source| source.root.components().count())
+                        .or(root_skill_source.as_ref());
+                    if matched_source.is_some_and(|source| {
+                        source
+                            .excluded_prefixes
+                            .iter()
+                            .any(|prefix| path.starts_with(prefix))
+                    }) || is_unapproved_skill_cache(&path, matched_source)
+                    {
+                        continue;
+                    }
+
+                    let description = skill_description(&content);
+                    let (display_name_zh, summary_zh) =
+                        chinese_skill_presentation(&asset.name, &description);
+                    asset.ownership = Some(
+                        matched_source
+                            .map(|source| source.ownership.clone())
+                            .unwrap_or_else(|| "created".to_string()),
+                    );
+                    asset.display_name_zh = display_name_zh;
+                    asset.summary_zh = Some(summary_zh);
+                    if let Some(source) = matched_source {
+                        asset.source = source.source.clone();
+                        if let Some(plugin) = &source.plugin {
+                            asset.tags.push(format!("plugin:{}", plugin));
+                            asset.tags.sort();
+                            asset.tags.dedup();
+                        }
+                    }
+                }
+                assets.push(asset);
             }
         }
 
@@ -509,11 +593,27 @@ impl KnowledgeStore {
                 .then(a.agent_id.cmp(&b.agent_id))
                 .then(a.relative_path.cmp(&b.relative_path))
         });
-        assets.dedup_by(|a, b| a.id == b.id);
+        let mut seen_ids = HashSet::new();
+        assets.retain(|asset| seen_ids.insert(asset.id.clone()));
 
+        self.backup_before_asset_replace()?;
         self.data.agent_assets = assets.clone();
         self.save();
         Ok(assets)
+    }
+
+    fn backup_before_asset_replace(&self) -> Result<(), String> {
+        if !self.file_path.exists() {
+            return Ok(());
+        }
+        let contents = read_private_text(&self.file_path)
+            .ok_or_else(|| "Failed to read existing knowledge index for backup".to_string())?;
+        let timestamp = chrono::Utc::now().format("%Y%m%dT%H%M%S%3fZ");
+        let backup = self
+            .file_path
+            .with_file_name(format!("knowledge.json.{}.bak", timestamp));
+        crate::local_api_auth::write_private_file_atomically(&backup, contents.as_bytes())
+            .map_err(|error| format!("Failed to back up knowledge index: {}", error))
     }
 
     pub fn diagnose_agent_asset_roots(
@@ -731,8 +831,7 @@ fn agent_rule_search_dirs(
     search_dirs
 }
 
-fn resolve_agent_asset_roots(roots: Option<Vec<String>>) -> Result<Vec<PathBuf>, String> {
-    let home = dirs::home_dir().ok_or_else(|| "Cannot determine home directory".to_string())?;
+fn resolve_agent_asset_roots_with_home(roots: Option<Vec<String>>, home: &Path) -> Vec<PathBuf> {
     let raw_roots = roots.unwrap_or_else(default_agent_asset_root_strings);
 
     let mut paths = Vec::new();
@@ -746,16 +845,11 @@ fn resolve_agent_asset_roots(roots: Option<Vec<String>>) -> Result<Vec<PathBuf>,
             paths.push(path);
         }
     }
-    Ok(paths)
+    paths
 }
 
 fn default_agent_asset_root_strings() -> Vec<String> {
     vec![
-        "~/.codex/skills".to_string(),
-        "~/.codex/plugins/cache".to_string(),
-        "~/.codex/vendor_imports/skills".to_string(),
-        "~/.claude".to_string(),
-        "~/.agents/skills".to_string(),
         "~/.qoder".to_string(),
         "~/.qoderwork".to_string(),
         "~/.gemini".to_string(),
@@ -825,7 +919,10 @@ fn agent_asset_file_priority(path: &Path) -> u8 {
 
     if filename == "skill.md" {
         0
-    } else if filename == "agents.md" || lower.contains("/agents/") || lower.contains("/agent/") {
+    } else if matches!(filename.as_str(), "agent.md" | "agents.md")
+        || lower.contains("/agents/")
+        || lower.contains("/agent/")
+    {
         1
     } else if lower.contains("memory") || lower.contains("soul") {
         2
@@ -868,7 +965,8 @@ fn is_agent_asset_file(path: &Path) -> bool {
 
     matches!(
         filename.as_str(),
-        "agents.md"
+        "agent.md"
+            | "agents.md"
             | "claude.md"
             | "skill.md"
             | "memory.md"
@@ -922,7 +1020,38 @@ fn parse_agent_asset(root: &Path, path: &Path, content: &str) -> AgentAsset {
         content: truncate_content(content, 2400),
         tags,
         modified_at,
+        ownership: None,
+        display_name_zh: None,
+        summary_zh: None,
     }
+}
+
+fn is_unapproved_skill_cache(path: &Path, source: Option<&SkillSource>) -> bool {
+    let normalized = path.to_string_lossy().replace('\\', "/");
+    let is_cache = normalized.contains("/.codex/plugins/cache/")
+        || normalized.contains("/.codex/vendor_imports/skills/");
+    is_cache
+        && !matches!(
+            source.map(|item| item.ownership.as_str()),
+            Some("installed" | "used")
+        )
+}
+
+fn skill_description(content: &str) -> String {
+    let (frontmatter, body) = parse_frontmatter(content);
+    frontmatter
+        .get("description")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            body.lines()
+                .map(str::trim)
+                .find(|line| !line.is_empty() && !line.starts_with('#'))
+                .map(str::to_string)
+        })
+        .unwrap_or_default()
 }
 
 fn classify_asset_type(lower_path: &str, filename: &str) -> String {
@@ -939,11 +1068,7 @@ fn classify_asset_type(lower_path: &str, filename: &str) -> String {
         "memory".to_string()
     } else if is_config {
         "config".to_string()
-    } else if (lower_path.contains("/skills/") || lower_path.contains("/skill/"))
-        && filename.ends_with(".md")
-    {
-        "skill".to_string()
-    } else if filename == "agents.md"
+    } else if matches!(filename.as_str(), "agent.md" | "agents.md")
         || lower_path.contains("/agents/")
         || lower_path.contains("/agent/")
     {
@@ -1824,5 +1949,150 @@ mod tests {
                 home,
             ]
         );
+    }
+
+    #[test]
+    fn personal_skill_scan_excludes_system_and_marketplace_caches() {
+        let root = temp_root("personal-skills");
+        let home = root.join("home");
+        let created = home.join(".agents/skills/my-helper/SKILL.md");
+        let system = home.join(".codex/skills/.system/imagegen/SKILL.md");
+        let marketplace =
+            home.join(".claude/plugins/marketplaces/official/plugins/noise/skills/noise/SKILL.md");
+        let installed = home.join(
+            ".codex/plugins/cache/openai-primary-runtime/documents/1.0.0/skills/documents/SKILL.md",
+        );
+        let used = home.join(
+            ".codex/plugins/cache/openai-curated-remote/superpowers/6.1.1/skills/using-superpowers/SKILL.md",
+        );
+        let agent_file = home.join(".claude/agent.md");
+
+        for (path, contents) in [
+            (
+                &created,
+                "---\nname: my-helper\ndescription: 帮我整理个人工作流\n---\n",
+            ),
+            (&system, "---\nname: imagegen\ndescription: built in\n---\n"),
+            (
+                &marketplace,
+                "---\nname: noise\ndescription: cached only\n---\n",
+            ),
+            (
+                &installed,
+                "---\nname: documents\ndescription: Create Word documents\n---\n",
+            ),
+            (
+                &used,
+                "---\nname: using-superpowers\ndescription: Apply Superpowers workflows\n---\n",
+            ),
+            (&agent_file, "# Personal agent instructions\n"),
+        ] {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, contents).unwrap();
+        }
+        let installed_reference = installed.parent().unwrap().join("tasks/create-edit.md");
+        std::fs::create_dir_all(installed_reference.parent().unwrap()).unwrap();
+        std::fs::write(&installed_reference, "# Supporting reference, not a skill").unwrap();
+        let created_reference = created.parent().unwrap().join("examples/usage.md");
+        std::fs::create_dir_all(created_reference.parent().unwrap()).unwrap();
+        std::fs::write(&created_reference, "# Supporting reference, not a skill").unwrap();
+        std::fs::create_dir_all(home.join(".codex")).unwrap();
+        std::fs::write(
+            home.join(".codex/config.toml"),
+            "[plugins.\"documents@openai-primary-runtime\"]\nenabled = true\n",
+        )
+        .unwrap();
+        let session = home.join(".codex/sessions/2026/07/17/session.jsonl");
+        std::fs::create_dir_all(session.parent().unwrap()).unwrap();
+        std::fs::write(
+            &session,
+            format!(
+                "{{\"type\":\"response_item\",\"payload\":{{\"type\":\"custom_tool_call\",\"name\":\"exec\",\"input\":\"cat {}\"}}}}\n",
+                used.display()
+            ),
+        )
+        .unwrap();
+
+        let mut store = store_at(&root);
+        let assets = store
+            .scan_agent_assets_with_home(
+                Some(vec![home.join(".claude").to_string_lossy().to_string()]),
+                &home,
+            )
+            .unwrap();
+        let skills = assets
+            .iter()
+            .filter(|asset| asset.asset_type == "skill")
+            .collect::<Vec<_>>();
+
+        assert_eq!(skills.len(), 3);
+        assert!(skills.iter().any(|asset| {
+            asset.name == "my-helper"
+                && asset.ownership.as_deref() == Some("created")
+                && asset.summary_zh.as_deref() == Some("帮我整理个人工作流")
+        }));
+        assert!(skills.iter().any(|asset| {
+            asset.name == "documents"
+                && asset.ownership.as_deref() == Some("installed")
+                && asset.display_name_zh.as_deref() == Some("Word 文档处理")
+        }));
+        assert!(skills.iter().any(|asset| {
+            asset.name == "using-superpowers"
+                && asset.ownership.as_deref() == Some("used")
+                && asset.tags.iter().any(|tag| tag == "plugin:superpowers")
+        }));
+        assert!(assets
+            .iter()
+            .any(|asset| asset.file_path == agent_file.to_string_lossy()
+                && asset.asset_type == "agent"));
+        assert!(!skills.iter().any(|asset| {
+            asset.file_path.contains("/.system/") || asset.file_path.contains("/marketplaces/")
+        }));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn asset_scan_backs_up_existing_knowledge_file() {
+        let root = temp_root("asset-backup");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join("knowledge.json"),
+            r#"{"agent_skills":[{"id":"old"}]}"#,
+        )
+        .unwrap();
+
+        let mut store = store_at(&root);
+        store
+            .scan_agent_assets_with_home(Some(Vec::new()), &root.join("home"))
+            .unwrap();
+
+        let backups = std::fs::read_dir(&root)
+            .unwrap()
+            .flatten()
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("knowledge.json.")
+                    && entry.file_name().to_string_lossy().ends_with(".bak")
+            })
+            .map(|entry| entry.path())
+            .collect::<Vec<_>>();
+        assert_eq!(backups.len(), 1);
+        assert_eq!(
+            std::fs::read_to_string(&backups[0]).unwrap(),
+            r#"{"agent_skills":[{"id":"old"}]}"#
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&backups[0]).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

@@ -5798,6 +5798,9 @@ mod humi_agent_kernel_tests {
             content: content.to_string(),
             tags: Vec::new(),
             modified_at: None,
+            ownership: None,
+            display_name_zh: None,
+            summary_zh: None,
         }
     }
 

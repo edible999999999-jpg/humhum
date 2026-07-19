@@ -32,6 +32,7 @@ mod pi_sidecar;
 mod qoder_log_watcher;
 mod remote_bridge;
 mod session_store;
+mod skill_index;
 mod sound_pack;
 mod stats_store;
 mod system_tts;

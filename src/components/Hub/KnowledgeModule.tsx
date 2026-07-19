@@ -33,11 +33,6 @@ const ASSET_TYPE_COLORS: Record<string, string> = {
 };
 
 const DEFAULT_ASSET_ROOTS = [
-  "~/.codex/skills",
-  "~/.codex/plugins/cache",
-  "~/.codex/vendor_imports/skills",
-  "~/.claude",
-  "~/.agents/skills",
   "~/.qoder",
   "~/.qoderwork",
   "~/.gemini",
@@ -143,6 +138,7 @@ export function KnowledgeModule() {
   const [vaultPath, setVaultPath] = useState("");
   const [vaultError, setVaultError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [assetView, setAssetView] = useState<"skills" | "all">("skills");
   const [reviewEngine, setReviewEngine] = useState<ReviewEngineState>({
     codex: null,
     hooks: {},
@@ -235,7 +231,7 @@ export function KnowledgeModule() {
       const found = await invoke<AgentAsset[]>("scan_agent_assets", { roots });
       const skillCount = found.filter((asset) => asset.asset_type === "skill").length;
       const agentCount = found.filter((asset) => asset.asset_type === "agent").length;
-      setAssetScanSummary(`Scanned ${found.length} assets · ${skillCount} skills · ${agentCount} agents`);
+      setAssetScanSummary(`已整理 ${found.length} 项本地知识 · ${skillCount} 个个人技能 · ${agentCount} 个 Agent 配置`);
       await fetchData();
     } catch (error) {
       setAssetError(String(error));
@@ -257,7 +253,7 @@ export function KnowledgeModule() {
       const candidates = diagnostics.reduce((sum, item) => sum + item.candidate_count, 0);
       const skills = diagnostics.reduce((sum, item) => sum + item.skill_count, 0);
       setAssetDiagnostics(diagnostics);
-      setAssetScanSummary(`Diagnostics: ${candidates} candidate files · ${skills} SKILL.md files`);
+      setAssetScanSummary(`诊断完成：${candidates} 个候选文件 · ${skills} 个技能文件`);
     } catch (error) {
       setAssetError(String(error));
     } finally {
@@ -358,6 +354,7 @@ export function KnowledgeModule() {
     return acc;
   }, {});
   const filteredAssets = assets.filter((asset) => {
+    if (assetView === "skills" && asset.asset_type !== "skill") return false;
     const query = searchQuery.trim().toLowerCase();
     if (!query) return true;
     return (
@@ -366,9 +363,15 @@ export function KnowledgeModule() {
       asset.agent_id.toLowerCase().includes(query) ||
       asset.relative_path.toLowerCase().includes(query) ||
       asset.content.toLowerCase().includes(query) ||
+      (asset.display_name_zh || "").toLowerCase().includes(query) ||
+      (asset.summary_zh || "").toLowerCase().includes(query) ||
       asset.tags.some((tag) => tag.toLowerCase().includes(query))
     );
   });
+  const personalSkills = assets.filter((asset) => asset.asset_type === "skill");
+  const createdSkillCount = personalSkills.filter((asset) => asset.ownership === "created").length;
+  const installedSkillCount = personalSkills.filter((asset) => asset.ownership === "installed").length;
+  const usedSkillCount = personalSkills.filter((asset) => asset.ownership === "used").length;
 
   return (
     <div className="hub-module">
@@ -409,7 +412,7 @@ export function KnowledgeModule() {
       >
         <div>
           <div style={{ fontSize: 13, color: "rgba(255,255,255,0.82)", fontWeight: 750 }}>
-            Agent Asset Connector
+            我的 Agent 知识
           </div>
           <div style={{ marginTop: 4, fontSize: 11, color: "rgba(255,255,255,0.42)", lineHeight: 1.45 }}>
             Hype 只负责扫描证据；哪些真的有用，需要借用一个已连接的 AI 助手来判断。
@@ -420,7 +423,7 @@ export function KnowledgeModule() {
           onClick={() => setActiveTab("assets")}
           style={{ minWidth: 116, padding: "8px 12px", fontSize: 12 }}
         >
-          Scan Assets
+          查看我的技能
         </button>
       </div>
 
@@ -433,7 +436,7 @@ export function KnowledgeModule() {
             onClick={() => setActiveTab(tab)}
           >
             {tab === "assets"
-              ? `Assets (${assets.length})`
+              ? `我的技能 (${personalSkills.length})`
               : tab === "preferences"
                 ? `偏好 (${data.preferences.length})`
                 : tab === "rules"
@@ -446,6 +449,41 @@ export function KnowledgeModule() {
       {/* Agent assets tab */}
       {activeTab === "assets" && (
         <div>
+          <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+            <button
+              type="button"
+              className={`kawaii-tab ${assetView === "skills" ? "active" : ""}`}
+              onClick={() => setAssetView("skills")}
+            >
+              我的技能
+            </button>
+            <button
+              type="button"
+              className={`kawaii-tab ${assetView === "all" ? "active" : ""}`}
+              onClick={() => setAssetView("all")}
+            >
+              全部知识
+            </button>
+          </div>
+
+          <input
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder={assetView === "skills" ? "搜索技能名称或中文用途..." : "搜索技能、规则、记忆或配置..."}
+            className="kawaii-input"
+            aria-label={assetView === "skills" ? "搜索我的技能" : "搜索全部知识"}
+          />
+          <div style={{ marginTop: 6, marginBottom: 10, fontSize: 10, color: "rgba(255,255,255,0.32)" }}>
+            {searchQuery.trim() ? `找到 ${filteredAssets.length} 项结果` : `共 ${filteredAssets.length} 项`}
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 8, marginBottom: 12 }}>
+            <KnowledgeStat label="我的技能" value={personalSkills.length} color="#60a5fa" />
+            <KnowledgeStat label="我创建的" value={createdSkillCount} color="#34d399" />
+            <KnowledgeStat label="已安装" value={installedSkillCount} color="#a78bfa" />
+            <KnowledgeStat label="会话用过" value={usedSkillCount} color="#f59e0b" />
+          </div>
+
           <div
             style={{
               padding: 14,
@@ -455,13 +493,13 @@ export function KnowledgeModule() {
               marginBottom: 12,
             }}
           >
-            <label className="kawaii-label">Agent asset roots</label>
+            <label className="kawaii-label">补充扫描目录</label>
             <button
               onClick={() => setAssetRoots(DEFAULT_ASSET_ROOTS)}
               className="kawaii-tab"
               style={{ marginTop: 8, marginBottom: 8, padding: "6px 10px", fontSize: 11 }}
             >
-              Use recommended roots
+              恢复推荐目录
             </button>
             <textarea
               value={assetRoots}
@@ -475,7 +513,7 @@ export function KnowledgeModule() {
               className="kawaii-save-btn"
               style={{ width: "100%", padding: 9, fontSize: 12, marginTop: 10 }}
             >
-              {scanningAssets ? "Scanning..." : "Scan and merge skill / agent / soul / memory"}
+              {scanningAssets ? "正在整理..." : "刷新我的技能与本地知识"}
             </button>
             <button
               onClick={handleDiagnoseAssets}
@@ -483,7 +521,7 @@ export function KnowledgeModule() {
               className="kawaii-tab"
               style={{ width: "100%", padding: 8, fontSize: 11, marginTop: 8 }}
             >
-              Diagnose scan roots
+              检查扫描目录
             </button>
             {assetError && (
               <div style={{ marginTop: 8, fontSize: 11, color: "#fb7185" }}>
@@ -510,10 +548,10 @@ export function KnowledgeModule() {
                     }}
                   >
                     <div style={{ color: item.exists && item.is_dir ? "#94eff4" : "#fb7185", fontWeight: 750 }}>
-                      {item.raw_path} · {item.exists && item.is_dir ? "ready" : "not found"}
+                      {item.raw_path} · {item.exists && item.is_dir ? "可读取" : "未找到"}
                     </div>
                     <div style={{ marginTop: 3 }}>
-                      candidates {item.candidate_count} · SKILL.md {item.skill_count}
+                      候选文件 {item.candidate_count} · 技能文件 {item.skill_count}
                     </div>
                     {item.sample_paths.length > 0 && (
                       <div style={{ marginTop: 4, fontFamily: "monospace", opacity: 0.7 }}>
@@ -529,20 +567,6 @@ export function KnowledgeModule() {
             )}
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginBottom: 12 }}>
-            <KnowledgeStat label="skills" value={assetTypeCounts.skill || 0} color="#60a5fa" />
-            <KnowledgeStat label="agents" value={assetTypeCounts.agent || 0} color="#a78bfa" />
-            <KnowledgeStat label="memory+soul" value={(assetTypeCounts.memory || 0) + (assetTypeCounts.soul || 0)} color="#fbbf24" />
-          </div>
-
-          <input
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="搜索 skill、agent、soul、memory、rules..."
-            className="kawaii-input"
-            style={{ marginBottom: 10 }}
-          />
-
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
             {Object.entries(assetTypeCounts).map(([type, count]) => (
               <span key={type} className="kawaii-badge">
@@ -554,7 +578,7 @@ export function KnowledgeModule() {
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {filteredAssets.length === 0 ? (
               <div style={{ padding: 24, textAlign: "center", color: "rgba(255,255,255,0.25)", fontSize: 13 }}>
-                点击扫描后，Hype 会把本地 Agent 资产合并到这里。
+                {assetView === "skills" ? "点击刷新后，Hype 会整理你创建和明确安装的技能。" : "点击刷新后，Hype 会整理本地 Agent 知识。"}
               </div>
             ) : (
               filteredAssets.map((asset) => <AgentAssetCard key={asset.id} asset={asset} />)
@@ -1076,12 +1100,21 @@ function ReviewerPill({ label, ok, detail }: { label: string; ok: boolean; detai
 function AgentAssetCard({ asset }: { asset: AgentAsset }) {
   const [expanded, setExpanded] = useState(false);
   const color = ASSET_TYPE_COLORS[asset.asset_type] || "#94eff4";
+  const isSkill = asset.asset_type === "skill";
+  const title = asset.display_name_zh || asset.name;
+  const ownershipLabel = asset.ownership === "used"
+    ? "会话用过"
+    : asset.ownership === "installed"
+      ? "已安装"
+      : asset.ownership === "created"
+        ? "我创建的"
+        : "来源待确认";
 
   return (
     <div
       style={{
         padding: 12,
-        borderRadius: 14,
+        borderRadius: 8,
         background: "rgba(255,255,255,0.02)",
         border: "1px solid rgba(255,255,255,0.05)",
         borderLeft: `3px solid ${color}`,
@@ -1090,7 +1123,7 @@ function AgentAssetCard({ asset }: { asset: AgentAsset }) {
       onClick={() => setExpanded(!expanded)}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
-        <span style={{ color, fontSize: 11, fontWeight: 800 }}>{asset.asset_type}</span>
+        <span style={{ color, fontSize: 11, fontWeight: 800 }}>{isSkill ? ownershipLabel : asset.asset_type}</span>
         <span style={{ fontSize: 10, color: "rgba(255,255,255,0.35)" }}>{asset.agent_id}</span>
         <span style={{ fontSize: 10, color: "rgba(255,255,255,0.22)" }}>{compactHomePath(asset.source)}</span>
         <div style={{ flex: 1 }} />
@@ -1102,21 +1135,33 @@ function AgentAssetCard({ asset }: { asset: AgentAsset }) {
       </div>
 
       <div style={{ fontSize: 13, color: "rgba(255,255,255,0.78)", fontWeight: 700 }}>
-        {asset.name}
+        {title}
       </div>
-      <div
-        style={{
-          marginTop: 4,
-          fontSize: 10,
-          color: "rgba(255,255,255,0.28)",
-          fontFamily: "monospace",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-        }}
-      >
-        {asset.relative_path}
-      </div>
+      {isSkill && asset.display_name_zh && (
+        <div style={{ marginTop: 3, fontSize: 10, color: "rgba(255,255,255,0.34)" }}>
+          原名：{asset.name}
+        </div>
+      )}
+      {isSkill && asset.summary_zh && (
+        <div style={{ marginTop: 6, fontSize: 12, color: "rgba(255,255,255,0.58)", lineHeight: 1.5 }}>
+          {asset.summary_zh}
+        </div>
+      )}
+      {!isSkill && (
+        <div
+          style={{
+            marginTop: 4,
+            fontSize: 10,
+            color: "rgba(255,255,255,0.28)",
+            fontFamily: "monospace",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {asset.relative_path}
+        </div>
+      )}
 
       {asset.tags.length > 0 && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 8 }}>

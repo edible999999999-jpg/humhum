@@ -1,0 +1,590 @@
+use std::collections::HashSet;
+use std::io::{Read, Seek, SeekFrom};
+use std::path::{Path, PathBuf};
+use std::time::UNIX_EPOCH;
+
+const MAX_RECENT_SESSION_FILES: usize = 80;
+const MAX_SESSION_TAIL_BYTES: u64 = 2 * 1024 * 1024;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnabledPlugin {
+    pub name: String,
+    pub marketplace: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct SkillSource {
+    pub root: PathBuf,
+    pub source: String,
+    pub plugin: Option<String>,
+    pub ownership: String,
+    pub excluded_prefixes: Vec<PathBuf>,
+}
+
+pub fn parse_enabled_codex_plugins(config: &str) -> Vec<EnabledPlugin> {
+    let mut current = None;
+    let mut enabled = Vec::new();
+
+    for line in config.lines().map(str::trim) {
+        if let Some(id) = line
+            .strip_prefix("[plugins.\"")
+            .and_then(|value| value.strip_suffix("\"]"))
+        {
+            current = id.split_once('@').map(|(name, marketplace)| EnabledPlugin {
+                name: name.to_string(),
+                marketplace: marketplace.to_string(),
+            });
+        } else if line == "enabled = true" {
+            if let Some(plugin) = current.take() {
+                enabled.push(plugin);
+            }
+        }
+    }
+
+    enabled
+}
+
+pub fn is_personal_skill_path(path: &Path) -> bool {
+    let normalized = path.to_string_lossy().replace('\\', "/");
+    !normalized.contains("/.claude/plugins/marketplaces/")
+        && !normalized.contains("/.codex/skills/.system/")
+        && !normalized.contains("/.qoder/plugins/cache/")
+}
+
+pub fn discover_skill_sources(home: &Path) -> Vec<SkillSource> {
+    let mut sources = vec![
+        SkillSource {
+            root: home.join(".claude/skills"),
+            source: "claude".into(),
+            plugin: None,
+            ownership: "created".into(),
+            excluded_prefixes: Vec::new(),
+        },
+        SkillSource {
+            root: home.join(".agents/skills"),
+            source: "agents".into(),
+            plugin: None,
+            ownership: "created".into(),
+            excluded_prefixes: Vec::new(),
+        },
+        SkillSource {
+            root: home.join(".codex/skills"),
+            source: "codex".into(),
+            plugin: None,
+            ownership: "created".into(),
+            excluded_prefixes: vec![home.join(".codex/skills/.system")],
+        },
+        SkillSource {
+            root: home.join(".qoder/skills"),
+            source: "qoder".into(),
+            plugin: None,
+            ownership: "installed".into(),
+            excluded_prefixes: Vec::new(),
+        },
+    ];
+
+    let claude_plugins = home.join(".claude/plugins");
+    if let Ok(entries) = std::fs::read_dir(&claude_plugins) {
+        for entry in entries.flatten() {
+            let root = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            if root.is_dir() && name != "marketplaces" {
+                sources.push(SkillSource {
+                    root,
+                    source: "claude-plugin".into(),
+                    plugin: Some(name),
+                    ownership: "installed".into(),
+                    excluded_prefixes: Vec::new(),
+                });
+            }
+        }
+    }
+
+    if let Ok(config) = std::fs::read_to_string(home.join(".codex/config.toml")) {
+        for plugin in parse_enabled_codex_plugins(&config) {
+            let plugin_root = home
+                .join(".codex/plugins/cache")
+                .join(&plugin.marketplace)
+                .join(&plugin.name);
+            if let Some(root) = newest_child_directory(&plugin_root) {
+                sources.push(SkillSource {
+                    root,
+                    source: "codex-plugin".into(),
+                    plugin: Some(plugin.name),
+                    ownership: "installed".into(),
+                    excluded_prefixes: Vec::new(),
+                });
+            }
+        }
+    }
+
+    let session_files = collect_recent_codex_session_files(home);
+    sources.extend(discover_session_skill_sources_from_files(
+        home,
+        &session_files,
+    ));
+
+    sources
+}
+
+pub fn extract_used_skill_paths_from_session(content: &str) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+
+    for line in content.lines() {
+        let Ok(entry) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if entry.get("type").and_then(serde_json::Value::as_str) != Some("response_item") {
+            continue;
+        }
+
+        let Some(payload) = entry.get("payload") else {
+            continue;
+        };
+        let tool_input = match payload.get("type").and_then(serde_json::Value::as_str) {
+            Some("custom_tool_call") => payload.get("input"),
+            Some("function_call") => payload.get("arguments"),
+            _ => None,
+        };
+        let Some(tool_input) = tool_input else {
+            continue;
+        };
+
+        if let Some(input) = tool_input.as_str() {
+            paths.extend(extract_plugin_skill_paths(input));
+        } else {
+            paths.extend(extract_plugin_skill_paths(&tool_input.to_string()));
+        }
+    }
+
+    let mut seen = HashSet::new();
+    paths.retain(|path| seen.insert(path.clone()));
+    paths
+}
+
+pub fn discover_session_skill_sources_from_files(
+    home: &Path,
+    session_files: &[PathBuf],
+) -> Vec<SkillSource> {
+    let cache_root = home.join(".codex/plugins/cache");
+    let Ok(canonical_cache_root) = cache_root.canonicalize() else {
+        return Vec::new();
+    };
+    let mut seen = HashSet::new();
+    let mut sources = Vec::new();
+
+    for session_file in session_files {
+        let Ok(content) = read_session_tail(session_file) else {
+            continue;
+        };
+        for skill_path in extract_used_skill_paths_from_session(&content) {
+            let Ok(canonical_skill_path) = skill_path.canonicalize() else {
+                continue;
+            };
+            if !canonical_skill_path.starts_with(&canonical_cache_root)
+                || !canonical_skill_path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.eq_ignore_ascii_case("SKILL.md"))
+            {
+                continue;
+            }
+
+            let Ok(relative) = canonical_skill_path.strip_prefix(&canonical_cache_root) else {
+                continue;
+            };
+            let components = relative
+                .components()
+                .filter_map(|component| component.as_os_str().to_str())
+                .collect::<Vec<_>>();
+            let Some(plugin) = components.get(1) else {
+                continue;
+            };
+            let Some(root) = skill_path.parent() else {
+                continue;
+            };
+            if !seen.insert(root.to_path_buf()) {
+                continue;
+            }
+
+            sources.push(SkillSource {
+                root: root.to_path_buf(),
+                source: "codex-session".into(),
+                plugin: Some((*plugin).to_string()),
+                ownership: "used".into(),
+                excluded_prefixes: Vec::new(),
+            });
+        }
+    }
+
+    sources.sort_by(|a, b| a.root.cmp(&b.root));
+    sources
+}
+
+fn extract_plugin_skill_paths(input: &str) -> Vec<PathBuf> {
+    const CACHE_MARKER: &str = "/.codex/plugins/cache/";
+    const SKILL_FILENAME: &str = "SKILL.md";
+
+    let mut paths = Vec::new();
+    let mut cursor = 0;
+    while let Some(marker_offset) = input[cursor..].find(CACHE_MARKER) {
+        let marker = cursor + marker_offset;
+        let Some(filename_offset) = input[marker..].find(SKILL_FILENAME) else {
+            break;
+        };
+        let end = marker + filename_offset + SKILL_FILENAME.len();
+        let start = input[..marker]
+            .char_indices()
+            .rev()
+            .find(|(_, character)| is_path_boundary(*character))
+            .map(|(index, character)| index + character.len_utf8())
+            .unwrap_or(0);
+        let candidate = &input[start..end];
+        if candidate.starts_with('/') {
+            paths.push(PathBuf::from(candidate));
+        }
+        cursor = end;
+    }
+    paths
+}
+
+fn is_path_boundary(character: char) -> bool {
+    character.is_whitespace()
+        || matches!(
+            character,
+            '\'' | '"'
+                | '`'
+                | '='
+                | '('
+                | ')'
+                | '['
+                | ']'
+                | '{'
+                | '}'
+                | ','
+                | ';'
+                | '<'
+                | '>'
+                | '|'
+        )
+}
+
+fn collect_recent_codex_session_files(home: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    for root in [
+        home.join(".codex/sessions"),
+        home.join(".codex/archived_sessions"),
+    ] {
+        collect_jsonl_files(&root, &mut files);
+    }
+    files.sort_by_key(|path| {
+        std::fs::metadata(path)
+            .and_then(|metadata| metadata.modified())
+            .ok()
+            .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+            .map(|duration| std::cmp::Reverse(duration.as_millis()))
+    });
+    files.truncate(MAX_RECENT_SESSION_FILES);
+    files
+}
+
+fn collect_jsonl_files(root: &Path, files: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_jsonl_files(&path, files);
+        } else if path.extension().and_then(|ext| ext.to_str()) == Some("jsonl") {
+            files.push(path);
+        }
+    }
+}
+
+fn read_session_tail(path: &Path) -> std::io::Result<String> {
+    let mut file = std::fs::File::open(path)?;
+    let len = file.metadata()?.len();
+    let start = len.saturating_sub(MAX_SESSION_TAIL_BYTES);
+    file.seek(SeekFrom::Start(start))?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    if start > 0 {
+        if let Some(first_newline) = bytes.iter().position(|byte| *byte == b'\n') {
+            bytes.drain(..=first_newline);
+        }
+    }
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+fn newest_child_directory(root: &Path) -> Option<PathBuf> {
+    let mut directories = std::fs::read_dir(root)
+        .ok()?
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir())
+        .collect::<Vec<_>>();
+    directories.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
+    directories.into_iter().next()
+}
+
+pub fn chinese_skill_presentation(name: &str, description: &str) -> (Option<String>, String) {
+    let normalized = name.to_lowercase();
+    let name_zh = match normalized.as_str() {
+        "a1" => Some("a1 研发助手"),
+        "documents" => Some("Word 文档处理"),
+        "pdf" => Some("PDF 处理"),
+        "spreadsheets" => Some("电子表格处理"),
+        "excel-live-control" => Some("Excel 实时控制"),
+        "presentations" => Some("演示文稿处理"),
+        "control-in-app-browser" | "browser" => Some("应用内浏览器控制"),
+        "sites-building" => Some("网站构建"),
+        "sites-hosting" => Some("网站托管"),
+        "visualize" => Some("交互式可视化"),
+        "template-creator" => Some("文档模板创建"),
+        "code-rubrics-generate" => Some("代码能力评分规则生成"),
+        "dogfooding" => Some("Dogfooding 模型配置"),
+        "data-agent-skill" => Some("DataWorks 数据助手"),
+        "fbi-dev-assistant" => Some("FBI 报表助手"),
+        "gexp-ae-logistics-order-query" => Some("AE 物流订单查询"),
+        "verify" => Some("项目验证"),
+        "agent-browser" => Some("浏览器操作"),
+        "docx" => Some("Word 文档处理"),
+        "find-skills" => Some("技能查找"),
+        "frontend-design" => Some("前端设计"),
+        "gexp-data-getdataclient-skill" => Some("数据客户端查询"),
+        "notion-infographic" => Some("Notion 信息图制作"),
+        "pptx" => Some("演示文稿处理"),
+        "remotion-best-practices" => Some("Remotion 视频制作规范"),
+        "xlsx" => Some("电子表格处理"),
+        "brainstorming" => Some("需求梳理与方案设计"),
+        "dispatching-parallel-agents" => Some("并行任务调度"),
+        "executing-plans" => Some("执行实施计划"),
+        "finishing-a-development-branch" => Some("完成开发分支"),
+        "receiving-code-review" => Some("处理代码评审反馈"),
+        "requesting-code-review" => Some("请求代码评审"),
+        "subagent-driven-development" => Some("子任务驱动开发"),
+        "systematic-debugging" => Some("系统化调试"),
+        "test-driven-development" => Some("测试驱动开发"),
+        "using-git-worktrees" => Some("Git 工作树开发"),
+        "using-superpowers" => Some("Superpowers 使用指南"),
+        "verification-before-completion" => Some("完成前验证"),
+        "writing-plans" => Some("编写实施计划"),
+        "writing-skills" => Some("编写 Agent 技能"),
+        _ => None,
+    }
+    .map(str::to_string);
+
+    if contains_cjk(description) {
+        return (name_zh, description.trim().to_string());
+    }
+
+    let summary = match normalized.as_str() {
+        "documents" => "创建、编辑和检查 Word 文档，包括修订、批注与版式验证。",
+        "pdf" => "读取、生成和检查 PDF 文件，并验证页面布局与内容。",
+        "spreadsheets" => "创建、编辑和分析 Excel、CSV 等电子表格文件。",
+        "excel-live-control" => "控制当前打开的 Excel 工作簿，读取或修改实时表格内容。",
+        "presentations" => "创建、编辑和检查 PowerPoint 或 Google Slides 演示文稿。",
+        "control-in-app-browser" | "browser" => "控制应用内浏览器，用于打开、操作和验证网页。",
+        "sites-building" => "构建网站、仪表盘、门户和其他可交互网页。",
+        "sites-hosting" => "发布并管理网站托管。",
+        "visualize" => "创建图表、模拟器和可交互的数据可视化。",
+        "template-creator" => "从 Word、PowerPoint 或 Excel 文件创建可复用的个人模板。",
+        "verify" => "运行项目约定的检查流程，确认代码、格式和构建结果是否可交付。",
+        "agent-browser" => "通过浏览器自动完成网页打开、点击、输入和结果检查。",
+        "docx" => "创建、编辑和检查 Word 文档，包括内容与版式。",
+        "find-skills" => "查找适合当前任务的可安装 Agent 技能。",
+        "frontend-design" => "设计并实现清晰、可用的前端界面。",
+        "gexp-data-getdataclient-skill" => "通过数据客户端查询和整理业务数据。",
+        "notion-infographic" => "把 Notion 内容整理成易读的信息图。",
+        "pptx" => "创建、编辑和检查 PowerPoint 演示文稿。",
+        "remotion-best-practices" => "按推荐实践制作和维护 Remotion 视频项目。",
+        "xlsx" => "创建、编辑和分析 Excel 电子表格。",
+        "brainstorming" => "在动手开发前梳理目标、约束和方案，形成可确认的设计方向。",
+        "dispatching-parallel-agents" => "把彼此独立的任务并行分派，汇总多个开发结果。",
+        "executing-plans" => "按既定实施计划分阶段执行，并在检查点核对进度。",
+        "finishing-a-development-branch" => "在开发完成后检查测试，并选择合并、提 PR 或清理分支。",
+        "receiving-code-review" => "核实代码评审意见并谨慎实施合理修改。",
+        "requesting-code-review" => "在重要改动完成后组织代码评审，检查需求和实现质量。",
+        "subagent-driven-development" => "把实施计划拆成独立子任务，在当前会话中逐项完成和复核。",
+        "systematic-debugging" => "先定位根因和复现路径，再实施并验证修复。",
+        "test-driven-development" => "先编写失败测试，再完成最小实现并持续重构验证。",
+        "using-git-worktrees" => "使用 Git worktree 隔离功能开发，避免干扰当前工作区。",
+        "using-superpowers" => "识别当前任务应使用的 Superpowers 工作流，并按技能说明执行。",
+        "verification-before-completion" => "在宣布完成前运行实际验证命令，用结果确认交付状态。",
+        "writing-plans" => "把多步骤需求整理成可执行、可验证的实施计划。",
+        "writing-skills" => "创建、修改并验证可复用的 Agent 技能说明。",
+        _ if normalized.contains("github") || normalized.starts_with("gh-") => {
+            "处理 GitHub 仓库、Issue、Pull Request 或检查任务。"
+        }
+        _ if normalized.contains("design") => "辅助产品设计、界面实现或体验检查。",
+        _ if normalized.contains("data") || normalized.contains("analytics") => {
+            "辅助数据查询、分析、质量检查或报告制作。"
+        }
+        _ => return (name_zh, format!("用于辅助处理「{}」相关任务。", name)),
+    };
+
+    (name_zh, summary.to_string())
+}
+
+fn contains_cjk(value: &str) -> bool {
+    value
+        .chars()
+        .any(|character| ('\u{4e00}'..='\u{9fff}').contains(&character))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        chinese_skill_presentation, discover_session_skill_sources_from_files,
+        discover_skill_sources, extract_used_skill_paths_from_session, is_personal_skill_path,
+        parse_enabled_codex_plugins, EnabledPlugin,
+    };
+    use std::path::{Path, PathBuf};
+
+    fn temp_root(tag: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "humhum-skill-index-{}-{}-{}",
+            tag,
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
+    }
+
+    #[test]
+    fn parses_only_enabled_codex_plugins() {
+        let config = r#"
+[plugins."documents@openai-primary-runtime"]
+enabled = true
+[plugins."github@openai-curated-remote"]
+enabled = false
+"#;
+
+        assert_eq!(
+            parse_enabled_codex_plugins(config),
+            vec![EnabledPlugin {
+                name: "documents".into(),
+                marketplace: "openai-primary-runtime".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn rejects_system_and_marketplace_skills() {
+        assert!(!is_personal_skill_path(Path::new(
+            "/Users/me/.codex/skills/.system/imagegen/SKILL.md"
+        )));
+        assert!(!is_personal_skill_path(Path::new(
+            "/Users/me/.claude/plugins/marketplaces/official/x/SKILL.md"
+        )));
+        assert!(!is_personal_skill_path(Path::new(
+            "/Users/me/.qoder/plugins/cache/bundled/skills/noise/SKILL.md"
+        )));
+        assert!(is_personal_skill_path(Path::new(
+            "/Users/me/.agents/skills/a1/SKILL.md"
+        )));
+    }
+
+    #[test]
+    fn discovers_created_roots_with_system_exclusion() {
+        let sources = discover_skill_sources(Path::new("/Users/me"));
+        let codex = sources
+            .iter()
+            .find(|source| source.root == Path::new("/Users/me/.codex/skills"))
+            .expect("codex created root");
+
+        assert_eq!(codex.ownership, "created");
+        assert!(codex
+            .excluded_prefixes
+            .iter()
+            .any(|path| path == Path::new("/Users/me/.codex/skills/.system")));
+        let qoder = sources
+            .iter()
+            .find(|source| source.root == Path::new("/Users/me/.qoder/skills"))
+            .expect("qoder installed root");
+        assert_eq!(qoder.ownership, "installed");
+    }
+
+    #[test]
+    fn preserves_chinese_descriptions_and_explains_common_skills() {
+        let (a1_name, a1_summary) = chinese_skill_presentation("a1", "查询代码评审和构建状态");
+        let (documents_name, documents_summary) = chinese_skill_presentation(
+            "documents",
+            "Create, edit, redline, and comment on Word documents",
+        );
+
+        assert_eq!(a1_name.as_deref(), Some("a1 研发助手"));
+        assert_eq!(a1_summary, "查询代码评审和构建状态");
+        assert_eq!(documents_name.as_deref(), Some("Word 文档处理"));
+        assert!(documents_summary.contains("创建、编辑和检查 Word 文档"));
+        for (name, expected) in [
+            ("verify", "项目验证"),
+            ("agent-browser", "浏览器操作"),
+            ("find-skills", "技能查找"),
+            ("frontend-design", "前端设计"),
+            ("remotion-best-practices", "Remotion 视频制作规范"),
+            ("using-superpowers", "Superpowers 使用指南"),
+            ("systematic-debugging", "系统化调试"),
+        ] {
+            assert_eq!(
+                chinese_skill_presentation(name, "English description")
+                    .0
+                    .as_deref(),
+                Some(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn skill_catalog_is_not_usage_but_real_tool_calls_are() {
+        let skill = "/Users/me/.codex/plugins/cache/openai-curated-remote/superpowers/6.1.1/skills/using-superpowers/SKILL.md";
+        let other = "/Users/me/.codex/plugins/cache/openai-curated-remote/superpowers/6.1.1/skills/systematic-debugging/SKILL.md";
+        let session = format!(
+            "{{\"type\":\"response_item\",\"payload\":{{\"type\":\"message\",\"role\":\"developer\",\"content\":[{{\"type\":\"input_text\",\"text\":\"Available skill: {skill}\"}}]}}}}\n\
+             {{\"type\":\"response_item\",\"payload\":{{\"type\":\"custom_tool_call\",\"name\":\"exec\",\"input\":\"cat {skill}\"}}}}\n\
+             {{\"type\":\"response_item\",\"payload\":{{\"type\":\"function_call\",\"name\":\"exec_command\",\"arguments\":\"{{\\\"cmd\\\":\\\"cat {other}\\\"}}\"}}}}\n\
+             {{\"type\":\"response_item\",\"payload\":{{\"type\":\"custom_tool_call_output\",\"output\":\"{skill}\"}}}}"
+        );
+
+        assert_eq!(
+            extract_used_skill_paths_from_session(&session),
+            vec![PathBuf::from(skill), PathBuf::from(other)]
+        );
+    }
+
+    #[test]
+    fn session_tool_call_discovers_only_the_used_plugin_skill() {
+        let root = temp_root("session-used");
+        let home = root.join("home");
+        let used_skill = home.join(
+            ".codex/plugins/cache/openai-curated-remote/superpowers/6.1.1/skills/using-superpowers/SKILL.md",
+        );
+        let unused_skill = home.join(
+            ".codex/plugins/cache/openai-curated-remote/superpowers/6.1.1/skills/brainstorming/SKILL.md",
+        );
+        for path in [&used_skill, &unused_skill] {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, "---\nname: test\ndescription: test\n---\n").unwrap();
+        }
+        let session_path = root.join("session.jsonl");
+        std::fs::write(
+            &session_path,
+            format!(
+                "{{\"type\":\"response_item\",\"payload\":{{\"type\":\"custom_tool_call\",\"name\":\"exec\",\"input\":\"cat {}\"}}}}\n",
+                used_skill.display()
+            ),
+        )
+        .unwrap();
+
+        let sources = discover_session_skill_sources_from_files(&home, &[session_path]);
+
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].root, used_skill.parent().unwrap());
+        assert_eq!(sources[0].plugin.as_deref(), Some("superpowers"));
+        assert_eq!(sources[0].ownership, "used");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}
