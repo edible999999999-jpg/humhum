@@ -240,6 +240,8 @@ mod tests {
             assert!(source.contains("HumHum is not another Agent"));
             assert!(source.contains("real provider session ID"));
             assert!(source.contains("--surface qoder_ide"));
+            assert!(source.contains("--surface qoder_cli"));
+            assert!(source.contains("--surface qoder_worker"));
             assert!(source.contains("--goal-id"));
             assert!(source.contains("do not fuzzy-match titles"));
             assert!(source.contains("--status waiting --need-user --blocked-reason"));

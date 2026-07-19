@@ -218,10 +218,14 @@ test("runs every command from a non-HUMHUM project with per-session state", asyn
   assert.equal(calls[8].body.status, "completed");
   assert.equal(calls[9].body.action, "append_milestone");
   assert.equal(calls[10].body.result_status, "unverified");
-  await assert.rejects(
-    runCli(["complete", "不能自证完成", "--result", "accepted"], options),
-    /unverified.*failed.*superseded/,
-  );
+  for (const result of ["verified", "accepted"]) {
+    const callsBeforeRejection = calls.length;
+    await assert.rejects(
+      runCli(["complete", "不能自证完成", "--result", result], options),
+      /unverified.*failed.*superseded/,
+    );
+    assert.equal(calls.length, callsBeforeRejection);
+  }
 
   const stateFile = stateFileFor({
     home,
