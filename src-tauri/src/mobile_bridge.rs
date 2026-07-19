@@ -55,6 +55,7 @@ pub struct MobilePairingInfo {
     pub url: String,
     pub certificate_fingerprint: String,
     pub scope: MobileDeviceScope,
+    pub personal_context: bool,
     pub network: MobileNetwork,
     pub android_setup: String,
 }
@@ -80,6 +81,7 @@ pub struct MobileDeviceSummary {
     pub name: String,
     pub paired_at: String,
     pub scope: MobileDeviceScope,
+    pub personal_context: bool,
     pub presence_mode: Option<MobilePresenceMode>,
     pub last_seen_at: Option<String>,
 }
@@ -95,6 +97,7 @@ pub enum MobilePresenceMode {
 struct MobileDeviceAuth {
     id: String,
     scope: MobileDeviceScope,
+    personal_context: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -503,13 +506,23 @@ impl MobileBridgeState {
         scope: MobileDeviceScope,
         network: MobileNetwork,
     ) -> Result<MobilePairingInfo, String> {
+        self.create_pairing_on_with_context(scope, network, false)
+    }
+
+    fn create_pairing_on_with_context(
+        &self,
+        scope: MobileDeviceScope,
+        network: MobileNetwork,
+        personal_context: bool,
+    ) -> Result<MobilePairingInfo, String> {
         let mut runtime = self.runtime.lock().map_err(|error| error.to_string())?;
         if !runtime.enabled {
             return Err("Enable mobile access before pairing a device".into());
         }
         let now = chrono::Utc::now().timestamp();
         let code = uuid::Uuid::new_v4().simple().to_string()[..8].to_ascii_uppercase();
-        let challenge = PairingChallenge::new(&code, now, scope);
+        let challenge =
+            PairingChallenge::new(&code, now, scope).with_personal_context(personal_context);
         let lan_url = runtime.url.as_deref().ok_or("Mobile URL is unavailable")?;
         let url = select_mobile_url(lan_url, runtime.tailnet_url.as_deref(), network)?.to_string();
         let fingerprint = runtime
@@ -523,6 +536,7 @@ impl MobileBridgeState {
             url,
             certificate_fingerprint: fingerprint,
             scope,
+            personal_context,
             network,
             android_setup,
         };
@@ -534,6 +548,16 @@ impl MobileBridgeState {
         self: &Arc<Self>,
         scope: MobileDeviceScope,
         network: MobileNetwork,
+    ) -> Result<MobilePairingInfo, String> {
+        self.create_pairing_for_android_with_context(scope, network, false)
+            .await
+    }
+
+    pub async fn create_pairing_for_android_with_context(
+        self: &Arc<Self>,
+        scope: MobileDeviceScope,
+        network: MobileNetwork,
+        personal_context: bool,
     ) -> Result<MobilePairingInfo, String> {
         let relay = {
             let runtime = self.runtime.lock().map_err(|error| error.to_string())?;
@@ -549,7 +573,7 @@ impl MobileBridgeState {
             }
         };
         let Some((base_url, invite_code)) = relay else {
-            return self.create_pairing_on(scope, network);
+            return self.create_pairing_on_with_context(scope, network, personal_context);
         };
 
         let relay_id = format!("pairing-{}", uuid::Uuid::new_v4());
@@ -568,6 +592,7 @@ impl MobileBridgeState {
                 let now = chrono::Utc::now().timestamp();
                 let code = uuid::Uuid::new_v4().simple().to_string()[..8].to_ascii_uppercase();
                 let challenge = PairingChallenge::new(&code, now, scope)
+                    .with_personal_context(personal_context)
                     .for_relay(&relay_id, Some(temporary_secret.clone()));
                 let lan_url = runtime.url.as_deref().ok_or("Mobile URL is unavailable")?;
                 let url = select_mobile_url(lan_url, runtime.tailnet_url.as_deref(), network)?
@@ -590,6 +615,7 @@ impl MobileBridgeState {
                     url,
                     certificate_fingerprint: fingerprint,
                     scope,
+                    personal_context,
                     network,
                     android_setup,
                 };
@@ -732,6 +758,7 @@ fn anywhere_snapshot_envelope(
 #[derive(Debug, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 enum AnywhereRequest {
+    PersonalContext,
     Conversation {
         session_id: String,
     },
@@ -760,9 +787,22 @@ fn parse_anywhere_request(
     scope: MobileDeviceScope,
     body: &serde_json::Value,
 ) -> Result<AnywhereRequest, String> {
+    parse_anywhere_request_with_capability(scope, false, body)
+}
+
+fn parse_anywhere_request_with_capability(
+    scope: MobileDeviceScope,
+    personal_context: bool,
+    body: &serde_json::Value,
+) -> Result<AnywhereRequest, String> {
     let request: AnywhereRequest =
         serde_json::from_value(body.clone()).map_err(|_| "Invalid Anywhere request".to_string())?;
     match &request {
+        AnywhereRequest::PersonalContext => {
+            if !personal_context {
+                return Err("Personal context is not authorized for this device".into());
+            }
+        }
         AnywhereRequest::Conversation { session_id } => {
             if !valid_anywhere_identifier(session_id) {
                 return Err("Invalid Anywhere conversation request".into());
@@ -816,6 +856,10 @@ async fn execute_anywhere_request(
     request: AnywhereRequest,
 ) -> Result<serde_json::Value, String> {
     match request {
+        AnywhereRequest::PersonalContext => serde_json::to_value(
+            crate::mobile_personal_context::project_mobile_personal_context(app),
+        )
+        .map_err(|_| "Personal context is unavailable".to_string()),
         AnywhereRequest::Refresh => Ok(with_mobile_cursor(mobile_session_page(app, scope).await)),
         AnywhereRequest::Conversation { session_id } => {
             let home_dir = dirs::home_dir().ok_or("Conversation unavailable")?;
@@ -978,13 +1022,22 @@ async fn run_wake_observer(
             .into_iter()
             .filter(|secret| secret.base_url == active_base_url.as_str())
             .collect::<Vec<_>>();
-        let scopes = bridge
+        let device_auth = bridge
             .devices
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .devices
             .iter()
-            .map(|device| (device.id.clone(), device.scope))
+            .map(|device| {
+                (
+                    device.id.clone(),
+                    MobileDeviceAuth {
+                        id: device.id.clone(),
+                        scope: device.scope,
+                        personal_context: device.personal_context,
+                    },
+                )
+            })
             .collect::<HashMap<_, _>>();
         let active_device_ids = secrets
             .iter()
@@ -992,14 +1045,24 @@ async fn run_wake_observer(
             .collect::<std::collections::HashSet<_>>();
         anywhere_states.retain(|device_id, _| active_device_ids.contains(device_id.as_str()));
         for secret in &secrets {
-            let Some(scope) = scopes.get(&secret.device_id).copied() else {
+            let Some(auth) = device_auth.get(&secret.device_id).cloned() else {
                 continue;
             };
+            let scope = auth.scope;
             let page = with_mobile_cursor(mobile_session_page(&app, scope).await);
             if let Some(cursor) = page["cursor"].as_str() {
                 if secret.command.is_some() {
                     let state = anywhere_states.entry(secret.device_id.clone()).or_default();
-                    sync_anywhere_device(&bridge, &app, secret, scope, &page, cursor, state).await;
+                    sync_anywhere_device(
+                        &bridge,
+                        &app,
+                        secret,
+                        auth,
+                        &page,
+                        cursor,
+                        state,
+                    )
+                    .await;
                 } else {
                     publisher.observe(&secret.device_id, cursor);
                 }
@@ -1018,11 +1081,12 @@ async fn sync_anywhere_device(
     bridge: &MobileBridgeState,
     app: &tauri::AppHandle,
     secret: &crate::mobile_relay::RelayDeviceSecret,
-    scope: MobileDeviceScope,
+    auth: MobileDeviceAuth,
     page: &serde_json::Value,
     cursor: &str,
     state: &mut AnywhereDeviceState,
 ) {
+    let scope = auth.scope;
     let current = bridge
         .relay_secrets
         .lock()
@@ -1117,7 +1181,11 @@ async fn sync_anywhere_device(
                     if !crate::anywhere_crypto::anywhere_message_is_current(&message, now) {
                         Err("This remote action expired before the Mac received it".to_string())
                     } else {
-                        match parse_anywhere_request(scope, &message.body) {
+                        match parse_anywhere_request_with_capability(
+                            scope,
+                            auth.personal_context,
+                            &message.body,
+                        ) {
                             Ok(request) => {
                                 execute_anywhere_request(app, &current.device_id, scope, request)
                                     .await
@@ -1326,9 +1394,14 @@ fn relay_invite_from_config(
 fn pair_success_value(
     token: &str,
     scope: MobileDeviceScope,
+    personal_context: bool,
     wake_relay: Option<crate::mobile_relay::WakeRelayBundle>,
 ) -> serde_json::Value {
-    let mut value = serde_json::json!({ "token": token, "scope": scope });
+    let mut value = serde_json::json!({
+        "token": token,
+        "scope": scope,
+        "personal_context": personal_context
+    });
     if let (Some(object), Some(bundle)) = (value.as_object_mut(), wake_relay) {
         object.insert(
             "wake_relay".into(),
@@ -1432,6 +1505,7 @@ async fn complete_temporary_pairing(
     bridge: &MobileBridgeState,
     name: &str,
     scope: MobileDeviceScope,
+    personal_context: bool,
 ) -> Result<CompletedTemporaryPairing, String> {
     let token = format!(
         "{}{}",
@@ -1442,7 +1516,7 @@ async fn complete_temporary_pairing(
         .devices
         .lock()
         .map_err(|error| error.to_string())?
-        .add_device(name, &token, scope)?;
+        .add_device_with_context(name, &token, scope, personal_context)?;
     let relay = {
         let runtime = bridge
             .runtime
@@ -1470,6 +1544,7 @@ async fn complete_temporary_pairing(
         &device.id,
         &token,
         scope,
+        personal_context,
         Some(&provision.desktop),
         Some(provision.android.clone()),
     );
@@ -1561,8 +1636,9 @@ async fn run_temporary_relay_pairing(
             if let Some(command) = secret.command.as_mut() {
                 command.last_sequence = request.sequence;
             }
-            let scope = match claim_temporary_pairing(&bridge, &relay_id, &request.code, now) {
-                Ok(scope) => scope,
+            let (scope, personal_context) =
+                match claim_temporary_pairing(&bridge, &relay_id, &request.code, now) {
+                Ok(capabilities) => capabilities,
                 Err(error) => {
                     let body = serde_json::json!({
                         "ok": false,
@@ -1578,7 +1654,13 @@ async fn run_temporary_relay_pairing(
                     continue;
                 }
             };
-            let completed = complete_temporary_pairing(&bridge, &request.device_name, scope).await;
+            let completed = complete_temporary_pairing(
+                &bridge,
+                &request.device_name,
+                scope,
+                personal_context,
+            )
+            .await;
             let (body, paired_device_id) = match completed {
                 Ok(completed) => {
                     let body = sealed_temporary_pairing_body(&request, completed.value, now);
@@ -1637,6 +1719,7 @@ fn commit_pairing_response(
     device_id: &str,
     raw_token: &str,
     scope: MobileDeviceScope,
+    personal_context: bool,
     relay_secret: Option<&crate::mobile_relay::RelayDeviceSecret>,
     wake_relay: Option<crate::mobile_relay::WakeRelayBundle>,
 ) -> Result<Response<HttpBody>, PairingCommitError> {
@@ -1645,6 +1728,7 @@ fn commit_pairing_response(
         device_id,
         raw_token,
         scope,
+        personal_context,
         relay_secret,
         wake_relay,
     )
@@ -1656,6 +1740,7 @@ fn commit_pairing_value(
     device_id: &str,
     raw_token: &str,
     scope: MobileDeviceScope,
+    personal_context: bool,
     relay_secret: Option<&crate::mobile_relay::RelayDeviceSecret>,
     wake_relay: Option<crate::mobile_relay::WakeRelayBundle>,
 ) -> Result<serde_json::Value, PairingCommitError> {
@@ -1691,7 +1776,12 @@ fn commit_pairing_value(
     // Build the final response while revocation is still excluded from the
     // commit boundary. A revoke that starts afterwards is ordered after this
     // successful pairing instead of racing between validation and response.
-    Ok(pair_success_value(raw_token, scope, wake_relay))
+    Ok(pair_success_value(
+        raw_token,
+        scope,
+        personal_context,
+        wake_relay,
+    ))
 }
 
 fn revoke_device_records(
@@ -2179,6 +2269,22 @@ async fn handle_mobile_request(
                 json_error(StatusCode::UNAUTHORIZED, "Pair this device first")
             }
         }
+        (&Method::GET, "/api/personal-context") => {
+            match request_device_auth(&request, &bridge) {
+                Some(device) if device.personal_context => json_response(
+                    StatusCode::OK,
+                    &serde_json::to_value(
+                        crate::mobile_personal_context::project_mobile_personal_context(&app),
+                    )
+                    .unwrap_or_default(),
+                ),
+                Some(_) => json_error(
+                    StatusCode::FORBIDDEN,
+                    "Personal context is not authorized for this device",
+                ),
+                None => json_error(StatusCode::UNAUTHORIZED, "Pair this device first"),
+            }
+        }
         (&Method::POST, "/api/session/conversation") => {
             read_mobile_session_conversation(request, &app, &bridge).await
         }
@@ -2544,7 +2650,7 @@ async fn pair_device(
         Ok(input) => input,
         Err(_) => return json_error(StatusCode::BAD_REQUEST, "Invalid pairing request"),
     };
-    let challenge_scope = {
+    let (challenge_scope, challenge_personal_context) = {
         let mut runtime = match bridge.runtime.lock() {
             Ok(runtime) => runtime,
             Err(_) => return json_error(StatusCode::INTERNAL_SERVER_ERROR, "Pairing unavailable"),
@@ -2559,8 +2665,9 @@ async fn pair_device(
             return json_error(StatusCode::UNAUTHORIZED, &error);
         }
         let scope = challenge.scope;
+        let personal_context = challenge.personal_context;
         runtime.pairing = None;
-        scope
+        (scope, personal_context)
     };
     let token = format!(
         "{}{}",
@@ -2572,7 +2679,14 @@ async fn pair_device(
         .devices
         .lock()
         .map_err(|error| error.to_string())
-        .and_then(|mut devices| devices.add_device(name, &token, challenge_scope))
+        .and_then(|mut devices| {
+            devices.add_device_with_context(
+                name,
+                &token,
+                challenge_scope,
+                challenge_personal_context,
+            )
+        })
     {
         Ok(device) => device,
         Err(_) => {
@@ -2626,6 +2740,7 @@ async fn pair_device(
         &device.id,
         &token,
         challenge_scope,
+        challenge_personal_context,
         relay_provision
             .as_ref()
             .map(|(_, provision)| &provision.desktop),
@@ -3187,6 +3302,7 @@ struct PairingChallenge {
     expires_at: i64,
     failed_attempts: u8,
     scope: MobileDeviceScope,
+    personal_context: bool,
     relay_id: Option<String>,
     relay_secret: Option<crate::mobile_relay::RelayDeviceSecret>,
 }
@@ -3198,9 +3314,15 @@ impl PairingChallenge {
             expires_at: now + PAIRING_TTL_SECONDS,
             failed_attempts: 0,
             scope,
+            personal_context: false,
             relay_id: None,
             relay_secret: None,
         }
+    }
+
+    fn with_personal_context(mut self, personal_context: bool) -> Self {
+        self.personal_context = personal_context;
+        self
     }
 
     fn for_relay(
@@ -3240,7 +3362,7 @@ fn claim_temporary_pairing(
     relay_id: &str,
     code: &str,
     now: i64,
-) -> Result<MobileDeviceScope, String> {
+) -> Result<(MobileDeviceScope, bool), String> {
     let mut runtime = bridge.runtime.lock().map_err(|error| error.to_string())?;
     let challenge = runtime
         .pairing
@@ -3251,8 +3373,9 @@ fn claim_temporary_pairing(
     }
     challenge.verify(code, now)?;
     let scope = challenge.scope;
+    let personal_context = challenge.personal_context;
     runtime.pairing = None;
-    Ok(scope)
+    Ok((scope, personal_context))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -3263,6 +3386,8 @@ struct MobileDevice {
     paired_at: String,
     #[serde(default = "default_mobile_scope")]
     scope: MobileDeviceScope,
+    #[serde(default)]
+    personal_context: bool,
 }
 
 struct MobileDeviceStore {
@@ -3302,12 +3427,23 @@ impl MobileDeviceStore {
         raw_token: &str,
         scope: MobileDeviceScope,
     ) -> Result<MobileDevice, String> {
+        self.add_device_with_context(name, raw_token, scope, false)
+    }
+
+    fn add_device_with_context(
+        &mut self,
+        name: &str,
+        raw_token: &str,
+        scope: MobileDeviceScope,
+        personal_context: bool,
+    ) -> Result<MobileDevice, String> {
         let device = MobileDevice {
             id: uuid::Uuid::new_v4().to_string(),
             name: sanitize_device_name(name),
             token_digest: digest_token(raw_token),
             paired_at: chrono::Utc::now().to_rfc3339(),
             scope,
+            personal_context,
         };
         self.devices.push(device.clone());
         if let Err(error) = self.persist() {
@@ -3330,6 +3466,7 @@ impl MobileDeviceStore {
             .map(|device| MobileDeviceAuth {
                 id: device.id.clone(),
                 scope: device.scope,
+                personal_context: device.personal_context,
             })
     }
 
@@ -3342,6 +3479,7 @@ impl MobileDeviceStore {
                 name: device.name.clone(),
                 paired_at: device.paired_at.clone(),
                 scope: device.scope,
+                personal_context: device.personal_context,
                 presence_mode: None,
                 last_seen_at: None,
             })
@@ -3362,6 +3500,7 @@ impl MobileDeviceStore {
                     name: device.name.clone(),
                     paired_at: device.paired_at.clone(),
                     scope: device.scope,
+                    personal_context: device.personal_context,
                     presence_mode: fresh.map(|value| value.mode),
                     last_seen_at: fresh.and_then(|value| {
                         chrono::DateTime::from_timestamp(value.recorded_at, 0)
@@ -3600,6 +3739,36 @@ mod tests {
             has_pending_permission: false,
             route: None,
         }
+    }
+
+    #[test]
+    fn personal_context_capability_is_explicit_and_persisted_with_pairing() {
+        let without_context =
+            PairingChallenge::new("ABCD1234", 1_800_000_000, MobileDeviceScope::Read);
+        let with_context =
+            PairingChallenge::new("EFGH5678", 1_800_000_000, MobileDeviceScope::Read)
+                .with_personal_context(true);
+
+        assert!(!without_context.personal_context);
+        assert!(with_context.personal_context);
+    }
+
+    #[test]
+    fn anywhere_personal_context_requires_the_device_capability() {
+        assert!(parse_anywhere_request_with_capability(
+            MobileDeviceScope::Read,
+            false,
+            &json!({"action": "personal_context"}),
+        )
+        .is_err());
+        assert!(matches!(
+            parse_anywhere_request_with_capability(
+                MobileDeviceScope::Read,
+                true,
+                &json!({"action": "personal_context"}),
+            ),
+            Ok(AnywhereRequest::PersonalContext)
+        ));
     }
 
     fn insert_hook_session(
@@ -3925,7 +4094,7 @@ mod tests {
         assert!(claim_temporary_pairing(&bridge, "pairing-two", "ABCD1234", now + 1).is_err());
         assert_eq!(
             claim_temporary_pairing(&bridge, "pairing-one", "ABCD1234", now + 1).unwrap(),
-            MobileDeviceScope::Control
+            (MobileDeviceScope::Control, false)
         );
         assert!(claim_temporary_pairing(&bridge, "pairing-one", "ABCD1234", now + 1).is_err());
     }
@@ -4039,10 +4208,11 @@ mod tests {
 
     #[test]
     fn relay_pair_response_is_backward_compatible_and_subscriber_only() {
-        let plain = pair_success_value("aa", MobileDeviceScope::Read, None);
-        assert_eq!(plain.as_object().unwrap().len(), 2);
+        let plain = pair_success_value("aa", MobileDeviceScope::Read, false, None);
+        assert_eq!(plain.as_object().unwrap().len(), 3);
         assert_eq!(plain["token"], "aa");
         assert_eq!(plain["scope"], "read");
+        assert_eq!(plain["personal_context"], false);
 
         let bundle = crate::mobile_relay::WakeRelayBundle {
             version: 1,
@@ -4052,8 +4222,10 @@ mod tests {
             wake_key: "33".repeat(32),
             command: None,
         };
-        let relayed = pair_success_value("aa", MobileDeviceScope::Control, Some(bundle));
-        assert_eq!(relayed.as_object().unwrap().len(), 3);
+        let relayed =
+            pair_success_value("aa", MobileDeviceScope::Control, true, Some(bundle));
+        assert_eq!(relayed.as_object().unwrap().len(), 4);
+        assert_eq!(relayed["personal_context"], true);
         assert_eq!(relayed["wake_relay"]["subscriber_token"], "22".repeat(32));
         let serialized = serde_json::to_string(&relayed).unwrap();
         assert!(!serialized.contains("publisher_token"));
@@ -4144,6 +4316,7 @@ mod tests {
                 &pairing_device_id,
                 &token,
                 MobileDeviceScope::Control,
+                false,
                 Some(&secret),
                 Some(bundle),
             )

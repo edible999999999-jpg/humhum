@@ -280,10 +280,15 @@ pub async fn start_mobile_pairing(
     state: State<'_, Arc<MobileBridgeState>>,
     scope: MobileDeviceScope,
     network: Option<MobileNetwork>,
+    personal_context: Option<bool>,
 ) -> Result<MobilePairingInfo, String> {
     state
         .inner()
-        .create_pairing_for_android(scope, network.unwrap_or_default())
+        .create_pairing_for_android_with_context(
+            scope,
+            network.unwrap_or_default(),
+            personal_context.unwrap_or(false),
+        )
         .await
 }
 

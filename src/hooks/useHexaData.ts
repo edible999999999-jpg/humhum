@@ -66,6 +66,7 @@ export interface MobileBridgeStatus {
     name: string;
     paired_at: string;
     scope: "read" | "control";
+    personal_context: boolean;
     presence_mode: "foreground" | "monitoring" | null;
     last_seen_at: string | null;
   }>;
@@ -81,6 +82,7 @@ export interface MobilePairingInfo {
   url: string;
   certificate_fingerprint: string;
   scope: "read" | "control";
+  personal_context: boolean;
   network: "lan" | "tailnet";
   android_setup: string;
 }
@@ -1137,8 +1139,13 @@ export function useHexaData() {
   const startMobilePairing = useCallback(async (
     scope: "read" | "control" = "read",
     network: "lan" | "tailnet" = "lan",
+    personalContext = true,
   ) => {
-    const pairing = await invoke<MobilePairingInfo>("start_mobile_pairing", { scope, network });
+    const pairing = await invoke<MobilePairingInfo>("start_mobile_pairing", {
+      scope,
+      network,
+      personalContext,
+    });
     setMobilePairing(pairing);
     const state = await invoke<MobileBridgeStatus>("get_mobile_bridge_status");
     setMobileBridge(state);

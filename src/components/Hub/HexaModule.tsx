@@ -263,10 +263,18 @@ export async function startOrRefreshMobilePairing(
   state: MobileBridgeStatus,
   pairing: MobilePairingInfo | null,
   onEnable: () => Promise<MobileBridgeStatus>,
-  onPair: (scope?: "read" | "control", network?: "lan" | "tailnet") => Promise<MobilePairingInfo>,
+  onPair: (
+    scope?: "read" | "control",
+    network?: "lan" | "tailnet",
+    personalContext?: boolean,
+  ) => Promise<MobilePairingInfo>,
 ): Promise<MobilePairingInfo> {
   if (!state.enabled) await onEnable();
-  return onPair(pairing?.scope ?? "read", pairing?.network ?? "lan");
+  return onPair(
+    pairing?.scope ?? "read",
+    pairing?.network ?? "lan",
+    pairing?.personal_context ?? true,
+  );
 }
 
 export function HexaMobilePairingCard({
@@ -278,7 +286,11 @@ export function HexaMobilePairingCard({
   state: MobileBridgeStatus;
   pairing: MobilePairingInfo | null;
   onEnable: () => Promise<MobileBridgeStatus>;
-  onPair: (scope?: "read" | "control", network?: "lan" | "tailnet") => Promise<MobilePairingInfo>;
+  onPair: (
+    scope?: "read" | "control",
+    network?: "lan" | "tailnet",
+    personalContext?: boolean,
+  ) => Promise<MobilePairingInfo>;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -381,7 +393,7 @@ export function HexaMobilePairingCard({
                 ? `已连接 ${state.paired_devices} 台设备，也可以重新配对`
                 : "生成二维码后，用 Android HUMHUM 扫描")}
             </span>
-            <small>默认只读 · 同一 Wi-Fi · 5 分钟有效</small>
+            <small>默认只读 · 同步个人上下文 · 5 分钟有效</small>
           </div>
           <button
             type="button"
@@ -1127,7 +1139,11 @@ export function HexaMobileAccessPanel({
   relayConfig: MobileRelayConfig;
   onEnable: () => Promise<MobileBridgeStatus>;
   onDisable: () => Promise<MobileBridgeStatus>;
-  onPair: (scope?: "read" | "control", network?: "lan" | "tailnet") => Promise<MobilePairingInfo>;
+  onPair: (
+    scope?: "read" | "control",
+    network?: "lan" | "tailnet",
+    personalContext?: boolean,
+  ) => Promise<MobilePairingInfo>;
   onRevoke: () => Promise<MobileBridgeStatus>;
   onRevokeDevice: (deviceId: string) => Promise<MobileBridgeStatus>;
   onConfigureRelay: (
@@ -1140,6 +1156,7 @@ export function HexaMobileAccessPanel({
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [network, setNetwork] = useState<"lan" | "tailnet">("lan");
+  const [personalContext, setPersonalContext] = useState(true);
   const [nowMs, setNowMs] = useState(Date.now());
   const [relayEnabled, setRelayEnabled] = useState(relayConfig.enabled);
   const [relayUrl, setRelayUrl] = useState(relayConfig.base_url ?? "");
@@ -1206,6 +1223,16 @@ export function HexaMobileAccessPanel({
               </button>
             ))}
           </div>
+        )}
+        {state.enabled && (
+          <label title="只同步限量摘要，不包含文件路径、原始聊天或完整会话">
+            <input
+              type="checkbox"
+              checked={personalContext}
+              onChange={(event) => setPersonalContext(event.target.checked)}
+            />
+            同步个人上下文
+          </label>
         )}
         {!state.enabled && (
           <div className="hexa-mobile-relay-form">
@@ -1308,8 +1335,8 @@ export function HexaMobileAccessPanel({
                 className="kawaii-toggle-btn"
               ><Copy size={15} /></button>
             )}
-            <button type="button" title="生成只读配对码" aria-label="生成只读配对码" disabled={busy} onClick={() => run(() => onPair("read", network))} className="kawaii-toggle-btn connected"><Link size={15} /></button>
-            <button type="button" title="生成可控制配对码" aria-label="生成可控制配对码" disabled={busy} onClick={() => run(() => onPair("control", network))} className="kawaii-toggle-btn"><ShieldCheck size={15} /></button>
+            <button type="button" title="生成只读配对码" aria-label="生成只读配对码" disabled={busy} onClick={() => run(() => onPair("read", network, personalContext))} className="kawaii-toggle-btn connected"><Link size={15} /></button>
+            <button type="button" title="生成可控制配对码" aria-label="生成可控制配对码" disabled={busy} onClick={() => run(() => onPair("control", network, personalContext))} className="kawaii-toggle-btn"><ShieldCheck size={15} /></button>
             {state.paired_devices > 0 && <button type="button" title="撤销全部移动设备" aria-label="撤销全部移动设备" disabled={busy} onClick={() => run(onRevoke)} className="kawaii-toggle-btn"><Trash2 size={15} /></button>}
             <button type="button" title="关闭 HUMHUM 移动访问" aria-label="关闭 HUMHUM 移动访问" disabled={busy} onClick={() => run(onDisable)} className="kawaii-toggle-btn"><Power size={15} /></button>
           </>

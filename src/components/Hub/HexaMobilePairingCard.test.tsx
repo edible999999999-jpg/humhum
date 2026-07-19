@@ -101,6 +101,7 @@ const activePairing: MobilePairingInfo = {
   url: "https://192.168.1.20:31276",
   certificate_fingerprint: "AABBCC",
   scope: "read",
+  personal_context: true,
   network: "lan",
   android_setup: JSON.stringify({ version: 1, code: "ABCD1234" }),
 };
@@ -226,7 +227,7 @@ describe("HexaMobilePairingCard", () => {
     );
 
     expect(onEnable).toHaveBeenCalledOnce();
-    expect(onPair).toHaveBeenCalledWith("read", "lan");
+    expect(onPair).toHaveBeenCalledWith("read", "lan", true);
     expect(onEnable.mock.invocationCallOrder[0]).toBeLessThan(onPair.mock.invocationCallOrder[0]!);
   });
 
@@ -242,7 +243,7 @@ describe("HexaMobilePairingCard", () => {
     );
 
     expect(onEnable).not.toHaveBeenCalled();
-    expect(onPair).toHaveBeenCalledWith("control", "tailnet");
+    expect(onPair).toHaveBeenCalledWith("control", "tailnet", true);
   });
 });
 
