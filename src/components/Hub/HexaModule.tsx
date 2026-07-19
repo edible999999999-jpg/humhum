@@ -1503,7 +1503,7 @@ function HermesObserverCard({
     >
       <ShieldCheck size={18} color={tone} />
       <div style={{ minWidth: 0 }}>
-        <div style={{ color: "rgba(255,255,255,0.78)", fontSize: 11, fontWeight: 900 }}>
+        <div style={{ color: "#263241", fontSize: 11, fontWeight: 900 }}>
           Hermes Agent
         </div>
         <div
