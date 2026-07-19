@@ -1,7 +1,6 @@
 package com.humhum.mobile.ui
 
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -22,7 +21,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.humhum.mobile.MobileRoleDashboard
@@ -87,7 +85,6 @@ private fun CompanionScaffold(
     callbacks: HumHumCallbacks,
     modifier: Modifier,
 ) {
-    val palette = paletteFor(state.selectedRole)
     Scaffold(
         modifier = modifier.fillMaxSize(),
         containerColor = Canvas,
@@ -100,18 +97,12 @@ private fun CompanionScaffold(
         },
     ) { padding ->
         when (state.selectedRole) {
-            MobileRoleDashboard.Role.HUMI -> LivingSignalsScreen(
-                state = state,
-                onAdjustToday = callbacks.onAdjustToday,
-                modifier = Modifier.padding(padding),
-            )
-            MobileRoleDashboard.Role.HYPE -> HypeScreen(state, Modifier.padding(padding))
-            MobileRoleDashboard.Role.HUSH -> HushSourcesScreen(
-                state = state,
-                onRequestPermission = callbacks.onRequestHealthPermission,
-                onManagePermissions = callbacks.onManageHealthPermissions,
-                modifier = Modifier.padding(padding),
-            )
+            MobileRoleDashboard.Role.HUMI ->
+                HumiRoomScreen(state, callbacks, Modifier.padding(padding))
+            MobileRoleDashboard.Role.HYPE ->
+                HypeRoomScreen(state, Modifier.padding(padding))
+            MobileRoleDashboard.Role.HUSH ->
+                HushRoomScreen(state, Modifier.padding(padding))
             MobileRoleDashboard.Role.HEXA -> HexaScreen(state, callbacks, Modifier.padding(padding))
         }
     }
@@ -122,14 +113,18 @@ private fun CompanionHeader(state: HumHumUiState, callbacks: HumHumCallbacks) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(68.dp)
+            .height(60.dp)
             .padding(start = 20.dp, end = 10.dp)
             .testTag("companion-header"),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text("HUMHUM", style = MaterialTheme.typography.titleLarge, color = paletteFor(state.selectedRole).accent)
-        Spacer(Modifier.size(10.dp))
-        Text(state.selectedRole.displayName(), style = MaterialTheme.typography.bodyLarge, color = Ink)
+        Text(
+            state.selectedRole.displayName(),
+            style = MaterialTheme.typography.titleLarge,
+            color = paletteFor(state.selectedRole).accent,
+        )
+        Spacer(Modifier.size(8.dp))
+        Text(state.selectedRole.purpose(), style = MaterialTheme.typography.bodyMedium, color = Ink)
         Spacer(Modifier.weight(1f))
         Text(
             state.statusMessage,

@@ -39,10 +39,10 @@ fun RoleNavigation(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .height(82.dp)
+            .height(64.dp)
             .background(Color.White)
             .border(width = 1.dp, color = Color(0xFFE8EAF1))
-            .padding(horizontal = 8.dp, vertical = 5.dp)
+            .padding(horizontal = 8.dp, vertical = 4.dp)
             .testTag("role-navigation"),
         horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.CenterVertically,
@@ -71,19 +71,19 @@ private fun RoleDestination(
         modifier = modifier
             .padding(horizontal = 3.dp)
             .clip(shape)
-            .then(if (selected) Modifier.background(palette.soft).border(1.dp, palette.accent, shape) else Modifier)
+            .then(if (selected) Modifier.background(palette.soft) else Modifier)
             .clickable(role = Role.Tab, onClick = onClick)
             .semantics { this.selected = selected }
             .testTag("role-destination")
-            .padding(vertical = 4.dp),
+            .padding(vertical = 3.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
         RoleMascot(
             role = role,
             contentDescription = null,
-            width = 42.dp,
-            height = 42.dp,
+            width = 28.dp,
+            height = 28.dp,
         )
         Text(
             text = role.displayName(),

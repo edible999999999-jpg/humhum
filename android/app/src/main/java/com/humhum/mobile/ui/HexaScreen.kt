@@ -59,31 +59,47 @@ fun HexaScreen(
     modifier: Modifier = Modifier,
 ) {
     LazyColumn(
-        modifier = modifier.fillMaxSize(),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(20.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+        modifier = modifier.fillMaxSize().testTag("hexa-room"),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                RoleMascot(
-                    role = MobileRoleDashboard.Role.HEXA,
-                    contentDescription = "Hexa",
-                    width = 104.dp,
-                    height = 124.dp,
-                )
-                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("Hexa · Agent 监督", style = MaterialTheme.typography.labelLarge, color = Hexa)
-                    Text("看清正在发生什么，再决定要不要介入", style = MaterialTheme.typography.headlineMedium, color = Ink)
-                    Text(
-                        if (state.canControl) "控制权限 · 可以确认和追问" else "只读观察",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = if (state.canControl) Hexa else Muted,
+            RoomIntro(
+                role = MobileRoleDashboard.Role.HEXA,
+                title = "看清 Agent 正在做什么，再决定是否介入",
+                summary = if (state.canControl) {
+                    "控制权限 · 可以确认和追问"
+                } else {
+                    "只读观察 · 不会替你执行操作"
+                },
+            )
+        }
+        if (!state.personalContext?.agents().isNullOrEmpty()) {
+            item {
+                Column(
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    RoomSectionHeader(
+                        "正在关注",
+                        "${state.personalContext!!.agents().size} 个 Agent",
                     )
+                    state.personalContext!!.agents().take(3).forEach { agent ->
+                        RoomItem(
+                            title = agent.name(),
+                            detail = agent.currentStep() ?: agent.status(),
+                            accent = Hexa,
+                            meta = if (agent.needsUser()) "需要你" else agent.status(),
+                        )
+                    }
                 }
             }
         }
         item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                modifier = Modifier.padding(horizontal = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Text("Agent 会话", style = MaterialTheme.typography.titleLarge, color = Ink)
                 Spacer(Modifier.weight(1f))
                 IconButton(onClick = callbacks.onRefresh, modifier = Modifier.size(48.dp)) {
@@ -98,7 +114,7 @@ fun HexaScreen(
         if (state.sessions.isEmpty()) {
             item {
                 Surface(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                     shape = RoundedCornerShape(8.dp),
                     color = HexaSoft,
                     border = androidx.compose.foundation.BorderStroke(1.dp, Hexa.copy(alpha = 0.25f)),
@@ -111,7 +127,12 @@ fun HexaScreen(
             }
         } else {
             items(state.sessions, key = { it.id() }) { session ->
-                SessionPanel(session = session, state = state, callbacks = callbacks)
+                SessionPanel(
+                    session = session,
+                    state = state,
+                    callbacks = callbacks,
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                )
             }
         }
     }
@@ -122,6 +143,7 @@ private fun SessionPanel(
     session: Models.Session,
     state: HumHumUiState,
     callbacks: HumHumCallbacks,
+    modifier: Modifier = Modifier,
 ) {
     var draft by remember(session.id()) { mutableStateOf("") }
     var handledSuccessRevision by remember(session.id()) {
@@ -137,7 +159,7 @@ private fun SessionPanel(
         handledSuccessRevision = state.followUpSuccessRevision
     }
     Surface(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(8.dp),
         color = Color.White,
         border = androidx.compose.foundation.BorderStroke(1.dp, if (session.needsAttention()) Hexa.copy(alpha = 0.45f) else Line),
