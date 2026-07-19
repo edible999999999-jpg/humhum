@@ -24,6 +24,7 @@ mod local_api_auth;
 #[cfg(target_os = "macos")]
 mod mac_notification_watcher;
 mod mobile_bridge;
+mod mobile_personal_context;
 mod mobile_relay;
 mod native_audio;
 mod openclaw_hook;
