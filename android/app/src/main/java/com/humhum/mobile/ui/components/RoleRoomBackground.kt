@@ -48,9 +48,9 @@ fun roomBackgroundFor(role: MobileRoleDashboard.Role): Int = when (role) {
     MobileRoleDashboard.Role.HEXA -> R.drawable.room_hexa
 }
 
-private fun roomBackgroundAlpha(role: MobileRoleDashboard.Role): Float = when (role) {
-    MobileRoleDashboard.Role.HUMI -> 0.78f
-    MobileRoleDashboard.Role.HYPE -> 0.72f
-    MobileRoleDashboard.Role.HUSH -> 0.76f
-    MobileRoleDashboard.Role.HEXA -> 0.68f
+internal fun roomBackgroundAlpha(role: MobileRoleDashboard.Role): Float = when (role) {
+    MobileRoleDashboard.Role.HUMI -> 0.74f
+    MobileRoleDashboard.Role.HYPE -> 0.46f
+    MobileRoleDashboard.Role.HUSH -> 0.58f
+    MobileRoleDashboard.Role.HEXA -> 0.70f
 }
