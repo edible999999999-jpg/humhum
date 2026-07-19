@@ -73,6 +73,13 @@ export function resolveAgentContext(options = {}, environment = process.env) {
   return { provider, agent: explicitAgent ?? provider, sessionId: null };
 }
 
+export function resolveAgentSurface(options = {}, environment = {}, context = {}) {
+  const explicit = clean(options.surface) ?? clean(environment.HUMHUM_AGENT_SURFACE);
+  if (explicit) return explicit;
+  if (context.provider === "qoderwork") return "qoder_worker";
+  return "unknown";
+}
+
 function safeProvider(provider) {
   return (provider || "agent").toLowerCase().replace(/[^a-z0-9_-]+/g, "-").slice(0, 32) || "agent";
 }
@@ -153,6 +160,7 @@ export async function runCli(argv, options = {}) {
     agent: flags.agent,
     sessionId: flags["session-id"],
   }, env);
+  const surface = resolveAgentSurface({ surface: flags.surface }, env, context);
   const workspace = resolve(flags.workspace ?? cwd);
   const stateFile = stateFileFor({ home, cwd: workspace, ...context });
   const apiUrl = resolveApiUrl(clean(flags.url) ?? clean(env.HUMHUM_HEXA_URL));
@@ -185,6 +193,11 @@ export async function runCli(argv, options = {}) {
     await mkdir(dirname(stateFile), { recursive: true });
     await writeFile(stateFile, `${JSON.stringify(state, null, 2)}\n`, "utf8");
   };
+  const withGoalContext = (session, state) => ({
+    ...session,
+    goal_id: clean(state.goal_id) ?? undefined,
+    surface: clean(state.surface) ?? undefined,
+  });
 
   if (command === "watch") {
     const goal = clean(flags.goal) ?? clean(positionals.join(" "));
@@ -208,10 +221,29 @@ export async function runCli(argv, options = {}) {
       confidence: "agent-bound",
       goal,
     });
-    await writeState(updated);
-    stdout(`Hexa watching: ${updated.name ?? goal}`);
-    stdout(`session_id: ${updated.session_id}`);
-    return updated;
+    let watched = { ...updated, surface };
+    try {
+      const linkedGoal = await post("/hexa/goal/link", {
+        goal_id: clean(flags["goal-id"]),
+        project_key: `repo:${workspace}`,
+        title: goal,
+        success_criteria: (clean(flags["success-criteria"]) ?? "")
+          .split("|")
+          .map((item) => item.trim())
+          .filter(Boolean),
+        session_id: updated.session_id,
+        surface,
+        branch: clean(flags.branch),
+        worktree: clean(flags.worktree),
+      });
+      watched = { ...watched, goal_id: linkedGoal.id };
+    } catch (error) {
+      stdout(`Hexa session registered, but goal linking failed: ${error.message}`);
+    }
+    await writeState(watched);
+    stdout(`Hexa watching: ${watched.name ?? goal}`);
+    stdout(`session_id: ${watched.session_id}`);
+    return watched;
   }
 
   if (command === "plan") {
@@ -229,7 +261,7 @@ export async function runCli(argv, options = {}) {
       revision: clean(flags.revision),
       items: parsePlan(raw),
     });
-    await writeState(updated);
+    await writeState(withGoalContext(updated, state));
     stdout(`Hexa plan synced: ${updated.audit?.work_items?.length ?? 0} work items`);
     return updated;
   }
@@ -242,6 +274,10 @@ export async function runCli(argv, options = {}) {
       throw new Error(`Usage: humhum-hexa ${command} "当前进展"`);
     }
     const completed = command === "complete";
+    const resultStatus = completed ? clean(flags.result) ?? "unverified" : null;
+    if (resultStatus && !["unverified", "failed", "superseded"].includes(resultStatus)) {
+      throw new Error("Hexa completion result must be unverified, failed, or superseded");
+    }
     let updated = await post("/hexa/update", {
       session_id: state.session_id,
       status: completed ? "completed" : clean(flags.status) ?? "working",
@@ -291,7 +327,15 @@ export async function runCli(argv, options = {}) {
         },
       });
     }
-    await writeState(updated);
+    if (completed && state.goal_id) {
+      await post("/hexa/goal/result", {
+        goal_id: state.goal_id,
+        session_id: state.session_id,
+        result_status: resultStatus,
+        evidence,
+      });
+    }
+    await writeState(withGoalContext(updated, state));
     stdout(`Hexa ${completed ? "completed" : "updated"}: ${summary ?? blockedReason}`);
     return updated;
   }
