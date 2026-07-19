@@ -80,6 +80,7 @@ public final class MainActivity extends ComponentActivity {
     };
     private ConnectionStore connectionStore;
     private EncryptedSessionSnapshotStore snapshotStore;
+    private EncryptedPersonalContextStore personalContextStore;
     private SessionSnapshotGenerationGate snapshotGenerationGate;
     private MonitorStore monitorStore;
     private AnywhereStateStore anywhereStateStore;
@@ -172,6 +173,7 @@ public final class MainActivity extends ComponentActivity {
         bindRoleTabs();
         connectionStore = new ConnectionStore(getSharedPreferences("humhum_connection", MODE_PRIVATE));
         snapshotStore = new EncryptedSessionSnapshotStore(this);
+        personalContextStore = new EncryptedPersonalContextStore(this);
         snapshotGenerationGate = SessionSnapshotGenerationGate.open();
         monitorStore = AgentMonitorService.monitorStore(this);
         anywhereStateStore = new AnywhereStateStore(
@@ -999,6 +1001,8 @@ public final class MainActivity extends ComponentActivity {
         }
         companionRepository.bindConnection(saved, protocol, anywhereGateway);
         dispatchState(new HumHumAction.Connected(saved.scope()));
+        dispatchState(new HumHumAction.PersonalContextCapabilityChanged(
+                saved.personalContext()));
         connectPanel.setVisibility(View.GONE);
         sessionPanel.setVisibility(View.VISIBLE);
         roleNavigation.setVisibility(View.VISIBLE);
@@ -1253,6 +1257,14 @@ public final class MainActivity extends ComponentActivity {
                                 },
                                 null)
                         : null;
+                PersonalContextSnapshot personalSnapshot =
+                        currentConnection.personalContext()
+                                ? snapshotGenerationGate.callIfCurrent(
+                                        refreshGeneration,
+                                        () -> readPersonalContextSafely(
+                                                currentConnection, nowMillis),
+                                        null)
+                                : null;
                 String visibleError = safeError(error);
                 postRefreshIfCurrent(refreshGeneration, current, currentConnection, () -> {
                     refreshInFlight = false;
@@ -1266,6 +1278,13 @@ public final class MainActivity extends ComponentActivity {
                             SessionSnapshotCodec.ageCopy(snapshot.savedAtMillis(), nowMillis);
                     HumHumUiState state = dispatchState(
                             new HumHumAction.OfflineSnapshotLoaded(snapshot.sessions(), ageCopy));
+                    dispatchState(new HumHumAction.PersonalContextCapabilityChanged(
+                            currentConnection.personalContext()));
+                    if (personalSnapshot != null) {
+                        dispatchState(new HumHumAction.PersonalContextLoaded(
+                                personalSnapshot.context(),
+                                true));
+                    }
                     renderSessions(state.getSessions());
                 });
             }
@@ -1284,6 +1303,11 @@ public final class MainActivity extends ComponentActivity {
             Models.SessionPage page,
             boolean remote) {
         long savedAtMillis = System.currentTimeMillis();
+        PersonalContextRefresh personalContext = refreshPersonalContext(
+                expectedProtocol,
+                expectedConnection,
+                remote,
+                savedAtMillis);
         boolean written = snapshotGenerationGate.callIfCurrent(generation, () -> {
             if (!isCurrentConnection(expectedProtocol, expectedConnection)) return false;
             writeSnapshotSafely(expectedConnection, page.sessions(), savedAtMillis);
@@ -1299,8 +1323,60 @@ public final class MainActivity extends ComponentActivity {
             HumHumUiState state = remote
                     ? dispatchState(new HumHumAction.RelayRecovered(page.sessions()))
                     : dispatchState(new HumHumAction.SessionsLoaded(page.sessions(), false));
+            dispatchState(new HumHumAction.PersonalContextCapabilityChanged(
+                    expectedConnection.personalContext()));
+            if (personalContext.context != null) {
+                dispatchState(new HumHumAction.PersonalContextLoaded(
+                        personalContext.context,
+                        personalContext.fromCache));
+            } else if (expectedConnection.personalContext()) {
+                dispatchState(new HumHumAction.PersonalContextFailed(
+                        personalContext.message));
+            }
             renderSessions(state.getSessions());
         });
+    }
+
+    private PersonalContextRefresh refreshPersonalContext(
+            MobileProtocol activeProtocol,
+            ConnectionStore.Connection activeConnection,
+            boolean remoteFirst,
+            long nowMillis) {
+        if (!activeConnection.personalContext()) {
+            clearPersonalContextSafely();
+            return PersonalContextRefresh.unavailable("电脑未授权个人上下文");
+        }
+        Models.PersonalContext context = null;
+        Exception failure = null;
+        try {
+            context = remoteFirst && anywhereGateway != null
+                    ? anywhereGateway.personalContext(activeConnection.wakeRelay())
+                    : activeProtocol.personalContext();
+        } catch (Exception error) {
+            failure = error;
+        }
+        if (context == null) {
+            try {
+                if (remoteFirst) {
+                    context = activeProtocol.personalContext();
+                } else if (anywhereGateway != null && activeConnection.wakeRelay() != null) {
+                    context = anywhereGateway.personalContext(activeConnection.wakeRelay());
+                }
+            } catch (Exception error) {
+                failure = error;
+            }
+        }
+        if (context != null) {
+            writePersonalContextSafely(activeConnection, context, nowMillis);
+            return PersonalContextRefresh.live(context);
+        }
+        PersonalContextSnapshot cached =
+                readPersonalContextSafely(activeConnection, nowMillis);
+        if (cached != null) {
+            return PersonalContextRefresh.cached(cached.context());
+        }
+        return PersonalContextRefresh.unavailable(
+                failure == null ? "个人上下文暂时不可用" : safeError(failure));
     }
 
     private void clearRevokedConnection(
@@ -1585,6 +1661,60 @@ public final class MainActivity extends ComponentActivity {
             snapshotStore.clear();
         } catch (RuntimeException ignored) {
             // Connection lifecycle must continue even when cache cleanup is unavailable.
+        }
+        clearPersonalContextSafely();
+    }
+
+    private void writePersonalContextSafely(
+            ConnectionStore.Connection activeConnection,
+            Models.PersonalContext context,
+            long savedAtMillis) {
+        try {
+            personalContextStore.write(activeConnection, context, savedAtMillis);
+        } catch (RuntimeException ignored) {
+            // The live personal context remains authoritative when caching is unavailable.
+        }
+    }
+
+    private PersonalContextSnapshot readPersonalContextSafely(
+            ConnectionStore.Connection activeConnection, long nowMillis) {
+        try {
+            return personalContextStore.read(activeConnection, nowMillis);
+        } catch (RuntimeException ignored) {
+            return null;
+        }
+    }
+
+    private void clearPersonalContextSafely() {
+        try {
+            personalContextStore.clear();
+        } catch (RuntimeException ignored) {
+            // Connection lifecycle must continue even when private cache cleanup fails.
+        }
+    }
+
+    private static final class PersonalContextRefresh {
+        final Models.PersonalContext context;
+        final boolean fromCache;
+        final String message;
+
+        private PersonalContextRefresh(
+                Models.PersonalContext context, boolean fromCache, String message) {
+            this.context = context;
+            this.fromCache = fromCache;
+            this.message = message;
+        }
+
+        static PersonalContextRefresh live(Models.PersonalContext context) {
+            return new PersonalContextRefresh(context, false, "");
+        }
+
+        static PersonalContextRefresh cached(Models.PersonalContext context) {
+            return new PersonalContextRefresh(context, true, "");
+        }
+
+        static PersonalContextRefresh unavailable(String message) {
+            return new PersonalContextRefresh(null, false, message);
         }
     }
 

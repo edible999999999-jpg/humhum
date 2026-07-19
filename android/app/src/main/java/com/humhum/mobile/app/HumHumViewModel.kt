@@ -276,6 +276,21 @@ class HumHumViewModel @JvmOverloads constructor(
                 ),
             )
             is HumHumAction.HealthUpdated -> state.copy(health = action.health)
+            is HumHumAction.PersonalContextCapabilityChanged -> state.copy(
+                personalContextAuthorized = action.authorized,
+                personalContext = if (action.authorized) state.personalContext else null,
+                personalContextFromCache = false,
+                personalContextMessage = if (action.authorized) null else "电脑未授权个人上下文",
+            )
+            is HumHumAction.PersonalContextLoaded -> state.copy(
+                personalContext = action.context,
+                personalContextAuthorized = true,
+                personalContextFromCache = action.fromCache,
+                personalContextMessage = if (action.fromCache) "显示 24 小时内的加密缓存" else null,
+            )
+            is HumHumAction.PersonalContextFailed -> state.copy(
+                personalContextMessage = action.message,
+            )
             is HumHumAction.StatusChanged -> state.copy(statusMessage = action.message)
             HumHumAction.OpenSettings -> state.copy(settingsVisible = true)
             HumHumAction.CloseSettings -> state.copy(settingsVisible = false)

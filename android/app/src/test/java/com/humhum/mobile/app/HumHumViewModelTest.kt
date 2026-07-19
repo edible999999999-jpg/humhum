@@ -15,6 +15,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -74,6 +75,20 @@ class HumHumViewModelTest {
         viewModel.dispatch(HumHumAction.RelayRecovered(listOf(session("remote"))))
         assertTrue(viewModel.state.value.relayRecovered)
         assertEquals("remote", viewModel.state.value.sessions.single().id())
+    }
+
+    @Test
+    fun personalContextSurvivesSessionRefreshAndClearsOnDisconnect() {
+        val context = personalContext()
+        viewModel.dispatch(HumHumAction.Connected(Models.Scope.READ))
+        viewModel.dispatch(HumHumAction.PersonalContextLoaded(context, fromCache = false))
+        viewModel.dispatch(HumHumAction.SessionsLoaded(emptyList(), viaRelay = false))
+
+        assertSame(context, viewModel.state.value.personalContext)
+        assertFalse(viewModel.state.value.personalContextFromCache)
+
+        viewModel.dispatch(HumHumAction.Disconnected)
+        assertNull(viewModel.state.value.personalContext)
     }
 
     @Test
@@ -316,5 +331,19 @@ class HumHumViewModelTest {
         true,
         true,
         listOf(Models.Action("action-1", "codex", "approve", "Allow change")),
+    )
+
+    private fun personalContext() = Models.PersonalContext(
+        1,
+        "2026-07-19T09:00:00Z",
+        "2026-07-20T09:00:00Z",
+        listOf(Models.TodayItem("goal-1", "完成安卓房间", null, "hexa_goal", "active")),
+        emptyList(),
+        emptyList(),
+        emptyList(),
+        emptyList(),
+        emptyList(),
+        emptyList(),
+        emptyList(),
     )
 }

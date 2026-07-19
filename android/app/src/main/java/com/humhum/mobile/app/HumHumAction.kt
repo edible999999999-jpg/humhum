@@ -54,6 +54,12 @@ sealed interface HumHumAction {
         val backgroundGranted: Boolean,
     ) : HumHumAction
     data class HealthUpdated(val health: HealthUiState) : HumHumAction
+    data class PersonalContextCapabilityChanged(val authorized: Boolean) : HumHumAction
+    data class PersonalContextLoaded(
+        val context: Models.PersonalContext,
+        val fromCache: Boolean,
+    ) : HumHumAction
+    data class PersonalContextFailed(val message: String) : HumHumAction
     data class StatusChanged(val message: String) : HumHumAction
     data object OpenSettings : HumHumAction
     data object CloseSettings : HumHumAction
