@@ -10,10 +10,29 @@ import { HumiModule } from "./HumiModule";
 import { KnowledgeModule } from "./KnowledgeModule";
 
 const hubSourceDirectory = resolve(process.cwd(), "src/components/Hub");
-const modulePaths = [
-  resolve(process.cwd(), "src/components/Hub/HumiModule.tsx"),
-  resolve(process.cwd(), "src/components/Hub/KnowledgeModule.tsx"),
-];
+const humiModulePath = resolve(
+  process.cwd(),
+  "src/components/Hub/HumiModule.tsx",
+);
+const hypeModulePath = resolve(
+  process.cwd(),
+  "src/components/Hub/KnowledgeModule.tsx",
+);
+const modulePaths = [humiModulePath, hypeModulePath];
+const humiSource = readFileSync(humiModulePath, "utf8");
+const hypeSource = readFileSync(hypeModulePath, "utf8");
+const hushSource = readFileSync(
+  resolve(process.cwd(), "src/components/Hub/HushModule.tsx"),
+  "utf8",
+);
+const hexaSource = readFileSync(
+  resolve(process.cwd(), "src/components/Hub/HexaModule.tsx"),
+  "utf8",
+);
+const hexaActiveMonitorSource = readFileSync(
+  resolve(process.cwd(), "src/components/Hub/hexa/HexaActiveMonitor.tsx"),
+  "utf8",
+);
 const globalStyleRoot = postcss.parse(
   readFileSync(resolve(process.cwd(), "src/styles/global.css"), "utf8"),
 );
@@ -253,7 +272,7 @@ describe("Hub inline radius contract", () => {
   it("keeps rendered non-circular Hub controls at 8px or less", () => {
     const html = renderToStaticMarkup(
       <>
-        <HumiModule />
+        <HumiModule onOpenHexa={() => {}} />
         <KnowledgeModule />
       </>,
     );
@@ -265,5 +284,39 @@ describe("Hub inline radius contract", () => {
 describe("Hub class radius contract", () => {
   it("scopes every used non-circular kawaii class radius to 8px or less", () => {
     expect(classRadiusViolations()).toEqual([]);
+  });
+});
+
+describe("approved room composition contracts", () => {
+  it("places Humi's small mascot inside the conversation instead of a utility header", () => {
+    expect(humiSource).toContain("humi-conversation-stage");
+    expect(humiSource).toContain("humi-message-avatar");
+    expect(humiSource).not.toContain("humi-room-utility-header");
+  });
+
+  it("keeps Hype's identity and dominant search action in one compact room header", () => {
+    expect(hypeSource).toContain("hype-room-header");
+    expect(hypeSource).toContain("hype-room-identity");
+  });
+
+  it("keeps Hype's personal inventory ahead of its advanced review engine", () => {
+    expect(hypeSource.indexOf('className="hype-inventory"')).toBeGreaterThan(-1);
+    expect(hypeSource.indexOf('className="hype-review-drawer"')).toBeGreaterThan(-1);
+    expect(hypeSource.indexOf('className="hype-inventory"')).toBeLessThan(
+      hypeSource.indexOf('className="hype-review-drawer"'),
+    );
+  });
+
+  it("gives Hush the compact inbox header and search field from the approved reference", () => {
+    expect(hushSource).toContain("hush-room-header");
+    expect(hushSource).toContain("hush-search-field");
+    expect(hushSource).toContain("hush-peek-character");
+  });
+
+  it("gives Hexa a compact mascot identity header above the workbench", () => {
+    expect(hexaSource).toContain("hexa-room-header");
+    expect(hexaSource).toContain("hexa-room-identity");
+    expect(hexaActiveMonitorSource).toContain("hexa-session-report-scroll");
+    expect(hexaActiveMonitorSource).toContain("hexa-session-report-dock");
   });
 });

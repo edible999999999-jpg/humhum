@@ -229,10 +229,45 @@ describe("filterAgentAssets", () => {
     ).toEqual([expected]);
   });
 
-  it("returns all matching inventory when scope is all", () => {
-    expect(filterAgentAssets(mixedAssets, "all", "")).toEqual(mixedAssets);
-    expect(filterAgentAssets(mixedAssets, "all", "marketplace")).toEqual([
-      marketplace,
-    ]);
+  it("returns all matching skills when scope is all", () => {
+    expect(filterAgentAssets(mixedAssets, "all", "")).toEqual(
+      mixedAssets.slice(0, -1),
+    );
+    expect(filterAgentAssets(mixedAssets, "all", "marketplace")).toEqual([]);
+  });
+
+  it("keeps the skills view limited to real SKILL.md descriptors", () => {
+    const jsonConfig = asset(
+      "/Users/me/.qoder/projects/session/task.json",
+      '{"status":"done"}',
+      {
+        name: "task.json",
+        asset_type: "config",
+      },
+    );
+    const mislabeledJson = asset(
+      "/Users/me/.agents/skills/example/package.json",
+      '{"name":"example"}',
+      {
+        name: "package.json",
+        asset_type: "skill",
+      },
+    );
+    const skillReference = asset(
+      "/Users/me/.agents/skills/example/references/usage.md",
+      "# Usage",
+      {
+        name: "usage",
+        asset_type: "skill",
+      },
+    );
+
+    expect(
+      filterAgentAssets(
+        [custom, jsonConfig, mislabeledJson, skillReference],
+        "all",
+        "",
+      ),
+    ).toEqual([custom]);
   });
 });

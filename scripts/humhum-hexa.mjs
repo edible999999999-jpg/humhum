@@ -222,23 +222,27 @@ export async function runCli(argv, options = {}) {
       goal,
     });
     let watched = { ...updated, surface };
-    try {
-      const linkedGoal = await post("/hexa/goal/link", {
-        goal_id: clean(flags["goal-id"]),
-        project_key: `repo:${workspace}`,
-        title: goal,
-        success_criteria: (clean(flags["success-criteria"]) ?? "")
-          .split("|")
-          .map((item) => item.trim())
-          .filter(Boolean),
-        session_id: updated.session_id,
-        surface,
-        branch: clean(flags.branch),
-        worktree: clean(flags.worktree),
-      });
-      watched = { ...watched, goal_id: linkedGoal.id };
-    } catch (error) {
-      stdout(`Hexa session registered, but goal linking failed: ${error.message}`);
+    const goalLinkRequested = Boolean(clean(flags["goal-id"]))
+      || flags["link-goal"] === "true";
+    if (goalLinkRequested) {
+      try {
+        const linkedGoal = await post("/hexa/goal/link", {
+          goal_id: clean(flags["goal-id"]),
+          project_key: `repo:${workspace}`,
+          title: goal,
+          success_criteria: (clean(flags["success-criteria"]) ?? "")
+            .split("|")
+            .map((item) => item.trim())
+            .filter(Boolean),
+          session_id: updated.session_id,
+          surface,
+          branch: clean(flags.branch),
+          worktree: clean(flags.worktree),
+        });
+        watched = { ...watched, goal_id: linkedGoal.id };
+      } catch (error) {
+        stdout(`Hexa session registered, but goal linking failed: ${error.message}`);
+      }
     }
     await writeState(watched);
     stdout(`Hexa watching: ${watched.name ?? goal}`);

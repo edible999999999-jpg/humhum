@@ -110,6 +110,13 @@ Humi remains the Hub home and overall guide. It may show one compact Hexa summar
 
 Selecting the summary opens the relevant goal inside Hexa active monitoring. Humi does not become a second development dashboard.
 
+When an Agent must ask the user for a decision before an unfinished goal can
+continue, the managed Skill must first mark the watched session as `waiting`
+with `need_user = true` and a concrete decision reason. The Agent returns the
+session to `working` immediately after the answer. Plain conversational
+questions are not treated as reliable confirmation events because HumHum
+cannot infer their workflow meaning without an LLM.
+
 ## Canonical Model
 
 ### Agent Runtime Identity
@@ -325,6 +332,8 @@ The feature is accepted only when:
 8. No LLM is required for the core workflow.
 9. Goal-store failures cannot make existing active monitoring unavailable.
 10. Existing persisted data and current Hexa operations remain backward compatible.
+11. A Skill-reported unfinished user decision appears as a needs-attention
+    state in Hexa and in Humi's compact summary.
 
 ## Non-Goals
 

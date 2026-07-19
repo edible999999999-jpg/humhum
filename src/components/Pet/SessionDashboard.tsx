@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { PanelTopOpen } from "lucide-react";
 
-interface Session {
+export interface Session {
   session_id: string;
   client_type: string;
   cwd: string | null;
@@ -136,7 +136,7 @@ export function SessionDashboard({ visible, onOpenHub }: SessionDashboardProps) 
   );
 }
 
-function SessionRow({ session: s }: { session: Session }) {
+export function SessionRow({ session: s }: { session: Session }) {
   const clientColor = CLIENT_COLORS[s.client_type] ?? "bg-slate-500/80";
   const clientLabel = CLIENT_LABELS[s.client_type] ?? s.client_type;
   const statusDot = STATUS_DOTS[s.status] ?? "bg-slate-500";
@@ -146,8 +146,15 @@ function SessionRow({ session: s }: { session: Session }) {
     (s.last_tool_name ? `Using ${s.last_tool_name}` : null);
 
   return (
-    <div
-      className="px-3 py-2.5 transition-colors"
+    <button
+      type="button"
+      aria-label={`打开会话 ${s.project_name ?? clientLabel}`}
+      onClick={() => {
+        invoke("focus_agent_session", { sessionId: s.session_id }).catch(
+          console.error,
+        );
+      }}
+      className="w-full px-3 py-2.5 transition-colors text-left hover:bg-white/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-500/40"
       style={{ borderBottom: "1px solid rgba(116,143,165,0.1)" }}
     >
       {/* Top row: client dot + project + time */}
@@ -173,6 +180,6 @@ function SessionRow({ session: s }: { session: Session }) {
           {displayMessage}
         </p>
       )}
-    </div>
+    </button>
   );
 }

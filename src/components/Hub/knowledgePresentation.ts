@@ -38,6 +38,13 @@ function assetPathCandidates(asset: AgentAsset): string[] {
   ].map(normalizePath);
 }
 
+function isSkillDescriptor(asset: AgentAsset): boolean {
+  return assetPathCandidates(asset).some((path) => {
+    const parts = path.split("/");
+    return parts[parts.length - 1] === "skill.md";
+  });
+}
+
 function isWithinConfiguredRoot(candidate: string, configuredRoot: string): boolean {
   const root = normalizePath(configuredRoot);
   if (!root) {
@@ -96,6 +103,9 @@ export function filterAgentAssets(
   const normalizedQuery = query.trim().toLowerCase();
 
   return assets.filter((asset) => {
+    if (!isSkillDescriptor(asset)) {
+      return false;
+    }
     if (scope === "mine" && !isPersonalAgentAsset(asset, configuredRoots)) {
       return false;
     }

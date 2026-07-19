@@ -32,13 +32,19 @@ Immediately run:
 
 The connector reads the real provider session ID from the Agent runtime. Do not invent a session ID and do not add HUMHUM files or npm dependencies to the current project.
 
+The ordinary `watch` command preserves the existing single-session report. When the user explicitly asks to create a development goal for multiple Agent attempts or comparison, create one with:
+
+```bash
+~/.humhum/bin/humhum-hexa watch "<one-sentence goal>" --link-goal --success-criteria "<criterion one>|<criterion two>"
+```
+
 When this work belongs to a development goal already shown by Hexa, reuse its exact ID; do not fuzzy-match titles:
 
 ```bash
 ~/.humhum/bin/humhum-hexa watch "<one-sentence goal>" --goal-id "<goal-id>"
 ```
 
-Only set a runtime surface when its identity is actually known. In particular, Qoder must use one of `--surface qoder_ide`, `--surface qoder_cli`, or `--surface qoder_worker` only when that exact runtime is known. Do not infer IDE versus CLI from a workspace path. The `watch` command records the attempt through `/hexa/goal/link` without rolling back an already watched session if the goal link fails.
+Only set a runtime surface when its identity is actually known. In particular, Qoder must use one of `--surface qoder_ide`, `--surface qoder_cli`, or `--surface qoder_worker` only when that exact runtime is known. Do not infer IDE versus CLI from a workspace path. With `--link-goal` or `--goal-id`, the `watch` command records the attempt through `/hexa/goal/link` without rolling back an already watched session if the goal link fails.
 
 ## Report the plan
 
@@ -243,6 +249,7 @@ mod tests {
             assert!(source.contains("--surface qoder_cli"));
             assert!(source.contains("--surface qoder_worker"));
             assert!(source.contains("--goal-id"));
+            assert!(source.contains("--link-goal"));
             assert!(source.contains("do not fuzzy-match titles"));
             assert!(source.contains("--status waiting --need-user --blocked-reason"));
             assert!(source.contains("--status working"));

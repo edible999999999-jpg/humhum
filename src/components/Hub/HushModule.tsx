@@ -7,6 +7,7 @@ import {
   LogIn,
   MessageCircle,
   RefreshCw,
+  Search,
   Settings,
   ShieldCheck,
   Star,
@@ -16,14 +17,23 @@ import { useTranslation } from "../../lib/i18n/react";
 import {
   compareHushContacts,
   filterHushContacts,
+  filterHushContactsByName,
+  formatHushMessageText,
+  getHushChatScope,
+  getHushConversationScope,
+  getHushConversationScopeLabel,
   getHushConversationIdentity,
+  getLatestHushMessage,
   getHushPlatformIdentity,
+  getHushPriorityLabel,
   getHushUnreadCount,
+  getVisibleHushSuggestedReply,
   groupHushMessages,
   migrateHushConversationState,
   parseHushConversationState,
   resolveHushSelectedContact,
   serializeHushConversationState,
+  sortHushContactsByAttention,
   type DerivedContact,
   type HushConversationState,
   type HushFilter,
@@ -245,6 +255,7 @@ export function HushModule() {
   const { t } = useTranslation();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [filter, setFilter] = useState<HushFilter>("all");
+  const [searchQuery, setSearchQuery] = useState("");
   const [conversationState, setConversationState] =
     useState<HushConversationState>(readStoredConversationState);
   const [connectors, setConnectors] = useState<HushConnectorStatus[]>([]);
@@ -476,17 +487,24 @@ export function HushModule() {
     const map = new Map<string, DerivedContact>();
     for (const message of inbox?.messages ?? []) {
       const identity = getHushConversationIdentity(message);
+      const readableMessage: HushInboxMessage = {
+        ...message,
+        text: formatHushMessageText(message.text) || "非文本消息",
+        ...(message.suggested_reply !== undefined
+          ? {
+              suggested_reply: message.suggested_reply
+                ? formatHushMessageText(message.suggested_reply)
+                : message.suggested_reply,
+            }
+          : {}),
+      };
       const existing = map.get(identity.id);
       if (existing) {
-        existing.messages.push(message);
+        existing.messages.push(readableMessage);
         for (const legacyId of identity.legacyIds) {
           if (!existing.legacyIds.includes(legacyId)) {
             existing.legacyIds.push(legacyId);
           }
-        }
-        if (message.received_at > existing.lastMessageTime) {
-          existing.lastMessage = message.text;
-          existing.lastMessageTime = message.received_at;
         }
         existing.importance = Math.max(existing.importance, message.importance);
         if (!existing.platforms.includes(message.platform)) {
@@ -499,14 +517,24 @@ export function HushModule() {
           name: identity.name,
           tier: TIER_ORDER.includes(message.tier) ? message.tier : "work",
           platforms: [message.platform],
-          lastMessage: message.text,
+          lastMessage: readableMessage.text,
           lastMessageTime: message.received_at,
           importance: message.importance,
-          messages: [message],
+          messages: [readableMessage],
         });
       }
     }
-    return Array.from(map.values()).sort(compareHushContacts);
+    return Array.from(map.values())
+      .map((contact) => {
+        const latestMessage = getLatestHushMessage(contact.messages);
+        if (!latestMessage) return contact;
+        return {
+          ...contact,
+          lastMessage: latestMessage.text,
+          lastMessageTime: latestMessage.received_at,
+        };
+      })
+      .sort(compareHushContacts);
   }, [inbox]);
 
   useEffect(() => {
@@ -515,10 +543,36 @@ export function HushModule() {
     );
   }, [contacts]);
 
-  const filteredContacts = useMemo(
-    () => filterHushContacts(contacts, filter, conversationState),
-    [contacts, conversationState, filter],
+  const displayContacts = useMemo(
+    () => sortHushContactsByAttention(contacts, conversationState),
+    [contacts, conversationState],
   );
+
+  const filteredContacts = useMemo(() => {
+    const scoped = filterHushContacts(
+      displayContacts,
+      filter,
+      conversationState,
+    );
+    return filterHushContactsByName(scoped, searchQuery);
+  }, [conversationState, displayContacts, filter, searchQuery]);
+
+  useEffect(() => {
+    const searching = searchQuery.trim().length > 0;
+    const selectableContacts = searching ? filteredContacts : displayContacts;
+    const firstContact = selectableContacts[0];
+    if (!firstContact) {
+      setSelectedId(null);
+      return;
+    }
+    if (
+      !selectedId ||
+      !selectableContacts.some((contact) => contact.id === selectedId)
+    ) {
+      setSelectedId(firstContact.id);
+    }
+  }, [displayContacts, filteredContacts, searchQuery, selectedId]);
+
   const selectedContact = resolveHushSelectedContact(contacts, selectedId);
   const healthSource = useMemo(
     () => deriveHushHealthSource(healthSignals),
@@ -550,10 +604,49 @@ export function HushModule() {
 
   return (
     <div className="hub-module hush-room-module">
-      <header className="hub-module-heading hush-heading">
-        <span className="hub-module-kicker">{t("hub.role.hush")}</span>
-        <h2 className="hub-module-title">{t("hub.hush.title")}</h2>
-        <p className="hub-module-desc">{t("hub.hush.desc")}</p>
+      <header className="hush-room-header">
+        <div className="hush-room-identity">
+          <h2>Hush 收件箱</h2>
+          <span>{filteredContacts.length} 个会话</span>
+        </div>
+        <label className="hush-search-field">
+          <Search size={16} strokeWidth={1.8} aria-hidden="true" />
+          <input
+            type="search"
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            placeholder="搜索单聊或群聊名称"
+            aria-label="搜索单聊或群聊名称"
+          />
+        </label>
+        <button
+          type="button"
+          className="hush-header-refresh"
+          onClick={() => void fetchInbox()}
+          aria-label="刷新 Hush 会话"
+          title="刷新"
+        >
+          <RefreshCw size={16} strokeWidth={1.8} aria-hidden="true" />
+        </button>
+        <div className="hush-filter-control" aria-label="消息筛选">
+          {(
+            [
+              ["all", "全部"],
+              ["attention", "特别关注"],
+              ["unread", "未读"],
+            ] as const
+          ).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              className={filter === value ? "is-active" : ""}
+              aria-pressed={filter === value}
+              onClick={() => setFilter(value)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </header>
 
       <HushStatusArea
@@ -595,29 +688,17 @@ export function HushModule() {
       />
 
       <div className="hush-inbox-toolbar">
-        <div className="hush-filter-control" aria-label="消息筛选">
-          {(
-            [
-              ["all", "全部"],
-              ["attention", "特别关注"],
-              ["unread", "未读"],
-            ] as const
-          ).map(([value, label]) => (
-            <button
-              key={value}
-              type="button"
-              className={filter === value ? "is-active" : ""}
-              aria-pressed={filter === value}
-              onClick={() => setFilter(value)}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
         <span className="hush-conversation-count">
           {filteredContacts.length} 个会话
         </span>
       </div>
+
+      <img
+        className="hush-peek-character"
+        src="/mascots/avatars/hush-peek.png"
+        alt=""
+        aria-hidden="true"
+      />
 
       {contacts.length === 0 ? (
         <div className="hush-empty-state">
@@ -650,7 +731,12 @@ export function HushModule() {
 
           <section className="hush-message-pane" aria-label="消息记录">
             {selectedContact ? (
-              <ConversationDetail contact={selectedContact} />
+              <ConversationDetail
+                contact={selectedContact}
+                attention={conversationState.attentionIds.includes(
+                  selectedContact.id,
+                )}
+              />
             ) : (
               <div className="hush-select-empty">
                 <div className="hub-empty-title">
@@ -735,7 +821,7 @@ function HushStatusArea({
       <summary>
         <span className="hush-status-summary-title">
           <ShieldCheck size={15} aria-hidden="true" />
-          连接与状态
+          <span>连接与状态</span>
         </span>
         <span className="hush-status-summary-meta">
           钉钉{dingTalkReady ? "已连接" : "未连接"} · WeChat
@@ -1377,19 +1463,29 @@ function LiveInboxPanel({
           <div className="hush-live-empty">暂无本地消息。</div>
         ) : (
           <div className="hush-live-list">
-            {messages.slice(0, 8).map((message) => (
-              <div className="hush-live-row" key={message.id}>
-                <HushPlatformLabel platform={message.platform} />
-                <strong>{message.sender}</strong>
-                <span>{message.text}</span>
-                {message.preview_limited && (
-                  <small>{t("hub.hush.bridge.limitedPreview")}</small>
-                )}
-                {message.suggested_reply && !message.preview_limited && (
-                  <small>建议回复：{message.suggested_reply}</small>
-                )}
-              </div>
-            ))}
+            {messages.slice(0, 8).map((message) => {
+              const suggestedReply = getVisibleHushSuggestedReply(message);
+              const scope = getHushChatScope(message);
+              return (
+                <div className="hush-live-row" key={message.id}>
+                  <HushPlatformLabel platform={message.platform} />
+                  <strong>{message.sender}</strong>
+                  <span>{formatHushMessageText(message.text) || "非文本消息"}</span>
+                  <small className="hush-conversation-scope" data-scope={scope}>
+                    {getHushConversationScopeLabel([message])}
+                  </small>
+                  {message.preview_limited && (
+                    <small>{t("hub.hush.bridge.limitedPreview")}</small>
+                  )}
+                  {suggestedReply && (
+                    <small>
+                      建议回复：
+                      {formatHushMessageText(suggestedReply)}
+                    </small>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
@@ -1471,8 +1567,13 @@ export function HushContactRow({
   onSelect: () => void;
   onToggleAttention: () => void;
 }) {
-  const isPriority = contact.importance >= 4;
+  const priorityLabel = attention
+    ? "特别关注"
+    : contact.importance >= 4
+      ? "重点"
+      : null;
   const unread = unreadCount > 0;
+  const primarySource = getHushPlatformIdentity(contact.platforms[0] ?? "");
 
   return (
     <li
@@ -1494,27 +1595,37 @@ export function HushContactRow({
           onSelect();
         }}
       >
-        <span className="hush-contact-heading">
-          <strong>{contact.name}</strong>
-          <time dateTime={contact.lastMessageTime}>
-            {formatTime(contact.lastMessageTime)}
-          </time>
+        <span
+          className={`hush-source-avatar is-${primarySource.key}`}
+          aria-hidden="true"
+        >
+          <MessageCircle size={18} strokeWidth={1.8} />
         </span>
-        <span className="hush-contact-sources">
-          {contact.platforms.map((platform) => (
-            <HushPlatformLabel key={platform} platform={platform} />
-          ))}
-          {unread && (
-            <span
-              className="hush-unread-label"
-              aria-label={`${unreadCount} 条未读`}
-            >
-              {unreadCount} 条未读
-            </span>
-          )}
-          {isPriority && <span className="hush-priority-label">重点</span>}
+        <span className="hush-contact-copy">
+          <span className="hush-contact-heading">
+            <strong>{contact.name}</strong>
+            <time dateTime={contact.lastMessageTime}>
+              {formatTime(contact.lastMessageTime)}
+            </time>
+          </span>
+          <span className="hush-contact-sources">
+            {contact.platforms.map((platform) => (
+              <HushPlatformLabel key={platform} platform={platform} />
+            ))}
+            {unread && (
+              <span
+                className="hush-unread-label"
+                aria-label={`${unreadCount} 条未读`}
+              >
+                {unreadCount} 条未读
+              </span>
+            )}
+            {priorityLabel && (
+              <span className="hush-priority-label">{priorityLabel}</span>
+            )}
+          </span>
+          <span className="hush-contact-preview">{contact.lastMessage}</span>
         </span>
-        <span className="hush-contact-preview">{contact.lastMessage}</span>
       </button>
       <button
         type="button"
@@ -1539,9 +1650,16 @@ export function HushContactRow({
   );
 }
 
-function ConversationDetail({ contact }: { contact: DerivedContact }) {
+function ConversationDetail({
+  contact,
+  attention,
+}: {
+  contact: DerivedContact;
+  attention: boolean;
+}) {
   const { t } = useTranslation();
   const groups = groupHushMessages(contact.messages);
+  const conversationScope = getHushConversationScope(contact.messages);
 
   return (
     <div className="hush-conversation-detail">
@@ -1553,7 +1671,13 @@ function ConversationDetail({ contact }: { contact: DerivedContact }) {
               <HushPlatformLabel key={platform} platform={platform} />
             ))}
             <span>
-              {contact.tier} · P{contact.importance}
+              {contact.tier} · {getHushPriorityLabel(contact.importance, attention)}
+            </span>
+            <span
+              className="hush-conversation-scope"
+              data-scope={conversationScope}
+            >
+              {getHushConversationScopeLabel(contact.messages)}
             </span>
           </div>
         </div>
@@ -1574,25 +1698,28 @@ function ConversationDetail({ contact }: { contact: DerivedContact }) {
               </time>
             </header>
             <div className="hush-message-lines">
-              {group.messages.map((message) => (
-                <div className="hush-message-line" key={message.id}>
-                  <p>{message.text}</p>
-                  {message.preview_limited && (
-                    <div className="hush-message-warning">
-                      {t("hub.hush.bridge.limitedPreview")}
-                    </div>
-                  )}
-                  {message.suggested_reply && !message.preview_limited && (
-                    <div className="hush-message-suggestion">
-                      <MessageCircle size={13} aria-hidden="true" />
-                      <span>
-                        {t("hub.hush.suggestedReplies")}：
-                        {message.suggested_reply}
-                      </span>
-                    </div>
-                  )}
-                </div>
-              ))}
+              {group.messages.map((message) => {
+                const suggestedReply = getVisibleHushSuggestedReply(message);
+                return (
+                  <div className="hush-message-line" key={message.id}>
+                    <p>{message.text}</p>
+                    {message.preview_limited && (
+                      <div className="hush-message-warning">
+                        {t("hub.hush.bridge.limitedPreview")}
+                      </div>
+                    )}
+                    {suggestedReply && (
+                      <div className="hush-message-suggestion">
+                        <MessageCircle size={13} aria-hidden="true" />
+                        <span>
+                          {t("hub.hush.suggestedReplies")}：
+                          {suggestedReply}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </section>
         ))}

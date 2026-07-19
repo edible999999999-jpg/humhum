@@ -66,3 +66,118 @@
 
 - No live visual QA was performed for this fix, as requested; parent Task 4 will own that review.
 - Vite's pre-existing warning for chunks above 500 kB remains unchanged.
+
+---
+
+# Task 3 Report: Shared Room Shell And Signature Navigation
+
+## Status
+
+Complete. The Hub now provides a room shell backed by the approved character
+backgrounds and a Lucide-only signature navigation rail.
+
+## RED Evidence
+
+```text
+npx vitest run src/components/Hub/HubRoom.test.tsx src/components/Hub/HubNavigation.test.tsx
+
+Failed as expected: Cannot find module './HubRoom' and
+Cannot find module './HubNavigation'.
+```
+
+## GREEN Evidence
+
+```text
+npx vitest run src/components/Hub/HubRoom.test.tsx src/components/Hub/HubNavigation.test.tsx src/components/Hub/HubLayout.test.tsx
+3 test files passed, 14 tests passed.
+
+npm test
+30 Vitest files / 116 tests passed, plus 10 Node Hexa tests passed.
+
+npm run build
+TypeScript compilation and Vite production build passed.
+
+git diff --check
+Passed.
+```
+
+## Files
+
+- `src/components/Hub/HubRoom.tsx`
+- `src/components/Hub/HubRoom.test.tsx`
+- `src/components/Hub/HubNavigation.tsx`
+- `src/components/Hub/HubNavigation.test.tsx`
+- `src/components/Hub/HubLayout.tsx`
+- `src/styles/hub-character-rooms.css`
+
+`src/components/Hub/HubLayout.test.tsx` remained unchanged because its imports
+did not move; its window-control assertions passed unchanged.
+
+## Commit
+
+`c54d3fb feat(hub): add character room shell and navigation`
+
+## Self-Review
+
+- `HubRoom` maps every room to the supplied `/mascots/hub-backgrounds/*-room.webp`
+  path and keeps its image decorative.
+- `HubLayout` preserves every lazy module import and all Tauri window controls.
+- Each navigation item is a labelled button with a visible label, state dot, and
+  active `aria-current` state. The rail uses only real Lucide icons.
+- Hype crossfades icons in a fixed 24px wrapper; Hush clips and peeks its eye;
+  Hexa keeps its wrench black and changes its yellow/blue state dot.
+- Focus-visible and reduced-motion styles are included without resizing or
+  shifting the navigation controls.
+- Pre-existing changes to `.superpowers/sdd/progress.md` and
+  `.superpowers/sdd/task-1-report.md` were left untouched.
+
+## Concerns
+
+- Vite reports its existing advisory for chunks over 500 kB. The production build
+  completes successfully; this task does not change chunking strategy.
+
+## Interaction Fix Review
+
+### RED
+
+```text
+npx vitest run src/components/Hub/HubNavigation.test.tsx
+
+1 test file failed: 6 failed, 8 passed.
+Failures covered Hype's default/signaled semantic states, Hush's resting and
+hover hooks, finite hover-only motion, and reduced-motion behavior.
+```
+
+### GREEN
+
+```text
+npx vitest run src/components/Hub/HubNavigation.test.tsx src/components/Hub/HubRoom.test.tsx src/components/Hub/HubLayout.test.tsx
+3 test files passed, 18 tests passed.
+
+npm test
+30 Vitest files / 120 tests passed, plus 10 Node Hexa tests passed.
+
+npm run build
+TypeScript compilation and Vite production build passed.
+
+git diff --check
+Passed.
+```
+
+### Fix
+
+- Hype now renders Antenna by default. Hover and the `is-signaled` wrapper state
+  crossfade to CircleAlert through stable semantic icon classes.
+- Hush now rests half clipped, runs one finite hover animation with one blink,
+  holds a slight retreat while hovered, and returns to its shy resting position
+  after pointer leave.
+- Reduced motion keeps Hush static and disables the icon transitions.
+
+### Commit
+
+`ee08611 fix(hub): correct signature navigation motion`
+
+### Concerns
+
+- Vite retains its existing advisory for chunks over 500 kB; the production build
+  succeeds.

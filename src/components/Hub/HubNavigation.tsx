@@ -1,4 +1,4 @@
-import { Antenna, CircleAlert, Eye, Mic2, Wrench } from "lucide-react";
+import { CircleAlert, Eye, Mic2, RadioTower, Wrench } from "lucide-react";
 import type { HubRoomId } from "./HubRoom";
 
 export interface HubNavigationItemProps {
@@ -26,7 +26,7 @@ function RoomSymbol({ room, signalActive = false }: Pick<HubNavigationItemProps,
           className={`hub-nav-symbol hub-nav-symbol-hype${signalActive ? " is-signaled" : ""}`}
           aria-hidden="true"
         >
-          <Antenna
+          <RadioTower
             className="hub-nav-hype-icon hub-nav-hype-antenna"
             size={18}
             strokeWidth={1.9}
@@ -69,9 +69,9 @@ export function HubNavigationItem({
       aria-current={active ? "page" : undefined}
       title={label}
     >
+      <span className="hub-nav-rail-accent" aria-hidden="true" />
       <span className="hub-nav-symbol-stack">
         <RoomSymbol room={room} signalActive={signalActive} />
-        <span className="hub-nav-state-dot" aria-hidden="true" />
       </span>
       <span className="hub-sidebar-label">{label}</span>
     </button>

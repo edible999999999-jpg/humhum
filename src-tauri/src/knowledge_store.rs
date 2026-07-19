@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 
 const MAX_OBSIDIAN_NOTES: usize = 2000;
 const MAX_AGENT_ASSETS: usize = 8000;
+const MAX_AGENT_RULE_FILES: usize = 2000;
+const MAX_AGENT_RULE_DEPTH: usize = 4;
 const MAX_MARKDOWN_BYTES: u64 = 512 * 1024;
 const MAX_ASSET_BYTES: u64 = 384 * 1024;
 const AGENT_RULE_SCAN_PATHS: [(&str, &str, &str); 3] = [
@@ -192,12 +194,37 @@ impl KnowledgeStore {
         }
     }
 
-    /// Load preferences and memory from the Markdown vault, making the vault the
-    /// source of truth for these two collections. Other collections
-    /// (agent_rules, agent_assets, obsidian_notes) stay in knowledge.json.
+    /// Merge Markdown vault records into the JSON snapshot. Vault files win
+    /// same-id conflicts, while JSON-only records survive an empty or partial
+    /// vault for backward compatibility.
     fn load_vault(&mut self) {
-        self.data.preferences = self.read_preferences_from_vault();
-        self.data.memory_items = self.read_memory_from_vault();
+        for pref in self.read_preferences_from_vault() {
+            if let Some(existing) = self
+                .data
+                .preferences
+                .iter_mut()
+                .find(|existing| existing.id == pref.id)
+            {
+                *existing = pref;
+            } else {
+                self.data.preferences.push(pref);
+            }
+        }
+        self.data.preferences.sort_by(|a, b| a.id.cmp(&b.id));
+
+        for item in self.read_memory_from_vault() {
+            if let Some(existing) = self
+                .data
+                .memory_items
+                .iter_mut()
+                .find(|existing| existing.id == item.id)
+            {
+                *existing = item;
+            } else {
+                self.data.memory_items.push(item);
+            }
+        }
+        self.data.memory_items.sort_by(|a, b| a.id.cmp(&b.id));
     }
 
     fn read_preferences_from_vault(&self) -> Vec<Preference> {
@@ -288,6 +315,7 @@ impl KnowledgeStore {
         } else {
             self.data.preferences.push(pref);
         }
+        self.save();
     }
 
     pub fn save_memory(&mut self, item: MemoryItem) {
@@ -297,6 +325,7 @@ impl KnowledgeStore {
         } else {
             self.data.memory_items.push(item);
         }
+        self.save();
     }
 
     pub fn delete_preference(&mut self, id: &str) -> bool {
@@ -306,6 +335,7 @@ impl KnowledgeStore {
         if removed {
             let path = self.preferences_dir().join(format!("{}.md", slugify(id)));
             let _ = std::fs::remove_file(path);
+            self.save();
         }
         removed
     }
@@ -444,26 +474,30 @@ impl KnowledgeStore {
         let mut scanned_roots = Vec::new();
 
         for dir in search_dirs {
-            let Ok(entries) = std::fs::read_dir(dir) else {
+            if std::fs::read_dir(dir).is_err() {
                 continue;
-            };
+            }
             scanned_roots.push(dir.clone());
-            let entry_paths: Vec<PathBuf> = entries.flatten().map(|entry| entry.path()).collect();
 
-            for (agent_id, filename, rule_type) in AGENT_RULE_SCAN_PATHS {
-                for path in &entry_paths {
-                    let rule_file = path.join(filename);
-                    if let Ok(content) = std::fs::read_to_string(&rule_file) {
-                        let id = format!("{}:{}", agent_id, rule_file.to_string_lossy());
-                        if !found.iter().any(|rule: &AgentRule| rule.id == id) {
-                            found.push(AgentRule {
-                                id,
-                                agent_id: agent_id.to_string(),
-                                rule_type: rule_type.to_string(),
-                                file_path: rule_file.to_string_lossy().to_string(),
-                                content: truncate_content(&content, 2000),
-                            });
-                        }
+            for rule_file in collect_agent_rule_files(dir, agent_rule_scan_depth(dir, search_dirs))
+            {
+                let Some((agent_id, _, rule_type)) =
+                    AGENT_RULE_SCAN_PATHS.iter().find(|(_, filename, _)| {
+                        rule_file.file_name().is_some_and(|name| name == *filename)
+                    })
+                else {
+                    continue;
+                };
+                if let Ok(content) = std::fs::read_to_string(&rule_file) {
+                    let id = format!("{}:{}", agent_id, rule_file.to_string_lossy());
+                    if !found.iter().any(|rule: &AgentRule| rule.id == id) {
+                        found.push(AgentRule {
+                            id,
+                            agent_id: agent_id.to_string(),
+                            rule_type: rule_type.to_string(),
+                            file_path: rule_file.to_string_lossy().to_string(),
+                            content: truncate_content(&content, 2000),
+                        });
                     }
                 }
             }
@@ -780,10 +814,60 @@ fn is_scanned_agent_rule_in_roots(rule: &AgentRule, scanned_roots: &[PathBuf]) -
         return false;
     }
 
-    let Some(parent) = path.parent().and_then(Path::parent) else {
-        return false;
-    };
-    scanned_roots.iter().any(|root| root == parent)
+    scanned_roots.iter().any(|root| path.starts_with(root))
+}
+
+fn agent_rule_scan_depth(root: &Path, search_dirs: &[PathBuf]) -> usize {
+    if search_dirs
+        .iter()
+        .any(|candidate| candidate != root && candidate.starts_with(root))
+    {
+        1
+    } else {
+        MAX_AGENT_RULE_DEPTH
+    }
+}
+
+fn collect_agent_rule_files(root: &Path, max_depth: usize) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    let mut queue = VecDeque::from([(root.to_path_buf(), 0usize)]);
+
+    while let Some((dir, depth)) = queue.pop_front() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            if path.is_dir() {
+                if depth < max_depth && !name.starts_with('.') && !should_skip_agent_rule_dir(&name)
+                {
+                    queue.push_back((path, depth + 1));
+                }
+                continue;
+            }
+
+            if AGENT_RULE_SCAN_PATHS
+                .iter()
+                .any(|(_, filename, _)| path.file_name().is_some_and(|name| name == *filename))
+            {
+                files.push(path);
+                if files.len() >= MAX_AGENT_RULE_FILES {
+                    return files;
+                }
+            }
+        }
+    }
+
+    files
+}
+
+fn should_skip_agent_rule_dir(name: &str) -> bool {
+    should_skip_dir(name)
+        || matches!(
+            name.to_ascii_lowercase().as_str(),
+            "applications" | "library" | "movies" | "music" | "pictures" | "public"
+        )
 }
 
 fn resolve_agent_asset_roots(roots: Option<Vec<String>>) -> Result<Vec<PathBuf>, String> {
@@ -915,15 +999,10 @@ fn is_agent_asset_file(path: &Path) -> bool {
         .and_then(|name| name.to_str())
         .unwrap_or("")
         .to_lowercase();
-    let ext = path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .unwrap_or("")
-        .to_lowercase();
-
-    matches!(
+    if matches!(
         filename.as_str(),
         "agents.md"
+            | "agent.md"
             | "claude.md"
             | "skill.md"
             | "memory.md"
@@ -931,11 +1010,25 @@ fn is_agent_asset_file(path: &Path) -> bool {
             | "soul.md"
             | "rules.md"
             | ".cursorrules"
-            | "settings.json"
-            | "config.json"
-    ) || matches!(ext.as_str(), "md" | "yaml" | "yml" | "json" | "toml")
+            | "preference.md"
+            | "preferences.md"
+            | "user.md"
+    ) {
+        return true;
+    }
+
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
         && [
-            "agent", "skill", "soul", "memory", "rules", ".codex", ".claude", ".agents", ".pi",
+            "/agent/",
+            "/agents/",
+            "/memory/",
+            "/memories/",
+            "/preference/",
+            "/preferences/",
+            "/rules/",
+            "/soul/",
         ]
         .iter()
         .any(|needle| lower.contains(needle))
@@ -982,24 +1075,23 @@ fn parse_agent_asset(root: &Path, path: &Path, content: &str) -> AgentAsset {
 
 fn classify_asset_type(lower_path: &str, filename: &str) -> String {
     let filename = filename.to_lowercase();
-    let is_config = filename.ends_with(".yaml")
-        || filename.ends_with(".yml")
-        || filename.ends_with(".json")
-        || filename.ends_with(".toml");
     if filename == "skill.md" {
         "skill".to_string()
-    } else if filename == "agents.md" {
+    } else if filename == "agents.md" || filename == "agent.md" {
         "agent".to_string()
+    } else if filename == "preference.md"
+        || filename == "preferences.md"
+        || filename == "user.md"
+        || filename.starts_with("feedback_")
+        || filename.starts_with("feedback-")
+        || lower_path.contains("/preference/")
+        || lower_path.contains("/preferences/")
+    {
+        "preference".to_string()
     } else if lower_path.contains("soul") {
         "soul".to_string()
     } else if lower_path.contains("memory") || lower_path.contains("memories") {
         "memory".to_string()
-    } else if is_config {
-        "config".to_string()
-    } else if (lower_path.contains("/skills/") || lower_path.contains("/skill/"))
-        && filename.ends_with(".md")
-    {
-        "skill".to_string()
     } else if lower_path.contains("/agents/") || lower_path.contains("/agent/") {
         "agent".to_string()
     } else if filename == "claude.md" || filename == ".cursorrules" || lower_path.contains("rules")
@@ -1678,6 +1770,10 @@ mod tests {
 
         let md = root.join("vault").join("preferences").join("pref-42.md");
         assert!(md.exists(), "preference markdown file should exist");
+        let persisted: KnowledgeData =
+            serde_json::from_str(&std::fs::read_to_string(root.join("knowledge.json")).unwrap())
+                .unwrap();
+        assert_eq!(persisted.preferences.len(), 1);
 
         // A fresh store reads the vault as source of truth.
         let reloaded = store_at(&root);
@@ -1725,6 +1821,10 @@ mod tests {
 
         let md = root.join("vault").join("memory").join("mem-1.md");
         assert!(md.exists());
+        let persisted: KnowledgeData =
+            serde_json::from_str(&std::fs::read_to_string(root.join("knowledge.json")).unwrap())
+                .unwrap();
+        assert_eq!(persisted.memory_items.len(), 1);
 
         let reloaded = store_at(&root);
         let items = &reloaded.get_all().memory_items;
@@ -2018,5 +2118,133 @@ mod tests {
             ),
             "agent",
         );
+    }
+
+    #[test]
+    fn only_skill_md_is_classified_as_a_skill() {
+        assert_eq!(
+            classify_asset_type(
+                "/Users/test/.agents/skills/custom-helper/SKILL.md",
+                "SKILL.md",
+            ),
+            "skill",
+        );
+        assert_ne!(
+            classify_asset_type(
+                "/Users/test/.agents/skills/custom-helper/references/usage.md",
+                "usage.md",
+            ),
+            "skill",
+        );
+        assert_ne!(
+            classify_asset_type(
+                "/Users/test/.agents/skills/custom-helper/package.json",
+                "package.json",
+            ),
+            "skill",
+        );
+    }
+
+    #[test]
+    fn asset_collection_rejects_json_session_and_config_files() {
+        assert!(!is_agent_asset_file(Path::new(
+            "/Users/test/.qoder/projects/session/task.json"
+        )));
+        assert!(!is_agent_asset_file(Path::new(
+            "/Users/test/.agents/skills/custom-helper/package.json"
+        )));
+        assert!(is_agent_asset_file(Path::new(
+            "/Users/test/.agents/skills/custom-helper/SKILL.md"
+        )));
+        assert!(is_agent_asset_file(Path::new(
+            "/Users/test/.qoder/memories/project/decision.md"
+        )));
+        assert!(is_agent_asset_file(Path::new(
+            "/Users/test/.qoderwork/awareness/main/USER.md"
+        )));
+    }
+
+    #[test]
+    fn learned_user_feedback_is_classified_as_preference() {
+        assert_eq!(
+            classify_asset_type(
+                "/Users/test/.claude/projects/project/memory/feedback_chinese_response.md",
+                "feedback_chinese_response.md",
+            ),
+            "preference",
+        );
+        assert_eq!(
+            classify_asset_type("/Users/test/.qoderwork/awareness/main/USER.md", "USER.md",),
+            "preference",
+        );
+    }
+
+    #[test]
+    fn scan_agent_rules_finds_rules_in_nested_projects() {
+        let temp = tempfile::tempdir().unwrap();
+        let scan_root = temp.path().join("Desktop");
+        let project = scan_root.join("workspace").join("nested-project");
+        std::fs::create_dir_all(&project).unwrap();
+        let rule_path = project.join("AGENTS.md");
+        std::fs::write(&rule_path, "nested rule").unwrap();
+
+        let mut store = store_at(temp.path());
+        store.scan_agent_rules_in(&[scan_root]);
+
+        assert!(store
+            .get_all()
+            .agent_rules
+            .iter()
+            .any(|rule| rule.file_path == rule_path.to_string_lossy()));
+    }
+
+    #[test]
+    fn parent_rule_root_uses_a_shallow_scan_when_child_roots_are_explicit() {
+        let home = PathBuf::from("/Users/test");
+        let search_dirs = vec![
+            home.join("Desktop"),
+            home.join("Documents"),
+            home.join("Projects"),
+            home.clone(),
+        ];
+
+        assert_eq!(agent_rule_scan_depth(&home, &search_dirs), 1);
+        assert_eq!(
+            agent_rule_scan_depth(&home.join("Desktop"), &search_dirs),
+            MAX_AGENT_RULE_DEPTH,
+        );
+    }
+
+    #[test]
+    fn existing_json_preferences_and_memories_survive_an_empty_vault() {
+        let root = temp_root("empty-vault-fallback");
+        std::fs::create_dir_all(root.join("vault")).unwrap();
+        let legacy = KnowledgeData {
+            preferences: vec![Preference {
+                id: "pref-existing".into(),
+                category: "communication".into(),
+                content: "请使用中文".into(),
+                source: "legacy".into(),
+                priority: 4,
+            }],
+            memory_items: vec![MemoryItem {
+                id: "memory-existing".into(),
+                agent_id: "codex".into(),
+                content: "正在构建 HUMHUM".into(),
+                temperature: "hot".into(),
+            }],
+            ..Default::default()
+        };
+        std::fs::write(
+            root.join("knowledge.json"),
+            serde_json::to_string_pretty(&legacy).unwrap(),
+        )
+        .unwrap();
+
+        let store = store_at(&root);
+
+        assert_eq!(store.get_all().preferences.len(), 1);
+        assert_eq!(store.get_all().memory_items.len(), 1);
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

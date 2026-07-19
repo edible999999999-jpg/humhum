@@ -1,7 +1,7 @@
 import { useEffect, useReducer, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { QRCodeSVG } from "qrcode.react";
-import { Activity, ChevronDown, ChevronRight, Clock3, Copy, Crosshair, FileDiff, Flame, Link, Power, QrCode, RefreshCw, RotateCcw, Save, Send, ShieldCheck, Smartphone, Square, Trash2, WifiOff } from "lucide-react";
+import { Activity, ChevronDown, ChevronRight, Clock3, Copy, Crosshair, FileDiff, Flame, Link, Power, QrCode, RefreshCw, RotateCcw, Save, Send, ShieldCheck, Smartphone, Square, Trash2, WifiOff, X } from "lucide-react";
 import {
   useHexaData,
   type CodexRemoteControlState,
@@ -277,6 +277,7 @@ export function HexaMobilePairingCard({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState(Date.now());
+  const [pairingDismissed, setPairingDismissed] = useState(false);
 
   useEffect(() => {
     if (!pairing) return;
@@ -285,13 +286,18 @@ export function HexaMobilePairingCard({
     return () => window.clearInterval(timer);
   }, [pairing]);
 
+  useEffect(() => {
+    setPairingDismissed(false);
+  }, [pairing?.android_setup]);
+
   const secondsRemaining = pairing
     ? mobilePairingSecondsRemaining(pairing.expires_at, nowMs)
     : 0;
   const qrVisible = pairing
     ? shouldShowMobilePairingQr(state.pairing_active, pairing.expires_at, nowMs)
     : false;
-  const pairingExpanded = qrVisible && Boolean(pairing?.android_setup);
+  const pairingExpanded =
+    qrVisible && Boolean(pairing?.android_setup) && !pairingDismissed;
   const actionLabel = pairingExpanded ? "刷新配对二维码" : "生成配对二维码";
 
   const refreshPairing = async () => {
@@ -299,6 +305,7 @@ export function HexaMobilePairingCard({
     setError(null);
     try {
       await startOrRefreshMobilePairing(state, pairing, onEnable, onPair);
+      setPairingDismissed(false);
     } catch (cause) {
       setError(String(cause));
     } finally {
@@ -314,6 +321,15 @@ export function HexaMobilePairingCard({
     >
       {pairingExpanded && pairing?.android_setup ? (
         <div className="hexa-mobile-pairing-panel">
+          <button
+            type="button"
+            className="hexa-mobile-pairing-close"
+            aria-label="关闭配对二维码"
+            title="关闭配对二维码"
+            onClick={() => setPairingDismissed(true)}
+          >
+            <X size={14} aria-hidden="true" />
+          </button>
           <div className="hexa-mobile-pairing-qr" aria-label="Hexa 手机配对二维码">
             <QRCodeSVG
               value={pairing.android_setup}
@@ -343,7 +359,9 @@ export function HexaMobilePairingCard({
               onClick={() => void refreshPairing()}
             >
               <RefreshCw size={14} className={busy ? "hexa-mobile-refreshing" : undefined} />
-              {busy ? "正在刷新" : "刷新二维码"}
+              <span className="hexa-mobile-action-label">
+                {busy ? "正在刷新" : "刷新二维码"}
+              </span>
             </button>
           </div>
         </div>
@@ -368,7 +386,9 @@ export function HexaMobilePairingCard({
             onClick={() => void refreshPairing()}
           >
             <QrCode size={15} />
-            {busy ? "正在生成" : "生成二维码"}
+            <span className="hexa-mobile-action-label">
+              {busy ? "正在生成" : "生成二维码"}
+            </span>
           </button>
         </div>
       )}
@@ -933,7 +953,15 @@ function CodexIntervention({
   };
 
   return (
-    <div style={{ display: "grid", gap: 8, paddingTop: 10, borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+    <div
+      className="hexa-intervention-composer"
+      style={{
+        display: "grid",
+        gap: 8,
+        paddingTop: 10,
+        borderTop: "1px solid rgba(255,255,255,0.06)",
+      }}
+    >
       {queuedInterventions.map((queued) => (
         <div
           key={queued.id}
@@ -1519,7 +1547,11 @@ function AgentSessionGroup({
   );
 }
 
-export function HexaModule() {
+export function HexaModule({
+  focusGoalId = null,
+}: {
+  focusGoalId?: string | null;
+} = {}) {
   const {
     activeSupervisorSessions,
     completedSupervisorSessions,
@@ -1528,6 +1560,9 @@ export function HexaModule() {
     alerts,
     watchDataState,
     retryHexaData,
+    developmentGoals,
+    goalDataState,
+    retryGoalData,
     bridgeHealth,
     remoteControl,
     remotePairing,
@@ -1557,6 +1592,8 @@ export function HexaModule() {
     revokeMobileDevice,
     configureMobileRelay,
     deleteWatchedSession,
+    acceptGoalAttempt,
+    deleteDevelopmentGoal,
     mutateHexaSessionAudit,
   } = useHexaData();
   const [openReviews, setOpenReviews] = useState<Set<string>>(new Set());
@@ -1675,7 +1712,10 @@ export function HexaModule() {
         : retryCodexMessage;
 
     return (
-      <section className="hexa-report-section" aria-label="会话操作">
+      <section
+        className="hexa-report-section hexa-report-operations"
+        aria-label="会话操作"
+      >
         <div className="hexa-report-section-title">
           <span><Activity size={15} /> 人工介入</span>
           {item.session.client_type === "claude-code" && (
@@ -1708,49 +1748,65 @@ export function HexaModule() {
 
   return (
     <div className="hub-module hexa-room-module">
-      <div className="hexa-heading-row">
-        <div className="hexa-heading-copy">
-          <h2 className="hub-module-title" style={{ marginBottom: 4 }}>Hexa 会话监督</h2>
-          <p className="hub-module-desc">
-            主动监控每一轮目标、进度和结果；自动扫描只负责发现，不混入可信结论。
-          </p>
-          <div className="hexa-bridge-health" role="status">
-            <span
-              className={`hexa-bridge-health-dot is-${bridgeHealth.status}`}
-              aria-hidden="true"
-            />
-            <span>{bridgeHealth.message}</span>
+      <header className="hexa-heading-row hexa-room-header">
+        <div className="hexa-room-identity">
+          <img
+            src="/mascots/avatars/hexa-avatar.png"
+            alt=""
+            aria-hidden="true"
+          />
+          <div className="hexa-heading-copy">
+            <div className="hexa-title-line">
+              <h2 className="hub-module-title">Hexa 监督台</h2>
+              <div className="hexa-bridge-health" role="status">
+                <span
+                  className={`hexa-bridge-health-dot is-${bridgeHealth.status}`}
+                  aria-hidden="true"
+                />
+                <span>{bridgeHealth.message}</span>
+              </div>
+            </div>
+            <p className="hub-module-desc">
+              专注监督与守护所有 HUMHUM Agents 的高效交付
+            </p>
           </div>
         </div>
-        <HexaMobilePairingCard
-          state={mobileBridge}
-          pairing={mobilePairing}
-          onEnable={enableMobileBridge}
-          onPair={startMobilePairing}
-        />
-      </div>
-
-      <div className="hexa-top-tabs" role="tablist" aria-label="Hexa 会话区域">
-        <button type="button" role="tab" aria-selected={activeSection === "watched"} className={`hexa-top-tab ${activeSection === "watched" ? "active" : ""}`} onClick={() => setActiveSection("watched")}>
-          <strong>主动监控 · {watchedSessions.length}</strong>
-          <span>可信报告与人工介入</span>
-        </button>
-        <button type="button" role="tab" aria-selected={activeSection === "scanned"} className={`hexa-top-tab ${activeSection === "scanned" ? "active" : ""}`} onClick={() => setActiveSection("scanned")}>
-          <strong>自动扫描 · {secondarySessions.length}</strong>
-          <span>发现会话与历史样本</span>
-        </button>
-      </div>
+        <div className="hexa-header-actions">
+          <div className="hexa-top-tabs" role="tablist" aria-label="Hexa 会话区域">
+            <button type="button" role="tab" aria-selected={activeSection === "watched"} className={`hexa-top-tab ${activeSection === "watched" ? "active" : ""}`} onClick={() => setActiveSection("watched")}>
+              <strong>主动监控 · {watchedSessions.length}</strong>
+              <span>可信报告与人工介入</span>
+            </button>
+            <button type="button" role="tab" aria-selected={activeSection === "scanned"} className={`hexa-top-tab ${activeSection === "scanned" ? "active" : ""}`} onClick={() => setActiveSection("scanned")}>
+              <strong>自动扫描 · {secondarySessions.length}</strong>
+              <span>发现会话与历史样本</span>
+            </button>
+          </div>
+          <HexaMobilePairingCard
+            state={mobileBridge}
+            pairing={mobilePairing}
+            onEnable={enableMobileBridge}
+            onPair={startMobilePairing}
+          />
+        </div>
+      </header>
 
       {activeSection === "watched" ? (
         <HexaActiveMonitor
           sessions={watchedSessions}
+          developmentGoals={developmentGoals}
           supervisorBySessionId={watchedSupervisorBySessionId}
           dataState={watchDataState}
+          goalDataState={goalDataState}
           onRetry={retryHexaData}
+          onRetryGoals={retryGoalData}
           onFocus={focusAgentSession}
           onDelete={deleteWatchedSession}
           onMutate={mutateHexaSessionAudit}
+          onAcceptGoalAttempt={acceptGoalAttempt}
+          onDeleteGoal={deleteDevelopmentGoal}
           renderOperations={renderWatchedOperations}
+          focusGoalId={focusGoalId}
           entryPanel={(
             <div className="hexa-binding-stack">
               <HexaWatchCommandPanel />

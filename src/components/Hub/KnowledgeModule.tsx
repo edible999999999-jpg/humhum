@@ -1,7 +1,15 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { RefreshCw, Search } from "lucide-react";
-import type { AgentAsset, AgentRule, AppConfig, KnowledgeData, ObsidianNote, Preference } from "@/types";
+import type {
+  AgentAsset,
+  AgentRule,
+  AppConfig,
+  KnowledgeData,
+  MemoryItem,
+  ObsidianNote,
+  Preference,
+} from "@/types";
 import {
   filterAgentAssets,
   getAgentAssetSummary,
@@ -33,6 +41,7 @@ const ASSET_TYPE_COLORS: Record<string, string> = {
   agent: "#a78bfa",
   soul: "#fb7185",
   memory: "#fbbf24",
+  preference: "#fb923c",
   rule: "#34d399",
   config: "#94eff4",
   note: "#cbd5e1",
@@ -59,7 +68,44 @@ function parseAssetRoots(value: string): string[] {
     .filter(Boolean);
 }
 
-export type KnowledgeTab = "assets" | "preferences" | "rules" | "obsidian";
+function matchesAssetQuery(asset: AgentAsset, normalizedQuery: string): boolean {
+  if (!normalizedQuery) return true;
+  return [
+    asset.name,
+    asset.content,
+    asset.source,
+    asset.asset_type,
+    asset.agent_id,
+    asset.file_path,
+    asset.relative_path,
+    ...asset.tags,
+  ].some((value) => value.toLowerCase().includes(normalizedQuery));
+}
+
+function matchesNoteQuery(note: ObsidianNote, normalizedQuery: string): boolean {
+  if (!normalizedQuery) return true;
+  return [
+    note.title,
+    note.relative_path,
+    note.note_type,
+    note.excerpt,
+    ...note.tags,
+  ].some((value) => value.toLowerCase().includes(normalizedQuery));
+}
+
+function isRuleAsset(asset: AgentAsset): boolean {
+  const pathParts = asset.file_path.replaceAll("\\", "/").split("/");
+  const filename = pathParts[pathParts.length - 1]?.toLowerCase();
+  return (
+    asset.asset_type === "rule" ||
+    filename === "agents.md" ||
+    filename === "agent.md" ||
+    filename === "claude.md" ||
+    filename === ".cursorrules"
+  );
+}
+
+export type KnowledgeTab = "assets" | "preferences" | "rules" | "memory";
 
 export type KnowledgeOperationStatus = {
   kind: "busy" | "success" | "error";
@@ -378,16 +424,20 @@ export function KnowledgeModule() {
     try {
       await runKnowledgeOperation(
         async () => {
-          const found = await invoke<AgentRule[]>("scan_agent_rules");
-          if (found.length > 0) {
-            await fetchData();
-          }
-          return found.length;
+          await invoke<AgentRule[]>("scan_agent_rules");
+          await invoke<AgentAsset[]>("scan_agent_assets", {
+            roots: parseAssetRoots(assetRoots),
+          });
+          const refreshed = await fetchData();
+          return (
+            refreshed.agent_rules.length +
+            refreshed.agent_assets.filter(isRuleAsset).length
+          );
         },
         (status) => setOperationStatus({ ...status, tab: "rules" }),
         {
           busy: "正在扫描 Agent 规则...",
-          success: (count) => `规则已刷新，共发现 ${count} 条。`,
+          success: (count) => `规则已刷新，共载入 ${count} 条。`,
           error: "扫描 Agent 规则失败",
         },
       );
@@ -398,10 +448,15 @@ export function KnowledgeModule() {
 
   const handleRefreshPreferences = async () => {
     await runKnowledgeOperation(
-      async () => fetchData(),
+      async () => {
+        await invoke<AgentAsset[]>("scan_agent_assets", {
+          roots: parseAssetRoots(assetRoots),
+        });
+        return fetchData();
+      },
       (status) => setOperationStatus({ ...status, tab: "preferences" }),
       {
-        busy: "正在刷新偏好...",
+        busy: "正在扫描偏好...",
         success: "偏好已刷新。",
         error: "刷新偏好失败",
       },
@@ -415,9 +470,9 @@ export function KnowledgeModule() {
     try {
       const roots = parseAssetRoots(assetRoots);
       const found = await invoke<AgentAsset[]>("scan_agent_assets", { roots });
-      const skillCount = found.filter((asset) => asset.asset_type === "skill").length;
+      const skillCount = filterAgentAssets(found, "all", "").length;
       const agentCount = found.filter((asset) => asset.asset_type === "agent").length;
-      setAssetScanSummary(`Scanned ${found.length} assets · ${skillCount} skills · ${agentCount} agents`);
+      setAssetScanSummary(`已扫描 ${found.length} 个知识文件 · ${skillCount} 个技能 · ${agentCount} 个 Agent 说明`);
       await fetchData();
     } catch (error) {
       setAssetError(String(error));
@@ -444,13 +499,39 @@ export function KnowledgeModule() {
     }
   };
 
-  const handleScanVault = async () => {
+  const handleRefreshMemory = async () => {
     setScanningVault(true);
     setVaultError(null);
     try {
-      const path = vaultPath.trim() || null;
-      await invoke<ObsidianNote[]>("scan_obsidian_vault", { path });
-      await fetchData();
+      await runKnowledgeOperation(
+        async () => {
+          await invoke<AgentAsset[]>("scan_agent_assets", {
+            roots: parseAssetRoots(assetRoots),
+          });
+          if (vaultPath.trim()) {
+            await invoke<ObsidianNote[]>("scan_obsidian_vault", {
+              path: vaultPath.trim(),
+            });
+          }
+          const refreshed = await fetchData();
+          return (
+            refreshed.memory_items.length +
+            refreshed.agent_assets.filter(
+              (asset) =>
+                asset.asset_type === "memory" || asset.asset_type === "soul",
+            ).length +
+            refreshed.obsidian_notes.filter((note) =>
+              ["memory", "daily", "project_context"].includes(note.note_type),
+            ).length
+          );
+        },
+        (status) => setOperationStatus({ ...status, tab: "memory" }),
+        {
+          busy: "正在刷新本地记忆...",
+          success: (count) => `记忆已刷新，共载入 ${count} 条。`,
+          error: "刷新记忆失败",
+        },
+      );
     } catch (error) {
       setVaultError(String(error));
     } finally {
@@ -523,16 +604,27 @@ export function KnowledgeModule() {
   const notes = data.obsidian_notes || [];
   const assets = data.agent_assets || [];
   const normalizedQuery = searchQuery.trim().toLowerCase();
-  const filteredNotes = notes.filter((note) => {
-    if (!normalizedQuery) return true;
-    return (
-      note.title.toLowerCase().includes(normalizedQuery) ||
-      note.relative_path.toLowerCase().includes(normalizedQuery) ||
-      note.note_type.toLowerCase().includes(normalizedQuery) ||
-      note.excerpt.toLowerCase().includes(normalizedQuery) ||
-      note.tags.some((tag) => tag.toLowerCase().includes(normalizedQuery))
-    );
-  });
+  const preferenceAssets = assets.filter(
+    (asset) => asset.asset_type === "preference",
+  );
+  const canonicalRulePaths = new Set(
+    data.agent_rules.map((rule) => rule.file_path),
+  );
+  const discoveredRuleAssets = assets.filter(
+    (asset) => isRuleAsset(asset) && !canonicalRulePaths.has(asset.file_path),
+  );
+  const memoryAssets = assets.filter(
+    (asset) =>
+      asset.asset_type === "memory" || asset.asset_type === "soul",
+  );
+  const preferenceNotes = notes.filter(
+    (note) => note.note_type === "preference",
+  );
+  const ruleNotes = notes.filter((note) => note.note_type === "rule");
+  const memoryNotes = notes.filter((note) =>
+    ["memory", "daily", "project_context"].includes(note.note_type),
+  );
+
   const filteredPreferences = data.preferences.filter((preference) => {
     if (!normalizedQuery) return true;
     return [
@@ -550,13 +642,46 @@ export function KnowledgeModule() {
       rule.content,
     ].some((value) => value.toLowerCase().includes(normalizedQuery));
   });
+  const filteredMemoryItems = data.memory_items.filter((item) => {
+    if (!normalizedQuery) return true;
+    return [item.agent_id, item.temperature, item.content].some((value) =>
+      value.toLowerCase().includes(normalizedQuery),
+    );
+  });
+  const filteredPreferenceAssets = preferenceAssets.filter((asset) =>
+    matchesAssetQuery(asset, normalizedQuery),
+  );
+  const filteredRuleAssets = discoveredRuleAssets.filter((asset) =>
+    matchesAssetQuery(asset, normalizedQuery),
+  );
+  const filteredMemoryAssets = memoryAssets.filter((asset) =>
+    matchesAssetQuery(asset, normalizedQuery),
+  );
+  const filteredPreferenceNotes = preferenceNotes.filter((note) =>
+    matchesNoteQuery(note, normalizedQuery),
+  );
+  const filteredRuleNotes = ruleNotes.filter((note) =>
+    matchesNoteQuery(note, normalizedQuery),
+  );
+  const filteredMemoryNotes = memoryNotes.filter((note) =>
+    matchesNoteQuery(note, normalizedQuery),
+  );
 
-  const typeCounts = notes.reduce<Record<string, number>>((acc, note) => {
+  const typeCounts = memoryNotes.reduce<Record<string, number>>((acc, note) => {
     acc[note.note_type] = (acc[note.note_type] || 0) + 1;
     return acc;
   }, {});
-  const hotCount = notes.filter((note) => note.memory_temperature === "hot").length;
-  const coldCount = notes.length - hotCount;
+  const hotCount =
+    data.memory_items.filter((item) => item.temperature === "hot").length +
+    memoryAssets.filter((asset) => asset.tags.includes("hot")).length +
+    memoryNotes.filter((note) => note.memory_temperature === "hot").length;
+  const memoryCount =
+    data.memory_items.length + memoryAssets.length + memoryNotes.length;
+  const coldCount = memoryCount - hotCount;
+  const preferenceCount =
+    data.preferences.length + preferenceAssets.length + preferenceNotes.length;
+  const ruleCount =
+    data.agent_rules.length + discoveredRuleAssets.length + ruleNotes.length;
   const configuredAssetRoots = parseAssetRoots(assetRoots);
   const scopedAssets = filterAgentAssets(
     assets,
@@ -579,17 +704,16 @@ export function KnowledgeModule() {
   const refreshBusy =
     (activeTab === "assets" && scanningAssets) ||
     (activeTab === "rules" && scanning) ||
-    (activeTab === "obsidian" && scanningVault) ||
+    (activeTab === "memory" && scanningVault) ||
     operationBusy;
-  const refreshDisabled =
-    refreshBusy || (activeTab === "obsidian" && !vaultPath.trim());
+  const refreshDisabled = refreshBusy;
   const refreshLabel =
     activeTab === "assets"
-      ? "扫描 Agent 资产"
+      ? "扫描本地技能"
       : activeTab === "rules"
         ? "扫描 Agent 规则"
-        : activeTab === "obsidian"
-          ? "刷新 Obsidian 索引"
+        : activeTab === "memory"
+          ? "刷新本地记忆"
           : "刷新偏好";
 
   const toolbarStatus: KnowledgeOperationStatus | null =
@@ -601,16 +725,13 @@ export function KnowledgeModule() {
           : assetScanSummary
             ? { kind: "success", message: assetScanSummary }
             : null
-      : activeTab === "obsidian"
+      : activeTab === "memory"
         ? scanningVault
-          ? { kind: "busy", message: "正在刷新 Obsidian 索引..." }
+          ? { kind: "busy", message: "正在刷新本地记忆..." }
           : vaultError
             ? { kind: "error", message: vaultError }
-            : data.obsidian_vault?.last_indexed_at
-              ? {
-                  kind: "success",
-                  message: `上次索引：${new Date(data.obsidian_vault.last_indexed_at).toLocaleString()}`,
-                }
+            : operationStatus?.tab === activeTab
+              ? operationStatus
               : null
         : operationStatus?.tab === activeTab
           ? operationStatus
@@ -621,30 +742,38 @@ export function KnowledgeModule() {
       assets: handleScanAssets,
       preferences: handleRefreshPreferences,
       rules: handleScan,
-      obsidian: handleScanVault,
+      memory: handleRefreshMemory,
     });
   };
 
   return (
     <div className="hub-module hype-room-module">
-      <header className="hype-heading">
-        <h2 className="hub-module-title">Hype 知识库</h2>
-        <p className="hub-module-desc">我安装和创建的技能、规则与记忆</p>
+      <header className="hype-heading hype-room-header">
+        <div className="hype-room-identity">
+          <img
+            src="/mascots/avatars/hype-avatar.png"
+            alt=""
+            aria-hidden="true"
+          />
+          <div>
+            <h2 className="hub-module-title"><span>Hype</span> 知识库</h2>
+            <p className="hub-module-desc">我安装和创建的</p>
+          </div>
+        </div>
+        <KnowledgeSearchToolbar
+          query={searchQuery}
+          onQueryChange={setSearchQuery}
+          onRefresh={handleActiveRefresh}
+          refreshBusy={refreshBusy}
+          refreshDisabled={refreshDisabled}
+          refreshLabel={refreshLabel}
+          status={toolbarStatus}
+        />
       </header>
-
-      <KnowledgeSearchToolbar
-        query={searchQuery}
-        onQueryChange={setSearchQuery}
-        onRefresh={handleActiveRefresh}
-        refreshBusy={refreshBusy}
-        refreshDisabled={refreshDisabled}
-        refreshLabel={refreshLabel}
-        status={toolbarStatus}
-      />
 
       <div className="hype-primary-controls">
         <div className="hype-tabs" role="tablist" aria-label="Hype 知识视图">
-          {(["assets", "preferences", "rules", "obsidian"] as KnowledgeTab[]).map((tab) => (
+          {(["assets", "preferences", "rules", "memory"] as KnowledgeTab[]).map((tab) => (
             <button
               key={tab}
               type="button"
@@ -656,10 +785,10 @@ export function KnowledgeModule() {
               {tab === "assets"
                 ? `我的技能 ${scopedAssets.length}`
                 : tab === "preferences"
-                  ? `我的偏好 ${data.preferences.length}`
+                  ? `我的偏好 ${preferenceCount}`
                   : tab === "rules"
-                    ? `我的规则 ${data.agent_rules.length}`
-                    : `记忆 ${notes.length}`}
+                    ? `我的规则 ${ruleCount}`
+                    : `我的记忆 ${memoryCount}`}
             </button>
           ))}
         </div>
@@ -685,23 +814,6 @@ export function KnowledgeModule() {
           </div>
         )}
       </div>
-
-      <ReviewEnginePanel
-        assetsCount={assets.length}
-        reviewEngine={reviewEngine}
-        busy={reviewBusy}
-        message={reviewMessage}
-        showAdvanced={showAdvancedReview}
-        piUrl={piUrl}
-        piModel={piModel}
-        piToken={piToken}
-        onToggleAdvanced={() => setShowAdvancedReview((value) => !value)}
-        onPiUrlChange={setPiUrl}
-        onPiModelChange={setPiModel}
-        onPiTokenChange={setPiToken}
-        onStartCodexReview={handleStartCodexReview}
-        onSaveCustomReviewer={handleSaveCustomReviewer}
-      />
 
       {/* Agent assets tab */}
       {activeTab === "assets" && (
@@ -870,12 +982,15 @@ export function KnowledgeModule() {
 
           {/* Preference list */}
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {filteredPreferences.length === 0 ? (
+            {filteredPreferences.length === 0 &&
+            filteredPreferenceAssets.length === 0 &&
+            filteredPreferenceNotes.length === 0 ? (
               <div style={{ padding: 24, textAlign: "center", color: "rgba(255,255,255,0.25)", fontSize: 13 }}>
-                {data.preferences.length === 0 ? "暂无偏好设置，点击上方按钮添加" : "没有匹配的偏好"}
+                {preferenceCount === 0 ? "暂无偏好，点击刷新扫描或手动添加" : "没有匹配的偏好"}
               </div>
             ) : (
-              filteredPreferences.map((pref) => {
+              <>
+                {filteredPreferences.map((pref) => {
                 const color = CATEGORY_COLORS[pref.category] || "#94eff4";
                 return (
                   <div
@@ -883,8 +998,8 @@ export function KnowledgeModule() {
                     style={{
                       padding: 12,
                       borderRadius: 8,
-                      background: "rgba(255,255,255,0.02)",
-                      border: "1px solid rgba(255,255,255,0.05)",
+                      background: "rgba(255,255,255,0.62)",
+                      border: "1px solid rgba(116,143,165,0.16)",
                       borderLeft: `3px solid ${color}`,
                     }}
                   >
@@ -901,7 +1016,7 @@ export function KnowledgeModule() {
                       >
                         {pref.category}
                       </span>
-                      <span style={{ fontSize: 10, color: "rgba(255,255,255,0.2)" }}>
+                      <span style={{ fontSize: 10, color: "#8290a3" }}>
                         via {pref.source}
                       </span>
                       <div style={{ flex: 1 }} />
@@ -921,8 +1036,8 @@ export function KnowledgeModule() {
                                 background:
                                   p <= pref.priority
                                     ? `${color}30`
-                                    : "rgba(255,255,255,0.04)",
-                                color: p <= pref.priority ? color : "rgba(255,255,255,0.2)",
+                                    : "rgba(116,143,165,0.08)",
+                                color: p <= pref.priority ? color : "#8290a3",
                                 fontSize: 9,
                                 cursor: "pointer",
                               }}
@@ -936,7 +1051,7 @@ export function KnowledgeModule() {
                           onClick={() => setEditing(pref.id)}
                           style={{
                             fontSize: 10,
-                            color: "rgba(255,255,255,0.25)",
+                            color: "#7b8798",
                             cursor: "pointer",
                           }}
                         >
@@ -952,7 +1067,7 @@ export function KnowledgeModule() {
                           borderRadius: "50%",
                           border: "none",
                           background: "transparent",
-                          color: "rgba(255,255,255,0.15)",
+                          color: "#94a3b8",
                           fontSize: 11,
                           cursor: "pointer",
                           display: "flex",
@@ -963,12 +1078,20 @@ export function KnowledgeModule() {
                         ×
                       </button>
                     </div>
-                    <div style={{ fontSize: 13, color: "rgba(255,255,255,0.7)", lineHeight: 1.5 }}>
+                    <div style={{ fontSize: 13, color: "#4f5e70", lineHeight: 1.5 }}>
                       {pref.content}
                     </div>
                   </div>
                 );
-              })
+                })}
+                <KnowledgeAssetSection
+                  title="本地偏好文件"
+                  assets={filteredPreferenceAssets}
+                />
+                {filteredPreferenceNotes.map((note) => (
+                  <ObsidianNoteCard key={note.id} note={note} />
+                ))}
+              </>
             )}
           </div>
 
@@ -994,59 +1117,39 @@ export function KnowledgeModule() {
       {activeTab === "rules" && (
         <div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {filteredRules.length === 0 ? (
+            {filteredRules.length === 0 &&
+            filteredRuleAssets.length === 0 &&
+            filteredRuleNotes.length === 0 ? (
               <div style={{ padding: 24, textAlign: "center", color: "rgba(255,255,255,0.25)", fontSize: 13 }}>
-                {data.agent_rules.length === 0
-                  ? "点击刷新发现 CLAUDE.md / .cursorrules 等规则文件"
+                {ruleCount === 0
+                  ? "点击刷新发现 AGENTS.md / CLAUDE.md / .cursorrules 等规则文件"
                   : "没有匹配的规则"}
               </div>
             ) : (
-              filteredRules.map((rule) => (
-                <RuleCard key={rule.id} rule={rule} />
-              ))
+              <>
+                {filteredRules.map((rule) => (
+                  <RuleCard key={rule.id} rule={rule} />
+                ))}
+                <KnowledgeAssetSection
+                  title="本地规则文件"
+                  assets={filteredRuleAssets}
+                />
+                {filteredRuleNotes.map((note) => (
+                  <ObsidianNoteCard key={note.id} note={note} />
+                ))}
+              </>
             )}
           </div>
         </div>
       )}
 
-      {/* Obsidian tab */}
-      {activeTab === "obsidian" && (
+      {/* Memory tab */}
+      {activeTab === "memory" && (
         <div>
-          <div
-            style={{
-              padding: 14,
-              borderRadius: 8,
-              background: "rgba(255,255,255,0.025)",
-              border: "1px solid rgba(148,239,244,0.12)",
-              marginBottom: 12,
-            }}
-          >
-            <label className="kawaii-label">Obsidian Vault</label>
-            <input
-              value={vaultPath}
-              onChange={(e) => setVaultPath(e.target.value)}
-              placeholder="~/Documents/My Vault"
-              className="kawaii-input"
-              style={{ marginTop: 8 }}
-            />
-            <div
-              style={{
-                marginTop: 8,
-                fontSize: 10,
-                color: "rgba(255,255,255,0.25)",
-                fontFamily: "monospace",
-              }}
-            >
-              {data.obsidian_vault?.last_indexed_at
-                ? `last indexed ${new Date(data.obsidian_vault.last_indexed_at).toLocaleString()}`
-                : "read-only local markdown index"}
-            </div>
-          </div>
-
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginBottom: 12 }}>
-            <KnowledgeStat label="hot" value={hotCount} color="#fbbf24" />
-            <KnowledgeStat label="cold" value={coldCount} color="#94a3b8" />
-            <KnowledgeStat label="tasks" value={notes.reduce((sum, note) => sum + note.tasks.length, 0)} color="#34d399" />
+            <KnowledgeStat label="热记忆" value={hotCount} color="#fbbf24" />
+            <KnowledgeStat label="冷记忆" value={coldCount} color="#94a3b8" />
+            <KnowledgeStat label="待办" value={memoryNotes.reduce((sum, note) => sum + note.tasks.length, 0)} color="#34d399" />
           </div>
 
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
@@ -1058,18 +1161,124 @@ export function KnowledgeModule() {
           </div>
 
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {filteredNotes.length === 0 ? (
+            {filteredMemoryItems.length === 0 &&
+            filteredMemoryAssets.length === 0 &&
+            filteredMemoryNotes.length === 0 ? (
               <div style={{ padding: 24, textAlign: "center", color: "rgba(255,255,255,0.25)", fontSize: 13 }}>
-                {notes.length === 0 ? "配置 vault 路径后刷新索引" : "没有匹配的笔记"}
+                {memoryCount === 0 ? "点击刷新扫描本地 Agent 记忆，也可接入 Obsidian" : "没有匹配的记忆"}
               </div>
             ) : (
-              filteredNotes.map((note) => (
-                <ObsidianNoteCard key={note.id} note={note} />
-              ))
+              <>
+                {filteredMemoryItems.map((item) => (
+                  <MemoryItemCard key={item.id} item={item} />
+                ))}
+                <KnowledgeAssetSection
+                  title="本地 Agent 记忆"
+                  assets={filteredMemoryAssets}
+                />
+                {filteredMemoryNotes.map((note) => (
+                  <ObsidianNoteCard key={note.id} note={note} />
+                ))}
+              </>
             )}
           </div>
+
+          <details className="hype-asset-details">
+            <summary>Obsidian 只读索引（可选）</summary>
+            <div className="hype-asset-details-content">
+              <label className="kawaii-label" htmlFor="hype-obsidian-vault">
+                Vault 路径
+              </label>
+              <input
+                id="hype-obsidian-vault"
+                value={vaultPath}
+                onChange={(event) => setVaultPath(event.target.value)}
+                placeholder="~/Documents/My Vault"
+                className="kawaii-input"
+              />
+              <span>
+                {data.obsidian_vault?.last_indexed_at
+                  ? `上次索引：${new Date(data.obsidian_vault.last_indexed_at).toLocaleString()}`
+                  : "仅在刷新时读取 Markdown，不会修改 Vault 内容。"}
+              </span>
+            </div>
+          </details>
         </div>
       )}
+
+      <details className="hype-review-drawer">
+        <summary>上下文整理与 AI 评审</summary>
+        <ReviewEnginePanel
+          assetsCount={assets.length}
+          reviewEngine={reviewEngine}
+          busy={reviewBusy}
+          message={reviewMessage}
+          showAdvanced={showAdvancedReview}
+          piUrl={piUrl}
+          piModel={piModel}
+          piToken={piToken}
+          onToggleAdvanced={() => setShowAdvancedReview((value) => !value)}
+          onPiUrlChange={setPiUrl}
+          onPiModelChange={setPiModel}
+          onPiTokenChange={setPiToken}
+          onStartCodexReview={handleStartCodexReview}
+          onSaveCustomReviewer={handleSaveCustomReviewer}
+        />
+      </details>
+    </div>
+  );
+}
+
+function KnowledgeAssetSection({
+  title,
+  assets,
+}: {
+  title: string;
+  assets: AgentAsset[];
+}) {
+  if (assets.length === 0) return null;
+
+  return (
+    <section className="hype-knowledge-source">
+      <h3>{title}</h3>
+      <div className="hype-asset-list">
+        <div className="hype-asset-list-header" aria-hidden="true">
+          <span>名称</span>
+          <span>来源 / Agent</span>
+          <span>类型</span>
+          <span>更新时间</span>
+        </div>
+        {assets.map((asset) => (
+          <AgentAssetRow key={asset.id} asset={asset} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function MemoryItemCard({ item }: { item: MemoryItem }) {
+  const color = item.temperature === "hot" ? "#fbbf24" : "#94a3b8";
+  return (
+    <div
+      style={{
+        padding: 12,
+        borderRadius: 8,
+        background: "rgba(255,255,255,0.62)",
+        border: "1px solid rgba(116,143,165,0.16)",
+        borderLeft: `3px solid ${color}`,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <span style={{ color, fontSize: 10, fontWeight: 700 }}>
+          {item.temperature === "hot" ? "热记忆" : "冷记忆"}
+        </span>
+        <span style={{ fontSize: 10, color: "#7b8798" }}>
+          {item.agent_id || "HUMHUM"}
+        </span>
+      </div>
+      <div style={{ marginTop: 6, fontSize: 13, color: "#4f5e70", lineHeight: 1.5 }}>
+        {item.content}
+      </div>
     </div>
   );
 }
@@ -1080,12 +1289,12 @@ function KnowledgeStat({ label, value, color }: { label: string; value: number; 
       style={{
         padding: "10px 12px",
         borderRadius: 8,
-        background: "rgba(255,255,255,0.025)",
-        border: "1px solid rgba(255,255,255,0.05)",
+        background: "rgba(255,255,255,0.62)",
+        border: "1px solid rgba(116,143,165,0.16)",
       }}
     >
       <div style={{ fontSize: 10, color, fontWeight: 700 }}>{label}</div>
-      <div style={{ fontSize: 18, color: "rgba(255,255,255,0.78)", fontWeight: 700 }}>
+      <div style={{ fontSize: 18, color: "#5f6f88", fontWeight: 700 }}>
         {value}
       </div>
     </div>
@@ -1315,8 +1524,8 @@ function ObsidianNoteCard({ note }: { note: ObsidianNote }) {
       style={{
         padding: 12,
         borderRadius: 8,
-        background: "rgba(255,255,255,0.02)",
-        border: "1px solid rgba(255,255,255,0.05)",
+        background: "rgba(255,255,255,0.62)",
+        border: "1px solid rgba(116,143,165,0.16)",
         borderLeft: `3px solid ${color}`,
         cursor: "pointer",
       }}
@@ -1327,12 +1536,12 @@ function ObsidianNoteCard({ note }: { note: ObsidianNote }) {
         <span
           style={{
             fontSize: 10,
-            color: note.memory_temperature === "hot" ? "#fbbf24" : "rgba(255,255,255,0.25)",
+            color: note.memory_temperature === "hot" ? "#d89a12" : "#8290a3",
           }}
         >
           {note.memory_temperature}
         </span>
-        <span style={{ fontSize: 10, color: "rgba(255,255,255,0.22)" }}>
+        <span style={{ fontSize: 10, color: "#8290a3" }}>
           {note.source}
         </span>
         <div style={{ flex: 1 }} />
@@ -1343,14 +1552,14 @@ function ObsidianNoteCard({ note }: { note: ObsidianNote }) {
         )}
       </div>
 
-      <div style={{ fontSize: 13, color: "rgba(255,255,255,0.78)", fontWeight: 650 }}>
+      <div style={{ fontSize: 13, color: "#263241", fontWeight: 650 }}>
         {note.title}
       </div>
       <div
         style={{
           marginTop: 4,
           fontSize: 10,
-          color: "rgba(255,255,255,0.28)",
+          color: "#7b8798",
           fontFamily: "monospace",
           overflow: "hidden",
           textOverflow: "ellipsis",
@@ -1361,7 +1570,7 @@ function ObsidianNoteCard({ note }: { note: ObsidianNote }) {
       </div>
 
       {note.excerpt && (
-        <div style={{ marginTop: 8, fontSize: 12, color: "rgba(255,255,255,0.52)", lineHeight: 1.45 }}>
+        <div style={{ marginTop: 8, fontSize: 12, color: "#5f6f88", lineHeight: 1.45 }}>
           {note.excerpt}
         </div>
       )}
@@ -1374,8 +1583,8 @@ function ObsidianNoteCard({ note }: { note: ObsidianNote }) {
               style={{
                 padding: "1px 6px",
                 borderRadius: 8,
-                background: "rgba(148,239,244,0.08)",
-                color: "rgba(148,239,244,0.75)",
+                background: "rgba(109,106,222,0.08)",
+                color: "#6d6ade",
                 fontSize: 10,
               }}
             >
@@ -1391,10 +1600,10 @@ function ObsidianNoteCard({ note }: { note: ObsidianNote }) {
             marginTop: 10,
             padding: 10,
             borderRadius: 8,
-            background: "rgba(0,0,0,0.22)",
-            border: "1px solid rgba(255,255,255,0.04)",
+            background: "rgba(246,248,252,0.86)",
+            border: "1px solid rgba(116,143,165,0.12)",
             fontSize: 11,
-            color: "rgba(255,255,255,0.45)",
+            color: "#5f6f88",
             lineHeight: 1.5,
           }}
         >
@@ -1424,8 +1633,8 @@ function RuleCard({ rule }: { rule: AgentRule }) {
       style={{
         padding: 12,
         borderRadius: 8,
-        background: "rgba(255,255,255,0.02)",
-        border: "1px solid rgba(255,255,255,0.05)",
+        background: "rgba(255,255,255,0.62)",
+        border: "1px solid rgba(116,143,165,0.16)",
         cursor: "pointer",
       }}
       onClick={() => setExpanded(!expanded)}
@@ -1434,14 +1643,14 @@ function RuleCard({ rule }: { rule: AgentRule }) {
         <span style={{ fontSize: 10, fontWeight: 600, color: "#a78bfa" }}>
           {rule.rule_type}
         </span>
-        <span style={{ fontSize: 10, color: "rgba(255,255,255,0.3)" }}>
+        <span style={{ fontSize: 10, color: "#7b8798" }}>
           {rule.agent_id}
         </span>
       </div>
       <div
         style={{
           fontSize: 11,
-          color: "rgba(255,255,255,0.35)",
+          color: "#5f6f88",
           fontFamily: "monospace",
           marginTop: 4,
           overflow: "hidden",
@@ -1457,9 +1666,9 @@ function RuleCard({ rule }: { rule: AgentRule }) {
             marginTop: 8,
             padding: 10,
             borderRadius: 8,
-            background: "rgba(0,0,0,0.25)",
+            background: "rgba(246,248,252,0.86)",
             fontSize: 11,
-            color: "rgba(255,255,255,0.5)",
+            color: "#4f5e70",
             fontFamily: "monospace",
             whiteSpace: "pre-wrap",
             maxHeight: 300,

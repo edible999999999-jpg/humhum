@@ -182,10 +182,21 @@ describe("HexaMobilePairingCard", () => {
 
     expect(html).toContain('aria-label="Hexa 手机配对二维码"');
     expect(html).toContain('aria-label="刷新配对二维码"');
+    expect(html).toContain('aria-label="关闭配对二维码"');
     expect(html).toContain('class="hexa-mobile-pairing-panel"');
     expect(html).toContain('data-expanded="true"');
     expect(html).toContain("同一 Wi-Fi");
     expect(html).toMatch(/剩余 [1-5] 分钟/);
+  });
+
+  it("floats the expanded QR over the workbench instead of changing header height", () => {
+    const expandedRule = selectorRule(
+      '.hexa-mobile-pairing[data-expanded="true"]',
+    );
+
+    expect(declaration(expandedRule, "position")).toBe("absolute");
+    expect(declaration(expandedRule, "z-index")).toBe("30");
+    expect(declaration(expandedRule, "right")).toBe("0");
   });
 
   it("does not expand when pairing is active but no QR payload is available", () => {
@@ -364,10 +375,11 @@ describe("Hexa supervision room presentation", () => {
           <HexaActiveMonitor
             sessions={sessions}
             supervisorBySessionId={new Map()}
-            dataState="ready"
-            entryPanel={null}
-            onRetry={vi.fn(async () => undefined)}
-            onFocus={vi.fn(async () => ({
+          dataState="ready"
+          entryPanel={null}
+          onRetry={vi.fn(async () => undefined)}
+          onRetryGoals={vi.fn(async () => undefined)}
+          onFocus={vi.fn(async () => ({
               strategy: "generic_terminal" as const,
               application: null,
               exact: false,
@@ -403,10 +415,14 @@ describe("Hexa supervision room presentation", () => {
     }
   });
 
-  it("keeps the shared room shell outside the module", () => {
+  it("keeps the shared room shell outside and uses one local Hexa avatar", () => {
     expect(hexaModuleSource).not.toContain("function MetricCard");
     expect(hexaModuleSource).not.toContain("<HubRoom");
-    expect(hexaModuleSource).not.toMatch(/mascot/i);
+    expect(hexaModuleSource.match(/<img/g)).toHaveLength(1);
+    expect(hexaModuleSource).toContain('className="hexa-room-identity"');
+    expect(hexaModuleSource).toContain(
+      'src="/mascots/avatars/hexa-avatar.png"',
+    );
   });
 
   it("scopes reduced motion to the Hexa room", () => {

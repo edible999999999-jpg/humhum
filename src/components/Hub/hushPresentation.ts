@@ -8,6 +8,7 @@ export interface HushInboxMessage {
   text: string;
   tier: string;
   importance: number;
+  conversation_kind?: HushChatScope | string;
   suggested_reply?: string | null;
   received_at: string;
   source_id?: string | null;
@@ -60,6 +61,8 @@ export interface HushPlatformIdentity {
   label: string;
 }
 
+export type HushChatScope = "direct" | "group" | "unknown";
+
 type HushConversationKind =
   | "dws-id"
   | "dws-chat"
@@ -71,6 +74,145 @@ const EMPTY_HUSH_CONVERSATION_STATE: HushConversationState = {
   readThrough: {},
 };
 
+export function getHushChatScope(
+  message: Pick<HushInboxMessage, "conversation_kind" | "raw">,
+): HushChatScope {
+  const explicit =
+    normalizeHushClassifier(message.conversation_kind) ??
+    normalizeHushClassifier(message.raw?.conversation_kind);
+  if (explicit === "direct" || explicit === "single" || explicit === "single_chat") {
+    return "direct";
+  }
+  if (explicit === "group" || explicit === "group_chat") {
+    return "group";
+  }
+
+  const legacySingleChat = message.raw?.single_chat;
+  if (legacySingleChat === true) return "direct";
+  if (legacySingleChat === false) return "group";
+  return "unknown";
+}
+
+export function getHushConversationScope(
+  messages: Array<Pick<HushInboxMessage, "conversation_kind" | "raw">>,
+): HushChatScope {
+  const knownScopes = new Set(
+    messages
+      .map(getHushChatScope)
+      .filter((scope): scope is Exclude<HushChatScope, "unknown"> =>
+        scope !== "unknown"
+      ),
+  );
+  return knownScopes.size === 1
+    ? (knownScopes.values().next().value ?? "unknown")
+    : "unknown";
+}
+
+export function getHushConversationScopeLabel(
+  messages: Array<Pick<HushInboxMessage, "conversation_kind" | "raw">>,
+): string {
+  const scope = getHushConversationScope(messages);
+  if (scope === "direct") return "单聊 · 可回复";
+  if (scope === "group") return "群聊 · 仅观察";
+  return "类型待确认 · 仅观察";
+}
+
+export function getVisibleHushSuggestedReply(
+  message: Pick<
+    HushInboxMessage,
+    | "conversation_kind"
+    | "preview_limited"
+    | "raw"
+    | "suggested_reply"
+    | "text"
+    | "tier"
+  >,
+): string | null {
+  if (message.preview_limited || getHushChatScope(message) !== "direct") {
+    return null;
+  }
+  const suggestion = message.suggested_reply?.trim();
+  if (suggestion && !isLegacyGenericHushReply(suggestion)) {
+    return suggestion;
+  }
+  return buildLocalHushReply(message.tier, message.text);
+}
+
+function isLegacyGenericHushReply(reply: string): boolean {
+  return (
+    /^看到了，我晚点回你[～~。.]?$/.test(reply) ||
+    /^我看到了，晚点认真回你/.test(reply) ||
+    /^收到，我先看一下，稍后同步进展给你。?@/.test(reply)
+  );
+}
+
+function buildLocalHushReply(tier: string, text: string): string {
+  const normalized = text.toLocaleLowerCase();
+  const schedule = getHushMeetingSchedulePrefix(text);
+  if (normalized.includes("图片消息")) {
+    return "图片收到了，我看一下内容，确认后回复你。";
+  }
+  if (
+    ["查到吗", "有结果吗", "进展呢", "怎么样了"].some((needle) =>
+      normalized.includes(needle),
+    )
+  ) {
+    return "我正在确认，查到明确结果后马上回复你。";
+  }
+  if (schedule) {
+    return `可以，我先确认一下${schedule}的安排，稍后明确回复你。`;
+  }
+  if (
+    ["紧急", "马上", "尽快", "urgent", "asap", "blocked"].some((needle) =>
+      normalized.includes(needle),
+    )
+  ) {
+    return "收到，我会优先处理，并尽快同步明确进展。";
+  }
+  if (
+    ["看一下", "确认一下", "review", "检查", "评审"].some((needle) =>
+      normalized.includes(needle),
+    )
+  ) {
+    return "收到，我先看一下，整理好结论后明确回复你。";
+  }
+  if (
+    ["帮忙", "麻烦", "请你", "能否"].some((needle) =>
+      normalized.includes(needle),
+    )
+  ) {
+    return "可以，我先处理这件事，完成后把结果回复你。";
+  }
+  if (
+    normalized.includes("？") ||
+    normalized.includes("?") ||
+    normalized.includes("可以吗")
+  ) {
+    return "可以，我先确认一下具体情况，稍后明确回复你。";
+  }
+  if (tier === "family" && text.includes("吃")) {
+    return "好，我会记得按时吃饭，也会认真回复你。";
+  }
+  if (tier === "work") {
+    return "收到，我会按这条信息推进，有结果后回复你。";
+  }
+  return "好，我知道了，我确认后回复你。";
+}
+
+function getHushMeetingSchedulePrefix(text: string): string | null {
+  for (const marker of ["开会", "会议"]) {
+    const markerIndex = text.indexOf(marker);
+    if (markerIndex <= 0) continue;
+    const prefix = text
+      .slice(0, markerIndex)
+      .trim()
+      .replace(/[，,。.？?！!]+$/g, "");
+    const length = Array.from(prefix).length;
+    if (length > 0 && length <= 20) return prefix;
+  }
+  return null;
+}
+
 export function compareHushContacts(
   a: Pick<DerivedContact, "importance" | "lastMessageTime">,
   b: Pick<DerivedContact, "importance" | "lastMessageTime">,
@@ -81,6 +223,29 @@ export function compareHushContacts(
     (Number.isFinite(bTime) ? bTime : Number.NEGATIVE_INFINITY) -
     (Number.isFinite(aTime) ? aTime : Number.NEGATIVE_INFINITY);
   return timeDifference || b.importance - a.importance;
+}
+
+export function sortHushContactsByAttention(
+  contacts: DerivedContact[],
+  state: Pick<HushConversationState, "attentionIds">,
+): DerivedContact[] {
+  const attentionIds = new Set(state.attentionIds);
+  return [...contacts].sort((a, b) => {
+    const attentionDifference =
+      Number(attentionIds.has(b.id)) - Number(attentionIds.has(a.id));
+    return attentionDifference || compareHushContacts(a, b);
+  });
+}
+
+export function getHushPriorityLabel(
+  importance: number,
+  attention: boolean,
+): string {
+  if (attention) return "P0 · 特别关注";
+  if (importance >= 5) return "P1";
+  if (importance >= 4) return "P2";
+  if (importance >= 3) return "P3";
+  return "P4";
 }
 
 export function getHushConversationIdentity(
@@ -187,6 +352,13 @@ export function groupHushMessages(
   }, []);
 }
 
+export function getLatestHushMessage(
+  messages: HushInboxMessage[],
+): HushInboxMessage | null {
+  const chronological = orderHushMessages(messages);
+  return chronological[chronological.length - 1] ?? null;
+}
+
 export function isHushContactUnread(
   contact: DerivedContact,
   state: HushConversationState,
@@ -234,6 +406,135 @@ export function filterHushContacts(
     return contacts.filter((contact) => isHushContactUnread(contact, state));
   }
   return contacts;
+}
+
+export function filterHushContactsByName(
+  contacts: DerivedContact[],
+  query: string,
+): DerivedContact[] {
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  if (!normalizedQuery) return contacts;
+
+  return contacts.filter((contact) =>
+    contact.name.toLocaleLowerCase().includes(normalizedQuery),
+  );
+}
+
+export function formatHushMessageText(raw: string): string {
+  const readableRaw = extractHushStructuredText(raw) ?? raw;
+  const entityNames: Record<string, string> = {
+    amp: "&",
+    apos: "'",
+    gt: ">",
+    lt: "<",
+    nbsp: " ",
+    quot: '"',
+  };
+
+  const decodeEntity = (_match: string, entity: string): string => {
+    if (entity.startsWith("#")) {
+      const isHex = entity[1]?.toLowerCase() === "x";
+      const digits = entity.slice(isHex ? 2 : 1);
+      const codePoint = Number.parseInt(digits, isHex ? 16 : 10);
+      if (
+        Number.isFinite(codePoint) &&
+        codePoint > 0 &&
+        codePoint <= 0x10ffff
+      ) {
+        try {
+          return String.fromCodePoint(codePoint);
+        } catch {
+          return "";
+        }
+      }
+      return "";
+    }
+    return entityNames[entity.toLowerCase()] ?? `&${entity};`;
+  };
+
+  return readableRaw
+    .replace(/\r\n?/g, "\n")
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, "")
+    .replace(/<(https?:\/\/[^>\s]+)>/gi, "$1")
+    .replace(/<mailto:([^>\s]+)>/gi, "$1")
+    .replace(/<@[^>\s]+>/g, "@")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/?(?:p|div|section|article|li|tr|h[1-6])\b[^>]*>/gi, "\n")
+    .replace(/<\?xml\b[^>]*\?>/gi, "")
+    .replace(/<\/?[A-Za-z][A-Za-z0-9:_-]*(?:\s[^<>]*?)?\s*\/?>/g, "")
+    .replace(
+      /!\[([^\]]*)\]\((?:\\.|[^)])*\)/g,
+      (_match, alt: string) => (alt.trim() ? `图片：${alt.trim()}` : "图片"),
+    )
+    .replace(
+      /\[([^\]]*)\]\((?:\\.|[^)])*\)/g,
+      (_match, label: string) => label.trim(),
+    )
+    .replace(/\[([^\]]+)\]\[[^\]]*\]/g, "$1")
+    .replace(/^\s*```[^\n]*$/gm, "")
+    .replace(/`([^`\n]+)`/g, "$1")
+    .replace(/`+/g, "")
+    .replace(/^\s{0,3}#{1,6}\s+/gm, "")
+    .replace(/^\s*>\s?/gm, "")
+    .replace(/^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/gm, "")
+    .replace(/\*\*([^*\n]+)\*\*/g, "$1")
+    .replace(/__([^_\n]+)__/g, "$1")
+    .replace(/~~([^~\n]+)~~/g, "$1")
+    .replace(/&(#(?:x[0-9a-f]+|\d+)|[a-z]+);/gi, decodeEntity)
+    .replace(/[\u200b-\u200d\ufeff]/g, "")
+    .split("\n")
+    .map((line) => line.replace(/[ \t\u00a0]+/g, " ").trim())
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function extractHushStructuredText(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (
+    !(
+      (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+      (trimmed.startsWith("[") && trimmed.endsWith("]"))
+    )
+  ) {
+    return null;
+  }
+
+  try {
+    return readHushStructuredText(JSON.parse(trimmed), 0);
+  } catch {
+    return null;
+  }
+}
+
+function readHushStructuredText(value: unknown, depth: number): string | null {
+  if (depth > 4) return null;
+  if (typeof value === "string") {
+    const text = value.trim();
+    return text || null;
+  }
+  if (Array.isArray(value)) {
+    const parts = value
+      .map((entry) => readHushStructuredText(entry, depth + 1))
+      .filter((entry): entry is string => Boolean(entry));
+    return parts.length > 0 ? parts.join("\n") : null;
+  }
+  if (!isRecord(value)) return null;
+
+  for (const key of [
+    "textContent",
+    "markdownContent",
+    "imageContent",
+    "text",
+    "content",
+    "markdown",
+    "message",
+  ]) {
+    const candidate = readHushStructuredText(value[key], depth + 1);
+    if (candidate) return candidate;
+  }
+  return null;
 }
 
 export function resolveHushSelectedContact(

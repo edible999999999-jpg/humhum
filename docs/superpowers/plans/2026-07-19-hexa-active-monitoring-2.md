@@ -580,10 +580,15 @@ Revise `MANAGED_SKILL` in `hexa_connector.rs` to explain:
 - Use the real provider session ID.
 - Set `--surface qoder_ide`, `qoder_cli`, or `qoder_worker` only when the runtime identity is known.
 - Reuse a supplied `--goal-id`; do not fuzzy-match titles.
+- Before asking the user for a decision while work remains, report
+  `--status waiting --need-user --blocked-reason "<decision needed>"`; after
+  the user responds, immediately return to `--status working`. A conversational
+  question alone is not a Hexa confirmation signal.
 - Agent completion is unverified until evidence or user acceptance exists.
 - Never invent test results or mark itself accepted.
 
-Update installer tests to assert those terms and the `/hexa/goal` command behavior are present.
+Update installer tests to assert those terms, the explicit waiting-for-user
+command, and the `/hexa/goal` command behavior are present.
 
 - [ ] **Step 7: Run CLI and connector tests**
 

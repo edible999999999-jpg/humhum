@@ -111,6 +111,7 @@ export interface HexaGoalSummary {
     working: number;
     verified: number;
     failed: number;
+    blocked: number;
     unverified: number;
   };
 }
@@ -147,7 +148,8 @@ function compareEntries(left: HexaMonitoringEntry, right: HexaMonitoringEntry): 
 
 function entryIsCompleted(entry: HexaMonitoringEntry): boolean {
   if (entry.kind === "session") return entry.session.status === "completed";
-  return entry.attempts.length > 0 && entry.attempts.every(({ session }) => session.status === "completed");
+  return entry.goal.status === "completed"
+    || (entry.attempts.length > 0 && entry.attempts.every(({ session }) => session.status === "completed"));
 }
 
 function latestTimestamp(values: string[]): string {
@@ -161,8 +163,6 @@ function goalEntry(goal: HexaDevelopmentGoal, sessionsById: Map<string, HexaWatc
       return session ? [{ attempt, session }] : [];
     })
     .sort((left, right) => compareSessions(left.session, right.session));
-
-  if (attempts.length === 0) return null;
 
   return {
     kind: "goal",
@@ -212,6 +212,7 @@ export function buildActiveMonitoringProjects(
     const entries = [...projectEntries].sort(compareEntries);
     const workspace = entries.find((entry) => entry.kind === "session")?.session.workspace
       ?? entries.find((entry) => entry.kind === "goal")?.attempts[0]?.session.workspace
+      ?? entries.find((entry) => entry.kind === "goal")?.goal.attempts[0]?.workspace
       ?? null;
     return {
       key,
@@ -237,6 +238,7 @@ export function buildGoalSummary(
     working: 0,
     verified: 0,
     failed: 0,
+    blocked: 0,
     unverified: 0,
   };
 
@@ -245,6 +247,10 @@ export function buildGoalSummary(
       counts.verified += 1;
     } else if (attempt.result_status === "failed") {
       counts.failed += 1;
+    } else if (attempt.result_status === "superseded") {
+      continue;
+    } else if (session?.status === "blocked" || session?.status === "waiting") {
+      counts.blocked += 1;
     } else if (session && session.status !== "completed" && !attempt.completed_at) {
       counts.working += 1;
     } else {

@@ -165,32 +165,32 @@ impl HexaGoalStore {
         self.reload_from_disk()?;
         let now = chrono::Utc::now().to_rfc3339();
         let session_id = required_text(request.session_id, "goal session_id")?;
-        let project_key = required_text(request.project_key, "goal project_key")?;
-        let title = required_text(request.title, "goal title")?;
         let goal_id = request
             .goal_id
             .and_then(clean_text)
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         let mut goals = self.goals.clone();
+        if !goals.contains_key(&goal_id) {
+            let project_key = required_text(request.project_key, "goal project_key")?;
+            let title = required_text(request.title, "goal title")?;
+            goals.insert(
+                goal_id.clone(),
+                HexaDevelopmentGoal {
+                    id: goal_id.clone(),
+                    project_key,
+                    title,
+                    success_criteria: request.success_criteria.clone(),
+                    status: HexaGoalStatus::Active,
+                    attempts: Vec::new(),
+                    accepted_attempt_id: None,
+                    created_at: now.clone(),
+                    updated_at: now.clone(),
+                },
+            );
+        }
         let goal = goals
-            .entry(goal_id.clone())
-            .or_insert_with(|| HexaDevelopmentGoal {
-                id: goal_id.clone(),
-                project_key: project_key.clone(),
-                title: title.clone(),
-                success_criteria: request.success_criteria.clone(),
-                status: HexaGoalStatus::Active,
-                attempts: Vec::new(),
-                accepted_attempt_id: None,
-                created_at: now.clone(),
-                updated_at: now.clone(),
-            });
-        if goal.project_key != project_key {
-            return Err(format!("Hexa goal project_key mismatch: {}", goal.id));
-        }
-        if goal.title != title {
-            return Err(format!("Hexa goal title mismatch: {}", goal.id));
-        }
+            .get_mut(&goal_id)
+            .ok_or_else(|| format!("Hexa goal not found: {goal_id}"))?;
         if goal
             .attempts
             .iter()
@@ -209,7 +209,6 @@ impl HexaGoalStore {
                 completed_at: None,
             });
         }
-        goal.success_criteria = request.success_criteria;
         goal.updated_at = now;
         recompute_goal_status(goal);
         let result = goal.clone();
@@ -496,6 +495,49 @@ mod tests {
     }
 
     #[test]
+    fn joining_an_existing_goal_preserves_identity_and_criteria_across_worktrees() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut store = HexaGoalStore::load_or_create(directory.path()).unwrap();
+        let mut first_request = link_request(
+            Some("goal-hush"),
+            "session-codex",
+            HexaAgentSurface::CodexDesktop,
+        );
+        first_request.success_criteria = vec!["npm test 通过".into()];
+        let first = store
+            .link_attempt(first_request, attempt_context("codex"))
+            .unwrap();
+
+        let mut joining_request = link_request(
+            Some(&first.id),
+            "session-worker",
+            HexaAgentSurface::QoderWorker,
+        );
+        joining_request.project_key = "repo:/work/humhum-worker".into();
+        joining_request.title = "来自另一个 worktree 的显示标题".into();
+        joining_request.success_criteria = vec![];
+        joining_request.worktree = Some("/work/humhum-worker".into());
+        let joined = store
+            .link_attempt(
+                joining_request,
+                HexaGoalAttemptContext {
+                    agent_family: "qoder".into(),
+                    workspace: Some("/work/humhum-worker".into()),
+                },
+            )
+            .unwrap();
+
+        assert_eq!(joined.project_key, "repo:/work/humhum");
+        assert_eq!(joined.title, "修复 Hush 消息分类");
+        assert_eq!(joined.success_criteria, vec!["npm test 通过"]);
+        assert_eq!(joined.attempts.len(), 2);
+        assert_eq!(
+            joined.attempts[1].workspace.as_deref(),
+            Some("/work/humhum-worker")
+        );
+    }
+
+    #[test]
     fn old_or_missing_goal_files_do_not_change_hexa_watch_storage() {
         let directory = tempfile::tempdir().unwrap();
         std::fs::write(
@@ -674,5 +716,25 @@ mod tests {
         store.delete_goal(&goal.id).unwrap();
         assert!(store.goals().is_empty());
         assert!(directory.path().join("hexa-watch.json").exists());
+    }
+
+    #[test]
+    fn reload_failure_keeps_the_last_successful_goal_snapshot() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut store = HexaGoalStore::load_or_create(directory.path()).unwrap();
+        store
+            .link_attempt(
+                link_request(
+                    Some("goal-hush"),
+                    "session-codex",
+                    HexaAgentSurface::CodexDesktop,
+                ),
+                attempt_context("codex"),
+            )
+            .unwrap();
+        std::fs::write(directory.path().join("hexa-goals.json"), "{broken").unwrap();
+
+        assert!(store.reload_from_disk().is_err());
+        assert_eq!(store.goals().len(), 1);
     }
 }

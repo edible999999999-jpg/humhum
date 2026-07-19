@@ -50,10 +50,12 @@ describe("HubNavigationItem", () => {
     );
   });
 
-  it("shows Hype's antenna by default using stable semantic icon classes", () => {
+  it("shows Hype's single-tower antenna by default using stable semantic icon classes", () => {
     const html = renderNavigationItem("hype");
 
     expect(html).toContain('class="hub-nav-symbol hub-nav-symbol-hype"');
+    expect(html).toContain("lucide-radio-tower");
+    expect(html).not.toContain("lucide-antenna");
     expect(html).toContain("hub-nav-hype-antenna");
     expect(html).toContain("hub-nav-hype-alert");
     expect(html).not.toContain("is-signaled");
@@ -78,14 +80,15 @@ describe("HubNavigationItem", () => {
     expect(renderNavigationItem("hexa")).toContain("lucide-wrench");
   });
 
-  it.each(rooms)("renders an accessible, labelled button with a state dot for %s", (room) => {
+  it.each(rooms)("renders an accessible, labelled button with a slim rail accent for %s", (room) => {
     const label = `${room} room`;
     const html = renderNavigationItem(room);
 
     expect(html).toContain('type="button"');
     expect(html).toContain(`aria-label="${label}"`);
     expect(html).toContain(`>${label}</span>`);
-    expect(html).toContain("hub-nav-state-dot");
+    expect(html).toContain("hub-nav-rail-accent");
+    expect(html).not.toContain("hub-nav-state-dot");
   });
 
   it("marks the active item as the current page", () => {
@@ -134,10 +137,11 @@ describe("Hub navigation motion styles", () => {
     );
   });
 
-  it("keeps Hush half-hidden at rest and runs one finite peek only on hover", () => {
+  it("keeps Hush centered at rest and runs one finite blink only on hover", () => {
     expect(characterRoomStyles).toMatch(
-      /\.hub-nav-hush-eye\s*\{[^}]*transform:\s*translateX\(-12px\)/,
+      /\.hub-nav-hush-eye\s*\{[^}]*transform:\s*translateX\(0\)/,
     );
+    expect(characterRoomStyles).not.toContain("translateX(-12px)");
     expect(characterRoomStyles).toMatch(
       /\.hub-nav-item-hush:hover \.hub-nav-hush-eye\s*\{[^}]*animation:\s*hub-hush-peek [^;]* 1 forwards/,
     );

@@ -43,6 +43,8 @@ import {
 } from "./HushModule";
 import {
   filterHushContacts,
+  filterHushContactsByName,
+  formatHushMessageText,
   parseHushConversationState,
   resolveHushSelectedContact,
   serializeHushConversationState,
@@ -187,6 +189,74 @@ describe("compareHushContacts", () => {
     expect(
       [olderPriorityContact, newerContact].sort(compareHushContacts),
     ).toEqual([newerContact, olderPriorityContact]);
+  });
+});
+
+describe("Hush conversation search and message text", () => {
+  it("searches only direct-chat and group-chat names", () => {
+    const projectGroup = {
+      ...contact("项目群", [message("project", "2026-07-18T01:00:00Z")]),
+      lastMessage: "正文里有独有关键词",
+    };
+    const directChat = {
+      ...contact("Alice", [message("direct", "2026-07-18T02:00:00Z")]),
+      lastMessage: "普通消息",
+    };
+    const contacts = [projectGroup, directChat];
+
+    expect(filterHushContactsByName(contacts, "独有关键词")).toEqual([]);
+    expect(filterHushContactsByName(contacts, "  项目  ")).toEqual([
+      projectGroup,
+    ]);
+    expect(filterHushContactsByName(contacts, "alice")).toEqual([directChat]);
+    expect(filterHushContactsByName(contacts, "   ")).toBe(contacts);
+  });
+
+  it("projects common DWS Markdown, HTML, and XML into readable plain text", () => {
+    const raw = [
+      "### **进度更新**",
+      '<font color="#0089ff">@成员甲 </font>&nbsp;[查看详情](https://example.com/private)',
+      "<imageContent>table_仅展示50条</imageContent>",
+      "[图片消息](mediaId=@secret)",
+      "<@AI119> `status --all`",
+    ].join("\n");
+
+    expect(formatHushMessageText(raw)).toBe(
+      ["进度更新", "@成员甲 查看详情", "table_仅展示50条", "图片消息", "@ status --all"].join(
+        "\n",
+      ),
+    );
+  });
+
+  it("keeps human content while removing code fences and formatting syntax", () => {
+    const readable = formatHushMessageText(
+      [
+        "> **说明**",
+        "```text",
+        "需要保留的内容",
+        "```",
+        "<br>",
+        "A &amp; B&nbsp;&lt;完成&gt;",
+      ].join("\n"),
+    );
+
+    expect(readable).toContain("说明");
+    expect(readable).toContain("需要保留的内容");
+    expect(readable).toContain("A & B <完成>");
+    expect(readable).not.toMatch(/```|<br>|&nbsp;|\*\*|^>/);
+  });
+
+  it("extracts the human message from a structured DWS JSON envelope", () => {
+    const raw = JSON.stringify({
+      textContent: {
+        text: "需求更新\n请查看最新方案",
+      },
+      contentType: 1200,
+    });
+
+    expect(formatHushMessageText(raw)).toBe(
+      "需求更新\n请查看最新方案",
+    );
   });
 });
 
@@ -535,6 +605,199 @@ describe("HushModule conversation state migration", () => {
   });
 });
 
+describe("HushModule conversation presentation", () => {
+  let view: { host: HTMLDivElement; root: Root } | null = null;
+
+  beforeEach(() => {
+    window.localStorage.clear();
+    listenMock.mockResolvedValue(() => undefined);
+    const messages: HushInboxMessage[] = [
+      {
+        id: "project-message",
+        platform: "dingtalk",
+        sender: "成员甲",
+        chat: "项目群",
+        text: '<font color="#0089ff">**正文独有词**</font>&nbsp;[详情](https://example.com)',
+        tier: "work",
+        importance: 3,
+        received_at: "2026-07-18T05:00:00Z",
+        source_id: "dws:project-message",
+        raw: {
+          source: "dws",
+          conversation_id: "project-conversation",
+          chat: "项目群",
+        },
+      },
+      {
+        id: "direct-message",
+        platform: "dingtalk",
+        sender: "成员乙",
+        chat: "成员乙",
+        text: "普通消息",
+        tier: "work",
+        importance: 2,
+        received_at: "2026-07-18T04:00:00Z",
+        source_id: "dws:direct-message",
+        raw: {
+          source: "dws",
+          conversation_id: "direct-conversation",
+          chat: "成员乙",
+          single_chat: true,
+        },
+      },
+    ];
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "get_hush_inbox") {
+        return Promise.resolve({
+          total: messages.length,
+          unread_priority: 0,
+          by_tier: { work: messages.length },
+          by_platform: { dingtalk: messages.length },
+          messages,
+        });
+      }
+      return Promise.resolve(defaultInvoke(command));
+    });
+  });
+
+  afterEach(async () => {
+    if (view) await disposeHushModule(view);
+    view = null;
+    window.localStorage.clear();
+    vi.clearAllMocks();
+  });
+
+  it("wires name-only search and readable text into the conversation list", async () => {
+    view = await renderHushModule();
+    const search = view.host.querySelector<HTMLInputElement>(
+      'input[aria-label="搜索单聊或群聊名称"]',
+    );
+    const previews = () =>
+      Array.from(view!.host.querySelectorAll(".hush-contact-preview"));
+    const rows = () =>
+      Array.from(view!.host.querySelectorAll(".hush-contact-row"));
+    const enterSearch = (value: string) => {
+      const setValue = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )?.set;
+      setValue?.call(search, value);
+      search!.dispatchEvent(new Event("input", { bubbles: true }));
+    };
+
+    expect(search).not.toBeNull();
+    expect(rows()).toHaveLength(2);
+    expect(previews()[0]?.textContent).toBe("正文独有词 详情");
+    expect(view.host.innerHTML).not.toContain("&lt;font");
+    expect(view.host.textContent).not.toContain("&nbsp;");
+
+    await act(async () => {
+      enterSearch("正文独有词");
+    });
+    expect(rows()).toHaveLength(0);
+    expect(
+      view.host.querySelector(".hush-conversation-detail"),
+    ).toBeNull();
+
+    await act(async () => {
+      enterSearch("项目");
+    });
+    expect(rows()).toHaveLength(1);
+    expect(rows()[0]?.textContent).toContain("项目群");
+    expect(
+      view.host.querySelector(".hush-conversation-header h3")?.textContent,
+    ).toBe("项目群");
+  });
+
+  it("updates the selected conversation to P0 when it becomes special attention", async () => {
+    view = await renderHushModule();
+    const detail = () =>
+      view!.host.querySelector(".hush-conversation-header")?.textContent ?? "";
+    const attentionButton = view.host.querySelector<HTMLButtonElement>(
+      'button[aria-label="特别关注项目群"]',
+    );
+
+    expect(detail()).toContain("work · P3");
+    expect(attentionButton).not.toBeNull();
+
+    await act(async () => {
+      attentionButton!.click();
+    });
+
+    expect(detail()).toContain("work · P0 · 特别关注");
+  });
+
+  it("moves a newly starred conversation ahead of newer normal conversations", async () => {
+    view = await renderHushModule();
+    const rowNames = () =>
+      Array.from(view!.host.querySelectorAll(".hush-contact-heading strong"))
+        .map((node) => node.textContent);
+    const directAttentionButton = view.host.querySelector<HTMLButtonElement>(
+      'button[aria-label="特别关注成员乙"]',
+    );
+
+    expect(rowNames()).toEqual(["项目群", "成员乙"]);
+
+    await act(async () => {
+      directAttentionButton!.click();
+    });
+
+    expect(rowNames()).toEqual(["成员乙", "项目群"]);
+  });
+
+  it("uses the same parsed latest timestamp for the sidebar and message list", async () => {
+    const newer: HushInboxMessage = {
+      id: "newer-message",
+      platform: "dingtalk",
+      sender: "成员甲",
+      chat: "跨时区项目群",
+      text: "真正最新消息",
+      tier: "work",
+      importance: 3,
+      received_at: "2026-07-18T03:00:00Z",
+      source_id: "dws:newer-message",
+      raw: {
+        source: "dws",
+        conversation_id: "timezone-conversation",
+        chat: "跨时区项目群",
+      },
+    };
+    const olderWithLargerClockText: HushInboxMessage = {
+      ...newer,
+      id: "older-message",
+      text: "较早消息",
+      received_at: "2026-07-18T10:30:00+08:00",
+      source_id: "dws:older-message",
+    };
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "get_hush_inbox") {
+        return Promise.resolve({
+          total: 2,
+          unread_priority: 0,
+          by_tier: { work: 2 },
+          by_platform: { dingtalk: 2 },
+          messages: [newer, olderWithLargerClockText],
+        });
+      }
+      return Promise.resolve(defaultInvoke(command));
+    });
+
+    view = await renderHushModule();
+
+    expect(
+      view.host.querySelector(".hush-contact-preview")?.textContent,
+    ).toBe("真正最新消息");
+    expect(
+      view.host.querySelector(".hush-contact-heading time")
+        ?.getAttribute("datetime"),
+    ).toBe("2026-07-18T03:00:00Z");
+    const messageTexts = Array.from(
+      view.host.querySelectorAll(".hush-message-line p"),
+    ).map((node) => node.textContent);
+    expect(messageTexts[messageTexts.length - 1]).toBe("真正最新消息");
+  });
+});
+
 describe("Hush conversation UI contracts", () => {
   it("uses the exact versioned local storage key and payload version", () => {
     const state = {
@@ -604,6 +867,30 @@ describe("Hush conversation UI contracts", () => {
     expect(onToggleAttention).toHaveBeenCalledOnce();
   });
 
+  it("renders explicit attention as the highest visible priority", () => {
+    const priorityContact = {
+      ...contact("项目群", [message("one", "2026-07-18T01:00:00Z")]),
+      importance: 4,
+    };
+    const html = renderToStaticMarkup(
+      createElement(HushContactRow, {
+        contact: priorityContact,
+        selected: false,
+        attention: true,
+        unreadCount: 0,
+        onSelect: vi.fn(),
+        onToggleAttention: vi.fn(),
+      }),
+    );
+
+    expect(html).toContain(
+      'class="hush-priority-label">特别关注</span>',
+    );
+    expect(html).not.toContain(
+      'class="hush-priority-label">重点</span>',
+    );
+  });
+
   it("keeps selection resolved from all contacts while filters use subsets", () => {
     const selected = contact("read", [message("read", "2026-07-18T02:00:00Z")]);
     const unread = contact("unread", [
@@ -637,7 +924,7 @@ describe("Hush conversation UI contracts", () => {
     expect(weChat).toContain("WeChat");
   });
 
-  it("keeps status collapsed and relies on the central room mascot", () => {
+  it("keeps status collapsed and uses one dedicated peeking mascot", () => {
     expect(hushModuleSource).toContain(
       '<details className="hush-status-area">',
     );
@@ -645,8 +932,21 @@ describe("Hush conversation UI contracts", () => {
       /<details className="hush-status-area"\s+open/,
     );
     expect(hushModuleSource).not.toContain("<HubRoom");
-    expect(hushModuleSource).not.toContain("<img");
-    expect(hushModuleSource).not.toContain("mascot");
+    expect(hushModuleSource.match(/<img/g)).toHaveLength(1);
+    expect(hushModuleSource).toContain('className="hush-peek-character"');
+    expect(hushModuleSource).toContain(
+      'src="/mascots/avatars/hush-peek.png"',
+    );
+  });
+
+  it("uses the conversation-scope guard for every suggested reply surface", () => {
+    expect(
+      hushModuleSource.match(/getVisibleHushSuggestedReply\(message\)/g),
+    ).toHaveLength(2);
+    expect(hushModuleSource).not.toContain(
+      "message.suggested_reply && !message.preview_limited",
+    );
+    expect(hushModuleSource).toContain("getHushConversationScopeLabel");
   });
 
   it("retains every Hush invoke command and message listener", () => {

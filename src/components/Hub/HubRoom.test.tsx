@@ -50,6 +50,22 @@ describe("HubRoom", () => {
     expect(html).toContain('<div class="hub-room-content"><p>Welcome back</p></div>');
   });
 
+  it("uses the dedicated Hexa diagnostics blueprint background", () => {
+    const html = renderToStaticMarkup(
+      <HubRoom room="hexa">
+        <p>Agent diagnostics</p>
+      </HubRoom>,
+    );
+
+    expect(html).toContain('data-room="hexa"');
+    expect(html).toContain(
+      '/mascots/hub-backgrounds/hexa-room-v2.png',
+    );
+    expect(html).not.toContain(
+      '/mascots/hub-backgrounds/hexa-room.webp',
+    );
+  });
+
   it("disables Hub room entrance motion at the reduced-motion selector", () => {
     expect(
       reducedMotionDeclaration(globalStyleRoot, ".hub-module", "animation")

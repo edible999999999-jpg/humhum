@@ -8,6 +8,10 @@ use crate::config::AppConfig;
 use crate::dws_hush_bridge::{DwsHushBridge, DwsHushStatus, DwsSyncReport};
 use crate::event_bus::{self, HookEvent, PermissionDecision};
 use crate::git_changes::GitChangeSummary;
+use crate::hexa_goal_store::{
+    HexaAttemptResultRequest, HexaDevelopmentGoal, HexaGoalAcceptRequest, HexaGoalAttemptContext,
+    HexaGoalLinkRequest, HexaGoalStore,
+};
 use crate::hexa_protocol::HexaSessionProjection;
 use crate::hexa_watch_store::{
     HexaAuditMutationRequest, HexaPlanSyncRequest, HexaWatchStore, HexaWatchedAgent,
@@ -34,13 +38,13 @@ use crate::window_focus;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashSet, VecDeque};
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command as StdCommand;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::process::Command;
 
@@ -352,6 +356,98 @@ pub async fn get_hexa_watched_agents(
         .map_err(|error| format!("Lock error: {error}"))?;
     store.reload_from_disk()?;
     Ok(store.agents())
+}
+
+#[tauri::command]
+pub async fn get_hexa_development_goals(
+    state: State<'_, Arc<std::sync::Mutex<HexaGoalStore>>>,
+) -> Result<Vec<HexaDevelopmentGoal>, String> {
+    let mut store = state
+        .lock()
+        .map_err(|error| format!("Lock error: {error}"))?;
+    store.reload_from_disk()?;
+    Ok(store.goals())
+}
+
+#[tauri::command]
+pub async fn link_hexa_goal_attempt(
+    goal_state: State<'_, Arc<std::sync::Mutex<HexaGoalStore>>>,
+    watch_state: State<'_, Arc<std::sync::Mutex<HexaWatchStore>>>,
+    app: AppHandle,
+    request: HexaGoalLinkRequest,
+) -> Result<HexaDevelopmentGoal, String> {
+    let watched_session = {
+        let mut store = watch_state
+            .lock()
+            .map_err(|error| format!("Lock error: {error}"))?;
+        store.reload_from_disk()?;
+        store
+            .sessions()
+            .into_iter()
+            .find(|session| session.session_id == request.session_id)
+            .ok_or_else(|| format!("Hexa watched session not found: {}", request.session_id))?
+    };
+    let updated = goal_state
+        .lock()
+        .map_err(|error| format!("Lock error: {error}"))?
+        .link_attempt(
+            request,
+            HexaGoalAttemptContext {
+                agent_family: watched_session.agent,
+                workspace: watched_session.workspace,
+            },
+        )?;
+    app.emit("humhum://hexa-goal-changed", &updated)
+        .map_err(|error| format!("Emit error: {error}"))?;
+    Ok(updated)
+}
+
+#[tauri::command]
+pub async fn update_hexa_attempt_result(
+    state: State<'_, Arc<std::sync::Mutex<HexaGoalStore>>>,
+    app: AppHandle,
+    request: HexaAttemptResultRequest,
+) -> Result<HexaDevelopmentGoal, String> {
+    let updated = state
+        .lock()
+        .map_err(|error| format!("Lock error: {error}"))?
+        .update_attempt_result(request)?;
+    app.emit("humhum://hexa-goal-changed", &updated)
+        .map_err(|error| format!("Emit error: {error}"))?;
+    Ok(updated)
+}
+
+#[tauri::command]
+pub async fn accept_hexa_goal_attempt(
+    state: State<'_, Arc<std::sync::Mutex<HexaGoalStore>>>,
+    app: AppHandle,
+    request: HexaGoalAcceptRequest,
+) -> Result<HexaDevelopmentGoal, String> {
+    let updated = state
+        .lock()
+        .map_err(|error| format!("Lock error: {error}"))?
+        .accept_attempt(request)?;
+    app.emit("humhum://hexa-goal-changed", &updated)
+        .map_err(|error| format!("Emit error: {error}"))?;
+    Ok(updated)
+}
+
+#[tauri::command]
+pub async fn delete_hexa_development_goal(
+    state: State<'_, Arc<std::sync::Mutex<HexaGoalStore>>>,
+    app: AppHandle,
+    goal_id: String,
+) -> Result<Vec<HexaDevelopmentGoal>, String> {
+    let goals = {
+        let mut store = state
+            .lock()
+            .map_err(|error| format!("Lock error: {error}"))?;
+        store.delete_goal(&goal_id)?;
+        store.goals()
+    };
+    app.emit("humhum://hexa-goal-changed", &goal_id)
+        .map_err(|error| format!("Emit error: {error}"))?;
+    Ok(goals)
 }
 
 #[tauri::command]
@@ -2632,8 +2728,12 @@ pub async fn send_notification(
 pub async fn get_active_sessions(
     store: State<'_, Arc<std::sync::Mutex<SessionStore>>>,
 ) -> Result<Value, String> {
-    let store = store.lock().map_err(|e| format!("Lock error: {}", e))?;
-    let sessions = store.get_active_sessions();
+    let mut sessions: Vec<Session> = {
+        let store = store.lock().map_err(|e| format!("Lock error: {}", e))?;
+        store.get_active_sessions().into_iter().cloned().collect()
+    };
+    merge_recent_codex_sessions(&mut sessions);
+    sessions.sort_by(|a, b| b.last_event_at.cmp(&a.last_event_at));
     serde_json::to_value(sessions).map_err(|e| format!("Serialize error: {}", e))
 }
 
@@ -2696,6 +2796,33 @@ pub async fn get_session(
     }
 }
 
+fn merge_recent_codex_sessions(sessions: &mut Vec<Session>) {
+    let Ok(files) = collect_codex_session_files(12) else {
+        return;
+    };
+
+    for file in files {
+        let modified = std::fs::metadata(&file)
+            .and_then(|metadata| metadata.modified())
+            .ok();
+        if !modified.is_some_and(|value| {
+            codex_session_status_from_modified(value, SystemTime::now()) == SessionStatus::Active
+        }) {
+            continue;
+        }
+        let Some(session) = parse_codex_session_file(&file) else {
+            continue;
+        };
+        if sessions
+            .iter()
+            .any(|item| item.session_id == session.session_id)
+        {
+            continue;
+        }
+        sessions.push(session);
+    }
+}
+
 fn merge_codex_sessions(sessions: &mut Vec<Session>) {
     let existing: HashSet<String> = sessions
         .iter()
@@ -2751,7 +2878,13 @@ fn collect_codex_session_files(limit: usize) -> Result<Vec<PathBuf>, String> {
 }
 
 fn parse_codex_session_file(path: &Path) -> Option<Session> {
-    let lines = read_codex_session_prefix(path, 600).ok()?;
+    let mut lines = read_codex_session_prefix(path, 600).ok()?;
+    if lines.len() == 600 {
+        lines.extend(read_codex_session_tail(path, 512 * 1024).unwrap_or_default());
+    }
+    let modified = std::fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .ok();
     let mut session_id = path
         .file_stem()
         .and_then(|name| name.to_str())
@@ -2824,14 +2957,17 @@ fn parse_codex_session_file(path: &Path) -> Option<Session> {
         }
     }
 
-    let started_at = started_at.or_else(|| {
-        std::fs::metadata(path)
-            .and_then(|metadata| metadata.modified())
-            .ok()
-            .map(chrono::DateTime::<chrono::Utc>::from)
-            .map(|dt| dt.to_rfc3339())
-    })?;
-    let last_event_at = last_event_at.unwrap_or_else(|| started_at.clone());
+    let modified_at = modified
+        .map(chrono::DateTime::<chrono::Utc>::from)
+        .map(|date| date.to_rfc3339());
+    let started_at = started_at.or_else(|| modified_at.clone())?;
+    let last_event_at = modified_at
+        .filter(|value| last_event_at.as_ref().map_or(true, |current| value > current))
+        .or(last_event_at)
+        .unwrap_or_else(|| started_at.clone());
+    let status = modified
+        .map(|value| codex_session_status_from_modified(value, SystemTime::now()))
+        .unwrap_or(SessionStatus::Completed);
 
     Some(Session {
         session_id,
@@ -2845,7 +2981,7 @@ fn parse_codex_session_file(path: &Path) -> Option<Session> {
         started_at,
         last_event_at,
         event_count,
-        status: SessionStatus::Completed,
+        status,
         last_hook_message: last_message.or_else(|| {
             Some(format!(
                 "Imported Codex transcript: {}",
@@ -2861,6 +2997,7 @@ fn parse_codex_session_file(path: &Path) -> Option<Session> {
 }
 
 const MAX_CODEX_SESSION_PREFIX_BYTES: u64 = 4 * 1024 * 1024;
+const CODEX_ACTIVE_WINDOW: Duration = Duration::from_secs(10 * 60);
 
 fn read_codex_session_prefix(path: &Path, max_lines: usize) -> Result<Vec<String>, String> {
     let file = std::fs::File::open(path).map_err(|error| error.to_string())?;
@@ -2871,10 +3008,48 @@ fn read_codex_session_prefix(path: &Path, max_lines: usize) -> Result<Vec<String
         .map_err(|error| error.to_string())
 }
 
+fn read_codex_session_tail(path: &Path, max_bytes: u64) -> Result<Vec<String>, String> {
+    let mut file = std::fs::File::open(path).map_err(|error| error.to_string())?;
+    let length = file
+        .metadata()
+        .map_err(|error| error.to_string())?
+        .len();
+    let start = length.saturating_sub(max_bytes);
+    file.seek(SeekFrom::Start(start))
+        .map_err(|error| error.to_string())?;
+
+    let mut content = String::new();
+    file.take(max_bytes)
+        .read_to_string(&mut content)
+        .map_err(|error| error.to_string())?;
+    if start > 0 {
+        if let Some(newline) = content.find('\n') {
+            content.drain(..=newline);
+        } else {
+            content.clear();
+        }
+    }
+
+    Ok(content.lines().map(str::to_string).collect())
+}
+
+fn codex_session_status_from_modified(modified: SystemTime, now: SystemTime) -> SessionStatus {
+    if now
+        .duration_since(modified)
+        .unwrap_or_default()
+        <= CODEX_ACTIVE_WINDOW
+    {
+        SessionStatus::Active
+    } else {
+        SessionStatus::Completed
+    }
+}
+
 #[cfg(test)]
 mod codex_session_io_tests {
     use super::*;
     use std::io::Write;
+    use std::time::{Duration, SystemTime};
 
     #[test]
     fn codex_session_prefix_reader_stops_at_600_lines() {
@@ -2889,6 +3064,40 @@ mod codex_session_io_tests {
 
         assert_eq!(lines.len(), 600);
         assert!(lines.last().unwrap().contains("\"index\":599"));
+    }
+
+    #[test]
+    fn codex_session_tail_reader_keeps_latest_activity() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("large-session.jsonl");
+        let mut file = std::fs::File::create(&path).unwrap();
+        for index in 0..700 {
+            writeln!(
+                file,
+                "{{\"timestamp\":\"2026-07-19T02:00:{:02}Z\",\"type\":\"response_item\",\"payload\":{{\"item\":{{\"name\":\"tool-{index}\"}}}}}}",
+                index % 60
+            )
+            .unwrap();
+        }
+
+        let lines = read_codex_session_tail(&path, 64 * 1024).unwrap();
+
+        assert!(lines.len() < 700);
+        assert!(lines.last().unwrap().contains("\"tool-699\""));
+    }
+
+    #[test]
+    fn recent_codex_transcript_is_treated_as_active() {
+        let now = SystemTime::now();
+
+        assert_eq!(
+            codex_session_status_from_modified(now - Duration::from_secs(60), now),
+            SessionStatus::Active
+        );
+        assert_eq!(
+            codex_session_status_from_modified(now - Duration::from_secs(20 * 60), now),
+            SessionStatus::Completed
+        );
     }
 }
 

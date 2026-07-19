@@ -18,14 +18,14 @@ const characterRoomStyles = readFileSync(
 );
 
 describe("Hype refresh routing", () => {
-  it.each(["assets", "preferences", "rules", "obsidian"] as const)(
+  it.each(["assets", "preferences", "rules", "memory"] as const)(
     "dispatches only the active %s refresh",
     async (activeTab) => {
       const actions = {
         assets: vi.fn(),
         preferences: vi.fn(),
         rules: vi.fn(),
-        obsidian: vi.fn(),
+        memory: vi.fn(),
       };
 
       await dispatchKnowledgeRefresh(activeTab, actions);
@@ -124,6 +124,13 @@ describe("Hype loading and toolbar UI", () => {
     expect(
       knowledgeModuleSource.match(/placeholder="搜索技能、规则、偏好与记忆"/g),
     ).toHaveLength(1);
+  });
+
+  it("loads discovered rules and memories instead of hiding them in agent assets", () => {
+    expect(knowledgeModuleSource).toContain('asset.asset_type === "rule"');
+    expect(knowledgeModuleSource).toContain('asset.asset_type === "memory"');
+    expect(knowledgeModuleSource).toContain("data.memory_items");
+    expect(knowledgeModuleSource).toContain("我的记忆");
   });
 });
 

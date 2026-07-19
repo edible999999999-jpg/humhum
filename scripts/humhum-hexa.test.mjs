@@ -243,6 +243,69 @@ test("runs every command from a non-HUMHUM project with per-session state", asyn
   await assert.rejects(readFile(stateFile, "utf8"), { code: "ENOENT" });
 });
 
+test("keeps the legacy watch command independent unless goal linking is explicit", async () => {
+  const root = await mkdtemp(join(tmpdir(), "humhum-hexa-independent-"));
+  const home = join(root, "home");
+  const cwd = join(root, "project");
+  await mkdir(join(home, ".humhum"), { recursive: true });
+  await mkdir(cwd, { recursive: true });
+  await writeFile(join(home, ".humhum", "local-api-token"), "test-token\n");
+  const calls = [];
+  const options = {
+    cwd,
+    home,
+    env: { CODEX_THREAD_ID: "legacy-thread" },
+    stdout: () => {},
+    fetchImpl: async (url, init) => {
+      const path = new URL(url).pathname;
+      const body = JSON.parse(init.body);
+      calls.push({ path, body });
+      if (path === "/hexa/goal/link") {
+        return new Response(JSON.stringify({ id: "generated-goal" }), { status: 200 });
+      }
+      return new Response(JSON.stringify({
+        session_id: body.session_id ?? "legacy-thread",
+        provider: "codex",
+        agent: "codex",
+        workspace: cwd,
+        goal: body.goal ?? "保留单会话体验",
+        name: "保留单会话体验",
+        status: body.status ?? "working",
+        audit: { work_items: [], milestones: [] },
+      }), { status: 200 });
+    },
+  };
+
+  await runCli(["watch", "保留单会话体验"], options);
+
+  assert.deepEqual(calls.map((call) => call.path), [
+    "/hexa/register",
+    "/hexa/update",
+  ]);
+  const saved = JSON.parse(await readFile(stateFileFor({
+    home,
+    cwd,
+    provider: "codex",
+    sessionId: "legacy-thread",
+  }), "utf8"));
+  assert.equal(saved.goal_id, undefined);
+
+  calls.length = 0;
+  await runCli(["watch", "建立多 Agent 目标", "--link-goal"], options);
+  assert.deepEqual(calls.map((call) => call.path), [
+    "/hexa/register",
+    "/hexa/update",
+    "/hexa/goal/link",
+  ]);
+  const linked = JSON.parse(await readFile(stateFileFor({
+    home,
+    cwd,
+    provider: "codex",
+    sessionId: "legacy-thread",
+  }), "utf8"));
+  assert.equal(linked.goal_id, "generated-goal");
+});
+
 test("keeps the watched session when goal linking fails", async () => {
   const root = await mkdtemp(join(tmpdir(), "humhum-hexa-goal-link-"));
   const home = join(root, "home");

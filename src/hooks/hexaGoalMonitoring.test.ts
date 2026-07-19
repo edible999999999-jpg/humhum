@@ -128,15 +128,16 @@ describe("Hexa goal monitoring selectors", () => {
     ]);
   });
 
-  it("does not hide sessions when goal data is missing or stale", () => {
+  it("keeps orphan-only goals reachable without hiding independent sessions", () => {
     const projects = buildActiveMonitoringProjects(
       [watchedSession({ session_id: "session-1" })],
       [developmentGoal({ attempts: [attempt("missing", "qoder", "qoder_worker")] })],
     );
 
-    expect(projects.flatMap((project) => project.entries)).toEqual([
+    expect(projects.flatMap((project) => project.entries)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "goal", key: "goal-1", attempts: [] }),
       expect.objectContaining({ kind: "session", sessionId: "session-1" }),
-    ]);
+    ]));
   });
 
   it("treats completed-without-evidence as unverified", () => {
@@ -152,7 +153,29 @@ describe("Hexa goal monitoring selectors", () => {
       working: 0,
       verified: 0,
       failed: 0,
+      blocked: 0,
       unverified: 1,
+    });
+  });
+
+  it("separates blocked attempts and never calls superseded history unverified", () => {
+    const summary = buildGoalSummary(developmentGoal({
+      attempts: [
+        attempt("blocked", "qoder", "qoder_worker"),
+        attempt("superseded", "codex", "codex_desktop", "superseded"),
+      ],
+    }), [
+      watchedSession({ session_id: "blocked", status: "blocked" }),
+      watchedSession({ session_id: "superseded", status: "completed" }),
+    ]);
+
+    expect(summary.counts).toEqual({
+      total: 2,
+      working: 0,
+      verified: 0,
+      failed: 0,
+      blocked: 1,
+      unverified: 0,
     });
   });
 

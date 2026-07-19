@@ -12,7 +12,7 @@ const ROOM_BACKGROUNDS: Record<HubRoomId, string> = {
   humi: "/mascots/hub-backgrounds/humi-room.webp",
   hype: "/mascots/hub-backgrounds/hype-room.webp",
   hush: "/mascots/hub-backgrounds/hush-room.webp",
-  hexa: "/mascots/hub-backgrounds/hexa-room.webp",
+  hexa: "/mascots/hub-backgrounds/hexa-room-v2.png",
 };
 
 export function HubRoom({ room, children, className }: HubRoomProps) {

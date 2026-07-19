@@ -1,14 +1,19 @@
 import { describe, expect, it } from "vitest";
 import {
   filterHushContacts,
+  getHushChatScope,
   getHushConversationIdentity,
+  getLatestHushMessage,
+  getHushPriorityLabel,
   getHushUnreadCount,
+  getVisibleHushSuggestedReply,
   groupHushMessages,
   isHushContactUnread,
   migrateHushConversationState,
   parseHushConversationState,
   resolveHushSelectedContact,
   serializeHushConversationState,
+  sortHushContactsByAttention,
   type DerivedContact,
   type HushConversationState,
   type HushInboxMessage,
@@ -63,6 +68,129 @@ function contact(
     messages,
   };
 }
+
+describe("Hush conversation scope", () => {
+  it.each([
+    {
+      label: "explicit direct kind",
+      candidate: { ...message("direct", "2026-07-18T01:00:00Z"), conversation_kind: "direct" },
+      expected: "direct",
+    },
+    {
+      label: "legacy DWS direct flag",
+      candidate: {
+        ...message("legacy-direct", "2026-07-18T01:00:00Z"),
+        raw: { source: "dws", single_chat: true },
+      },
+      expected: "direct",
+    },
+    {
+      label: "legacy DWS group flag",
+      candidate: {
+        ...message("legacy-group", "2026-07-18T01:00:00Z"),
+        raw: { source: "dws", single_chat: false },
+      },
+      expected: "group",
+    },
+    {
+      label: "unclassified notification",
+      candidate: message("unknown", "2026-07-18T01:00:00Z"),
+      expected: "unknown",
+    },
+  ])("classifies $label", ({ candidate, expected }) => {
+    expect(getHushChatScope(candidate)).toBe(expected);
+  });
+
+  it("hides persisted group suggestions but keeps direct suggestions", () => {
+    const group = {
+      ...message("group", "2026-07-18T01:00:00Z"),
+      conversation_kind: "group",
+      suggested_reply: "看到了，我晚点回你",
+    };
+    const direct = {
+      ...message("direct", "2026-07-18T01:00:00Z"),
+      conversation_kind: "direct",
+      suggested_reply: "可以，我确认时间后明确回复你。",
+    };
+
+    expect(getVisibleHushSuggestedReply(group)).toBeNull();
+    expect(getVisibleHushSuggestedReply(direct)).toBe(
+      "可以，我确认时间后明确回复你。",
+    );
+  });
+
+  it("upgrades a persisted generic direct reply using the message content", () => {
+    const legacyDirect = {
+      ...message("legacy-direct", "2026-07-18T01:00:00Z"),
+      conversation_kind: "direct",
+      text: "明天下午三点开会可以吗？",
+      suggested_reply: "看到了，我晚点回你～",
+    };
+
+    expect(getVisibleHushSuggestedReply(legacyDirect)).toBe(
+      "可以，我先确认一下明天下午三点的安排，稍后明确回复你。",
+    );
+  });
+
+  it.each([
+    {
+      text: "怎么样郭师，有查到吗",
+      expected: "我正在确认，查到明确结果后马上回复你。",
+    },
+    {
+      text: "图片消息 注意：如需下载使用 dws chat message download-media",
+      expected: "图片收到了，我看一下内容，确认后回复你。",
+    },
+  ])("upgrades legacy direct replies for: $text", ({ text, expected }) => {
+    const legacyDirect = {
+      ...message("legacy-direct", "2026-07-18T01:00:00Z"),
+      conversation_kind: "direct",
+      text,
+      suggested_reply: "看到了，我晚点回你～",
+    };
+
+    expect(getVisibleHushSuggestedReply(legacyDirect)).toBe(expected);
+  });
+});
+
+describe("Hush priority labels", () => {
+  it("uses P0 for explicit attention and maps higher internal scores to lower P numbers", () => {
+    expect(getHushPriorityLabel(5, false)).toBe("P1");
+    expect(getHushPriorityLabel(4, false)).toBe("P2");
+    expect(getHushPriorityLabel(3, false)).toBe("P3");
+    expect(getHushPriorityLabel(2, false)).toBe("P4");
+    expect(getHushPriorityLabel(4, true)).toBe("P0 · 特别关注");
+  });
+});
+
+describe("Hush latest-message and attention ordering", () => {
+  it("chooses the latest instant instead of comparing timestamp strings", () => {
+    const newer = message("newer", "2026-07-18T03:00:00Z");
+    const olderWithLargerClockText = message(
+      "older",
+      "2026-07-18T10:30:00+08:00",
+    );
+
+    expect(
+      getLatestHushMessage([newer, olderWithLargerClockText]),
+    ).toBe(newer);
+  });
+
+  it("puts special-attention contacts first and keeps each group time-sorted", () => {
+    const newestNormal = contact("normal-new", "2026-07-18T05:00:00Z");
+    const newestAttention = contact("attention-new", "2026-07-18T04:00:00Z");
+    const olderAttention = contact("attention-old", "2026-07-18T03:00:00Z");
+
+    expect(
+      sortHushContactsByAttention(
+        [newestNormal, olderAttention, newestAttention],
+        {
+          attentionIds: ["attention-old", "attention-new"],
+        },
+      ).map(({ id }) => id),
+    ).toEqual(["attention-new", "attention-old", "normal-new"]);
+  });
+});
 
 describe("getHushConversationIdentity", () => {
   it("keeps system notification threads separate for the same sender and platform", () => {
