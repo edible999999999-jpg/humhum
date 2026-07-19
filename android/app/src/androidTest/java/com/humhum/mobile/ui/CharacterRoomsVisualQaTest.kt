@@ -26,12 +26,12 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
-class LivingSignalsVisualQaTest {
+class CharacterRoomsVisualQaTest {
     @get:Rule
     val compose = createAndroidComposeRule<ComponentActivity>()
 
     @Test
-    fun captureHumiReferenceViewport() = capture(connectedState(), "living-signals-first-viewport")
+    fun captureHumiReferenceViewport() = capture(connectedState(), "humi-first-viewport")
 
     @Test
     fun captureHypeReferenceViewport() = capture(

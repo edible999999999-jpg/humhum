@@ -1,6 +1,10 @@
 package com.humhum.mobile.ui.theme
 
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontListFontFamily
+import androidx.compose.ui.text.font.ResourceFont
+import androidx.compose.ui.unit.Density
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -15,6 +19,19 @@ class HumHumThemeTest {
         assertTrue(HumHumTypography.labelMedium.fontSize.value == 12f)
         assertTrue(HumHumTypography.bodyMedium.letterSpacing.value == 0f)
         assertTrue(HeadlineNumberStyle.fontFeatureSettings == "tnum")
+    }
+
+    @Test
+    fun bundledVariableFontUsesDistinctWeightAxes() {
+        val density = Density(1f)
+        val weightAxes = (HumHumFontFamily as FontListFontFamily).map { font ->
+            val resourceFont = font as ResourceFont
+            resourceFont.variationSettings.settings
+                .single { it.axisName == "wght" }
+                .toVariationValue(density)
+        }
+
+        assertEquals(listOf(400f, 500f, 600f), weightAxes)
     }
 
     @Test

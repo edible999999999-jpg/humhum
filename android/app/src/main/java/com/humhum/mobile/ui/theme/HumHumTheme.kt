@@ -5,18 +5,20 @@ import androidx.compose.material3.Typography
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.ExperimentalTextApi
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontVariation
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
 import com.humhum.mobile.MobileRoleDashboard
 import com.humhum.mobile.R
 
-val Ink = Color(0xFF243247)
-val Muted = Color(0xFF667085)
+val Ink = Color(0xFF1E2B3D)
+val Muted = Color(0xFF596579)
 val Canvas = Color(0xFFFAFCFF)
 val Line = Color(0xFFE3E8F0)
 val Humi = Color(0xFF6657B8)
@@ -40,10 +42,23 @@ fun paletteFor(role: MobileRoleDashboard.Role): RolePalette = when (role) {
     MobileRoleDashboard.Role.HEXA -> RolePalette(Hexa, HexaSoft, Sky)
 }
 
+@OptIn(ExperimentalTextApi::class)
 val HumHumFontFamily = FontFamily(
-    Font(R.font.noto_sans_sc, FontWeight.Normal),
-    Font(R.font.noto_sans_sc, FontWeight.Medium),
-    Font(R.font.noto_sans_sc, FontWeight.SemiBold),
+    Font(
+        R.font.noto_sans_sc,
+        FontWeight.Normal,
+        variationSettings = FontVariation.Settings(FontVariation.weight(400)),
+    ),
+    Font(
+        R.font.noto_sans_sc,
+        FontWeight.Medium,
+        variationSettings = FontVariation.Settings(FontVariation.weight(500)),
+    ),
+    Font(
+        R.font.noto_sans_sc,
+        FontWeight.SemiBold,
+        variationSettings = FontVariation.Settings(FontVariation.weight(600)),
+    ),
 )
 
 private val NoExtraFontPadding = PlatformTextStyle(includeFontPadding = false)
