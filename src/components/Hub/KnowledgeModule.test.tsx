@@ -18,6 +18,7 @@ import {
   KnowledgeLoadGate,
   KnowledgeSearchToolbar,
   dispatchKnowledgeRefresh,
+  getAgentAssetScanSummary,
   runKnowledgeOperation,
 } from "./KnowledgeModule";
 
@@ -45,6 +46,50 @@ const emptyKnowledge = {
   obsidian_notes: [],
   obsidian_vault: null,
 };
+
+describe("Hype asset refresh summary", () => {
+  it("counts unique logical skills using declared asset types", () => {
+    const baseSkill = {
+      id: "asset:codex-release",
+      asset_type: "skill",
+      agent_id: "codex",
+      name: "Release Helper",
+      file_path: "/Users/me/.codex/skills/release/SKILL.md",
+      relative_path: "release/SKILL.md",
+      source: "codex",
+      content: "release",
+      tags: [],
+    };
+    const assets = [
+      baseSkill,
+      {
+        ...baseSkill,
+        id: "asset:claude-release",
+        agent_id: "claude",
+        name: "release_helper",
+        file_path: "/Users/me/.claude/skills/release/SKILL.md",
+      },
+      {
+        ...baseSkill,
+        id: "asset:prompt-skill-filename",
+        asset_type: "prompt",
+        name: "Prompt descriptor",
+        file_path: "/Users/me/.codex/prompts/SKILL.md",
+      },
+      {
+        ...baseSkill,
+        id: "asset:agent",
+        asset_type: "agent",
+        name: "Builder Agent",
+        file_path: "/Users/me/.codex/agents/builder.md",
+      },
+    ];
+
+    expect(getAgentAssetScanSummary(assets)).toBe(
+      "已整理 4 项本地知识 · 1 个个人技能 · 1 个 Agent 配置",
+    );
+  });
+});
 
 describe("Hype automatic skill freshness", () => {
   beforeEach(() => {
@@ -178,6 +223,27 @@ describe("Hype logical skill rows", () => {
               ],
             },
             {
+              id: "asset:unknown-time-skill",
+              asset_type: "skill",
+              agent_id: "claude-code",
+              name: "Unknown-time skill",
+              file_path: "/Users/me/.claude/skills/unknown-time/SKILL.md",
+              relative_path: "unknown-time/SKILL.md",
+              source: "claude",
+              content: "Unknown time copy",
+              tags: [],
+              ownership: "created",
+              usage_evidence: [
+                {
+                  session_id: "newest-session",
+                  agent_id: "claude-code",
+                  session_path: "/Users/me/.claude/sessions/newest.jsonl",
+                  workspace: "/Users/me/Projects/newest-work",
+                  used_at: null,
+                },
+              ],
+            },
+            {
               id: "asset:release-prompt",
               asset_type: "prompt",
               agent_id: "codex",
@@ -249,7 +315,7 @@ describe("Hype logical skill rows", () => {
         host.querySelectorAll(
           ".hype-logical-skill-row .hype-asset-name strong",
         ),
-      ).toHaveLength(2);
+      ).toHaveLength(3);
     });
     const logicalSkillText = [...host.querySelectorAll(".hype-logical-skill-row")]
       .map((row) => row.textContent)
@@ -276,6 +342,58 @@ describe("Hype logical skill rows", () => {
     expect(details).toContain("~/.codex/skills/humhum-hexa/SKILL.md");
     expect(details).toContain("~/.claude/skills/humhum-hexa/SKILL.md");
     expect(details.indexOf("newest-work")).toBeLessThan(details.indexOf("older-work"));
+
+    await act(async () => root.unmount());
+  });
+
+  it("shows unknown usage time when sessions exist without a meaningful timestamp", async () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+
+    await act(async () => {
+      root.render(createElement(KnowledgeModule));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const row = await vi.waitFor(() => {
+      const found = [...host.querySelectorAll(".hype-logical-skill-row")].find(
+        (item) => item.textContent?.includes("Unknown-time skill"),
+      );
+      expect(found).toBeTruthy();
+      return found;
+    });
+    expect(row.querySelector("time")?.textContent).toBe("使用时间未知");
+    expect(row.querySelector("time")?.textContent).not.toBe("未发现使用记录");
+
+    await act(async () => root.unmount());
+  });
+
+  it("omits version evidence when skill content does not differ", async () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+
+    await act(async () => {
+      root.render(createElement(KnowledgeModule));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const row = await vi.waitFor(() => {
+      const found = [...host.querySelectorAll(".hype-logical-skill-row")].find(
+        (item) => item.textContent?.includes("Unknown-time skill"),
+      );
+      expect(found).toBeTruthy();
+      return found;
+    });
+    await act(async () => {
+      row.querySelector<HTMLButtonElement>(".hype-asset-row")?.click();
+    });
+
+    expect(row.textContent).not.toContain("内容版本一致");
+    expect(row.textContent).not.toContain("发现内容不同的版本");
 
     await act(async () => root.unmount());
   });

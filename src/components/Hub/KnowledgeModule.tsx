@@ -14,7 +14,7 @@ import type {
 import {
   agentAssetLastUsedTimestamp,
   agentAssetModifiedTimestamp,
-  filterAgentAssets,
+  countDistinctLogicalSkillSessions,
   filterLogicalSkills,
   getAgentAssetSummary,
   groupLogicalSkills,
@@ -24,6 +24,14 @@ import {
 } from "./knowledgePresentation";
 
 const CATEGORIES = ["coding_style", "tools", "workflow", "communication", "other"];
+
+export function getAgentAssetScanSummary(found: AgentAsset[]): string {
+  const skillCount = groupLogicalSkills(
+    found.filter((asset) => asset.asset_type === "skill"),
+  ).length;
+  const agentCount = found.filter((asset) => asset.asset_type === "agent").length;
+  return `已整理 ${found.length} 项本地知识 · ${skillCount} 个个人技能 · ${agentCount} 个 Agent 配置`;
+}
 
 const CATEGORY_COLORS: Record<string, string> = {
   coding_style: "#94eff4",
@@ -497,9 +505,7 @@ export function KnowledgeModule() {
     try {
       const roots = parseAssetRoots(assetRoots);
       const found = await invoke<AgentAsset[]>("scan_agent_assets", { roots });
-      const skillCount = filterAgentAssets(found, "all", "").length;
-      const agentCount = found.filter((asset) => asset.asset_type === "agent").length;
-      setAssetScanSummary(`已整理 ${found.length} 项本地知识 · ${skillCount} 个个人技能 · ${agentCount} 个 Agent 配置`);
+      setAssetScanSummary(getAgentAssetScanSummary(found));
       await fetchData();
       return true;
     } catch (error) {
@@ -882,7 +888,7 @@ export function KnowledgeModule() {
             <span>{filteredAssetCount} 项</span>
             <span>{filteredSkills.length} 个技能</span>
             <span>
-              {filteredSkills.reduce((sum, skill) => sum + skill.session_count, 0)} 个最近会话
+              {countDistinctLogicalSkillSessions(filteredSkills)} 个最近会话
             </span>
             {filteredNonSkillAssets.length > 0 && (
               <span>{filteredNonSkillAssets.length} 个其他资产</span>
@@ -1559,7 +1565,9 @@ function LogicalSkillRow({ skill }: { skill: LogicalSkill }) {
         <time dateTime={validLatestUsedAt?.toISOString()}>
           {validLatestUsedAt
             ? validLatestUsedAt.toLocaleString()
-            : "未发现使用记录"}
+            : skill.session_count > 0
+              ? "使用时间未知"
+              : "未发现使用记录"}
         </time>
       </button>
 
@@ -1614,11 +1622,9 @@ function LogicalSkillRow({ skill }: { skill: LogicalSkill }) {
           <section className="hype-skill-evidence-section">
             <div className="hype-skill-evidence-heading">
               <strong>安装来源</strong>
-              <span>
-                {skill.has_multiple_versions
-                  ? "发现内容不同的版本"
-                  : "内容版本一致"}
-              </span>
+              {skill.has_multiple_versions && (
+                <span>发现内容不同的版本</span>
+              )}
             </div>
             <div className="hype-skill-copy-list">
               {skill.copies.map((copy) => (

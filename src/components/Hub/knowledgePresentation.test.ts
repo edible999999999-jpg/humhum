@@ -3,6 +3,7 @@ import type { AgentAsset } from "@/types";
 import {
   agentAssetLastUsedTimestamp,
   agentAssetModifiedTimestamp,
+  countDistinctLogicalSkillSessions,
   filterLogicalSkills,
   filterAgentAssets,
   getAgentAssetSummary,
@@ -452,6 +453,60 @@ describe("logical skill presentation", () => {
     expect(skill?.sessions[0]?.session_path).toBe("/sessions/newest");
   });
 
+  it("detects full-content divergence when persisted previews are identical", () => {
+    const firstCopy = {
+      ...asset("/codex/long/SKILL.md", "x".repeat(2_400), {
+        name: "Long Skill",
+      }),
+      content_hash: "hash-first-tail",
+    };
+    const secondCopy = {
+      ...asset("/claude/long/SKILL.md", "x".repeat(2_400), {
+        agent_id: "claude",
+        name: "Long Skill",
+      }),
+      content_hash: "hash-second-tail",
+    };
+
+    const [skill] = groupLogicalSkills([firstCopy, secondCopy]);
+
+    expect(skill?.has_multiple_versions).toBe(true);
+  });
+
+  it("prefers matching full-content hashes over divergent previews", () => {
+    const firstCopy = {
+      ...asset("/codex/same/SKILL.md", "truncated preview one", {
+        name: "Same Skill",
+      }),
+      content_hash: "same-full-content-hash",
+    };
+    const secondCopy = {
+      ...asset("/claude/same/SKILL.md", "truncated preview two", {
+        agent_id: "claude",
+        name: "Same Skill",
+      }),
+      content_hash: "same-full-content-hash",
+    };
+
+    const [skill] = groupLogicalSkills([firstCopy, secondCopy]);
+
+    expect(skill?.has_multiple_versions).toBe(false);
+  });
+
+  it("falls back to normalized previews when legacy copies have no hash", () => {
+    const firstCopy = asset("/codex/legacy/SKILL.md", "same\ncontent", {
+      name: "Legacy Skill",
+    });
+    const secondCopy = asset("/claude/legacy/SKILL.md", " same   content ", {
+      agent_id: "claude",
+      name: "Legacy Skill",
+    });
+
+    const [skill] = groupLogicalSkills([firstCopy, secondCopy]);
+
+    expect(skill?.has_multiple_versions).toBe(false);
+  });
+
   it("keeps installed copies without evidence and searches session workspaces", () => {
     const installedCopy = asset("/codex/installed/SKILL.md", "", {
       name: "Installed Helper",
@@ -515,6 +570,27 @@ describe("logical skill presentation", () => {
       "claude",
       "codex",
     ]);
+  });
+
+  it("globally deduplicates the same Agent session across logical skills", () => {
+    const sharedEvidence = {
+      session_id: "shared-session",
+      agent_id: "codex",
+      session_path: "/sessions/shared",
+      used_at: "2026-07-20T10:00:00Z",
+    };
+    const skills = groupLogicalSkills([
+      asset("/codex/first/SKILL.md", "first", {
+        name: "First Skill",
+        usage_evidence: [sharedEvidence],
+      }),
+      asset("/codex/second/SKILL.md", "second", {
+        name: "Second Skill",
+        usage_evidence: [sharedEvidence],
+      }),
+    ]);
+
+    expect(countDistinctLogicalSkillSessions(skills)).toBe(1);
   });
 
   it("retains the newest parseable pre-2000 evidence for duplicate sessions", () => {

@@ -292,6 +292,7 @@ export interface AgentAsset {
   relative_path: string;
   source: string;
   content: string;
+  content_hash?: string | null;
   tags: string[];
   modified_at?: string | null;
   last_used_at?: string | null;

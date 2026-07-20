@@ -253,6 +253,15 @@ function normalizeContent(value: string): string {
   return value.normalize("NFKC").replace(/\s+/gu, " ").trim();
 }
 
+function hasMultipleContentVersions(copies: AgentAsset[]): boolean {
+  const hashes = copies.map((copy) => copy.content_hash?.trim()).filter(Boolean);
+  if (hashes.length === copies.length) {
+    return new Set(hashes).size > 1;
+  }
+
+  return new Set(copies.map((copy) => normalizeContent(copy.content))).size > 1;
+}
+
 function usageEvidenceKey(evidence: SkillUsageEvidence): string {
   return `${evidence.agent_id}\u0000${evidence.session_id}`;
 }
@@ -302,7 +311,6 @@ export function groupLogicalSkills(assets: AgentAsset[]): LogicalSkill[] {
     const firstCopy = copies[0];
     const localizedCopy = copies.find((copy) => copy.display_name_zh?.trim());
     const summaryCopy = copies.find((copy) => copy.summary_zh?.trim()) ?? firstCopy;
-    const contentVariants = new Set(copies.map((copy) => normalizeContent(copy.content)));
 
     return {
       key,
@@ -315,7 +323,7 @@ export function groupLogicalSkills(assets: AgentAsset[]): LogicalSkill[] {
       latest_modified_at: newestValue(copies.map((copy) => copy.modified_at)),
       session_count: sessions.length,
       agent_count: new Set(copies.map((copy) => copy.agent_id)).size,
-      has_multiple_versions: contentVariants.size > 1,
+      has_multiple_versions: hasMultipleContentVersions(copies),
     };
   });
 
@@ -338,6 +346,12 @@ export function groupLogicalSkills(assets: AgentAsset[]): LogicalSkill[] {
 
     return left.name.localeCompare(right.name);
   });
+}
+
+export function countDistinctLogicalSkillSessions(skills: LogicalSkill[]): number {
+  return new Set(
+    skills.flatMap((skill) => skill.sessions.map(usageEvidenceKey)),
+  ).size;
 }
 
 export function filterLogicalSkills(
