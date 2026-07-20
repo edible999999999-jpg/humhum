@@ -1,9 +1,10 @@
 use crate::skill_index::{
-    chinese_skill_presentation, discover_skill_sources, is_personal_skill_path, SkillSource,
-    SkillUsageEvidence,
+    chinese_skill_presentation, discover_skill_sources_with_roots, is_personal_skill_path,
+    SkillSource, SkillUsageEvidence,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use sha2::{Digest, Sha256};
 use std::collections::{HashSet, VecDeque};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -93,6 +94,8 @@ pub struct AgentAsset {
     pub relative_path: String,
     pub source: String,
     pub content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_hash: Option<String>,
     pub tags: Vec<String>,
     pub modified_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -572,7 +575,7 @@ impl KnowledgeStore {
         home: &Path,
     ) -> Result<Vec<AgentAsset>, String> {
         let roots = resolve_agent_asset_roots_with_home(roots, home);
-        let skill_sources = discover_skill_sources(home);
+        let skill_sources = discover_skill_sources_with_roots(home, &roots);
         let mut scan_roots = roots
             .into_iter()
             .map(|path| (path, None))
@@ -613,9 +616,10 @@ impl KnowledgeStore {
                     if !is_personal_skill_path(&path) {
                         continue;
                     }
+                    let canonical_path = path.canonicalize().unwrap_or_else(|_| path.clone());
                     let matched_source = skill_sources
                         .iter()
-                        .filter(|source| path.starts_with(&source.root))
+                        .filter(|source| canonical_path.starts_with(&source.root))
                         .max_by_key(|source| source.root.components().count())
                         .or(root_skill_source.as_ref());
                     if matched_source.is_some_and(|source| {
@@ -1164,6 +1168,7 @@ fn parse_agent_asset(root: &Path, path: &Path, content: &str) -> AgentAsset {
         relative_path,
         source: root.to_string_lossy().to_string(),
         content: truncate_content(content, 2400),
+        content_hash: Some(format!("{:x}", Sha256::digest(content.as_bytes()))),
         tags,
         modified_at,
         last_used_at: None,
@@ -1915,6 +1920,70 @@ mod tests {
         .unwrap();
 
         assert!(asset.usage_evidence.is_empty());
+        assert!(asset.content_hash.is_none());
+    }
+
+    #[test]
+    fn agent_asset_hash_uses_full_content_before_preview_truncation() {
+        let root = Path::new("/tmp/humhum-hash-test");
+        let shared_prefix = "x".repeat(2_500);
+        let first = parse_agent_asset(
+            root,
+            &root.join("first/SKILL.md"),
+            &format!("{shared_prefix}first-tail"),
+        );
+        let second = parse_agent_asset(
+            root,
+            &root.join("second/SKILL.md"),
+            &format!("{shared_prefix}second-tail"),
+        );
+
+        assert_eq!(first.content, second.content);
+        assert!(first.content_hash.is_some());
+        assert_ne!(first.content_hash, second.content_hash);
+    }
+
+    #[test]
+    fn configured_project_skill_receives_session_evidence() {
+        let root = temp_root("configured-project-skill-evidence");
+        let home = root.join("home");
+        let project = root.join("project");
+        let skill = project.join(".agents/skills/release/SKILL.md");
+        std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
+        std::fs::write(
+            &skill,
+            "---\nname: release\ndescription: Release helper\n---\n",
+        )
+        .unwrap();
+        let session_dir = home.join(".codex/sessions");
+        std::fs::create_dir_all(&session_dir).unwrap();
+        std::fs::write(
+            session_dir.join("project-session.jsonl"),
+            format!(
+                "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"project-session\",\"cwd\":\"{}\"}}}}\n\
+                 {{\"timestamp\":\"2026-07-20T13:00:00Z\",\"type\":\"response_item\",\"payload\":{{\"type\":\"custom_tool_call\",\"name\":\"exec\",\"input\":\"cat {}\"}}}}\n",
+                project.display(),
+                skill.display(),
+            ),
+        )
+        .unwrap();
+        let mut store = store_at(&root);
+
+        let assets = store
+            .scan_agent_assets_with_home(Some(vec![project.to_string_lossy().to_string()]), &home)
+            .unwrap();
+
+        let release = assets
+            .iter()
+            .find(|asset| asset.name == "release")
+            .expect("configured project skill");
+        assert_eq!(release.usage_evidence.len(), 1);
+        assert_eq!(release.usage_evidence[0].session_id, "project-session");
+        assert_eq!(
+            release.usage_evidence[0].workspace.as_deref(),
+            Some(project.to_string_lossy().as_ref())
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

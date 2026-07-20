@@ -6011,6 +6011,7 @@ mod humi_agent_kernel_tests {
             relative_path: relative_path.to_string(),
             source: "test".to_string(),
             content: content.to_string(),
+            content_hash: None,
             tags: Vec::new(),
             modified_at: None,
             last_used_at: None,

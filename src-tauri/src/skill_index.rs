@@ -64,7 +64,10 @@ pub fn is_personal_skill_path(path: &Path) -> bool {
         && !normalized.contains("/.qoder/plugins/cache/")
 }
 
-pub fn discover_skill_sources(home: &Path) -> Vec<SkillSource> {
+pub fn discover_skill_sources_with_roots(
+    home: &Path,
+    additional_roots: &[PathBuf],
+) -> Vec<SkillSource> {
     let mut sources = vec![
         SkillSource {
             root: home.join(".claude/skills"),
@@ -144,9 +147,10 @@ pub fn discover_skill_sources(home: &Path) -> Vec<SkillSource> {
     }
 
     let session_files = collect_recent_codex_session_files(home);
-    sources.extend(discover_session_skill_sources_from_files(
+    sources.extend(discover_session_skill_sources_from_files_with_roots(
         home,
         &session_files,
+        additional_roots,
     ));
 
     sources
@@ -195,9 +199,9 @@ fn extract_used_skills_from_session(content: &str) -> Vec<SkillUsage> {
         };
 
         let paths = if let Some(input) = tool_input.as_str() {
-            extract_plugin_skill_paths(input)
+            extract_absolute_skill_paths(input)
         } else {
-            extract_plugin_skill_paths(&tool_input.to_string())
+            extract_absolute_skill_paths(&tool_input.to_string())
         };
         let timestamp = entry
             .get("timestamp")
@@ -219,14 +223,19 @@ fn extract_used_skills_from_session(content: &str) -> Vec<SkillUsage> {
     usages
 }
 
+#[cfg(test)]
 pub fn discover_session_skill_sources_from_files(
     home: &Path,
     session_files: &[PathBuf],
 ) -> Vec<SkillSource> {
-    let cache_root = home.join(".codex/plugins/cache");
-    let Ok(canonical_cache_root) = cache_root.canonicalize() else {
-        return Vec::new();
-    };
+    discover_session_skill_sources_from_files_with_roots(home, session_files, &[])
+}
+
+fn discover_session_skill_sources_from_files_with_roots(
+    home: &Path,
+    session_files: &[PathBuf],
+    additional_roots: &[PathBuf],
+) -> Vec<SkillSource> {
     let mut sources: Vec<SkillSource> = Vec::new();
 
     for session_file in session_files {
@@ -246,26 +255,21 @@ pub fn discover_session_skill_sources_from_files(
             let Ok(canonical_skill_path) = skill_path.canonicalize() else {
                 continue;
             };
-            if !canonical_skill_path.starts_with(&canonical_cache_root)
+            if !canonical_skill_path.is_file()
                 || !canonical_skill_path
                     .file_name()
                     .and_then(|name| name.to_str())
                     .is_some_and(|name| name.eq_ignore_ascii_case("SKILL.md"))
+                || !is_personal_skill_path(&canonical_skill_path)
             {
                 continue;
             }
-
-            let Ok(relative) = canonical_skill_path.strip_prefix(&canonical_cache_root) else {
+            let Some((source, ownership, plugin)) =
+                recognized_skill_source(home, &canonical_skill_path, additional_roots)
+            else {
                 continue;
             };
-            let components = relative
-                .components()
-                .filter_map(|component| component.as_os_str().to_str())
-                .collect::<Vec<_>>();
-            let Some(plugin) = components.get(1) else {
-                continue;
-            };
-            let Some(root) = skill_path.parent() else {
+            let Some(root) = canonical_skill_path.parent() else {
                 continue;
             };
             let last_used_at = usage.last_used_at.or_else(|| file_modified_at.clone());
@@ -285,9 +289,9 @@ pub fn discover_session_skill_sources_from_files(
 
             sources.push(SkillSource {
                 root: root.to_path_buf(),
-                source: "codex-session".into(),
-                plugin: Some((*plugin).to_string()),
-                ownership: "used".into(),
+                source,
+                plugin,
+                ownership,
                 last_used_at,
                 usage_evidence: vec![evidence],
                 excluded_prefixes: Vec::new(),
@@ -297,6 +301,61 @@ pub fn discover_session_skill_sources_from_files(
 
     sources.sort_by(|a, b| a.root.cmp(&b.root));
     sources
+}
+
+fn recognized_skill_source(
+    home: &Path,
+    skill_path: &Path,
+    additional_roots: &[PathBuf],
+) -> Option<(String, String, Option<String>)> {
+    let standard_roots = [
+        (home.join(".claude/skills"), "claude", "created"),
+        (home.join(".agents/skills"), "agents", "created"),
+        (home.join(".codex/skills"), "codex", "created"),
+        (home.join(".qoder/skills"), "qoder", "installed"),
+        (home.join(".codex/plugins/cache"), "codex-session", "used"),
+        (home.join(".claude/plugins"), "claude-plugin", "installed"),
+    ];
+    let mut matches = standard_roots
+        .into_iter()
+        .filter_map(|(root, source, ownership)| {
+            root.canonicalize()
+                .ok()
+                .filter(|root| skill_path.starts_with(root))
+                .map(|root| (root, source.to_string(), ownership.to_string()))
+        })
+        .collect::<Vec<_>>();
+    matches.extend(additional_roots.iter().filter_map(|root| {
+        root.canonicalize()
+            .ok()
+            .filter(|root| skill_path.starts_with(root))
+            .map(|root| {
+                let source = root.to_string_lossy().to_string();
+                (root, source, "created".to_string())
+            })
+    }));
+    let (recognized_root, source, ownership) = matches
+        .into_iter()
+        .max_by_key(|(root, _, _)| root.components().count())?;
+    let plugin = if source == "codex-session" {
+        skill_path
+            .strip_prefix(recognized_root)
+            .ok()
+            .and_then(|relative| relative.components().nth(1))
+            .and_then(|component| component.as_os_str().to_str())
+            .map(str::to_string)
+    } else if source == "claude-plugin" {
+        skill_path
+            .strip_prefix(recognized_root)
+            .ok()
+            .and_then(|relative| relative.components().next())
+            .and_then(|component| component.as_os_str().to_str())
+            .map(str::to_string)
+    } else {
+        None
+    };
+
+    Some((source, ownership, plugin))
 }
 
 fn extract_session_context(content: &str, session_file: &Path) -> SessionContext {
@@ -407,19 +466,15 @@ fn newest_timestamp(left: Option<String>, right: Option<String>) -> Option<Strin
     }
 }
 
-fn extract_plugin_skill_paths(input: &str) -> Vec<PathBuf> {
-    const CACHE_MARKER: &str = "/.codex/plugins/cache/";
+fn extract_absolute_skill_paths(input: &str) -> Vec<PathBuf> {
     const SKILL_FILENAME: &str = "SKILL.md";
 
     let mut paths = Vec::new();
     let mut cursor = 0;
-    while let Some(marker_offset) = input[cursor..].find(CACHE_MARKER) {
-        let marker = cursor + marker_offset;
-        let Some(filename_offset) = input[marker..].find(SKILL_FILENAME) else {
-            break;
-        };
-        let end = marker + filename_offset + SKILL_FILENAME.len();
-        let start = input[..marker]
+    while let Some(filename_offset) = input[cursor..].find(SKILL_FILENAME) {
+        let filename = cursor + filename_offset;
+        let end = filename + SKILL_FILENAME.len();
+        let start = input[..filename]
             .char_indices()
             .rev()
             .find(|(_, character)| is_path_boundary(*character))
@@ -632,8 +687,8 @@ fn contains_cjk(value: &str) -> bool {
 mod tests {
     use super::{
         chinese_skill_presentation, discover_session_skill_sources_from_files,
-        discover_skill_sources, extract_used_skill_paths_from_session, is_personal_skill_path,
-        parse_enabled_codex_plugins, EnabledPlugin,
+        discover_skill_sources_with_roots, extract_used_skill_paths_from_session,
+        is_personal_skill_path, parse_enabled_codex_plugins, EnabledPlugin,
     };
     use std::io::Write;
     use std::path::{Path, PathBuf};
@@ -686,7 +741,7 @@ enabled = false
 
     #[test]
     fn discovers_created_roots_with_system_exclusion() {
-        let sources = discover_skill_sources(Path::new("/Users/me"));
+        let sources = discover_skill_sources_with_roots(Path::new("/Users/me"), &[]);
         let codex = sources
             .iter()
             .find(|source| source.root == Path::new("/Users/me/.codex/skills"))
@@ -752,6 +807,86 @@ enabled = false
     }
 
     #[test]
+    fn extracts_absolute_skill_paths_outside_plugin_cache_from_tool_calls() {
+        let paths = [
+            "/Users/me/.codex/skills/personal/SKILL.md",
+            "/Users/me/.agents/skills/shared/SKILL.md",
+            "/Users/me/.claude/skills/writing/SKILL.md",
+            "/Users/me/.qoder/skills/review/SKILL.md",
+            "/Users/me/Projects/humhum/.agents/skills/release/SKILL.md",
+        ];
+        let session = paths
+            .iter()
+            .map(|path| {
+                format!(
+                    "{{\"type\":\"response_item\",\"payload\":{{\"type\":\"custom_tool_call\",\"name\":\"exec\",\"input\":\"cat {path}\"}}}}"
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert_eq!(
+            extract_used_skill_paths_from_session(&session),
+            paths.into_iter().map(PathBuf::from).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn session_evidence_discovers_personal_skill_without_plugin_cache() {
+        let root = temp_root("session-personal-no-cache");
+        let home = root.join("home");
+        let skill = home.join(".codex/skills/personal/SKILL.md");
+        std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
+        std::fs::write(&skill, "---\nname: personal\ndescription: test\n---\n").unwrap();
+        let session_path = root.join("personal-session.jsonl");
+        std::fs::write(
+            &session_path,
+            format!(
+                "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"personal-session\"}}}}\n\
+                 {{\"timestamp\":\"2026-07-20T12:00:00Z\",\"type\":\"response_item\",\"payload\":{{\"type\":\"custom_tool_call\",\"name\":\"exec\",\"input\":\"cat {}\"}}}}\n",
+                skill.display(),
+            ),
+        )
+        .unwrap();
+
+        let sources = discover_session_skill_sources_from_files(&home, &[session_path]);
+
+        assert_eq!(sources.len(), 1);
+        assert_eq!(
+            sources[0].root,
+            skill.parent().unwrap().canonicalize().unwrap()
+        );
+        assert_eq!(sources[0].source, "codex");
+        assert_eq!(sources[0].ownership, "created");
+        assert_eq!(sources[0].usage_evidence[0].session_id, "personal-session");
+        assert!(!home.join(".codex/plugins/cache").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn session_evidence_rejects_skill_outside_recognized_roots() {
+        let root = temp_root("session-unrecognized");
+        let home = root.join("home");
+        let skill = root.join("unrecognized/random/SKILL.md");
+        std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
+        std::fs::write(&skill, "---\nname: random\ndescription: test\n---\n").unwrap();
+        let session_path = root.join("unrecognized-session.jsonl");
+        std::fs::write(
+            &session_path,
+            format!(
+                "{{\"type\":\"response_item\",\"payload\":{{\"type\":\"custom_tool_call\",\"name\":\"exec\",\"input\":\"cat {}\"}}}}\n",
+                skill.display(),
+            ),
+        )
+        .unwrap();
+
+        let sources = discover_session_skill_sources_from_files(&home, &[session_path]);
+
+        assert!(sources.is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn session_tool_call_discovers_only_the_used_plugin_skill() {
         let root = temp_root("session-used");
         let home = root.join("home");
@@ -780,7 +915,10 @@ enabled = false
         let sources = discover_session_skill_sources_from_files(&home, &[session_path]);
 
         assert_eq!(sources.len(), 1);
-        assert_eq!(sources[0].root, used_skill.parent().unwrap());
+        assert_eq!(
+            sources[0].root,
+            used_skill.parent().unwrap().canonicalize().unwrap()
+        );
         assert_eq!(sources[0].plugin.as_deref(), Some("superpowers"));
         assert_eq!(sources[0].ownership, "used");
         assert_eq!(
