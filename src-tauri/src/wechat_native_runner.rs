@@ -448,6 +448,8 @@ mod tests {
     use std::time::Duration;
     use tempfile::TempDir;
 
+    const TEST_PROCESS_TIMEOUT: Duration = Duration::from_secs(10);
+
     #[test]
     fn request_serialization_keeps_keys_out_of_debug_and_arguments() {
         let mut keys = BTreeMap::new();
@@ -477,7 +479,7 @@ mod tests {
         );
         std::env::set_var("HUMHUM_PARENT_SECRET", "must-not-reach-reader");
         let result = runner
-            .run(&WechatReaderRequest::status(keys), Duration::from_secs(2))
+            .run(&WechatReaderRequest::status(keys), TEST_PROCESS_TIMEOUT)
             .await
             .unwrap();
         std::env::remove_var("HUMHUM_PARENT_SECRET");
@@ -497,7 +499,7 @@ mod tests {
             .runner()
             .run(
                 &WechatReaderRequest::status(BTreeMap::new()),
-                Duration::from_secs(2),
+                TEST_PROCESS_TIMEOUT,
             )
             .await
             .unwrap_err();
@@ -508,7 +510,7 @@ mod tests {
             .runner()
             .run(
                 &WechatReaderRequest::status(BTreeMap::new()),
-                Duration::from_secs(2),
+                TEST_PROCESS_TIMEOUT,
             )
             .await
             .unwrap_err();

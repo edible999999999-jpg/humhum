@@ -572,17 +572,20 @@ describe("Hush WeChat local history connector", () => {
     vi.clearAllMocks();
   });
 
-  it("shows the honest native-reader setup boundary without launching bootstrap", async () => {
+  it("offers one explicit local wxkey setup action", async () => {
     view = await renderHushModule();
 
     expect(view.host.textContent).toContain("微信真实消息");
     expect(view.host.textContent).toContain("待准备");
-    expect(view.host.textContent).toContain("当前版本不会启动");
-    expect(view.host.textContent).toContain("签名预览版开放");
+    expect(view.host.textContent).toContain("只在本机运行");
+    expect(view.host.textContent).toContain("准备本机读取");
     expect(
-      buttonByText(view.host, "签名预览版开放").hasAttribute("disabled"),
-    ).toBe(true);
-    expect(invokeMock).not.toHaveBeenCalledWith("open_hush_wechat_setup");
+      buttonByText(view.host, "准备本机读取").hasAttribute("disabled"),
+    ).toBe(false);
+    await act(async () =>
+      buttonByText(view!.host, "准备本机读取").click(),
+    );
+    expect(invokeMock).toHaveBeenCalledWith("open_hush_wechat_setup");
   });
 });
 

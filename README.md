@@ -147,14 +147,23 @@ The bundled reader and WCDB runtime are hash-verified before each launch.
 The minimum WCDB compatibility layer was independently reduced from an audited
 snapshot of [`r266-tech/wechat-cli`](https://github.com/r266-tech/wechat-cli);
 exact source commits and licenses are recorded in
-[`native/humhum-wechat/NOTICE.md`](./native/humhum-wechat/NOTICE.md). HUMHUM does
-not execute or download that third-party CLI.
+[`native/humhum-wechat/NOTICE.md`](./native/humhum-wechat/NOTICE.md).
 
-The current source preview validates the local WeChat build and database runtime,
-but real history remains blocked until HUMHUM ships a signed, explicitly
-authorized key-setup helper. It will not silently start `sudo`, modify WeChat, or
-send chat data to a server. Once unlocked, Hush imports incoming messages only
-into the local inbox and skips messages sent by the user.
+The current source preview can use an explicitly installed
+`~/.local/share/wechat-cli/wxkey` as a temporary local key provider. The Hush
+setup button runs only its `bootstrap` or `setup` action after checking the
+executable path and permissions; all key-helper output is discarded. HUMHUM
+does not invoke the third-party query CLI, companion server, updater, export,
+or SQL surface.
+
+This compatibility path has an important temporary tradeoff: upstream `wxkey`
+stores a validated sudo credential in macOS Keychain and writes the WCDB key map
+to `~/.config/wxcli/config.json` as an owner-only `0600` file. HUMHUM rejects
+symlinks, broad permissions, unknown schemas, and malformed keys before loading
+that file, then passes validated keys only to its own reader through stdin. A
+future signed HUMHUM helper and Keychain-backed encrypted vault will replace
+this compatibility path. Hush imports incoming messages only into the local
+inbox and skips messages sent by the user.
 
 Anywhere requires a deployed HTTPS relay and an invite code configured in Hexa. See [Android setup](./docs/android-install.md) and [relay deployment](./relay/README.md). It is currently a self-hosted beta, not a promise that a public HUMHUM endpoint is already online.
 
@@ -208,6 +217,7 @@ scripts/                # Edge TTS bridge, etc.
 - [ ] Public hosted HUMHUM Anywhere endpoint and iOS client
 - [ ] Cross-device preference and context sync
 - [x] Read-only macOS notification bridge for new WeChat and DingTalk messages
+- [x] Experimental local wxkey compatibility path for WeChat history
 - [ ] Signed key setup for the bundled read-only WeChat history reader
 - [x] DingTalk DWS history sync
 - [ ] Feishu message bridge through a local or official authorized source

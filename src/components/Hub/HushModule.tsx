@@ -1543,8 +1543,8 @@ function WechatLocalPanel({
         </span>
         {state === "setup_required" && (
           <span>
-            读取内核已经内置。安全提钥仍需完成签名与微信版本验证，当前版本不会启动
-            sudo、第三方 CLI 或远程服务。
+            读取内核已经内置。准备动作会调用本机 wxkey，只在本机运行，可能暂时重启
+            微信并请求一次管理员授权，不会上传聊天内容。
           </span>
         )}
         {status?.next_action && state !== "ready" && (
@@ -1589,10 +1589,10 @@ function WechatLocalPanel({
             type="button"
             className="hush-status-action"
             onClick={onPrepare}
-            disabled
+            disabled={preparing}
           >
             <ShieldCheck size={14} aria-hidden="true" />
-            {preparing ? "正在检查..." : "签名预览版开放"}
+            {preparing ? "正在准备..." : "准备本机读取"}
           </button>
         )}
         <button

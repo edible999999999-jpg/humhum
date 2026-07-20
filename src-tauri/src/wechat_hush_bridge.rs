@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
+use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -17,6 +18,8 @@ const INCREMENTAL_OVERLAP_MINUTES: i64 = 2;
 const SYNC_INTERVAL_MINUTES: u64 = 5;
 const SESSION_LIMIT: usize = 100;
 const WECHAT_COMMAND_TIMEOUT: Duration = Duration::from_secs(45);
+const MAX_EXTERNAL_KEY_CONFIG_BYTES: u64 = 256 * 1024;
+const MAX_EXTERNAL_KEY_COUNT: usize = 256;
 
 struct WechatNativeRuntime {
     executable: PathBuf,
@@ -125,6 +128,7 @@ impl WechatRunner for MissingWechatRunner {
 }
 
 pub struct WechatHushBridge {
+    home_dir: PathBuf,
     config_path: PathBuf,
     config: AsyncMutex<WechatHushConfig>,
     last_error: AsyncMutex<Option<String>>,
@@ -164,7 +168,7 @@ impl WechatHushBridge {
     }
 
     fn from_parts(
-        _home_dir: PathBuf,
+        home_dir: PathBuf,
         config_path: PathBuf,
         runner: Arc<dyn WechatRunner>,
         fixed_executable: Option<WechatExecutable>,
@@ -179,6 +183,7 @@ impl WechatHushBridge {
             WechatHushConfig::default()
         };
         Ok(Self {
+            home_dir,
             config_path,
             config: AsyncMutex::new(config),
             last_error: AsyncMutex::new(None),
@@ -378,10 +383,11 @@ impl WechatHushBridge {
                 .unwrap_or_else(|| "请先完成微信本地读取准备".to_string()));
         }
         let start_at = self.sync_start(now).await?;
+        let keys = self.reader_keys()?;
         let sessions_output = self
             .runner
             .run(
-                &WechatReaderRequest::sessions(BTreeMap::new()),
+                &WechatReaderRequest::sessions(keys.clone()),
                 WECHAT_COMMAND_TIMEOUT,
             )
             .await?;
@@ -414,7 +420,7 @@ impl WechatHushBridge {
                     &WechatReaderRequest::timeline(
                         session.username.clone(),
                         start_at.timestamp(),
-                        BTreeMap::new(),
+                        keys.clone(),
                     )
                     .map_err(|error| error.to_string())?,
                     WECHAT_COMMAND_TIMEOUT,
@@ -473,12 +479,10 @@ impl WechatHushBridge {
     }
 
     async fn check_readiness(&self) -> Result<WechatReadiness, String> {
+        let keys = self.reader_keys()?;
         let output = self
             .runner
-            .run(
-                &WechatReaderRequest::status(BTreeMap::new()),
-                WECHAT_COMMAND_TIMEOUT,
-            )
+            .run(&WechatReaderRequest::status(keys), WECHAT_COMMAND_TIMEOUT)
             .await?;
         parse_status_output(&output.stdout)
     }
@@ -510,7 +514,45 @@ impl WechatHushBridge {
     }
 
     pub async fn open_setup_terminal(&self) -> Result<(), String> {
-        Err("安全提钥将在签名预览版开放；当前版本不会启动提权脚本".to_string())
+        let helper = discover_external_wxkey(&self.home_dir)?;
+        let action = if self.reader_keys()?.is_empty() {
+            "bootstrap"
+        } else {
+            "setup"
+        };
+        let username = self
+            .home_dir
+            .file_name()
+            .and_then(|value| value.to_str())
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| "无法确认当前用户，未启动微信准备".to_string())?;
+        let mut command = tokio::process::Command::new(helper);
+        command
+            .arg(action)
+            .env_clear()
+            .env("HOME", &self.home_dir)
+            .env("USER", username)
+            .env("LOGNAME", username)
+            .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true);
+        let mut child = command
+            .spawn()
+            .map_err(|error| format!("无法启动本机微信准备：{error}"))?;
+        let status = tokio::time::timeout(Duration::from_secs(11 * 60), child.wait())
+            .await
+            .map_err(|_| "微信准备超时，请保持微信登录后重试".to_string())?
+            .map_err(|error| format!("微信准备未完成：{error}"))?;
+        if !status.success() {
+            return Err("微信准备未完成，请保持 shadow 微信登录并打开一个聊天后重试".to_string());
+        }
+        if self.reader_keys()?.is_empty() {
+            return Err("微信准备完成但没有可用密钥，请保持微信登录后重试".to_string());
+        }
+        *self.last_readiness.lock().await = None;
+        Ok(())
     }
 
     pub async fn open_install_page() -> Result<(), String> {
@@ -531,6 +573,10 @@ impl WechatHushBridge {
 
     fn now(&self) -> chrono::DateTime<chrono::Utc> {
         self.fixed_now.unwrap_or_else(chrono::Utc::now)
+    }
+
+    fn reader_keys(&self) -> Result<BTreeMap<String, String>, String> {
+        load_external_wechat_keys(&self.home_dir)
     }
 }
 
@@ -597,7 +643,7 @@ fn native_runtime_exists(runtime: &WechatNativeRuntime) -> bool {
 fn user_facing_next_action(blocked_by: Option<&str>, fallback: Option<&str>) -> Option<String> {
     let message = match blocked_by {
         Some("key_coverage_incomplete") | Some("key_validation_failed") => {
-            "当前只读内核已就绪；安全提钥将在签名预览版开放"
+            "点击“准备本机读取”，完成一次本机提钥后即可读取真实正文"
         }
         Some("unsupported_wechat_build") => "当前微信版本尚未通过兼容验证，请等待 HUMHUM 更新",
         Some("wechat_not_running") => "请先打开这台 Mac 上的微信",
@@ -623,6 +669,85 @@ fn write_config(path: &Path, config: &WechatHushConfig) -> Result<(), String> {
         .map_err(|error| format!("无法序列化微信同步设置：{error}"))?;
     crate::local_api_auth::write_private_file_atomically(path, &json)
         .map_err(|error| format!("无法保存微信同步设置：{error}"))
+}
+
+fn discover_external_wxkey(home: &Path) -> Result<PathBuf, String> {
+    let path = home
+        .join(".local")
+        .join("share")
+        .join("wechat-cli")
+        .join("wxkey");
+    let metadata = std::fs::symlink_metadata(&path)
+        .map_err(|_| "尚未安装兼容的本机 wxkey，暂时无法自动准备微信读取".to_string())?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err("本机 wxkey 路径不安全，已拒绝执行".to_string());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mode = metadata.permissions().mode();
+        if mode & 0o111 == 0 || mode & 0o022 != 0 {
+            return Err("本机 wxkey 权限不安全，已拒绝执行".to_string());
+        }
+    }
+    Ok(path)
+}
+
+#[derive(Deserialize)]
+struct ExternalWechatKeyConfig {
+    schema_version: u8,
+    #[serde(default)]
+    keys: BTreeMap<String, String>,
+}
+
+fn load_external_wechat_keys(home: &Path) -> Result<BTreeMap<String, String>, String> {
+    let path = home.join(".config").join("wxcli").join("config.json");
+    let metadata = match std::fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(BTreeMap::new());
+        }
+        Err(error) => return Err(format!("无法检查微信提钥配置：{error}")),
+    };
+    if metadata.file_type().is_symlink() {
+        return Err("微信提钥配置不能是符号链接".to_string());
+    }
+    if !metadata.is_file() {
+        return Err("微信提钥配置必须是普通文件".to_string());
+    }
+    if metadata.len() > MAX_EXTERNAL_KEY_CONFIG_BYTES {
+        return Err("微信提钥配置超过安全大小上限".to_string());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        if metadata.permissions().mode() & 0o077 != 0 {
+            return Err("微信提钥配置权限过宽，请限制为仅当前用户可读写".to_string());
+        }
+    }
+
+    let contents =
+        std::fs::read(&path).map_err(|error| format!("无法读取微信提钥配置：{error}"))?;
+    let config: ExternalWechatKeyConfig =
+        serde_json::from_slice(&contents).map_err(|_| "微信提钥配置格式无效".to_string())?;
+    if config.schema_version != 2 || config.keys.len() > MAX_EXTERNAL_KEY_COUNT {
+        return Err("微信提钥配置格式无效".to_string());
+    }
+    for (salt, key) in &config.keys {
+        if !is_fixed_lower_hex(salt, 32) || !is_fixed_lower_hex(key, 64) {
+            return Err("微信提钥配置格式无效".to_string());
+        }
+    }
+    Ok(config.keys)
+}
+
+fn is_fixed_lower_hex(value: &str, expected_len: usize) -> bool {
+    value.len() == expected_len
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn truncate_error_detail(value: &str) -> String {
@@ -912,7 +1037,7 @@ mod tests {
 
     struct FakeRunner {
         outputs: Mutex<VecDeque<Result<WechatCommandOutput, String>>>,
-        calls: Mutex<Vec<(String, Option<String>)>>,
+        calls: Mutex<Vec<(String, Option<String>, usize)>>,
     }
 
     impl FakeRunner {
@@ -965,9 +1090,15 @@ mod tests {
         ) -> Pin<Box<dyn Future<Output = Result<WechatCommandOutput, String>> + Send + 'a>>
         {
             Box::pin(async move {
+                let serialized = serde_json::to_value(request).unwrap();
+                let key_count = serialized
+                    .get("keys")
+                    .and_then(Value::as_object)
+                    .map_or(0, serde_json::Map::len);
                 self.calls.lock().unwrap().push((
                     request.action_name().to_string(),
                     request.talker().map(str::to_string),
+                    key_count,
                 ));
                 self.outputs
                     .lock()
@@ -980,6 +1111,80 @@ mod tests {
 
     fn test_dir(label: &str) -> PathBuf {
         std::env::temp_dir().join(format!("humhum-wechat-{label}-{}", Uuid::new_v4()))
+    }
+
+    #[cfg(unix)]
+    fn write_test_external_keys(home: &Path) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = home.join(".config").join("wxcli");
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("config.json");
+        std::fs::write(
+            &path,
+            json!({
+                "schema_version": 2,
+                "wxid": "wxid_fixture",
+                "db_root": "/fixture/account",
+                "keys": {
+                    "00112233445566778899aabbccddeeff":
+                        "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn loads_only_private_valid_external_wechat_keys() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let home = test_dir("external-keys");
+        write_test_external_keys(&home);
+        let keys = load_external_wechat_keys(&home).unwrap();
+        assert_eq!(keys.len(), 1);
+
+        let path = home.join(".config").join("wxcli").join("config.json");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(load_external_wechat_keys(&home)
+            .unwrap_err()
+            .contains("权限"));
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_external_wechat_key_symlinks_and_invalid_entries() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let home = test_dir("external-key-symlink");
+        let directory = home.join(".config").join("wxcli");
+        std::fs::create_dir_all(&directory).unwrap();
+        let target = home.join("keys.json");
+        std::fs::write(
+            &target,
+            json!({
+                "schema_version": 2,
+                "keys": {"not-a-salt": "not-a-key"}
+            })
+            .to_string(),
+        )
+        .unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::os::unix::fs::symlink(&target, directory.join("config.json")).unwrap();
+        assert!(load_external_wechat_keys(&home)
+            .unwrap_err()
+            .contains("符号链接"));
+
+        std::fs::remove_file(directory.join("config.json")).unwrap();
+        std::fs::rename(&target, directory.join("config.json")).unwrap();
+        assert!(load_external_wechat_keys(&home)
+            .unwrap_err()
+            .contains("格式"));
+        let _ = std::fs::remove_dir_all(home);
     }
 
     #[test]
@@ -1247,6 +1452,8 @@ mod tests {
         ]));
         let dir = test_dir("sync");
         std::fs::create_dir_all(&dir).unwrap();
+        #[cfg(unix)]
+        write_test_external_keys(&dir);
         let executable = WechatExecutable {
             path: dir.join("humhum-wechat-reader"),
         };
@@ -1281,17 +1488,26 @@ mod tests {
 
         let calls = runner.calls.lock().unwrap();
         assert_eq!(calls.len(), 6);
-        assert_eq!(calls[0], ("status".to_string(), None));
-        assert_eq!(calls[1], ("sessions".to_string(), None));
+        let expected_key_count = if cfg!(unix) { 1 } else { 0 };
+        assert_eq!(calls[0], ("status".to_string(), None, expected_key_count));
+        assert_eq!(calls[1], ("sessions".to_string(), None, expected_key_count));
         assert_eq!(
             calls[2],
-            ("timeline".to_string(), Some("wxid_alice".to_string()))
+            (
+                "timeline".to_string(),
+                Some("wxid_alice".to_string()),
+                expected_key_count
+            )
         );
-        assert_eq!(calls[3], ("status".to_string(), None));
-        assert_eq!(calls[4], ("sessions".to_string(), None));
+        assert_eq!(calls[3], ("status".to_string(), None, expected_key_count));
+        assert_eq!(calls[4], ("sessions".to_string(), None, expected_key_count));
         assert_eq!(
             calls[5],
-            ("timeline".to_string(), Some("wxid_alice".to_string()))
+            (
+                "timeline".to_string(),
+                Some("wxid_alice".to_string()),
+                expected_key_count
+            )
         );
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -1344,7 +1560,7 @@ mod tests {
         );
         assert_eq!(
             status.next_action.as_deref(),
-            Some("当前只读内核已就绪；安全提钥将在签名预览版开放")
+            Some("点击“准备本机读取”，完成一次本机提钥后即可读取真实正文")
         );
         let _ = std::fs::remove_dir_all(dir);
     }
