@@ -229,14 +229,21 @@ mod tests {
     async fn enabled_guard_restarts_after_its_child_exits() {
         let guard = WakeGuardState::with_program("/bin/sleep", vec!["0.05".to_string()]);
         let first = guard.set_enabled(true).await.unwrap().process_id.unwrap();
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-        let second = guard
-            .reconcile_desired_state(true)
-            .await
-            .unwrap()
-            .process_id
-            .unwrap();
+        let second = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                let status = guard.reconcile_desired_state(true).await.unwrap();
+                if let Some(process_id) = status
+                    .process_id
+                    .filter(|process_id| *process_id != first)
+                {
+                    break process_id;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("wake guard did not restart its exited child within 2 seconds");
 
         assert_ne!(first, second);
         guard.set_enabled(false).await.unwrap();
