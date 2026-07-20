@@ -1,0 +1,18 @@
+{
+  "projectId": "17103155804088058110",
+  "title": "HUMHUM Android Quiet Rooms",
+  "selectedConcept": {
+    "id": "B",
+    "name": "角色海报",
+    "selectedAt": "2026-07-20"
+  },
+  "screens": [],
+  "designSystem": {
+    "assetId": "e1e6c403436641bfacbbf9e4c855699c",
+    "primaryColor": "#298DA8",
+    "secondaryColor": "#E85D37",
+    "backgroundColor": "#F7FAFC",
+    "fontFamily": "INTER",
+    "roundness": "ROUND_EIGHT"
+  }
+}
