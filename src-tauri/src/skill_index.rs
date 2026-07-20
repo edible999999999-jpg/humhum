@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
@@ -18,6 +17,7 @@ pub struct SkillSource {
     pub source: String,
     pub plugin: Option<String>,
     pub ownership: String,
+    pub last_used_at: Option<String>,
     pub excluded_prefixes: Vec<PathBuf>,
 }
 
@@ -58,6 +58,7 @@ pub fn discover_skill_sources(home: &Path) -> Vec<SkillSource> {
             source: "claude".into(),
             plugin: None,
             ownership: "created".into(),
+            last_used_at: None,
             excluded_prefixes: Vec::new(),
         },
         SkillSource {
@@ -65,6 +66,7 @@ pub fn discover_skill_sources(home: &Path) -> Vec<SkillSource> {
             source: "agents".into(),
             plugin: None,
             ownership: "created".into(),
+            last_used_at: None,
             excluded_prefixes: Vec::new(),
         },
         SkillSource {
@@ -72,6 +74,7 @@ pub fn discover_skill_sources(home: &Path) -> Vec<SkillSource> {
             source: "codex".into(),
             plugin: None,
             ownership: "created".into(),
+            last_used_at: None,
             excluded_prefixes: vec![home.join(".codex/skills/.system")],
         },
         SkillSource {
@@ -79,6 +82,7 @@ pub fn discover_skill_sources(home: &Path) -> Vec<SkillSource> {
             source: "qoder".into(),
             plugin: None,
             ownership: "installed".into(),
+            last_used_at: None,
             excluded_prefixes: Vec::new(),
         },
     ];
@@ -94,6 +98,7 @@ pub fn discover_skill_sources(home: &Path) -> Vec<SkillSource> {
                     source: "claude-plugin".into(),
                     plugin: Some(name),
                     ownership: "installed".into(),
+                    last_used_at: None,
                     excluded_prefixes: Vec::new(),
                 });
             }
@@ -112,6 +117,7 @@ pub fn discover_skill_sources(home: &Path) -> Vec<SkillSource> {
                     source: "codex-plugin".into(),
                     plugin: Some(plugin.name),
                     ownership: "installed".into(),
+                    last_used_at: None,
                     excluded_prefixes: Vec::new(),
                 });
             }
@@ -127,8 +133,22 @@ pub fn discover_skill_sources(home: &Path) -> Vec<SkillSource> {
     sources
 }
 
+#[cfg(test)]
 pub fn extract_used_skill_paths_from_session(content: &str) -> Vec<PathBuf> {
-    let mut paths = Vec::new();
+    extract_used_skills_from_session(content)
+        .into_iter()
+        .map(|usage| usage.path)
+        .collect()
+}
+
+#[derive(Debug)]
+struct SkillUsage {
+    path: PathBuf,
+    last_used_at: Option<String>,
+}
+
+fn extract_used_skills_from_session(content: &str) -> Vec<SkillUsage> {
+    let mut usages: Vec<SkillUsage> = Vec::new();
 
     for line in content.lines() {
         let Ok(entry) = serde_json::from_str::<serde_json::Value>(line) else {
@@ -150,16 +170,29 @@ pub fn extract_used_skill_paths_from_session(content: &str) -> Vec<PathBuf> {
             continue;
         };
 
-        if let Some(input) = tool_input.as_str() {
-            paths.extend(extract_plugin_skill_paths(input));
+        let paths = if let Some(input) = tool_input.as_str() {
+            extract_plugin_skill_paths(input)
         } else {
-            paths.extend(extract_plugin_skill_paths(&tool_input.to_string()));
+            extract_plugin_skill_paths(&tool_input.to_string())
+        };
+        let timestamp = entry
+            .get("timestamp")
+            .and_then(serde_json::Value::as_str)
+            .and_then(normalize_rfc3339_timestamp);
+        for path in paths {
+            if let Some(existing) = usages.iter_mut().find(|usage| usage.path == path) {
+                existing.last_used_at =
+                    newest_timestamp(existing.last_used_at.clone(), timestamp.clone());
+            } else {
+                usages.push(SkillUsage {
+                    path,
+                    last_used_at: timestamp.clone(),
+                });
+            }
         }
     }
 
-    let mut seen = HashSet::new();
-    paths.retain(|path| seen.insert(path.clone()));
-    paths
+    usages
 }
 
 pub fn discover_session_skill_sources_from_files(
@@ -170,14 +203,19 @@ pub fn discover_session_skill_sources_from_files(
     let Ok(canonical_cache_root) = cache_root.canonicalize() else {
         return Vec::new();
     };
-    let mut seen = HashSet::new();
-    let mut sources = Vec::new();
+    let mut sources: Vec<SkillSource> = Vec::new();
 
     for session_file in session_files {
         let Ok(content) = read_session_tail(session_file) else {
             continue;
         };
-        for skill_path in extract_used_skill_paths_from_session(&content) {
+        let file_modified_at = std::fs::metadata(session_file)
+            .and_then(|metadata| metadata.modified())
+            .ok()
+            .map(chrono::DateTime::<chrono::Utc>::from)
+            .map(|timestamp| timestamp.to_rfc3339());
+        for usage in extract_used_skills_from_session(&content) {
+            let skill_path = usage.path;
             let Ok(canonical_skill_path) = skill_path.canonicalize() else {
                 continue;
             };
@@ -203,7 +241,10 @@ pub fn discover_session_skill_sources_from_files(
             let Some(root) = skill_path.parent() else {
                 continue;
             };
-            if !seen.insert(root.to_path_buf()) {
+            let last_used_at = usage.last_used_at.or_else(|| file_modified_at.clone());
+            if let Some(existing) = sources.iter_mut().find(|source| source.root == root) {
+                existing.last_used_at =
+                    newest_timestamp(existing.last_used_at.clone(), last_used_at);
                 continue;
             }
 
@@ -212,6 +253,7 @@ pub fn discover_session_skill_sources_from_files(
                 source: "codex-session".into(),
                 plugin: Some((*plugin).to_string()),
                 ownership: "used".into(),
+                last_used_at,
                 excluded_prefixes: Vec::new(),
             });
         }
@@ -219,6 +261,29 @@ pub fn discover_session_skill_sources_from_files(
 
     sources.sort_by(|a, b| a.root.cmp(&b.root));
     sources
+}
+
+fn normalize_rfc3339_timestamp(value: &str) -> Option<String> {
+    chrono::DateTime::parse_from_rfc3339(value)
+        .ok()
+        .map(|timestamp| timestamp.with_timezone(&chrono::Utc).to_rfc3339())
+}
+
+fn newest_timestamp(left: Option<String>, right: Option<String>) -> Option<String> {
+    match (left, right) {
+        (Some(left), Some(right)) => {
+            let left_time = chrono::DateTime::parse_from_rfc3339(&left).ok();
+            let right_time = chrono::DateTime::parse_from_rfc3339(&right).ok();
+            match (left_time, right_time) {
+                (Some(left_time), Some(right_time)) if right_time > left_time => Some(right),
+                (Some(_), _) => Some(left),
+                (None, Some(_)) => Some(right),
+                (None, None) => None,
+            }
+        }
+        (Some(value), None) | (None, Some(value)) => Some(value),
+        (None, None) => None,
+    }
 }
 
 fn extract_plugin_skill_paths(input: &str) -> Vec<PathBuf> {
@@ -573,7 +638,9 @@ enabled = false
         std::fs::write(
             &session_path,
             format!(
-                "{{\"type\":\"response_item\",\"payload\":{{\"type\":\"custom_tool_call\",\"name\":\"exec\",\"input\":\"cat {}\"}}}}\n",
+                "{{\"timestamp\":\"2026-07-18T08:00:00Z\",\"type\":\"response_item\",\"payload\":{{\"type\":\"custom_tool_call\",\"name\":\"exec\",\"input\":\"cat {}\"}}}}\n\
+                 {{\"timestamp\":\"2026-07-19T09:30:00Z\",\"type\":\"response_item\",\"payload\":{{\"type\":\"custom_tool_call\",\"name\":\"exec\",\"input\":\"cat {}\"}}}}\n",
+                used_skill.display(),
                 used_skill.display()
             ),
         )
@@ -585,6 +652,10 @@ enabled = false
         assert_eq!(sources[0].root, used_skill.parent().unwrap());
         assert_eq!(sources[0].plugin.as_deref(), Some("superpowers"));
         assert_eq!(sources[0].ownership, "used");
+        assert_eq!(
+            sources[0].last_used_at.as_deref(),
+            Some("2026-07-19T09:30:00+00:00")
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 }

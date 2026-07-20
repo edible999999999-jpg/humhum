@@ -89,6 +89,8 @@ pub struct AgentAsset {
     pub tags: Vec<String>,
     pub modified_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_used_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ownership: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name_zh: Option<String>,
@@ -618,6 +620,7 @@ impl KnowledgeStore {
                     asset.summary_zh = Some(summary_zh);
                     if let Some(source) = matched_source {
                         asset.source = source.source.clone();
+                        asset.last_used_at = source.last_used_at.clone();
                         if let Some(plugin) = &source.plugin {
                             asset.tags.push(format!("plugin:{}", plugin));
                             asset.tags.sort();
@@ -1142,6 +1145,7 @@ fn parse_agent_asset(root: &Path, path: &Path, content: &str) -> AgentAsset {
         content: truncate_content(content, 2400),
         tags,
         modified_at,
+        last_used_at: None,
         ownership: None,
         display_name_zh: None,
         summary_zh: None,
@@ -2148,7 +2152,7 @@ mod tests {
         std::fs::write(
             &session,
             format!(
-                "{{\"type\":\"response_item\",\"payload\":{{\"type\":\"custom_tool_call\",\"name\":\"exec\",\"input\":\"cat {}\"}}}}\n",
+                "{{\"timestamp\":\"2026-07-19T09:30:00Z\",\"type\":\"response_item\",\"payload\":{{\"type\":\"custom_tool_call\",\"name\":\"exec\",\"input\":\"cat {}\"}}}}\n",
                 used.display()
             ),
         )
@@ -2180,6 +2184,7 @@ mod tests {
         assert!(skills.iter().any(|asset| {
             asset.name == "using-superpowers"
                 && asset.ownership.as_deref() == Some("used")
+                && asset.last_used_at.as_deref() == Some("2026-07-19T09:30:00+00:00")
                 && asset.tags.iter().any(|tag| tag == "plugin:superpowers")
         }));
         assert!(assets

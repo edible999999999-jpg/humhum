@@ -291,6 +291,7 @@ export interface AgentAsset {
   content: string;
   tags: string[];
   modified_at?: string | null;
+  last_used_at?: string | null;
   ownership?: "created" | "installed" | string | null;
   display_name_zh?: string | null;
   summary_zh?: string | null;

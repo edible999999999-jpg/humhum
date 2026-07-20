@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { AgentAsset } from "@/types";
 import {
+  agentAssetLastUsedTimestamp,
+  agentAssetModifiedTimestamp,
   filterAgentAssets,
   getAgentAssetSummary,
   isPersonalAgentAsset,
+  sortAgentAssetsByRecentUse,
 } from "./knowledgePresentation";
 
 function asset(
@@ -314,5 +317,50 @@ describe("filterAgentAssets", () => {
         "",
       ),
     ).toEqual([custom]);
+  });
+});
+
+describe("recent skill usage presentation", () => {
+  it("sorts real usage first and newest to oldest", () => {
+    const oldUse = asset("/Users/me/.codex/skills/old/SKILL.md", "", {
+      name: "Old use",
+      last_used_at: "2026-07-18T09:00:00Z",
+      modified_at: "2026-07-20T09:00:00Z",
+    });
+    const newUse = asset("/Users/me/.codex/skills/new/SKILL.md", "", {
+      name: "New use",
+      last_used_at: "2026-07-19T09:00:00Z",
+      modified_at: "2026-01-01T09:00:00Z",
+    });
+    const neverUsed = asset("/Users/me/.codex/skills/never/SKILL.md", "", {
+      name: "Never used",
+      modified_at: "2026-07-20T10:00:00Z",
+    });
+    const epochMetadata = asset("/Users/me/.codex/skills/epoch/SKILL.md", "", {
+      name: "Epoch metadata",
+      modified_at: "1970-01-01T00:00:01Z",
+    });
+
+    expect(sortAgentAssetsByRecentUse([epochMetadata, neverUsed, oldUse, newUse])).toEqual([
+      newUse,
+      oldUse,
+      neverUsed,
+      epochMetadata,
+    ]);
+  });
+
+  it("treats Unix epoch metadata as unknown instead of a user-facing date", () => {
+    expect(agentAssetModifiedTimestamp({
+      ...asset("/Users/me/.codex/plugins/cache/example/SKILL.md"),
+      modified_at: "1970-01-01T00:00:01Z",
+    })).toBeNull();
+    expect(agentAssetLastUsedTimestamp({
+      ...asset("/Users/me/.codex/plugins/cache/example/SKILL.md"),
+      last_used_at: "1970-01-01T00:00:01Z",
+    })).toBeNull();
+    expect(agentAssetLastUsedTimestamp({
+      ...asset("/Users/me/.codex/skills/recent/SKILL.md"),
+      last_used_at: "2026-07-19T09:00:00Z",
+    })).toBe(Date.parse("2026-07-19T09:00:00Z"));
   });
 });

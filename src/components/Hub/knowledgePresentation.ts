@@ -70,6 +70,46 @@ function oneLine(value: string): string {
 
 export type AgentAssetScope = "mine" | "all";
 
+const MIN_MEANINGFUL_ASSET_TIME = Date.UTC(2000, 0, 1);
+
+function meaningfulAssetTimestamp(value?: string | null): number | null {
+  if (!value) return null;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) && timestamp >= MIN_MEANINGFUL_ASSET_TIME
+    ? timestamp
+    : null;
+}
+
+export function agentAssetLastUsedTimestamp(asset: AgentAsset): number | null {
+  return meaningfulAssetTimestamp(asset.last_used_at);
+}
+
+export function agentAssetModifiedTimestamp(asset: AgentAsset): number | null {
+  return meaningfulAssetTimestamp(asset.modified_at);
+}
+
+export function sortAgentAssetsByRecentUse(assets: AgentAsset[]): AgentAsset[] {
+  return [...assets].sort((left, right) => {
+    const leftUsed = agentAssetLastUsedTimestamp(left);
+    const rightUsed = agentAssetLastUsedTimestamp(right);
+    if (leftUsed !== null || rightUsed !== null) {
+      if (leftUsed === null) return 1;
+      if (rightUsed === null) return -1;
+      if (leftUsed !== rightUsed) return rightUsed - leftUsed;
+    }
+
+    const leftModified = agentAssetModifiedTimestamp(left);
+    const rightModified = agentAssetModifiedTimestamp(right);
+    if (leftModified !== null || rightModified !== null) {
+      if (leftModified === null) return 1;
+      if (rightModified === null) return -1;
+      if (leftModified !== rightModified) return rightModified - leftModified;
+    }
+
+    return left.name.localeCompare(right.name);
+  });
+}
+
 export function isPersonalAgentAsset(
   asset: AgentAsset,
   configuredRoots: string[] = [],

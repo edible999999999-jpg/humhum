@@ -11,8 +11,11 @@ import type {
   Preference,
 } from "@/types";
 import {
+  agentAssetLastUsedTimestamp,
+  agentAssetModifiedTimestamp,
   filterAgentAssets,
   getAgentAssetSummary,
+  sortAgentAssetsByRecentUse,
   type AgentAssetScope,
 } from "./knowledgePresentation";
 
@@ -690,11 +693,13 @@ export function KnowledgeModule() {
     acc[asset.asset_type] = (acc[asset.asset_type] || 0) + 1;
     return acc;
   }, {});
-  const filteredAssets = filterAgentAssets(
-    assets,
-    assetScope,
-    searchQuery,
-    configuredAssetRoots,
+  const filteredAssets = sortAgentAssetsByRecentUse(
+    filterAgentAssets(
+      assets,
+      assetScope,
+      searchQuery,
+      configuredAssetRoots,
+    ),
   );
   const operationBusy =
     operationStatus?.tab === activeTab && operationStatus.kind === "busy";
@@ -827,7 +832,7 @@ export function KnowledgeModule() {
               <span>名称</span>
               <span>来源 / Agent</span>
               <span>类型</span>
-              <span>更新时间</span>
+              <span>最近使用</span>
             </div>
             {filteredAssets.length === 0 ? (
               <div className="hype-empty-state">
@@ -1435,6 +1440,9 @@ function AgentAssetRow({ asset }: { asset: AgentAsset }) {
   const [expanded, setExpanded] = useState(false);
   const color = ASSET_TYPE_COLORS[asset.asset_type] || "#94eff4";
   const isSkill = asset.asset_type === "skill";
+  const displayTimestamp = isSkill
+    ? agentAssetLastUsedTimestamp(asset)
+    : agentAssetModifiedTimestamp(asset);
   const title = asset.display_name_zh || asset.name;
   const summary = asset.summary_zh || getAgentAssetSummary(asset);
   const ownershipLabel = asset.ownership === "used"
@@ -1469,8 +1477,10 @@ function AgentAssetRow({ asset }: { asset: AgentAsset }) {
         >
           {isSkill ? ownershipLabel : asset.asset_type}
         </span>
-        <time dateTime={asset.modified_at || undefined}>
-          {asset.modified_at ? new Date(asset.modified_at).toLocaleString() : "—"}
+        <time dateTime={displayTimestamp === null ? undefined : new Date(displayTimestamp).toISOString()}>
+          {displayTimestamp === null
+            ? isSkill ? "未发现使用记录" : "—"
+            : new Date(displayTimestamp).toLocaleString()}
         </time>
       </button>
 
