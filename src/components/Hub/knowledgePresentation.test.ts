@@ -481,4 +481,88 @@ describe("logical skill presentation", () => {
       "workspace-helper",
     ]);
   });
+
+  it("keeps the same session ID when usage belongs to different Agents", () => {
+    const codexCopy = asset("/codex/shared/SKILL.md", "shared", {
+      agent_id: "codex",
+      name: "Shared Skill",
+      usage_evidence: [
+        {
+          session_id: "same-session",
+          agent_id: "codex",
+          session_path: "/codex/sessions/same",
+          used_at: "2026-07-20T10:00:00Z",
+        },
+      ],
+    });
+    const claudeCopy = asset("/claude/shared/SKILL.md", "shared", {
+      agent_id: "claude",
+      name: "Shared Skill",
+      usage_evidence: [
+        {
+          session_id: "same-session",
+          agent_id: "claude",
+          session_path: "/claude/sessions/same",
+          used_at: "2026-07-20T10:00:00Z",
+        },
+      ],
+    });
+
+    const [skill] = groupLogicalSkills([codexCopy, claudeCopy]);
+
+    expect(skill?.session_count).toBe(2);
+    expect(skill?.sessions.map((session) => session.agent_id)).toEqual([
+      "claude",
+      "codex",
+    ]);
+  });
+
+  it("orders real use, meaningful modification, then names with unknown dates last", () => {
+    const recentUse = asset("/skills/recent-use/SKILL.md", "recent", {
+      name: "recent-use",
+      modified_at: "2026-01-01T00:00:00Z",
+      usage_evidence: [
+        {
+          session_id: "recent-session",
+          agent_id: "codex",
+          session_path: "/sessions/recent",
+          used_at: "2026-07-20T12:00:00Z",
+        },
+      ],
+    });
+    const modifiedOnly = asset("/skills/modified-only/SKILL.md", "modified", {
+      name: "modified-only",
+      modified_at: "2026-07-19T12:00:00Z",
+    });
+    const invalidDate = asset("/skills/alpha-unknown/SKILL.md", "invalid", {
+      name: "alpha-unknown",
+      modified_at: "not-a-date",
+    });
+    const epochDate = asset("/skills/beta-unknown/SKILL.md", "epoch", {
+      name: "beta-unknown",
+      modified_at: "1970-01-01T00:00:01Z",
+    });
+    const epochUse = asset("/skills/epoch-use/SKILL.md", "epoch use", {
+      name: "epoch-use",
+      usage_evidence: [
+        {
+          session_id: "epoch-session",
+          agent_id: "codex",
+          session_path: "/sessions/epoch",
+          used_at: "1970-01-01T00:00:01Z",
+        },
+      ],
+    });
+
+    expect(
+      groupLogicalSkills([epochDate, epochUse, invalidDate, modifiedOnly, recentUse])
+        .map((skill) => skill.name),
+    ).toEqual([
+      "recent-use",
+      "modified-only",
+      "alpha-unknown",
+      "beta-unknown",
+      "epoch-use",
+    ]);
+  });
 });

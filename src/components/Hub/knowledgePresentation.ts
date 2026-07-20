@@ -225,9 +225,7 @@ export function normalizeLogicalSkillName(name: string): string {
 }
 
 function parsedTimestamp(value?: string | null): number | null {
-  if (!value) return null;
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? parsed : null;
+  return meaningfulAssetTimestamp(value);
 }
 
 function compareNewest(left?: string | null, right?: string | null): number {
