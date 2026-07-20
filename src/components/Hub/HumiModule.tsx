@@ -788,7 +788,7 @@ export function HumiModule({ onActivityChange, onOpenHexa }: HumiModuleProps) {
           )}
 
           {kernelMessage && (
-            <div style={{ marginTop: 10, fontSize: 10, color: "#fca5a5", lineHeight: 1.5 }}>
+            <div className="humi-kernel-message">
               {kernelMessage}
             </div>
           )}
