@@ -564,7 +564,7 @@ public final class MainActivity extends ComponentActivity {
             MobileRoleDashboard.Role selectedRole = state.getSelectedRole();
             List<Models.Session> sessions = state.getSessions();
             String status = state.getStatusMessage();
-            boolean canControl = state.getCanControl();
+            boolean canActOnSessions = state.getCanActOnSessions();
             java.util.Set<PendingAction> pendingActions = state.getPendingActions();
             statusText.setText(status);
             refreshButton.setEnabled(
@@ -579,7 +579,7 @@ public final class MainActivity extends ComponentActivity {
                     || !previous.getSessions().equals(sessions);
             boolean sessionCardsChanged = previous == null
                     || !previous.getSessions().equals(sessions)
-                    || previous.getCanControl() != canControl
+                    || previous.getCanActOnSessions() != canActOnSessions
                     || !previous.getPendingActions().equals(pendingActions)
                     || !previous.getConversation().equals(state.getConversation())
                     || previous.getConnection() != state.getConnection();
@@ -1940,7 +1940,7 @@ public final class MainActivity extends ComponentActivity {
         Button allow = button("允许一次", true);
         boolean pending = isPendingAction(
                 PendingActionKind.APPROVAL, sessionId, action.id());
-        boolean enabled = currentUiState().getCanControl() && !pending;
+        boolean enabled = currentUiState().getCanActOnSessions() && !pending;
         deny.setEnabled(enabled);
         allow.setEnabled(enabled);
         deny.setOnClickListener(
@@ -1981,7 +1981,7 @@ public final class MainActivity extends ComponentActivity {
         Button send = button("发送跟进", true);
         boolean sending = isPendingAction(
                 PendingActionKind.FOLLOW_UP, session.id(), "");
-        boolean enabled = currentUiState().getCanControl() && !sending;
+        boolean enabled = currentUiState().getCanActOnSessions() && !sending;
         draft.setEnabled(enabled);
         send.setEnabled(enabled);
         LinearLayout.LayoutParams sendParams = matchWidthWrap();
@@ -2113,7 +2113,8 @@ public final class MainActivity extends ComponentActivity {
             String decision,
             Button first,
             Button second) {
-        if (viewModel != null && !viewModel.getState().getValue().getCanControl()) return;
+        if (viewModel != null
+                && !viewModel.getState().getValue().getCanActOnSessions()) return;
         dispatchState(new HumHumAction.ApprovalStarted(sessionId, action.id()));
         first.setEnabled(false);
         second.setEnabled(false);
@@ -2189,7 +2190,7 @@ public final class MainActivity extends ComponentActivity {
         String message = draft.getText().toString().trim();
         if (message.isEmpty()
                 || isPendingAction(PendingActionKind.FOLLOW_UP, session.id(), "")) return;
-        if (!currentUiState().getCanControl()) return;
+        if (!currentUiState().getCanActOnSessions()) return;
         dispatchState(new HumHumAction.FollowUpStarted(session.id()));
         draft.setEnabled(false);
         send.setEnabled(false);

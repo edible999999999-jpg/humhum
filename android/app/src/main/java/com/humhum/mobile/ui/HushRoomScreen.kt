@@ -88,9 +88,10 @@ fun HushRoomScreen(
             item(key = inbox.first().id()) {
                 RoomItem(
                     title = inbox.first().sender(),
-                    detail = "${inbox.first().preview()} · ${relativeTimestampLabel(inbox.first().receivedAt())}",
+                    detail = inbox.first().preview(),
                     accent = Hush,
                     meta = inbox.first().platform(),
+                    freshness = relativeTimestampLabel(inbox.first().receivedAt()),
                     modifier = Modifier
                         .padding(horizontal = 20.dp)
                         .testTag("hush-first-contact"),
@@ -99,9 +100,10 @@ fun HushRoomScreen(
             items(inbox.drop(1), key = { it.id() }) { message ->
                 RoomItem(
                     title = message.sender(),
-                    detail = "${message.preview()} · ${relativeTimestampLabel(message.receivedAt())}",
+                    detail = message.preview(),
                     accent = Hush,
                     meta = message.platform(),
+                    freshness = relativeTimestampLabel(message.receivedAt()),
                     modifier = Modifier.padding(horizontal = 20.dp),
                 )
             }

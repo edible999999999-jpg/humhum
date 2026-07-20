@@ -4,6 +4,7 @@ import android.content.res.Configuration
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.assertCountEquals
@@ -85,6 +86,21 @@ class HumHumAppTest {
 
         compose.onNodeWithContentDescription("设置").performClick()
         compose.onNodeWithTag("settings-screen").assertIsDisplayed()
+    }
+
+    @Test
+    fun roomItemKeepsFreshnessVisibleWhenDetailIsLong() {
+        compose.setContent {
+            RoomItem(
+                title = "Peidong",
+                detail = "这是一条很长的消息预览，用来确认内容占满两行时同步时间仍然不会被截断或藏起来。",
+                accent = Color(0xFF4F8BC9),
+                meta = "DingTalk",
+                freshness = "时间未知",
+            )
+        }
+
+        compose.onNodeWithText("时间未知").assertIsDisplayed()
     }
 
     @Test
@@ -595,10 +611,10 @@ class HumHumAppTest {
     )
 
     private fun personalContext(
-        expiresAt: String = "2026-07-20T09:00:00Z",
+        expiresAt: String = Instant.now().plusSeconds(24 * 60 * 60).toString(),
     ) = Models.PersonalContext(
         1,
-        "2026-07-19T09:00:00Z",
+        Instant.now().minusSeconds(15 * 60).toString(),
         expiresAt,
         listOf(
             Models.TodayItem(

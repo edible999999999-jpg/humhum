@@ -45,6 +45,7 @@ fun RoomItem(
     detail: String,
     accent: Color,
     meta: String? = null,
+    freshness: String? = null,
     modifier: Modifier = Modifier,
 ) {
     Surface(
@@ -69,6 +70,9 @@ fun RoomItem(
             ) {
                 Text(title, style = MaterialTheme.typography.titleMedium, color = Ink, maxLines = 2)
                 Text(detail, style = MaterialTheme.typography.bodyMedium, color = Muted, maxLines = 2)
+                freshness?.let {
+                    Text(it, style = MaterialTheme.typography.labelMedium, color = Muted, maxLines = 1)
+                }
             }
             meta?.let {
                 Text(it, style = MaterialTheme.typography.labelMedium, color = accent, maxLines = 1)

@@ -18,13 +18,12 @@ internal fun personalContextFreshness(
 ): PersonalContextFreshness {
     val generated = generatedAt.toInstantOrNull()
     val expires = expiresAt.toInstantOrNull()
-    val expired = expires?.let { !it.isAfter(now) } ?: false
-    val label = when {
-        expired && generated != null ->
-            "已过期 · ${absoluteTimestampLabel(generated, now, zone)} 更新"
-        expired -> "已过期 · 更新时间未知"
-        generated != null -> "${relativeTimestampLabel(generated, now, zone)}同步"
-        else -> "同步时间未知"
+    val expired = generated == null || expires == null || !expires.isAfter(now)
+    val label = if (expired) {
+        generated?.let { "已过期 · ${absoluteTimestampLabel(it, now, zone)} 更新" }
+            ?: "已过期 · 更新时间未知"
+    } else {
+        "${relativeTimestampLabel(requireNotNull(generated), now, zone)}同步"
     }
     return PersonalContextFreshness(label = label, expired = expired)
 }

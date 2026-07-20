@@ -104,7 +104,7 @@ public final class CompanionLifecycleContractTest {
         assertTrue(rendering.contains("state.getSelectedRole()"));
         assertTrue(rendering.contains("state.getSessions()"));
         assertTrue(rendering.contains("state.getStatusMessage()"));
-        assertTrue(rendering.contains("state.getCanControl()"));
+        assertTrue(rendering.contains("state.getCanActOnSessions()"));
         assertTrue(rendering.contains("state.getPendingActions()"));
 
         String commit = methodSource(

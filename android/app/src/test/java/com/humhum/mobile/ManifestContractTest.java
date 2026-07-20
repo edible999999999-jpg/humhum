@@ -590,7 +590,7 @@ public class ManifestContractTest {
                 "draft.addTextChangedListener(",
                 "messageDraftBySessionId.put(session.id(), value.toString())",
                 "boolean sending = isPendingAction(",
-                "boolean enabled = currentUiState().getCanControl() && !sending",
+                "boolean enabled = currentUiState().getCanActOnSessions() && !sending",
                 "draft.setEnabled(enabled)",
                 "send.setEnabled(enabled)");
 
@@ -603,6 +603,20 @@ public class ManifestContractTest {
                 "new HumHumAction.FollowUpSucceeded(session.id())",
                 "messageDraftBySessionId.remove(session.id());",
                 "renderSessions(currentUiState().getSessions())");
+    }
+
+    @Test
+    public void sessionWritesRequireLiveActionPermissionAtTheActivityBoundary()
+            throws Exception {
+        String source = new String(Files.readAllBytes(
+                Path.of("src/main/java/com/humhum/mobile/MainActivity.java")),
+                StandardCharsets.UTF_8);
+
+        String resolve = methodSource(source, "private void resolve(", "private void send(");
+        assertTrue(resolve.contains("getCanActOnSessions()"));
+
+        String send = methodSource(source, "private void send(", "private void setPairing(");
+        assertTrue(send.contains("getCanActOnSessions()"));
     }
 
     @Test

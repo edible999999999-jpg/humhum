@@ -125,9 +125,10 @@ fun HexaScreen(
                     state.personalContext!!.agents().take(3).forEach { agent ->
                         RoomItem(
                             title = agent.name(),
-                            detail = "${agent.currentStep() ?: agent.status()} · ${relativeTimestampLabel(agent.updatedAt())}",
+                            detail = agent.currentStep() ?: agent.status(),
                             accent = Hexa,
                             meta = if (agent.needsUser()) "需要你" else agent.status(),
+                            freshness = relativeTimestampLabel(agent.updatedAt()),
                         )
                     }
                 }

@@ -314,7 +314,7 @@ class HumHumViewModel @JvmOverloads constructor(
         pendingAction: PendingAction,
         sessionAllowsAction: Boolean,
     ): HumHumUiState {
-        if (!state.canControl || !sessionAllowsAction) return state
+        if (!state.canActOnSessions || !sessionAllowsAction) return state
         return state.copy(pendingActions = state.pendingActions + pendingAction)
     }
 

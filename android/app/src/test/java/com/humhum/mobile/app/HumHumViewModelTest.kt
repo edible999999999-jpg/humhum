@@ -109,6 +109,24 @@ class HumHumViewModelTest {
     }
 
     @Test
+    fun offlineControlSnapshotRejectsApprovalAndFollowUpAtReducerBoundary() {
+        viewModel.dispatch(HumHumAction.Connected(Models.Scope.CONTROL))
+        viewModel.dispatch(
+            HumHumAction.OfflineSnapshotLoaded(
+                sessions = listOf(session("cached")),
+                ageCopy = "12 分钟前同步",
+            ),
+        )
+
+        viewModel.dispatch(HumHumAction.ApprovalStarted("cached", "action-1"))
+        viewModel.dispatch(HumHumAction.FollowUpStarted("cached"))
+
+        assertTrue(viewModel.state.value.canControl)
+        assertFalse(viewModel.state.value.canActOnSessions)
+        assertTrue(viewModel.state.value.pendingActions.isEmpty())
+    }
+
+    @Test
     fun conversationDisclosureLoadsAndCollapses() {
         viewModel.dispatch(HumHumAction.Connected(Models.Scope.CONTROL))
         viewModel.dispatch(

@@ -3,8 +3,11 @@ package com.humhum.mobile.ui
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performScrollToNode
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.humhum.mobile.MobileRoleDashboard
@@ -79,6 +82,7 @@ class CharacterRoomsVisualQaTest {
             ),
         ),
         "health-unavailable-viewport",
+        scrollToTag = "health-source-steps",
     )
 
     @Test
@@ -99,6 +103,7 @@ class CharacterRoomsVisualQaTest {
             ),
         ),
         "health-denied-viewport",
+        scrollToTag = "health-source-steps",
     )
 
     @Test
@@ -107,12 +112,21 @@ class CharacterRoomsVisualQaTest {
             health = connectedState().health?.copy(freshness = HealthFreshness.STALE),
         ),
         "health-stale-viewport",
+        scrollToTag = "personal-signals-card",
     )
 
-    private fun capture(state: HumHumUiState, fileName: String) {
+    private fun capture(
+        state: HumHumUiState,
+        fileName: String,
+        scrollToTag: String? = null,
+    ) {
         compose.setContent { HumHumApp(state = state, callbacks = HumHumCallbacks()) }
 
         compose.waitForIdle()
+        scrollToTag?.let {
+            compose.onNodeWithTag("humi-room").performScrollToNode(hasTestTag(it))
+            compose.waitForIdle()
+        }
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val directory = File(context.filesDir, "qa").apply { mkdirs() }
         FileOutputStream(File(directory, "$fileName.png")).use { output ->
@@ -147,11 +161,13 @@ class CharacterRoomsVisualQaTest {
         ),
     )
 
-    private fun personalContext() = Models.PersonalContext(
-        1,
-        "2026-07-19T09:00:00Z",
-        "2026-07-20T09:00:00Z",
-        listOf(
+    private fun personalContext(): Models.PersonalContext {
+        val now = Instant.now()
+        return Models.PersonalContext(
+            1,
+            now.minusSeconds(15 * 60).toString(),
+            now.plusSeconds(24 * 60 * 60).toString(),
+            listOf(
             Models.TodayItem(
                 "goal-1",
                 "完成 Android 房间",
@@ -193,8 +209,9 @@ class CharacterRoomsVisualQaTest {
                 false,
                 "2026-07-19T08:30:00Z",
             ),
-        ),
-    )
+            ),
+        )
+    }
 
     private fun controllableSession() = Models.Session(
         "session-1",

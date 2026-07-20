@@ -44,4 +44,30 @@ class PersonalContextFreshnessTest {
             relativeTimestampLabel("not-a-time", now = now, zone = zone),
         )
     }
+
+    @Test
+    fun invalidExpiryFailsClosedInsteadOfClaimingFreshness() {
+        val freshness = personalContextFreshness(
+            generatedAt = "2026-07-20T09:58:00Z",
+            expiresAt = "not-a-time",
+            now = now,
+            zone = zone,
+        )
+
+        assertTrue(freshness.expired)
+        assertEquals("已过期 · 09:58 更新", freshness.label)
+    }
+
+    @Test
+    fun invalidGenerationAlsoFailsClosedWithHonestCopy() {
+        val freshness = personalContextFreshness(
+            generatedAt = "not-a-time",
+            expiresAt = "2026-07-20T11:00:00Z",
+            now = now,
+            zone = zone,
+        )
+
+        assertTrue(freshness.expired)
+        assertEquals("已过期 · 更新时间未知", freshness.label)
+    }
 }
