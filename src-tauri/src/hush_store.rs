@@ -121,6 +121,9 @@ impl HushStore {
                 .as_deref()
                 .is_some_and(|source_id| self.contains_source_id(source_id))
             {
+                if let Some(source_id) = source_id.as_deref() {
+                    self.refresh_duplicate_wechat_labels(source_id, &raw);
+                }
                 duplicates += 1;
                 continue;
             }
@@ -136,6 +139,102 @@ impl HushStore {
             imported,
             duplicates,
         })
+    }
+
+    pub fn refresh_wechat_conversation_labels(
+        &mut self,
+        labels: &BTreeMap<String, String>,
+    ) -> Result<usize, String> {
+        if labels.is_empty() {
+            return Ok(0);
+        }
+        let previous = self.messages.clone();
+        let mut updated = 0;
+        for message in &mut self.messages {
+            if message.raw.get("source").and_then(Value::as_str) != Some("wechat_native") {
+                continue;
+            }
+            let Some(talker) = message
+                .raw
+                .get("talker")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+            else {
+                continue;
+            };
+            let conversation_label = labels
+                .get(&talker)
+                .and_then(|label| safe_wechat_label(Some(label)))
+                .map(str::to_string);
+            let mut changed = false;
+            if let Some(replacement) = conversation_label {
+                if message
+                    .chat
+                    .as_deref()
+                    .is_none_or(|current| should_refresh_wechat_label(current, &replacement))
+                {
+                    message.chat = Some(replacement.clone());
+                    set_raw_wechat_label(&mut message.raw, "chat", &replacement);
+                    changed = true;
+                }
+            }
+            let sender_label = message
+                .raw
+                .get("sender_wxid")
+                .and_then(Value::as_str)
+                .and_then(|sender_wxid| labels.get(sender_wxid))
+                .and_then(|label| safe_wechat_label(Some(label)))
+                .map(str::to_string);
+            if let Some(replacement) = sender_label {
+                if should_refresh_wechat_label(&message.sender, &replacement) {
+                    message.sender = replacement.clone();
+                    set_raw_wechat_label(&mut message.raw, "sender", &replacement);
+                    changed = true;
+                }
+            }
+            if changed {
+                updated += 1;
+            }
+        }
+        if updated > 0 {
+            if let Err(error) = self.save() {
+                self.messages = previous;
+                return Err(error);
+            }
+        }
+        Ok(updated)
+    }
+
+    fn refresh_duplicate_wechat_labels(&mut self, source_id: &str, raw: &Value) {
+        if !source_id.starts_with("wechat-native:")
+            || raw.get("source").and_then(Value::as_str) != Some("wechat_native")
+        {
+            return;
+        }
+        let Some(message) = self
+            .messages
+            .iter_mut()
+            .find(|message| message.source_id.as_deref() == Some(source_id))
+        else {
+            return;
+        };
+        if message.raw.get("source").and_then(Value::as_str) != Some("wechat_native") {
+            return;
+        }
+        if let Some(sender) = safe_wechat_label(raw.get("sender").and_then(Value::as_str)) {
+            if should_refresh_wechat_label(&message.sender, sender) {
+                message.sender = sender.to_string();
+            }
+        }
+        if let Some(chat) = safe_wechat_label(raw.get("chat").and_then(Value::as_str)) {
+            if message
+                .chat
+                .as_deref()
+                .is_none_or(|current| should_refresh_wechat_label(current, chat))
+            {
+                message.chat = Some(chat.to_string());
+            }
+        }
     }
 
     fn build_message(&self, raw: Value) -> Result<HushInboxMessage, String> {
@@ -329,6 +428,46 @@ impl HushStore {
             file_path,
         }
     }
+}
+
+fn safe_wechat_label(value: Option<&str>) -> Option<&str> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && value.chars().count() <= 160 && !value.contains('\0'))
+}
+
+fn set_raw_wechat_label(raw: &mut Value, field: &str, value: &str) {
+    if let Some(raw) = raw.as_object_mut() {
+        raw.insert(field.to_string(), Value::String(value.to_string()));
+    }
+}
+
+fn should_refresh_wechat_label(current: &str, replacement: &str) -> bool {
+    let current_quality = wechat_label_quality(current);
+    let replacement_quality = wechat_label_quality(replacement);
+    replacement_quality > current_quality
+        || (replacement_quality == 2 && current_quality == 2 && replacement != current)
+}
+
+fn wechat_label_quality(value: &str) -> u8 {
+    if is_internal_wechat_label(value) {
+        0
+    } else if matches!(
+        value.trim(),
+        "微信联系人" | "未命名群聊" | "群成员" | "Unknown sender"
+    ) {
+        1
+    } else {
+        2
+    }
+}
+
+fn is_internal_wechat_label(value: &str) -> bool {
+    let trimmed = value.trim();
+    trimmed.is_empty()
+        || trimmed.starts_with("wxid_")
+        || trimmed.ends_with("@chatroom")
+        || trimmed.chars().all(|character| character.is_ascii_digit())
 }
 
 fn parse_received_at(value: &str) -> Option<chrono::DateTime<chrono::Utc>> {
@@ -664,6 +803,143 @@ mod tests {
         assert!(error.contains("Duplicate source message"));
         assert_eq!(store.summary().total, 1);
 
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn duplicate_wechat_native_messages_refresh_existing_conversation_labels() {
+        let path = temp_file("wechat-label-refresh");
+        let mut store = HushStore::with_file_path(path.clone());
+        let now = chrono::Utc::now();
+        let source_id = "wechat-native:43122059806@chatroom:123";
+
+        store
+            .add_many_from_values(
+                vec![json!({
+                    "platform": "wechat",
+                    "sender": "wxid_alice",
+                    "chat": "43122059806@chatroom",
+                    "text": "hello",
+                    "received_at": now.to_rfc3339(),
+                    "source_id": source_id,
+                    "source": "wechat_native",
+                    "conversation_kind": "group"
+                })],
+                now,
+            )
+            .unwrap();
+        let result = store
+            .add_many_from_values(
+                vec![json!({
+                    "platform": "wechat",
+                    "sender": "Alice",
+                    "chat": "HUMHUM 项目群",
+                    "text": "hello",
+                    "received_at": now.to_rfc3339(),
+                    "source_id": source_id,
+                    "source": "wechat_native",
+                    "conversation_kind": "group"
+                })],
+                now,
+            )
+            .unwrap();
+
+        assert_eq!(result.imported, 0);
+        assert_eq!(result.duplicates, 1);
+        let message = &store.summary().messages[0];
+        assert_eq!(message.sender, "Alice");
+        assert_eq!(message.chat.as_deref(), Some("HUMHUM 项目群"));
+
+        store
+            .add_many_from_values(
+                vec![json!({
+                    "platform": "wechat",
+                    "sender": "群成员",
+                    "chat": "未命名群聊",
+                    "text": "hello",
+                    "received_at": now.to_rfc3339(),
+                    "source_id": source_id,
+                    "source": "wechat_native",
+                    "conversation_kind": "group"
+                })],
+                now,
+            )
+            .unwrap();
+        let message = &store.summary().messages[0];
+        assert_eq!(message.sender, "Alice");
+        assert_eq!(message.chat.as_deref(), Some("HUMHUM 项目群"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn wechat_session_metadata_refreshes_labels_without_reimporting_messages() {
+        let path = temp_file("wechat-session-label-refresh");
+        let mut store = HushStore::with_file_path(path.clone());
+        let now = chrono::Utc::now();
+
+        store
+            .add_many_from_values(
+                vec![
+                    json!({
+                        "platform": "wechat",
+                        "sender": "wxid_alice",
+                        "chat": "wxid_alice",
+                        "text": "direct",
+                        "received_at": now.to_rfc3339(),
+                        "source_id": "wechat-native:wxid_alice:1",
+                        "source": "wechat_native",
+                        "sender_wxid": "wxid_alice",
+                        "talker": "wxid_alice",
+                        "conversation_kind": "direct"
+                    }),
+                    json!({
+                        "platform": "wechat",
+                        "sender": "群成员",
+                        "chat": "43122059806@chatroom",
+                        "text": "group",
+                        "received_at": now.to_rfc3339(),
+                        "source_id": "wechat-native:43122059806@chatroom:2",
+                        "source": "wechat_native",
+                        "sender_wxid": "wxid_bob",
+                        "talker": "43122059806@chatroom",
+                        "conversation_kind": "group"
+                    }),
+                ],
+                now,
+            )
+            .unwrap();
+
+        let updated = store
+            .refresh_wechat_conversation_labels(&BTreeMap::from([
+                ("wxid_alice".to_string(), "Alice".to_string()),
+                (
+                    "43122059806@chatroom".to_string(),
+                    "HUMHUM 项目群".to_string(),
+                ),
+                ("wxid_bob".to_string(), "Bob".to_string()),
+            ]))
+            .unwrap();
+
+        assert_eq!(updated, 2);
+        let summary = store.summary();
+        let direct = summary
+            .messages
+            .iter()
+            .find(|message| message.text == "direct")
+            .unwrap();
+        assert_eq!(direct.sender, "Alice");
+        assert_eq!(direct.chat.as_deref(), Some("Alice"));
+        assert_eq!(direct.raw["sender"], "Alice");
+        assert_eq!(direct.raw["chat"], "Alice");
+        let group = summary
+            .messages
+            .iter()
+            .find(|message| message.text == "group")
+            .unwrap();
+        assert_eq!(group.sender, "Bob");
+        assert_eq!(group.chat.as_deref(), Some("HUMHUM 项目群"));
+        assert_eq!(group.raw["sender"], "Bob");
+        assert_eq!(group.raw["chat"], "HUMHUM 项目群");
         let _ = std::fs::remove_file(path);
     }
 

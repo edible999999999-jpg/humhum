@@ -392,6 +392,19 @@ impl WechatHushBridge {
             )
             .await?;
         let all_sessions = parse_sessions_output(&sessions_output.stdout)?;
+        let conversation_labels = all_sessions
+            .iter()
+            .filter_map(|session| {
+                let talker = session.username.trim();
+                let display_name = session.display_name.trim();
+                (!talker.is_empty() && !display_name.is_empty())
+                    .then(|| (talker.to_string(), display_name.to_string()))
+            })
+            .collect::<BTreeMap<_, _>>();
+        hush_store
+            .lock()
+            .map_err(|error| format!("无法锁定 Hush 消息库：{error}"))?
+            .refresh_wechat_conversation_labels(&conversation_labels)?;
         let session_count = all_sessions.len();
         let sessions: Vec<_> = all_sessions
             .into_iter()
@@ -944,16 +957,15 @@ fn normalize_incoming_messages(
     if talker.is_empty() {
         return Err("微信消息缺少会话标识".to_string());
     }
-    let chat = if timeline.display_name.trim().is_empty() {
-        if session.display_name.trim().is_empty() {
-            talker
-        } else {
-            session.display_name.trim()
-        }
-    } else {
-        timeline.display_name.trim()
-    };
     let is_group = session.chat_type == "group" || talker.ends_with("@chatroom");
+    let chat = [timeline.display_name.trim(), session.display_name.trim()]
+        .into_iter()
+        .find(|candidate| !candidate.is_empty() && *candidate != talker)
+        .unwrap_or(if is_group {
+            "未命名群聊"
+        } else {
+            "微信联系人"
+        });
     let conversation_kind = if is_group { "group" } else { "direct" };
     let mut payloads = Vec::new();
 
@@ -1356,6 +1368,37 @@ mod tests {
         assert_eq!(payloads[0]["conversation_kind"], "direct");
     }
 
+    #[test]
+    fn keeps_the_resolved_session_name_when_timeline_repeats_the_internal_talker() {
+        let session = WechatSession {
+            username: "43122059806@chatroom".to_string(),
+            display_name: "HUMHUM 项目群".to_string(),
+            chat_type: "group".to_string(),
+            last_timestamp: 1_784_471_400,
+        };
+        let timeline = WechatTimeline {
+            talker: "43122059806@chatroom".to_string(),
+            display_name: "43122059806@chatroom".to_string(),
+            messages: vec![WechatTimelineMessage {
+                id: WechatMessageId {
+                    talker: "43122059806@chatroom".to_string(),
+                    local_id: 22,
+                    server_id_str: None,
+                },
+                time_iso: "2026-07-19T09:10:00Z".to_string(),
+                sender: "Alice".to_string(),
+                sender_wxid: Some("wxid_alice".to_string()),
+                is_from_me: false,
+                kind: "text".to_string(),
+                text: "hello".to_string(),
+                raw: json!({}),
+            }],
+        };
+
+        let payloads = normalize_incoming_messages(&session, timeline).unwrap();
+        assert_eq!(payloads[0]["chat"], "HUMHUM 项目群");
+    }
+
     #[tokio::test]
     async fn concurrent_status_requests_share_one_cli_probe() {
         let blocked = json!({
@@ -1464,6 +1507,25 @@ mod tests {
             WechatHushBridge::with_test_parts(&dir, executable, runner.clone(), now).unwrap();
         let inbox_path = dir.join("hush-inbox.json");
         let store = Arc::new(Mutex::new(HushStore::with_file_path(inbox_path)));
+        store
+            .lock()
+            .unwrap()
+            .add_many_from_values(
+                vec![json!({
+                    "platform": "wechat",
+                    "sender": "wxid_alice",
+                    "chat": "wxid_alice",
+                    "text": "older message",
+                    "received_at": "2026-07-18T10:00:00Z",
+                    "source_id": "wechat-native:wxid_alice:stale",
+                    "source": "wechat_native",
+                    "sender_wxid": "wxid_alice",
+                    "talker": "wxid_alice",
+                    "conversation_kind": "direct"
+                })],
+                now,
+            )
+            .unwrap();
 
         let report = bridge.sync(store.clone()).await.unwrap();
 
@@ -1472,9 +1534,20 @@ mod tests {
         assert_eq!(report.skipped_sent_messages, 1);
         assert_eq!(report.imported_messages, 1);
         let summary = store.lock().unwrap().summary();
-        assert_eq!(summary.total, 1);
-        assert_eq!(summary.messages[0].text, "今晚吃饭吗？");
-        assert_eq!(summary.messages[0].conversation_kind, "direct");
+        assert_eq!(summary.total, 2);
+        let older = summary
+            .messages
+            .iter()
+            .find(|message| message.text == "older message")
+            .unwrap();
+        assert_eq!(older.sender, "Alice");
+        assert_eq!(older.chat.as_deref(), Some("Alice"));
+        let latest = summary
+            .messages
+            .iter()
+            .find(|message| message.text == "今晚吃饭吗？")
+            .unwrap();
+        assert_eq!(latest.conversation_kind, "direct");
         let config = bridge.config_snapshot().await;
         assert_eq!(
             config.last_success_at.as_deref(),
@@ -1484,7 +1557,7 @@ mod tests {
         let repeated = bridge.sync(store.clone()).await.unwrap();
         assert_eq!(repeated.imported_messages, 0);
         assert_eq!(repeated.duplicate_messages, 1);
-        assert_eq!(store.lock().unwrap().summary().total, 1);
+        assert_eq!(store.lock().unwrap().summary().total, 2);
 
         let calls = runner.calls.lock().unwrap();
         assert_eq!(calls.len(), 6);

@@ -22,6 +22,36 @@ func TestMessageTableNameMatchesWechatSchema(t *testing.T) {
 	}
 }
 
+func TestContactDisplayNamesPreferRemarkAndHideInternalIdentifiers(t *testing.T) {
+	t.Parallel()
+
+	names := contactDisplayNames([]wcdb.Row{
+		{
+			"username":  "43122059806@chatroom",
+			"remark":    "",
+			"nick_name": "HUMHUM 项目群",
+		},
+		{
+			"username":  "wxid_alice",
+			"remark":    "Alice 备注",
+			"nick_name": "Alice 昵称",
+		},
+	})
+
+	if got := resolvedDisplayName("43122059806@chatroom", Group, names); got != "HUMHUM 项目群" {
+		t.Fatalf("group display name = %q", got)
+	}
+	if got := resolvedDisplayName("wxid_alice", Private, names); got != "Alice 备注" {
+		t.Fatalf("private display name = %q", got)
+	}
+	if got := resolvedDisplayName("99999999999@chatroom", Group, nil); got != "未命名群聊" {
+		t.Fatalf("missing group display name = %q", got)
+	}
+	if got := resolvedDisplayName("wxid_missing", Private, nil); got != "微信联系人" {
+		t.Fatalf("missing private display name = %q", got)
+	}
+}
+
 func TestNormalizeMessageRowKeepsDirectionAndReadableKinds(t *testing.T) {
 	t.Parallel()
 

@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "reader": {
     "file": "humhum-wechat-reader-aarch64-apple-darwin",
-    "sha256": "d0815b45a436e04514338436e395b540651b195e40b5e4ed226dc0faef7b2f84"
+    "sha256": "f127d59dda69cebf0a3d43b6650ba954146a575ceaceafed6f74336e2ef54836"
   },
   "wcdb": {
     "file": "libWCDB.dylib",

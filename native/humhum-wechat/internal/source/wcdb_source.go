@@ -53,6 +53,7 @@ LIMIT ?`
 type accountPaths struct {
 	Root         string
 	SelfWXID     string
+	ContactPath  string
 	SessionPath  string
 	MessagePaths []string
 }
@@ -185,6 +186,13 @@ func (data *WcdbSource) Sessions(
 			Cause:   err,
 		}
 	}
+	talkers := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if talker := rowString(row, "username"); talker != "" {
+			talkers = append(talkers, talker)
+		}
+	}
+	displayNames := data.loadDisplayNames(talkers)
 	sessions := make([]Session, 0, len(rows))
 	for _, row := range rows {
 		talker := rowString(row, "username")
@@ -197,7 +205,7 @@ func (data *WcdbSource) Sessions(
 		}
 		sessions = append(sessions, Session{
 			Talker:        talker,
-			DisplayName:   talker,
+			DisplayName:   resolvedDisplayName(talker, kind, displayNames),
 			Kind:          kind,
 			LastTimestamp: rowInt64(row, "last_timestamp"),
 		})
@@ -293,9 +301,33 @@ LIMIT ?`, tableName)
 	if len(ordered) > limit {
 		ordered = ordered[:limit]
 	}
+	contactUsernames := make([]string, 0, len(ordered)+1)
+	contactUsernames = append(contactUsernames, talker)
+	for _, item := range ordered {
+		if item.Message.SenderWXID != "" {
+			contactUsernames = append(contactUsernames, item.Message.SenderWXID)
+		}
+	}
+	displayNames := data.loadDisplayNames(contactUsernames)
+	conversationKind := Private
+	if strings.HasSuffix(talker, "@chatroom") {
+		conversationKind = Group
+	}
+	talkerDisplayName := resolvedDisplayName(talker, conversationKind, displayNames)
 	messages := make([]Message, len(ordered))
 	for index := range ordered {
-		messages[index] = ordered[index].Message
+		message := ordered[index].Message
+		switch {
+		case message.SenderWXID == data.account.SelfWXID:
+			message.Sender = "我"
+		case displayNames[message.SenderWXID] != "":
+			message.Sender = displayNames[message.SenderWXID]
+		case conversationKind == Group:
+			message.Sender = "群成员"
+		default:
+			message.Sender = talkerDisplayName
+		}
+		messages[index] = message
 	}
 	return messages, nil
 }
@@ -382,6 +414,7 @@ func discoverAccount(root string) (accountPaths, error) {
 			continue
 		}
 		accountRoot := filepath.Join(canonicalRoot, entry.Name())
+		contactPath := filepath.Join(accountRoot, "db_storage", "contact", "contact.db")
 		sessionPath := filepath.Join(accountRoot, "db_storage", "session", "session.db")
 		messageDirectory := filepath.Join(accountRoot, "db_storage", "message")
 		if !regularFile(sessionPath) || !realDirectory(messageDirectory) {
@@ -407,6 +440,7 @@ func discoverAccount(root string) (accountPaths, error) {
 		candidates = append(candidates, accountPaths{
 			Root:         accountRoot,
 			SelfWXID:     entry.Name(),
+			ContactPath:  contactPath,
 			SessionPath:  sessionPath,
 			MessagePaths: messagePaths,
 		})
@@ -415,6 +449,75 @@ func discoverAccount(root string) (accountPaths, error) {
 		return accountPaths{}, fmt.Errorf("found %d active account roots", len(candidates))
 	}
 	return candidates[0], nil
+}
+
+func (data *WcdbSource) loadDisplayNames(usernames []string) map[string]string {
+	if !regularFile(data.account.ContactPath) || len(usernames) == 0 {
+		return nil
+	}
+	unique := make(map[string]bool, len(usernames))
+	for _, username := range usernames {
+		if username != "" {
+			unique[username] = true
+		}
+	}
+	if len(unique) == 0 {
+		return nil
+	}
+	database, err := data.open(data.account.ContactPath)
+	if err != nil {
+		return nil
+	}
+	defer database.Close()
+	placeholders := make([]string, 0, len(unique))
+	arguments := make([]any, 0, len(unique))
+	for username := range unique {
+		placeholders = append(placeholders, "?")
+		arguments = append(arguments, username)
+	}
+	rows, err := database.Query(
+		fmt.Sprintf(
+			`SELECT username, remark, nick_name FROM contact WHERE username IN (%s)`,
+			strings.Join(placeholders, ","),
+		),
+		arguments...,
+	)
+	if err != nil {
+		return nil
+	}
+	return contactDisplayNames(rows)
+}
+
+func contactDisplayNames(rows []wcdb.Row) map[string]string {
+	names := make(map[string]string, len(rows))
+	for _, row := range rows {
+		username := strings.TrimSpace(rowString(row, "username"))
+		if username == "" {
+			continue
+		}
+		name := strings.TrimSpace(rowString(row, "remark"))
+		if name == "" {
+			name = strings.TrimSpace(rowString(row, "nick_name"))
+		}
+		if name != "" && name != username && len([]rune(name)) <= 160 {
+			names[username] = name
+		}
+	}
+	return names
+}
+
+func resolvedDisplayName(
+	username string,
+	kind ConversationKind,
+	names map[string]string,
+) string {
+	if name := strings.TrimSpace(names[username]); name != "" && name != username {
+		return name
+	}
+	if kind == Group || strings.HasSuffix(username, "@chatroom") {
+		return "未命名群聊"
+	}
+	return "微信联系人"
 }
 
 func discoverWCDBLibrary() (string, error) {
