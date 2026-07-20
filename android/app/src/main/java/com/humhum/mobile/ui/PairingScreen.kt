@@ -40,12 +40,10 @@ import androidx.compose.ui.unit.dp
 import com.humhum.mobile.MobileRoleDashboard
 import com.humhum.mobile.app.ConnectionStatus
 import com.humhum.mobile.app.HumHumUiState
+import com.humhum.mobile.ui.components.RolePoster
 import com.humhum.mobile.ui.theme.Humi
-import com.humhum.mobile.ui.theme.HumiSoft
 import com.humhum.mobile.ui.theme.Ink
-import com.humhum.mobile.ui.theme.Line
 import com.humhum.mobile.ui.theme.Muted
-import com.humhum.mobile.ui.components.RoleRoomBackground
 
 @Composable
 fun PairingScreen(
@@ -60,27 +58,40 @@ fun PairingScreen(
     var deviceName by rememberSaveable { mutableStateOf("") }
     val busy = state.connection == ConnectionStatus.SCANNING || state.connection == ConnectionStatus.PAIRING
 
-    RoleRoomBackground(
-        role = MobileRoleDashboard.Role.HUMI,
-        modifier = modifier.fillMaxSize(),
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState()),
     ) {
-        Column(
-            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            Text("HUMHUM", style = MaterialTheme.typography.displaySmall, color = Ink)
-            Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+        RolePoster(MobileRoleDashboard.Role.HUMI) {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(horizontal = 20.dp, vertical = 18.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text("HUMHUM", style = MaterialTheme.typography.labelLarge, color = Humi)
                 Text("连接这台电脑", style = MaterialTheme.typography.headlineMedium, color = Ink)
-                Text(
-                    "在 Mac 的 Hexa 右上角打开移动访问，然后扫描配对二维码。",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = Muted,
-                )
             }
+        }
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(
+                "在 Mac 的 Hexa 右上角打开移动访问，然后扫描配对二维码。",
+                style = MaterialTheme.typography.bodyLarge,
+                color = Muted,
+            )
             Button(
                 onClick = callbacks.onScanPairing,
                 enabled = !busy,
-                modifier = Modifier.fillMaxWidth().height(52.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp)
+                    .testTag("pairing-primary-action"),
                 shape = RoundedCornerShape(8.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Humi),
             ) {
@@ -121,7 +132,10 @@ fun PairingScreen(
                 text = if (recoveryOpen) "收起连接恢复" else "连接遇到问题",
                 style = MaterialTheme.typography.labelLarge,
                 color = Humi,
-                modifier = Modifier.fillMaxWidth().clickable { recoveryOpen = !recoveryOpen }.padding(vertical = 14.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { recoveryOpen = !recoveryOpen }
+                    .padding(vertical = 10.dp),
             )
             if (recoveryOpen) {
                 Column(
@@ -172,7 +186,7 @@ fun PairingScreen(
                 }
             }
             Text(
-                "默认只在你明确操作时连接。配对资料保存在 Android 私有应用存储中；健康队列与离线快照使用 Android Keystore 加密。",
+                "仅在你明确操作时连接。配对资料保存在 Android 私有应用存储中；健康队列与离线快照使用 Android Keystore 加密。",
                 style = MaterialTheme.typography.bodyMedium,
                 color = Muted,
             )

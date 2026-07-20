@@ -10,7 +10,7 @@ import org.junit.Test;
 
 public class RoomVisualAssetContractTest {
     @Test
-    public void androidRoomBackgroundsExactlyMatchMacAssets() throws Exception {
+    public void androidRoleVisualsExactlyMatchMacAssets() throws Exception {
         assertSameFile(
                 "../../public/mascots/hub-backgrounds/humi-room.webp",
                 "src/main/res/drawable-nodpi/room_humi.webp");
@@ -23,6 +23,9 @@ public class RoomVisualAssetContractTest {
         assertSameFile(
                 "../../public/mascots/hub-backgrounds/hexa-room-v2.png",
                 "src/main/res/drawable-nodpi/room_hexa.png");
+        assertSameFile(
+                "../../public/mascots/avatars/hexa-avatar.png",
+                "src/main/res/drawable-nodpi/room_hexa_character.png");
     }
 
     @Test

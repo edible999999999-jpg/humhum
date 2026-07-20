@@ -13,7 +13,9 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.humhum.mobile.MobileRoleDashboard
 import com.humhum.mobile.app.HumHumUiState
+import com.humhum.mobile.ui.components.RolePoster
 import com.humhum.mobile.ui.theme.Hush
+import com.humhum.mobile.ui.theme.Ink
 import com.humhum.mobile.ui.theme.Muted
 
 @Composable
@@ -22,6 +24,7 @@ fun HushRoomScreen(
     modifier: Modifier = Modifier,
 ) {
     val inbox = state.personalContext?.inbox().orEmpty()
+        .sortedByDescending { it.importance() }
     val priority = inbox.count { it.importance() >= 4 }
     LazyColumn(
         modifier = modifier.testTag("hush-room"),
@@ -29,21 +32,42 @@ fun HushRoomScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
-            RoomIntro(
-                role = MobileRoleDashboard.Role.HUSH,
-                title = "只把真正值得你看见的消息放在前面",
-                summary = if (priority == 0) {
-                    "现在没有高优先级消息，你可以继续手上的事。"
-                } else {
-                    "$priority 条消息值得留意，Hush 不会替你偷偷回复。"
-                },
-            )
+            RolePoster(MobileRoleDashboard.Role.HUSH)
+        }
+        item {
+            Column(
+                modifier = Modifier.padding(horizontal = 20.dp),
+                verticalArrangement = Arrangement.spacedBy(5.dp),
+            ) {
+                Text("Hush 注意到", style = MaterialTheme.typography.labelLarge, color = Hush)
+                Text(
+                    text = if (priority == 0) {
+                        "今天没有需要你立刻处理的人"
+                    } else {
+                        "$priority 个人值得你今天回一下"
+                    },
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = Ink,
+                    maxLines = 2,
+                    modifier = Modifier.testTag("hush-attention"),
+                )
+                Text(
+                    text = if (state.personalContextAuthorized) {
+                        "只读摘要 · 仅限已授权来源 · 不会自动发送回复"
+                    } else {
+                        "尚未授权消息来源 · 不会读取或发送回复"
+                    },
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Muted,
+                    modifier = Modifier.testTag("hush-privacy-boundary"),
+                )
+            }
         }
         item {
             RoomSectionHeader(
-                title = "收件箱",
+                title = "需要回复",
                 trailing = if (inbox.isEmpty()) null else "${inbox.size} 条摘要",
-                modifier = Modifier.padding(horizontal = 16.dp),
+                modifier = Modifier.padding(horizontal = 20.dp),
             )
         }
         if (inbox.isEmpty()) {
@@ -51,23 +75,34 @@ fun HushRoomScreen(
                 ContextUnavailable(
                     state.personalContextAuthorized,
                     state.personalContextMessage,
-                    Modifier.padding(horizontal = 16.dp),
+                    Modifier.padding(horizontal = 20.dp),
                 )
             }
         } else {
-            items(inbox, key = { it.id() }) { message ->
+            item(key = inbox.first().id()) {
+                RoomItem(
+                    title = inbox.first().sender(),
+                    detail = inbox.first().preview(),
+                    accent = Hush,
+                    meta = inbox.first().platform(),
+                    modifier = Modifier
+                        .padding(horizontal = 20.dp)
+                        .testTag("hush-first-contact"),
+                )
+            }
+            items(inbox.drop(1), key = { it.id() }) { message ->
                 RoomItem(
                     title = message.sender(),
                     detail = message.preview(),
                     accent = Hush,
                     meta = message.platform(),
-                    modifier = Modifier.padding(horizontal = 16.dp),
+                    modifier = Modifier.padding(horizontal = 20.dp),
                 )
             }
         }
         item {
             Column(
-                modifier = Modifier.padding(horizontal = 16.dp),
+                modifier = Modifier.padding(horizontal = 20.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 Text(
@@ -76,7 +111,7 @@ fun HushRoomScreen(
                     color = Hush,
                 )
                 Text(
-                    "这里只显示你已授权来源的限量预览，不包含原始消息对象，也不会自动发送回复。",
+                    "只显示已授权来源的限量预览，不包含原始聊天数据库；建议语气也必须由你主动采用。",
                     style = MaterialTheme.typography.bodyMedium,
                     color = Muted,
                 )

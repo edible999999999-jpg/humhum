@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -45,6 +46,7 @@ import com.humhum.mobile.MobileRoleDashboard
 import com.humhum.mobile.app.HumHumUiState
 import com.humhum.mobile.app.PendingAction
 import com.humhum.mobile.app.PendingActionKind
+import com.humhum.mobile.ui.components.RolePoster
 import com.humhum.mobile.ui.theme.Hexa
 import com.humhum.mobile.ui.theme.HexaSoft
 import com.humhum.mobile.ui.theme.Ink
@@ -57,26 +59,59 @@ fun HexaScreen(
     callbacks: HumHumCallbacks,
     modifier: Modifier = Modifier,
 ) {
+    val decisions = state.sessions.flatMap { session ->
+        session.actions().map { action -> session to action }
+    }
     LazyColumn(
         modifier = modifier.fillMaxSize().testTag("hexa-room"),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
-            RoomIntro(
-                role = MobileRoleDashboard.Role.HEXA,
-                title = "看清 Agent 正在做什么，再决定是否介入",
-                summary = if (state.canControl) {
+            RolePoster(MobileRoleDashboard.Role.HEXA) {
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.CenterStart)
+                        .padding(start = 20.dp)
+                        .widthIn(max = 166.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Text("监督模式", style = MaterialTheme.typography.labelLarge, color = Hexa)
+                    Text(
+                        "先处理需要你决定的事",
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = Ink,
+                        maxLines = 3,
+                    )
+                }
+            }
+        }
+        item {
+            Text(
+                text = if (state.canControl) {
                     "控制权限 · 可以确认和追问"
                 } else {
                     "只读观察 · 不会替你执行操作"
                 },
+                style = MaterialTheme.typography.labelLarge,
+                color = if (state.canControl) Hexa else Muted,
+                modifier = Modifier
+                    .padding(horizontal = 20.dp)
+                    .testTag("hexa-permission"),
+            )
+        }
+        item {
+            HexaDecisionSection(
+                decisions = decisions,
+                state = state,
+                callbacks = callbacks,
+                modifier = Modifier.padding(horizontal = 20.dp),
             )
         }
         if (!state.personalContext?.agents().isNullOrEmpty()) {
             item {
                 Column(
-                    modifier = Modifier.padding(horizontal = 16.dp),
+                    modifier = Modifier.padding(horizontal = 20.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     RoomSectionHeader(
@@ -96,7 +131,7 @@ fun HexaScreen(
         }
         item {
             Row(
-                modifier = Modifier.padding(horizontal = 16.dp),
+                modifier = Modifier.padding(horizontal = 20.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text("Agent 会话", style = MaterialTheme.typography.titleLarge, color = Ink)
@@ -113,7 +148,7 @@ fun HexaScreen(
         if (state.sessions.isEmpty()) {
             item {
                 Surface(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
                     shape = RoundedCornerShape(8.dp),
                     color = HexaSoft,
                     border = androidx.compose.foundation.BorderStroke(1.dp, Hexa.copy(alpha = 0.25f)),
@@ -130,8 +165,75 @@ fun HexaScreen(
                     session = session,
                     state = state,
                     callbacks = callbacks,
-                    modifier = Modifier.padding(horizontal = 16.dp),
+                    showActions = false,
+                    modifier = Modifier.padding(horizontal = 20.dp),
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun HexaDecisionSection(
+    decisions: List<Pair<Models.Session, Models.Action>>,
+    state: HumHumUiState,
+    callbacks: HumHumCallbacks,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("hexa-decision-section"),
+        shape = RoundedCornerShape(8.dp),
+        color = HexaSoft,
+        border = androidx.compose.foundation.BorderStroke(1.dp, Hexa.copy(alpha = 0.28f)),
+    ) {
+        Column(
+            modifier = Modifier.padding(15.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                text = when {
+                    decisions.isEmpty() -> "没有等待你确认的动作"
+                    decisions.size == 1 -> "1 件事需要你决定"
+                    else -> "${decisions.size} 件事需要你决定"
+                },
+                style = MaterialTheme.typography.titleLarge,
+                color = Ink,
+            )
+            if (decisions.isEmpty()) {
+                Text(
+                    "Agent 可以继续工作，你暂时不用介入。",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Muted,
+                )
+            } else if (!state.canControl) {
+                Text(
+                    "当前连接只有读取权限，因此这里只展示待确认摘要。",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Muted,
+                )
+            }
+            decisions.forEach { (session, action) ->
+                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(
+                        session.project().ifBlank { session.agent() },
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Hexa,
+                    )
+                    ActionRow(
+                        action = action,
+                        enabled = PendingAction(
+                            PendingActionKind.APPROVAL,
+                            session.id(),
+                            action.id(),
+                        ) !in state.pendingActions,
+                        onResolve = { approved ->
+                            callbacks.onResolve(session, action, approved)
+                        },
+                        controlsVisible = state.canControl,
+                    )
+                }
             }
         }
     }
@@ -142,6 +244,7 @@ private fun SessionPanel(
     session: Models.Session,
     state: HumHumUiState,
     callbacks: HumHumCallbacks,
+    showActions: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     var draft by remember(session.id()) { mutableStateOf("") }
@@ -175,7 +278,7 @@ private fun SessionPanel(
                     }
                 }
             }
-            if (state.canControl) {
+            if (state.canControl && showActions) {
                 session.actions().forEach { action ->
                     ActionRow(
                         action = action,
@@ -220,23 +323,26 @@ private fun ActionRow(
     action: Models.Action,
     enabled: Boolean,
     onResolve: (Boolean) -> Unit,
+    controlsVisible: Boolean = true,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(action.summary().ifBlank { action.operation() }, style = MaterialTheme.typography.bodyMedium, color = Ink)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(
-                onClick = { onResolve(true) },
-                enabled = enabled,
-                shape = RoundedCornerShape(8.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Hexa),
-                modifier = Modifier.height(48.dp),
-            ) { Text("允许") }
-            OutlinedButton(
-                onClick = { onResolve(false) },
-                enabled = enabled,
-                shape = RoundedCornerShape(8.dp),
-                modifier = Modifier.height(48.dp),
-            ) { Text("拒绝") }
+        if (controlsVisible) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = { onResolve(true) },
+                    enabled = enabled,
+                    shape = RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Hexa),
+                    modifier = Modifier.height(48.dp),
+                ) { Text("允许") }
+                OutlinedButton(
+                    onClick = { onResolve(false) },
+                    enabled = enabled,
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.height(48.dp),
+                ) { Text("拒绝") }
+            }
         }
     }
 }

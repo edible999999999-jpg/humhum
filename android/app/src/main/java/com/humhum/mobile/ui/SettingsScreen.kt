@@ -40,9 +40,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.humhum.mobile.app.HumHumUiState
-import com.humhum.mobile.ui.theme.Humi
 import com.humhum.mobile.ui.theme.Ink
-import com.humhum.mobile.ui.theme.Line
 import com.humhum.mobile.ui.theme.Muted
 
 @Composable
@@ -129,6 +127,7 @@ fun SettingsScreen(
                 detail = "清除连接、加密队列和离线快照",
                 onClick = callbacks.onDeleteLocalData,
                 trailing = "删除",
+                destructive = true,
             )
         }
         item { SettingsSection("关于") }
@@ -172,7 +171,7 @@ private fun SettingsSection(title: String) {
     Text(
         title,
         style = MaterialTheme.typography.labelLarge,
-        color = Humi,
+        color = Muted,
         modifier = Modifier.padding(top = 14.dp, bottom = 3.dp),
     )
 }
@@ -184,18 +183,20 @@ private fun SettingsRow(
     detail: String,
     onClick: () -> Unit,
     trailing: String? = null,
+    destructive: Boolean = false,
 ) {
+    val actionColor = if (destructive) MaterialTheme.colorScheme.error else Ink
     Row(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(icon, contentDescription = null, tint = Humi, modifier = Modifier.size(24.dp))
+        Icon(icon, contentDescription = null, tint = if (destructive) actionColor else Muted, modifier = Modifier.size(24.dp))
         Spacer(Modifier.size(13.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.titleMedium, color = Ink)
             Text(detail, style = MaterialTheme.typography.bodyMedium, color = Muted)
         }
-        trailing?.let { Text(it, style = MaterialTheme.typography.labelLarge, color = Humi) }
+        trailing?.let { Text(it, style = MaterialTheme.typography.labelLarge, color = actionColor) }
         if (trailing != null) Icon(Icons.Outlined.ChevronRight, contentDescription = null, tint = Muted)
     }
 }
@@ -212,7 +213,7 @@ private fun SettingsToggle(
         modifier = Modifier.fillMaxWidth().padding(vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(icon, contentDescription = null, tint = Humi, modifier = Modifier.size(24.dp))
+        Icon(icon, contentDescription = null, tint = Muted, modifier = Modifier.size(24.dp))
         Spacer(Modifier.size(13.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.titleMedium, color = Ink)

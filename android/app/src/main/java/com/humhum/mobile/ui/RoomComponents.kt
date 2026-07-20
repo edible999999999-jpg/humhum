@@ -17,45 +17,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
-import com.humhum.mobile.MobileRoleDashboard
 import com.humhum.mobile.ui.theme.Ink
 import com.humhum.mobile.ui.theme.Line
 import com.humhum.mobile.ui.theme.Muted
-import com.humhum.mobile.ui.theme.paletteFor
-
-@Composable
-fun RoomIntro(
-    role: MobileRoleDashboard.Role,
-    title: String,
-    summary: String,
-    modifier: Modifier = Modifier,
-) {
-    val palette = paletteFor(role)
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        Text(
-            text = "${role.displayName()} · ${role.purpose()}",
-            style = MaterialTheme.typography.labelLarge,
-            color = palette.accent,
-        )
-        Text(
-            text = title,
-            style = MaterialTheme.typography.headlineMedium,
-            color = Ink,
-            maxLines = 3,
-        )
-        Text(
-            text = summary,
-            style = MaterialTheme.typography.bodyMedium,
-            color = Muted,
-            maxLines = 3,
-        )
-    }
-}
 
 @Composable
 fun RoomSectionHeader(

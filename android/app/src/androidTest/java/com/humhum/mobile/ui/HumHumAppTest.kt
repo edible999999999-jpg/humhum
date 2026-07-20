@@ -7,6 +7,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -15,6 +17,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -59,9 +62,11 @@ class HumHumAppTest {
         }
 
         compose.onNodeWithTag("humi-room").assertIsDisplayed()
+        compose.onNodeWithTag("role-poster-humi", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithTag("humi-primary-judgment").assertIsDisplayed()
+        compose.onNodeWithTag("humi-composer").assertIsDisplayed()
         compose.onNodeWithText("今天").assertIsDisplayed()
         compose.onNodeWithText("完成 Android 房间").assertIsDisplayed()
-        compose.onNodeWithText("身体信号").assertIsDisplayed()
         compose.onAllNodesWithTag("role-destination", useUnmergedTree = true).assertCountEquals(4)
         compose.onAllNodesWithTag("role-navigation-icon", useUnmergedTree = true)
             .assertCountEquals(4)
@@ -116,6 +121,7 @@ class HumHumAppTest {
         )
 
         assertEquals(0, requests.get())
+        scrollRoomToTag("humi-room", "health-source-steps")
         compose.onNodeWithTag("health-source-steps").performClick()
         compose.waitForIdle()
         assertEquals(1, requests.get())
@@ -133,6 +139,7 @@ class HumHumAppTest {
             ),
         )
 
+        scrollRoomToTag("humi-room", "health-source-steps")
         compose.onNodeWithTag("health-source-steps").performClick()
 
         assertEquals(0, requests.get())
@@ -190,7 +197,36 @@ class HumHumAppTest {
     }
 
     @Test
-    fun everyRoomUsesOneDecorativeBackgroundAndNoIntroMascot() {
+    fun largeFontKeepsEveryRoomSettingsActionInsideTheHeader() {
+        var state by mutableStateOf(connectedState())
+        compose.setContent {
+            val current = LocalConfiguration.current
+            val currentDensity = LocalDensity.current
+            val configuration = Configuration(current).apply { fontScale = 1.3f }
+            androidx.compose.runtime.CompositionLocalProvider(
+                LocalConfiguration provides configuration,
+                LocalDensity provides Density(currentDensity.density, 1.3f),
+            ) {
+                HumHumApp(state = state, callbacks = HumHumCallbacks())
+            }
+        }
+
+        MobileRoleDashboard.Role.entries.forEach { role ->
+            compose.runOnIdle { state = state.copy(selectedRole = role) }
+            val header = compose.onNodeWithTag("companion-header")
+                .fetchSemanticsNode()
+                .boundsInRoot
+            val settings = compose.onNodeWithContentDescription("设置")
+                .assertIsDisplayed()
+                .fetchSemanticsNode()
+                .boundsInRoot
+
+            assertTrue("role=$role header=$header settings=$settings", settings.right <= header.right)
+        }
+    }
+
+    @Test
+    fun everyRoomUsesOneRolePosterAndNoFullPageBackground() {
         var state by mutableStateOf(connectedState())
         compose.setContent {
             HumHumApp(state = state, callbacks = HumHumCallbacks())
@@ -198,11 +234,95 @@ class HumHumAppTest {
 
         MobileRoleDashboard.Role.entries.forEach { role ->
             compose.runOnIdle { state = state.copy(selectedRole = role) }
-            compose.onAllNodesWithTag("room-background", useUnmergedTree = true)
+            compose.onAllNodesWithTag("role-poster", useUnmergedTree = true)
                 .assertCountEquals(1)
-            compose.onAllNodesWithTag("room-intro-mascot", useUnmergedTree = true)
-                .assertCountEquals(0)
+            compose.onNodeWithTag("role-poster-${role.id()}", useUnmergedTree = true)
+                .assertIsDisplayed()
+            compose.onNodeWithTag("room-background", useUnmergedTree = true)
+                .assertDoesNotExist()
         }
+    }
+
+    @Test
+    fun pairingStartsWithHumiPosterAndScanActionWithoutRoleNavigation() {
+        setContent(state = HumHumUiState())
+
+        compose.onNodeWithTag("role-poster-humi", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithTag("pairing-primary-action").assertIsDisplayed()
+        compose.onNodeWithTag("role-navigation").assertDoesNotExist()
+        compose.onNodeWithTag("manual-pairing-fields").assertDoesNotExist()
+    }
+
+    @Test
+    fun humiStartsWithPosterJudgmentAndConversationBeforeToday() {
+        setContent(state = connectedState())
+
+        compose.onNodeWithTag("role-poster-humi", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithTag("humi-primary-judgment").assertIsDisplayed()
+        compose.onNodeWithTag("humi-composer").assertIsDisplayed()
+        compose.onNodeWithTag("today-section").assertIsDisplayed()
+        assertAbove("humi-composer", "today-section")
+    }
+
+    @Test
+    fun humiComposerKeepsTheDraftWhenMobileChatTransportIsUnavailable() {
+        setContent(state = connectedState())
+
+        compose.onNodeWithTag("humi-composer").performTextInput("帮我整理今天")
+        compose.onNodeWithContentDescription("发送给 Humi").performClick()
+
+        assertEditableText("humi-composer", "帮我整理今天")
+        compose.onNodeWithText("尚未发送", substring = true).assertIsDisplayed()
+    }
+
+    @Test
+    fun hypeSearchIsTheFirstActionAfterItsPoster() {
+        setContent(
+            state = connectedState().copy(selectedRole = MobileRoleDashboard.Role.HYPE),
+        )
+
+        compose.onNodeWithTag("role-poster-hype", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithTag("hype-search").assertIsDisplayed()
+        compose.onNodeWithTag("hype-first-knowledge").assertIsDisplayed()
+        assertAbove("hype-search", "hype-first-knowledge")
+    }
+
+    @Test
+    fun hushLeadsWithAttentionAndReadOnlyBoundaryBeforeContacts() {
+        setContent(
+            state = connectedState().copy(selectedRole = MobileRoleDashboard.Role.HUSH),
+        )
+
+        compose.onNodeWithTag("role-poster-hush", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithTag("hush-attention").assertIsDisplayed()
+        compose.onNodeWithTag("hush-privacy-boundary").assertIsDisplayed()
+        compose.onNodeWithTag("hush-first-contact").assertIsDisplayed()
+        compose.onNodeWithText("不会自动发送回复", substring = true).assertIsDisplayed()
+        compose.onNodeWithTag("health-source-steps").assertDoesNotExist()
+    }
+
+    @Test
+    fun hexaPutsPermissionAndDecisionBeforeAgentProgress() {
+        setContent(
+            state = connectedState().copy(
+                selectedRole = MobileRoleDashboard.Role.HEXA,
+                sessions = listOf(controllableSession()),
+            ),
+        )
+
+        compose.onNodeWithTag("role-poster-hexa", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithTag("hexa-permission").assertIsDisplayed()
+        compose.onNodeWithTag("hexa-decision-section").assertIsDisplayed()
+        compose.onNodeWithText("允许").assertIsDisplayed()
+        compose.onNodeWithText("拒绝").assertIsDisplayed()
+    }
+
+    @Test
+    fun settingsNeverUsesARolePoster() {
+        setContent(state = connectedState().copy(settingsVisible = true))
+
+        compose.onNodeWithTag("settings-screen").assertIsDisplayed()
+        compose.onNodeWithTag("role-poster").assertDoesNotExist()
     }
 
     @Test
@@ -231,6 +351,7 @@ class HumHumAppTest {
             callbacks = HumHumCallbacks(onSendFollowUp = { _, _ -> sends.incrementAndGet() }),
         )
 
+        scrollRoomToTag("hexa-room", "follow-up-draft")
         compose.onNodeWithTag("follow-up-draft").performTextInput("请继续验证")
         compose.onNodeWithContentDescription("发送").performClick()
 
@@ -250,6 +371,7 @@ class HumHumAppTest {
             HumHumApp(state = state, callbacks = HumHumCallbacks())
         }
 
+        scrollRoomToTag("hexa-room", "follow-up-draft")
         compose.onNodeWithTag("follow-up-draft").performTextInput("请继续验证")
         compose.runOnIdle {
             state = state.copy(
@@ -281,6 +403,7 @@ class HumHumAppTest {
         setContent(state = connectedState())
 
         compose.onNodeWithText("今天的节奏值得慢一点").assertDoesNotExist()
+        scrollRoomToText("humi-room", "身体信号")
         compose.onNodeWithText("身体信号").assertIsDisplayed()
     }
 
@@ -292,6 +415,7 @@ class HumHumAppTest {
             ),
         )
 
+        scrollRoomToText("humi-room", "采集于", substring = true)
         compose.onNodeWithText("采集于", substring = true).assertIsDisplayed()
     }
 
@@ -326,6 +450,7 @@ class HumHumAppTest {
     fun personalSignalsStayAboveTheFixedRoleNavigation() {
         setContent(state = connectedState())
 
+        scrollRoomToTag("humi-room", "personal-signals-card")
         val signals = compose.onNodeWithTag("personal-signals-card")
             .fetchSemanticsNode()
             .boundsInRoot
@@ -456,6 +581,22 @@ class HumHumAppTest {
             .config[SemanticsProperties.EditableText]
             .text
         assertEquals(expected, actual)
+    }
+
+    private fun assertAbove(firstTag: String, secondTag: String) {
+        val first = compose.onNodeWithTag(firstTag).fetchSemanticsNode().boundsInRoot
+        val second = compose.onNodeWithTag(secondTag).fetchSemanticsNode().boundsInRoot
+        assertTrue("$firstTag=$first $secondTag=$second", first.bottom <= second.top)
+    }
+
+    private fun scrollRoomToTag(roomTag: String, targetTag: String) {
+        compose.onNodeWithTag(roomTag).performScrollToNode(hasTestTag(targetTag))
+    }
+
+    private fun scrollRoomToText(roomTag: String, text: String, substring: Boolean = false) {
+        compose.onNodeWithTag(roomTag).performScrollToNode(
+            hasText(text, substring = substring),
+        )
     }
 
 }

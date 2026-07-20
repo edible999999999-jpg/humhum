@@ -47,7 +47,9 @@ class CharacterRoomsVisualQaTest {
 
     @Test
     fun captureHexaReferenceViewport() = capture(
-        connectedState(MobileRoleDashboard.Role.HEXA),
+        connectedState(MobileRoleDashboard.Role.HEXA).copy(
+            sessions = listOf(controllableSession()),
+        ),
         "hexa-first-viewport",
     )
 
@@ -192,5 +194,17 @@ class CharacterRoomsVisualQaTest {
                 "2026-07-19T08:30:00Z",
             ),
         ),
+    )
+
+    private fun controllableSession() = Models.Session(
+        "session-1",
+        "Codex",
+        "HUMHUM",
+        "working",
+        "now",
+        true,
+        true,
+        true,
+        listOf(Models.Action("action-1", "Codex", "Run command", "需要确认")),
     )
 }

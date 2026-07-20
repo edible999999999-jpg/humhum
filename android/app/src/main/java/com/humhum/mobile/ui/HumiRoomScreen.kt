@@ -4,6 +4,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -12,14 +13,22 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.automirrored.outlined.DirectionsWalk
 import androidx.compose.material.icons.outlined.FavoriteBorder
+import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -32,6 +41,7 @@ import com.humhum.mobile.app.HumHumUiState
 import com.humhum.mobile.health.HealthMetric
 import com.humhum.mobile.health.HealthFreshness
 import com.humhum.mobile.health.HealthSourceState
+import com.humhum.mobile.ui.components.RolePoster
 import com.humhum.mobile.ui.theme.Humi
 import com.humhum.mobile.ui.theme.Hush
 import com.humhum.mobile.ui.theme.HeadlineNumberStyle
@@ -49,24 +59,92 @@ fun HumiRoomScreen(
     modifier: Modifier = Modifier,
 ) {
     val context = state.personalContext
+    var draft by rememberSaveable { mutableStateOf("") }
+    var composerNotice by rememberSaveable { mutableStateOf(false) }
     val intro = context?.today()?.firstOrNull()?.let {
         "我先替你看住“${it.title()}”，其他事情可以慢一点来。"
     } ?: "我会把今天、身体信号和真正值得记住的事放在一起。"
     LazyColumn(
         modifier = modifier.testTag("humi-room"),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 20.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        contentPadding = PaddingValues(bottom = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         item {
-            RoomIntro(
-                role = MobileRoleDashboard.Role.HUMI,
-                title = "今天先照顾好你的节奏",
-                summary = intro,
-            )
+            RolePoster(MobileRoleDashboard.Role.HUMI)
         }
         item {
             Column(
-                modifier = Modifier.padding(horizontal = 16.dp),
+                modifier = Modifier
+                    .padding(horizontal = 20.dp)
+                    .testTag("humi-primary-judgment"),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text("Humi 注意到", style = MaterialTheme.typography.labelLarge, color = Humi)
+                Text(
+                    text = intro,
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = Ink,
+                    maxLines = 2,
+                )
+                Text(
+                    text = when {
+                        context == null -> "等待 Mac 的已授权个人上下文"
+                        context.today().isEmpty() -> "今天暂无明确条目 · ${if (state.personalContextFromCache) "加密缓存" else "刚刚同步"}"
+                        else -> "来自已确认的今天 · ${if (state.personalContextFromCache) "加密缓存" else "刚刚同步"}"
+                    },
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Muted,
+                )
+            }
+        }
+        item {
+            Column(
+                modifier = Modifier
+                    .padding(horizontal = 20.dp)
+                    .fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                if (composerNotice) {
+                    Text(
+                        "尚未发送：手机版 Humi 对话通道还没有接入，草稿已为你保留。",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Muted,
+                    )
+                }
+                OutlinedTextField(
+                    value = draft,
+                    onValueChange = {
+                        draft = it.take(1000)
+                        composerNotice = false
+                    },
+                    placeholder = { Text("和 Humi 聊聊") },
+                    leadingIcon = {
+                        Icon(Icons.Outlined.Mic, contentDescription = "语音输入")
+                    },
+                    trailingIcon = {
+                        IconButton(
+                            onClick = { composerNotice = true },
+                            enabled = draft.isNotBlank(),
+                        ) {
+                            Icon(
+                                Icons.AutoMirrored.Outlined.Send,
+                                contentDescription = "发送给 Humi",
+                            )
+                        }
+                    },
+                    singleLine = true,
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("humi-composer"),
+                )
+            }
+        }
+        item {
+            Column(
+                modifier = Modifier
+                    .padding(horizontal = 20.dp)
+                    .testTag("today-section"),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 RoomSectionHeader(
@@ -93,7 +171,7 @@ fun HumiRoomScreen(
         if (!context?.suggestions().isNullOrEmpty()) {
             item {
                 Column(
-                    modifier = Modifier.padding(horizontal = 16.dp),
+                    modifier = Modifier.padding(horizontal = 20.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     RoomSectionHeader("Humi 的建议", "建议，不是事实")
@@ -110,7 +188,7 @@ fun HumiRoomScreen(
         }
         item {
             Column(
-                modifier = Modifier.padding(horizontal = 16.dp),
+                modifier = Modifier.padding(horizontal = 20.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 RoomSectionHeader(
@@ -139,7 +217,7 @@ fun HumiRoomScreen(
         }
         item {
             Column(
-                modifier = Modifier.padding(horizontal = 16.dp),
+                modifier = Modifier.padding(horizontal = 20.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 RoomSectionHeader("身体信号", healthSectionTrailing(state))

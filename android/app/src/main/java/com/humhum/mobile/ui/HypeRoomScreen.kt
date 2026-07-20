@@ -18,12 +18,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.humhum.mobile.MobileRoleDashboard
 import com.humhum.mobile.app.HumHumUiState
+import com.humhum.mobile.ui.components.RolePoster
 import com.humhum.mobile.ui.theme.Hype
+import com.humhum.mobile.ui.theme.Ink
 import com.humhum.mobile.ui.theme.Muted
 
 @Composable
@@ -44,11 +47,22 @@ fun HypeRoomScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
-            RoomIntro(
-                role = MobileRoleDashboard.Role.HYPE,
-                title = "你的知识，要能在下一次直接用",
-                summary = "技能、偏好与记忆来自 Mac 的个人知识库，这里只显示整理后的摘要。",
-            )
+            RolePoster(MobileRoleDashboard.Role.HYPE) {
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(horizontal = 20.dp, vertical = 18.dp),
+                    verticalArrangement = Arrangement.spacedBy(3.dp),
+                ) {
+                    Text("本次先整理", style = MaterialTheme.typography.labelLarge, color = Hype)
+                    Text(
+                        context?.knowledge()?.firstOrNull()?.title() ?: "让知识在下一次直接可用",
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = Ink,
+                        maxLines = 2,
+                    )
+                }
+            }
         }
         item {
             OutlinedTextField(
@@ -58,14 +72,17 @@ fun HypeRoomScreen(
                 placeholder = { Text("搜索技能与知识") },
                 singleLine = true,
                 shape = RoundedCornerShape(8.dp),
-                modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth(),
+                modifier = Modifier
+                    .padding(horizontal = 20.dp)
+                    .fillMaxWidth()
+                    .testTag("hype-search"),
             )
         }
         item {
             RoomSectionHeader(
                 title = "可复用能力",
                 trailing = context?.knowledge()?.size?.let { "$it 项" },
-                modifier = Modifier.padding(horizontal = 16.dp),
+                modifier = Modifier.padding(horizontal = 20.dp),
             )
         }
         if (knowledge.isEmpty()) {
@@ -73,23 +90,34 @@ fun HypeRoomScreen(
                 ContextUnavailable(
                     state.personalContextAuthorized,
                     state.personalContextMessage,
-                    Modifier.padding(horizontal = 16.dp),
+                    Modifier.padding(horizontal = 20.dp),
                 )
             }
         } else {
-            items(knowledge, key = { it.id() }) { item ->
+            item(key = knowledge.first().id()) {
+                RoomItem(
+                    title = knowledge.first().title(),
+                    detail = "${knowledge.first().summary()} · 来自 Mac 知识库",
+                    accent = Hype,
+                    meta = if (knowledge.first().kind() == "skill") "Skill" else "笔记",
+                    modifier = Modifier
+                        .padding(horizontal = 20.dp)
+                        .testTag("hype-first-knowledge"),
+                )
+            }
+            items(knowledge.drop(1), key = { it.id() }) { item ->
                 RoomItem(
                     title = item.title(),
-                    detail = item.summary(),
+                    detail = "${item.summary()} · 来自 Mac 知识库",
                     accent = Hype,
                     meta = if (item.kind() == "skill") "Skill" else "笔记",
-                    modifier = Modifier.padding(horizontal = 16.dp),
+                    modifier = Modifier.padding(horizontal = 20.dp),
                 )
             }
         }
         item {
             Column(
-                modifier = Modifier.padding(horizontal = 16.dp),
+                modifier = Modifier.padding(horizontal = 20.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 RoomSectionHeader(
@@ -116,7 +144,7 @@ fun HypeRoomScreen(
         }
         item {
             Column(
-                modifier = Modifier.padding(horizontal = 16.dp),
+                modifier = Modifier.padding(horizontal = 20.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 RoomSectionHeader("长期记忆", context?.memories()?.size?.let { "$it 条" })

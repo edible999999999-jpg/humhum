@@ -30,7 +30,6 @@ import com.humhum.mobile.app.ConnectionStatus
 import com.humhum.mobile.app.HealthPermission
 import com.humhum.mobile.app.HumHumUiState
 import com.humhum.mobile.ui.components.RoleNavigation
-import com.humhum.mobile.ui.components.RoleRoomBackground
 import com.humhum.mobile.ui.theme.Canvas
 import com.humhum.mobile.ui.theme.HumHumTheme
 import com.humhum.mobile.ui.theme.Ink
@@ -98,10 +97,7 @@ private fun CompanionScaffold(
             )
         },
     ) { padding ->
-        RoleRoomBackground(
-            role = state.selectedRole,
-            modifier = Modifier.padding(padding),
-        ) {
+        Box(modifier = Modifier.padding(padding)) {
             when (state.selectedRole) {
                 MobileRoleDashboard.Role.HUMI ->
                     HumiRoomScreen(state, callbacks, Modifier.fillMaxSize())
