@@ -16,6 +16,7 @@ import {
   filterAgentAssets,
   getAgentAssetSummary,
   sortAgentAssetsByRecentUse,
+  sortByRecentUpdate,
   type AgentAssetScope,
 } from "./knowledgePresentation";
 
@@ -676,15 +677,15 @@ export function KnowledgeModule() {
     ["memory", "daily", "project_context"].includes(note.note_type),
   );
 
-  const filteredPreferences = data.preferences.filter((preference) => {
+  const filteredPreferences = sortByRecentUpdate(data.preferences.filter((preference) => {
     if (!normalizedQuery) return true;
     return [
       preference.category,
       preference.content,
       preference.source,
     ].some((value) => value.toLowerCase().includes(normalizedQuery));
-  });
-  const filteredRules = data.agent_rules.filter((rule) => {
+  }));
+  const filteredRules = sortByRecentUpdate(data.agent_rules.filter((rule) => {
     if (!normalizedQuery) return true;
     return [
       rule.agent_id,
@@ -692,30 +693,30 @@ export function KnowledgeModule() {
       rule.file_path,
       rule.content,
     ].some((value) => value.toLowerCase().includes(normalizedQuery));
-  });
-  const filteredMemoryItems = data.memory_items.filter((item) => {
+  }));
+  const filteredMemoryItems = sortByRecentUpdate(data.memory_items.filter((item) => {
     if (!normalizedQuery) return true;
     return [item.agent_id, item.temperature, item.content].some((value) =>
       value.toLowerCase().includes(normalizedQuery),
     );
-  });
-  const filteredPreferenceAssets = preferenceAssets.filter((asset) =>
-    matchesAssetQuery(asset, normalizedQuery),
+  }));
+  const filteredPreferenceAssets = sortByRecentUpdate(
+    preferenceAssets.filter((asset) => matchesAssetQuery(asset, normalizedQuery)),
   );
-  const filteredRuleAssets = discoveredRuleAssets.filter((asset) =>
-    matchesAssetQuery(asset, normalizedQuery),
+  const filteredRuleAssets = sortByRecentUpdate(
+    discoveredRuleAssets.filter((asset) => matchesAssetQuery(asset, normalizedQuery)),
   );
-  const filteredMemoryAssets = memoryAssets.filter((asset) =>
-    matchesAssetQuery(asset, normalizedQuery),
+  const filteredMemoryAssets = sortByRecentUpdate(
+    memoryAssets.filter((asset) => matchesAssetQuery(asset, normalizedQuery)),
   );
-  const filteredPreferenceNotes = preferenceNotes.filter((note) =>
-    matchesNoteQuery(note, normalizedQuery),
+  const filteredPreferenceNotes = sortByRecentUpdate(
+    preferenceNotes.filter((note) => matchesNoteQuery(note, normalizedQuery)),
   );
-  const filteredRuleNotes = ruleNotes.filter((note) =>
-    matchesNoteQuery(note, normalizedQuery),
+  const filteredRuleNotes = sortByRecentUpdate(
+    ruleNotes.filter((note) => matchesNoteQuery(note, normalizedQuery)),
   );
-  const filteredMemoryNotes = memoryNotes.filter((note) =>
-    matchesNoteQuery(note, normalizedQuery),
+  const filteredMemoryNotes = sortByRecentUpdate(
+    memoryNotes.filter((note) => matchesNoteQuery(note, normalizedQuery)),
   );
 
   const typeCounts = memoryNotes.reduce<Record<string, number>>((acc, note) => {

@@ -110,6 +110,19 @@ export function sortAgentAssetsByRecentUse(assets: AgentAsset[]): AgentAsset[] {
   });
 }
 
+export function sortByRecentUpdate<T extends { modified_at?: string | null }>(
+  items: T[],
+): T[] {
+  return [...items].sort((left, right) => {
+    const leftModified = meaningfulAssetTimestamp(left.modified_at);
+    const rightModified = meaningfulAssetTimestamp(right.modified_at);
+    if (leftModified === null && rightModified === null) return 0;
+    if (leftModified === null) return 1;
+    if (rightModified === null) return -1;
+    return rightModified - leftModified;
+  });
+}
+
 export function isPersonalAgentAsset(
   asset: AgentAsset,
   configuredRoots: string[] = [],

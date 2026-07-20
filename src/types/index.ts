@@ -235,6 +235,7 @@ export interface Preference {
   content: string;
   source: string;
   priority: number;
+  modified_at?: string | null;
 }
 
 export interface AgentRule {
@@ -243,6 +244,7 @@ export interface AgentRule {
   rule_type: string;
   file_path: string;
   content: string;
+  modified_at?: string | null;
 }
 
 export interface MemoryItem {
@@ -250,6 +252,7 @@ export interface MemoryItem {
   agent_id: string;
   content: string;
   temperature: string;
+  modified_at?: string | null;
 }
 
 export interface ObsidianVaultConfig {

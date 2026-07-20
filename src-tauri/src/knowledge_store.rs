@@ -26,6 +26,8 @@ pub struct Preference {
     pub content: String,
     pub source: String,
     pub priority: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modified_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -35,6 +37,8 @@ pub struct AgentRule {
     pub rule_type: String,
     pub file_path: String,
     pub content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modified_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,6 +47,8 @@ pub struct MemoryItem {
     pub agent_id: String,
     pub content: String,
     pub temperature: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modified_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -152,6 +158,14 @@ fn read_private_text(path: &Path) -> Option<String> {
         );
     }
     std::fs::read_to_string(path).ok()
+}
+
+fn file_modified_at(path: &Path) -> Option<String> {
+    std::fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .ok()
+        .map(chrono::DateTime::<chrono::Utc>::from)
+        .map(|modified_at| modified_at.to_rfc3339())
 }
 
 impl KnowledgeStore {
@@ -294,7 +308,8 @@ impl KnowledgeStore {
         &self.data
     }
 
-    pub fn save_preference(&mut self, pref: Preference) {
+    pub fn save_preference(&mut self, mut pref: Preference) {
+        pref.modified_at = Some(chrono::Utc::now().to_rfc3339());
         self.write_preference_file(&pref);
         if let Some(existing) = self.data.preferences.iter_mut().find(|p| p.id == pref.id) {
             *existing = pref;
@@ -304,7 +319,8 @@ impl KnowledgeStore {
         self.save();
     }
 
-    pub fn save_memory(&mut self, item: MemoryItem) {
+    pub fn save_memory(&mut self, mut item: MemoryItem) {
+        item.modified_at = Some(chrono::Utc::now().to_rfc3339());
         self.write_memory_file(&item);
         if let Some(existing) = self.data.memory_items.iter_mut().find(|m| m.id == item.id) {
             *existing = item;
@@ -495,6 +511,7 @@ impl KnowledgeStore {
                             rule_type: rule_type.to_string(),
                             file_path: rule_file.to_string_lossy().to_string(),
                             content: truncate_content(&content, 2000),
+                            modified_at: file_modified_at(&rule_file),
                         });
                     }
                 }
@@ -1772,6 +1789,7 @@ fn preference_from_markdown(path: &Path, content: &str) -> Option<Preference> {
         content: body.trim().to_string(),
         source: frontmatter_string(&frontmatter, "source").unwrap_or_default(),
         priority: frontmatter_u8(&frontmatter, "priority"),
+        modified_at: file_modified_at(path),
     })
 }
 
@@ -1790,6 +1808,7 @@ fn memory_from_markdown(path: &Path, content: &str) -> Option<MemoryItem> {
         agent_id: frontmatter_string(&frontmatter, "agent_id").unwrap_or_default(),
         content: body.trim().to_string(),
         temperature,
+        modified_at: file_modified_at(path),
     })
 }
 
@@ -1882,6 +1901,7 @@ mod tests {
             content: "简洁优先".into(),
             source: "humi".into(),
             priority: 4,
+            modified_at: None,
         });
 
         let md = root.join("vault").join("preferences").join("pref-42.md");
@@ -1898,6 +1918,7 @@ mod tests {
         assert_eq!(prefs[0].id, "pref-42");
         assert_eq!(prefs[0].content, "简洁优先");
         assert_eq!(prefs[0].priority, 4);
+        assert!(prefs[0].modified_at.is_some());
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -1912,6 +1933,7 @@ mod tests {
             content: "临时".into(),
             source: "humi".into(),
             priority: 1,
+            modified_at: None,
         });
         let md = root.join("vault").join("preferences").join("pref-del.md");
         assert!(md.exists());
@@ -1933,6 +1955,7 @@ mod tests {
             agent_id: "claude-code".into(),
             content: "用户在做本地 Agent 中枢".into(),
             temperature: "hot".into(),
+            modified_at: None,
         });
 
         let md = root.join("vault").join("memory").join("mem-1.md");
@@ -1943,6 +1966,7 @@ mod tests {
         assert_eq!(persisted.memory_items.len(), 1);
 
         let reloaded = store_at(&root);
+        assert!(reloaded.get_all().memory_items[0].modified_at.is_some());
         let items = &reloaded.get_all().memory_items;
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].id, "mem-1");
@@ -1963,6 +1987,7 @@ mod tests {
                 content: "旧 JSON 里的偏好".into(),
                 source: "import".into(),
                 priority: 2,
+                modified_at: None,
             }],
             ..Default::default()
         };
@@ -2272,12 +2297,14 @@ mod tests {
             content: "keep preference".into(),
             source: "manual".into(),
             priority: 3,
+            modified_at: None,
         });
         store.save_memory(MemoryItem {
             id: "memory-1".into(),
             agent_id: "codex".into(),
             content: "keep memory".into(),
             temperature: "warm".into(),
+            modified_at: None,
         });
         store.data.agent_rules.push(AgentRule {
             id: manual_rule_id.clone(),
@@ -2285,6 +2312,7 @@ mod tests {
             rule_type: "manual".into(),
             file_path: rule_path.to_string_lossy().into_owned(),
             content: "keep manual rule".into(),
+            modified_at: None,
         });
         store.data.agent_rules.push(AgentRule {
             id: unavailable_rule_id.clone(),
@@ -2292,6 +2320,7 @@ mod tests {
             rule_type: "AGENTS.md".into(),
             file_path: unavailable_rule_path.to_string_lossy().into_owned(),
             content: "keep rule from unavailable root".into(),
+            modified_at: None,
         });
 
         let scan_roots = vec![scan_root, other_scan_root, unavailable_scan_root];
@@ -2488,12 +2517,14 @@ mod tests {
                 content: "请使用中文".into(),
                 source: "legacy".into(),
                 priority: 4,
+                modified_at: None,
             }],
             memory_items: vec![MemoryItem {
                 id: "memory-existing".into(),
                 agent_id: "codex".into(),
                 content: "正在构建 HUMHUM".into(),
                 temperature: "hot".into(),
+                modified_at: None,
             }],
             ..Default::default()
         };

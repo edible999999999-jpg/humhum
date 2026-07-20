@@ -7,6 +7,7 @@ import {
   getAgentAssetSummary,
   isPersonalAgentAsset,
   sortAgentAssetsByRecentUse,
+  sortByRecentUpdate,
 } from "./knowledgePresentation";
 
 function asset(
@@ -362,5 +363,23 @@ describe("recent skill usage presentation", () => {
       ...asset("/Users/me/.codex/skills/recent/SKILL.md"),
       last_used_at: "2026-07-19T09:00:00Z",
     })).toBe(Date.parse("2026-07-19T09:00:00Z"));
+  });
+});
+
+describe("Hype module chronology", () => {
+  it("sorts updated records newest first and keeps unknown dates last", () => {
+    const records = [
+      { id: "unknown" },
+      { id: "older", modified_at: "2026-07-18T09:00:00Z" },
+      { id: "epoch", modified_at: "1970-01-01T00:00:01Z" },
+      { id: "newer", modified_at: "2026-07-20T09:00:00Z" },
+    ];
+
+    expect(sortByRecentUpdate(records).map((record) => record.id)).toEqual([
+      "newer",
+      "older",
+      "unknown",
+      "epoch",
+    ]);
   });
 });

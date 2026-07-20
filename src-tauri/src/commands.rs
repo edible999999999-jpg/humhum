@@ -5036,6 +5036,7 @@ pub async fn save_humi_memory(
         agent_id: bounded_tool_text(&source, 240),
         content,
         temperature,
+        modified_at: None,
     });
     Ok(())
 }
@@ -5056,6 +5057,7 @@ pub async fn save_preference(
         content,
         source,
         priority,
+        modified_at: None,
     });
     Ok(())
 }
