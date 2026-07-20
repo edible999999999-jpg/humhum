@@ -2123,23 +2123,64 @@
   line-height: 1.4;
 }
 
-.hush-message-suggestion {
+.hush-reply-skill {
   display: flex;
+  flex-direction: column;
   align-items: flex-start;
-  gap: 6px;
-  margin-top: 6px;
-  padding: 6px 8px;
-  border-left: 2px solid rgba(197, 110, 37, 0.46);
-  border-radius: 0 6px 6px 0;
-  background: rgba(255, 240, 222, 0.56);
-  color: #775234;
-  font-size: 10px;
-  line-height: 1.45;
+  gap: 8px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(69, 113, 101, 0.1);
 }
 
-.hush-message-suggestion svg {
+.hush-reply-skill-trigger {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid rgba(66, 139, 115, 0.22);
+  border-radius: 7px;
+  background: rgba(240, 251, 247, 0.86);
+  color: #397c66;
+  font-size: 10px;
+  font-weight: 720;
+  cursor: pointer;
+}
+
+.hush-reply-skill-trigger:hover:not(:disabled) {
+  border-color: rgba(66, 139, 115, 0.36);
+  background: rgba(229, 247, 240, 0.94);
+}
+
+.hush-reply-skill-trigger:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
+.hush-reply-skill-suggestion {
+  display: flex;
+  width: min(100%, 520px);
+  align-items: flex-start;
+  gap: 7px;
+  padding: 9px 10px;
+  border-left: 2px solid rgba(197, 110, 37, 0.46);
+  border-radius: 0 7px 7px 0;
+  background: rgba(255, 240, 222, 0.56);
+  color: #775234;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.hush-reply-skill-suggestion svg {
   flex: 0 0 auto;
   margin-top: 1px;
+}
+
+.hush-reply-skill-error {
+  color: #a34f36;
+  font-size: 10px;
+  line-height: 1.45;
 }
 
 .hush-filter-empty,

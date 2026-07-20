@@ -14,9 +14,10 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { invokeMock, listenMock } = vi.hoisted(() => ({
+const { invokeMock, listenMock, runHushReplySkillMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
   listenMock: vi.fn(),
+  runHushReplySkillMock: vi.fn(),
 }));
 
 declare global {
@@ -29,6 +30,9 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: listenMock }));
+vi.mock("../../lib/hush/replySkill", () => ({
+  runHushReplySkill: runHushReplySkillMock,
+}));
 
 import {
   HUSH_CONVERSATION_STATE_KEY,
@@ -688,6 +692,9 @@ describe("HushModule conversation presentation", () => {
   beforeEach(() => {
     window.localStorage.clear();
     listenMock.mockResolvedValue(() => undefined);
+    runHushReplySkillMock.mockResolvedValue(
+      "可以，明天下午三点我有空，我们到时同步。",
+    );
     const messages: HushInboxMessage[] = [
       {
         id: "project-message",
@@ -802,6 +809,73 @@ describe("HushModule conversation presentation", () => {
     });
 
     expect(detail()).toContain("work · P0 · 特别关注");
+  });
+
+  it("shows one on-demand reply action for a direct chat without prefilled suggestions", async () => {
+    view = await renderHushModule();
+    const directContact = Array.from(
+      view.host.querySelectorAll<HTMLButtonElement>(".hush-contact-select"),
+    ).find((button) => button.textContent?.includes("成员乙"));
+
+    expect(directContact).toBeDefined();
+    expect(
+      Array.from(view.host.querySelectorAll("button")).filter(
+        (button) => button.textContent?.trim() === "建议回复",
+      ),
+    ).toHaveLength(0);
+
+    await act(async () => {
+      directContact?.click();
+    });
+
+    expect(
+      view.host.querySelectorAll(".hush-message-suggestion"),
+    ).toHaveLength(0);
+    expect(
+      Array.from(view.host.querySelectorAll("button")).filter(
+        (button) => button.textContent?.trim() === "建议回复",
+      ),
+    ).toHaveLength(1);
+    expect(view.host.textContent).not.toContain(
+      "建议回复：收到，我会按这条信息推进，有结果后回复你。",
+    );
+  });
+
+  it("runs the reply Skill once on demand and shows one contextual suggestion", async () => {
+    view = await renderHushModule();
+    const directContact = Array.from(
+      view.host.querySelectorAll<HTMLButtonElement>(".hush-contact-select"),
+    ).find((button) => button.textContent?.includes("成员乙"));
+
+    await act(async () => {
+      directContact?.click();
+    });
+    expect(runHushReplySkillMock).not.toHaveBeenCalled();
+
+    const trigger = buttonByText(view.host, "建议回复");
+    await act(async () => {
+      trigger.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(runHushReplySkillMock).toHaveBeenCalledTimes(1);
+    expect(runHushReplySkillMock).toHaveBeenCalledWith({
+      conversationName: "成员乙",
+      messages: [
+        {
+          sender: "成员乙",
+          text: "普通消息",
+          received_at: "2026-07-18T04:00:00Z",
+        },
+      ],
+    });
+    expect(
+      view.host.querySelectorAll(".hush-reply-skill-suggestion"),
+    ).toHaveLength(1);
+    expect(
+      view.host.querySelector(".hush-reply-skill-suggestion")?.textContent,
+    ).toContain("可以，明天下午三点我有空，我们到时同步。");
   });
 
   it("moves a newly starred conversation ahead of newer normal conversations", async () => {
@@ -1016,13 +1090,11 @@ describe("Hush conversation UI contracts", () => {
     );
   });
 
-  it("uses the conversation-scope guard for every suggested reply surface", () => {
-    expect(
-      hushModuleSource.match(/getVisibleHushSuggestedReply\(message\)/g),
-    ).toHaveLength(2);
-    expect(hushModuleSource).not.toContain(
-      "message.suggested_reply && !message.preview_limited",
-    );
+  it("keeps reply suggestions on demand instead of rendering stored message replies", () => {
+    expect(hushModuleSource).not.toContain("getVisibleHushSuggestedReply");
+    expect(hushModuleSource).not.toContain("hush-message-suggestion");
+    expect(hushModuleSource).toContain("runHushReplySkill");
+    expect(hushModuleSource).toContain('conversationScope === "direct"');
     expect(hushModuleSource).toContain("getHushConversationScopeLabel");
   });
 

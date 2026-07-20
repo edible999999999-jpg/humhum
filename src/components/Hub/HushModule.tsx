@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { runHushReplySkill } from "../../lib/hush/replySkill";
 import {
   ChevronDown,
   ExternalLink,
@@ -28,7 +29,6 @@ import {
   getHushPlatformIdentity,
   getHushPriorityLabel,
   getHushUnreadCount,
-  getVisibleHushSuggestedReply,
   groupHushMessages,
   migrateHushConversationState,
   parseHushConversationState,
@@ -749,6 +749,7 @@ export function HushModule() {
           <section className="hush-message-pane" aria-label="消息记录">
             {selectedContact ? (
               <ConversationDetail
+                key={`${selectedContact.id}:${selectedContact.lastMessageTime}`}
                 contact={selectedContact}
                 attention={conversationState.attentionIds.includes(
                   selectedContact.id,
@@ -1481,7 +1482,6 @@ function LiveInboxPanel({
         ) : (
           <div className="hush-live-list">
             {messages.slice(0, 8).map((message) => {
-              const suggestedReply = getVisibleHushSuggestedReply(message);
               const scope = getHushChatScope(message);
               return (
                 <div className="hush-live-row" key={message.id}>
@@ -1493,12 +1493,6 @@ function LiveInboxPanel({
                   </small>
                   {message.preview_limited && (
                     <small>{t("hub.hush.bridge.limitedPreview")}</small>
-                  )}
-                  {suggestedReply && (
-                    <small>
-                      建议回复：
-                      {formatHushMessageText(suggestedReply)}
-                    </small>
                   )}
                 </div>
               );
@@ -1678,8 +1672,45 @@ function ConversationDetail({
   attention: boolean;
 }) {
   const { t } = useTranslation();
+  const [replySuggestion, setReplySuggestion] = useState<string | null>(null);
+  const [replyError, setReplyError] = useState<string | null>(null);
+  const [replyLoading, setReplyLoading] = useState(false);
   const groups = groupHushMessages(contact.messages);
   const conversationScope = getHushConversationScope(contact.messages);
+  const replyContext = contact.messages
+    .filter((message) => !message.preview_limited && message.text.trim())
+    .sort(
+      (left, right) =>
+        Date.parse(left.received_at) - Date.parse(right.received_at),
+    )
+    .map(({ sender, text, received_at }) => ({
+      sender,
+      text,
+      received_at,
+    }));
+  const canSuggest =
+    conversationScope === "direct" && replyContext.length > 0;
+
+  const requestReplySuggestion = async () => {
+    if (!canSuggest || replyLoading) return;
+    setReplyLoading(true);
+    setReplyError(null);
+    try {
+      const suggestion = await runHushReplySkill({
+        conversationName: contact.name,
+        messages: replyContext,
+      });
+      setReplySuggestion(suggestion);
+    } catch (error) {
+      setReplyError(
+        error instanceof Error
+          ? error.message
+          : "暂时没有生成建议，请稍后重试。",
+      );
+    } finally {
+      setReplyLoading(false);
+    }
+  };
 
   return (
     <div className="hush-conversation-detail">
@@ -1718,32 +1749,54 @@ function ConversationDetail({
               </time>
             </header>
             <div className="hush-message-lines">
-              {group.messages.map((message) => {
-                const suggestedReply = getVisibleHushSuggestedReply(message);
-                return (
-                  <div className="hush-message-line" key={message.id}>
-                    <p>{message.text}</p>
-                    {message.preview_limited && (
-                      <div className="hush-message-warning">
-                        {t("hub.hush.bridge.limitedPreview")}
-                      </div>
-                    )}
-                    {suggestedReply && (
-                      <div className="hush-message-suggestion">
-                        <MessageCircle size={13} aria-hidden="true" />
-                        <span>
-                          {t("hub.hush.suggestedReplies")}：
-                          {suggestedReply}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+              {group.messages.map((message) => (
+                <div className="hush-message-line" key={message.id}>
+                  <p>{message.text}</p>
+                  {message.preview_limited && (
+                    <div className="hush-message-warning">
+                      {t("hub.hush.bridge.limitedPreview")}
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
           </section>
         ))}
       </div>
+
+      {canSuggest && (
+        <div className="hush-reply-skill">
+          {replySuggestion && (
+            <div
+              className="hush-reply-skill-suggestion"
+              aria-live="polite"
+            >
+              <MessageCircle size={14} aria-hidden="true" />
+              <span>{replySuggestion}</span>
+            </div>
+          )}
+          {replyError && (
+            <div className="hush-reply-skill-error" role="status">
+              {replyError}
+            </div>
+          )}
+          <button
+            type="button"
+            className="hush-reply-skill-trigger"
+            disabled={replyLoading}
+            onClick={() => void requestReplySuggestion()}
+          >
+            <MessageCircle size={14} aria-hidden="true" />
+            {replyLoading
+              ? "正在生成..."
+              : replySuggestion
+                ? "重新生成"
+                : replyError
+                  ? "重试建议"
+                  : "建议回复"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

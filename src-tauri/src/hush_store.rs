@@ -213,14 +213,6 @@ impl HushStore {
             .importance
             .unwrap_or_else(|| infer_importance(&tier, &text));
         let conversation_kind = infer_conversation_kind(parsed.conversation_kind.as_deref(), &raw);
-        let suggested_reply = if parsed.preview_limited || conversation_kind != "direct" {
-            None
-        } else {
-            parsed
-                .suggested_reply
-                .clone()
-                .or_else(|| suggest_reply(&tier, &text))
-        };
 
         let message = HushInboxMessage {
             id: format!("hush-{}", Uuid::new_v4()),
@@ -231,7 +223,7 @@ impl HushStore {
             tier,
             importance,
             conversation_kind,
-            suggested_reply,
+            suggested_reply: None,
             received_at: parsed
                 .received_at
                 .unwrap_or_else(|| chrono::Utc::now().to_rfc3339()),
@@ -440,59 +432,6 @@ fn infer_conversation_kind(explicit: Option<&str>, raw: &Value) -> String {
     }
 }
 
-fn suggest_reply(tier: &str, text: &str) -> Option<String> {
-    let normalized = text.to_lowercase();
-    if normalized.contains("图片消息") {
-        Some("图片收到了，我看一下内容，确认后回复你。".to_string())
-    } else if ["查到吗", "有结果吗", "进展呢", "怎么样了"]
-        .iter()
-        .any(|needle| normalized.contains(needle))
-    {
-        Some("我正在确认，查到明确结果后马上回复你。".to_string())
-    } else if let Some(schedule) = meeting_schedule_prefix(text) {
-        Some(format!(
-            "可以，我先确认一下{}的安排，稍后明确回复你。",
-            schedule
-        ))
-    } else if ["紧急", "马上", "尽快", "urgent", "asap", "blocked"]
-        .iter()
-        .any(|needle| normalized.contains(needle))
-    {
-        Some("收到，我会优先处理，并尽快同步明确进展。".to_string())
-    } else if ["看一下", "确认一下", "review", "检查", "评审"]
-        .iter()
-        .any(|needle| normalized.contains(needle))
-    {
-        Some("收到，我先看一下，整理好结论后明确回复你。".to_string())
-    } else if ["帮忙", "麻烦", "请你", "能否"]
-        .iter()
-        .any(|needle| normalized.contains(needle))
-    {
-        Some("可以，我先处理这件事，完成后把结果回复你。".to_string())
-    } else if normalized.contains('？') || normalized.contains('?') || normalized.contains("可以吗")
-    {
-        Some("可以，我先确认一下具体情况，稍后明确回复你。".to_string())
-    } else if tier == "family" && text.contains('吃') {
-        Some("好，我会记得按时吃饭，也会认真回复你。".to_string())
-    } else if tier == "work" {
-        Some("收到，我会按这条信息推进，有结果后回复你。".to_string())
-    } else {
-        Some("好，我知道了，我确认后回复你。".to_string())
-    }
-}
-
-fn meeting_schedule_prefix(text: &str) -> Option<String> {
-    ["开会", "会议"].iter().find_map(|marker| {
-        let prefix = text
-            .split_once(marker)?
-            .0
-            .trim()
-            .trim_matches(['，', ',', '。', '.', '？', '?', '！', '!']);
-        let length = prefix.chars().count();
-        (length > 0 && length <= 20).then(|| prefix.to_string())
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -546,7 +485,7 @@ mod tests {
     }
 
     #[test]
-    fn direct_messages_receive_content_aware_suggested_replies() {
+    fn direct_messages_do_not_persist_suggestions_before_user_requests_one() {
         let path = temp_file("direct-reply");
         let mut store = HushStore::with_file_path(path.clone());
         let message = store
@@ -562,31 +501,8 @@ mod tests {
             .unwrap();
 
         assert_eq!(message.conversation_kind, "direct");
-        assert_eq!(
-            message.suggested_reply.as_deref(),
-            Some("可以，我先确认一下明天下午三点的安排，稍后明确回复你。")
-        );
-        assert_ne!(
-            message.suggested_reply.as_deref(),
-            Some("看到了，我晚点回你～")
-        );
+        assert!(message.suggested_reply.is_none());
         let _ = std::fs::remove_file(path);
-    }
-
-    #[test]
-    fn direct_reply_templates_cover_progress_questions_and_images() {
-        assert_eq!(
-            suggest_reply("friends", "怎么样郭师，有查到吗").as_deref(),
-            Some("我正在确认，查到明确结果后马上回复你。")
-        );
-        assert_eq!(
-            suggest_reply(
-                "friends",
-                "图片消息 注意：如需下载使用 dws chat message download-media"
-            )
-            .as_deref(),
-            Some("图片收到了，我看一下内容，确认后回复你。")
-        );
     }
 
     #[test]

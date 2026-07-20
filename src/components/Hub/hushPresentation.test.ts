@@ -7,7 +7,6 @@ import {
   getLatestHushMessage,
   getHushPriorityLabel,
   getHushUnreadCount,
-  getVisibleHushSuggestedReply,
   groupHushMessages,
   isHushContactUnread,
   migrateHushConversationState,
@@ -123,56 +122,6 @@ describe("Hush conversation scope", () => {
     expect(getHushChatScope(candidate)).toBe(expected);
   });
 
-  it("hides persisted group suggestions but keeps direct suggestions", () => {
-    const group = {
-      ...message("group", "2026-07-18T01:00:00Z"),
-      conversation_kind: "group",
-      suggested_reply: "看到了，我晚点回你",
-    };
-    const direct = {
-      ...message("direct", "2026-07-18T01:00:00Z"),
-      conversation_kind: "direct",
-      suggested_reply: "可以，我确认时间后明确回复你。",
-    };
-
-    expect(getVisibleHushSuggestedReply(group)).toBeNull();
-    expect(getVisibleHushSuggestedReply(direct)).toBe(
-      "可以，我确认时间后明确回复你。",
-    );
-  });
-
-  it("upgrades a persisted generic direct reply using the message content", () => {
-    const legacyDirect = {
-      ...message("legacy-direct", "2026-07-18T01:00:00Z"),
-      conversation_kind: "direct",
-      text: "明天下午三点开会可以吗？",
-      suggested_reply: "看到了，我晚点回你～",
-    };
-
-    expect(getVisibleHushSuggestedReply(legacyDirect)).toBe(
-      "可以，我先确认一下明天下午三点的安排，稍后明确回复你。",
-    );
-  });
-
-  it.each([
-    {
-      text: "怎么样郭师，有查到吗",
-      expected: "我正在确认，查到明确结果后马上回复你。",
-    },
-    {
-      text: "图片消息 注意：如需下载使用 dws chat message download-media",
-      expected: "图片收到了，我看一下内容，确认后回复你。",
-    },
-  ])("upgrades legacy direct replies for: $text", ({ text, expected }) => {
-    const legacyDirect = {
-      ...message("legacy-direct", "2026-07-18T01:00:00Z"),
-      conversation_kind: "direct",
-      text,
-      suggested_reply: "看到了，我晚点回你～",
-    };
-
-    expect(getVisibleHushSuggestedReply(legacyDirect)).toBe(expected);
-  });
 });
 
 describe("Hush priority labels", () => {
