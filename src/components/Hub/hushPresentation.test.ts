@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   filterHushContacts,
+  formatHushConversationTime,
   getHushChatScope,
   getHushConversationIdentity,
   getLatestHushMessage,
@@ -68,6 +69,27 @@ function contact(
     messages,
   };
 }
+
+describe("Hush conversation time labels", () => {
+  const now = new Date(2026, 6, 20, 12, 0, 0);
+  const localIso = (
+    year: number,
+    month: number,
+    day: number,
+    hour: number,
+    minute: number,
+  ) => new Date(year, month, day, hour, minute, 0).toISOString();
+
+  it.each([
+    [localIso(2026, 6, 20, 11, 8), "11:08"],
+    [localIso(2026, 6, 19, 13, 27), "昨天 13:27"],
+    [localIso(2026, 6, 17, 13, 27), "7月17日"],
+    [localIso(2025, 11, 31, 23, 59), "2025/12/31"],
+    ["invalid-time", "invalid-time"],
+  ])("formats %s as %s", (value, expected) => {
+    expect(formatHushConversationTime(value, now)).toBe(expected);
+  });
+});
 
 describe("Hush conversation scope", () => {
   it.each([

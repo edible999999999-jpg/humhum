@@ -248,6 +248,34 @@ export function getHushPriorityLabel(
   return "P4";
 }
 
+export function formatHushConversationTime(
+  value: string,
+  now: Date = new Date(),
+): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  const time = date.toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const valueStart = new Date(
+    date.getFullYear(),
+    date.getMonth(),
+    date.getDate(),
+  );
+  const dayDifference = Math.round(
+    (dayStart.getTime() - valueStart.getTime()) / 86_400_000,
+  );
+  if (dayDifference === 0) return time;
+  if (dayDifference === 1) return `昨天 ${time}`;
+  if (date.getFullYear() === now.getFullYear()) {
+    return `${date.getMonth() + 1}月${date.getDate()}日`;
+  }
+  return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}`;
+}
+
 export function getHushConversationIdentity(
   message: Pick<
     HushInboxMessage,

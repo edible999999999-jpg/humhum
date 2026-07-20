@@ -18,6 +18,7 @@ import {
   compareHushContacts,
   filterHushContacts,
   filterHushContactsByName,
+  formatHushConversationTime,
   formatHushMessageText,
   getHushChatScope,
   getHushConversationScope,
@@ -1604,8 +1605,11 @@ export function HushContactRow({
         <span className="hush-contact-copy">
           <span className="hush-contact-heading">
             <strong>{contact.name}</strong>
-            <time dateTime={contact.lastMessageTime}>
-              {formatTime(contact.lastMessageTime)}
+            <time
+              dateTime={contact.lastMessageTime}
+              title={new Date(contact.lastMessageTime).toLocaleString()}
+            >
+              {formatHushConversationTime(contact.lastMessageTime)}
             </time>
           </span>
           <span className="hush-contact-sources">
