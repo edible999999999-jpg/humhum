@@ -199,6 +199,13 @@ function buttonByLabel(host: HTMLElement, label: string): HTMLButtonElement {
   return button;
 }
 
+async function openOperations(host: HTMLElement): Promise<void> {
+  await act(async () => {
+    buttonByLabel(host, "展开运行状态").click();
+    await Promise.resolve();
+  });
+}
+
 describe("Humi operational controls", () => {
   beforeEach(() => {
     sessionStorage.clear();
@@ -212,19 +219,34 @@ describe("Humi operational controls", () => {
     document.body.innerHTML = "";
   });
 
-  it("keeps sessions, auto confirm, TTS and token stats visible beside chat", async () => {
+  it("keeps the operations rail collapsed by default and toggles it on demand", async () => {
     const view = await renderHumiModule();
 
+    expect(view.host.textContent).toContain("你好，我是 Humi");
+    expect(
+      view.host.querySelector('textarea[placeholder="和 Humi 聊聊"]'),
+    ).not.toBeNull();
+
+    const openButton = buttonByLabel(view.host, "展开运行状态");
+    expect(openButton.getAttribute("aria-expanded")).toBe("false");
+    expect(view.host.querySelector("#humi-operations-panel")).toBeNull();
+
+    await act(async () => openButton.click());
+
+    const closeButton = buttonByLabel(view.host, "收起运行状态");
+    expect(closeButton.getAttribute("aria-expanded")).toBe("true");
+    expect(view.host.querySelector("#humi-operations-panel")).not.toBeNull();
     expect(view.host.textContent).toContain("实时会话");
     expect(view.host.textContent).toContain("HUMHUM");
     expect(view.host.textContent).toContain("自动确认");
     expect(view.host.textContent).toContain("TTS 播报");
     expect(view.host.textContent).toContain("1.3M");
     expect(view.host.textContent).toContain("41 次会话");
-    expect(view.host.textContent).toContain("你好，我是 Humi");
-    expect(
-      view.host.querySelector('textarea[placeholder="和 Humi 聊聊"]'),
-    ).not.toBeNull();
+
+    await act(async () => closeButton.click());
+
+    expect(view.host.querySelector("#humi-operations-panel")).toBeNull();
+    expect(buttonByLabel(view.host, "展开运行状态")).not.toBeNull();
 
     await dispose(view);
   });
@@ -232,6 +254,7 @@ describe("Humi operational controls", () => {
   it("shows one compact Hexa attention summary and opens the most urgent goal", async () => {
     const onOpenHexa = vi.fn();
     const view = await renderHumiModule(onOpenHexa);
+    await openOperations(view.host);
 
     expect(view.host.textContent).toContain("1 个开发目标需要注意");
     expect(view.host.textContent).toContain("1 个验证失败");
@@ -325,6 +348,7 @@ describe("Humi operational controls", () => {
     });
     const onOpenHexa = vi.fn();
     const view = await renderHumiModule(onOpenHexa);
+    await openOperations(view.host);
 
     expect(view.host.textContent).toContain("4 个开发目标需要注意");
     expect(view.host.textContent).toContain("1 个验证失败");
@@ -394,6 +418,7 @@ describe("Humi operational controls", () => {
     });
     const onOpenHexa = vi.fn();
     const view = await renderHumiModule(onOpenHexa);
+    await openOperations(view.host);
 
     await act(async () => {
       view.host.querySelector<HTMLButtonElement>(".humi-hexa-summary")?.click();
@@ -421,6 +446,7 @@ describe("Humi operational controls", () => {
     });
     const onOpenHexa = vi.fn();
     const view = await renderHumiModule(onOpenHexa);
+    await openOperations(view.host);
 
     expect(view.host.textContent).toContain("1 个开发目标需要注意");
     expect(view.host.textContent).toContain("0 个验证失败");
@@ -444,6 +470,7 @@ describe("Humi operational controls", () => {
     });
     const onOpenHexa = vi.fn();
     const view = await renderHumiModule(onOpenHexa);
+    await openOperations(view.host);
 
     expect(view.host.textContent).toContain("1 个开发目标需要注意");
     expect(view.host.textContent).toContain("1 个验证失败");
@@ -470,6 +497,7 @@ describe("Humi operational controls", () => {
     });
 
     const view = await renderHumiModule();
+    await openOperations(view.host);
 
     expect(view.host.textContent).toContain("实时会话");
     expect(view.host.textContent).toContain("自动确认");
@@ -481,6 +509,7 @@ describe("Humi operational controls", () => {
 
   it("opens the selected Agent session", async () => {
     const view = await renderHumiModule();
+    await openOperations(view.host);
 
     await act(async () => {
       buttonByLabel(view.host, "打开会话 HUMHUM").click();
@@ -496,6 +525,7 @@ describe("Humi operational controls", () => {
 
   it("persists global auto confirm and can preview the configured voice", async () => {
     const view = await renderHumiModule();
+    await openOperations(view.host);
 
     await act(async () => {
       buttonByLabel(view.host, "自动确认所有权限").click();
