@@ -1241,6 +1241,9 @@ mod tests {
             Ok(ready.as_str()),
             Ok(sessions.as_str()),
             Ok(timeline.as_str()),
+            Ok(ready.as_str()),
+            Ok(sessions.as_str()),
+            Ok(timeline.as_str()),
         ]));
         let dir = test_dir("sync");
         std::fs::create_dir_all(&dir).unwrap();
@@ -1271,12 +1274,23 @@ mod tests {
             Some("2026-07-19T12:30:00+00:00")
         );
 
+        let repeated = bridge.sync(store.clone()).await.unwrap();
+        assert_eq!(repeated.imported_messages, 0);
+        assert_eq!(repeated.duplicate_messages, 1);
+        assert_eq!(store.lock().unwrap().summary().total, 1);
+
         let calls = runner.calls.lock().unwrap();
-        assert_eq!(calls.len(), 3);
+        assert_eq!(calls.len(), 6);
         assert_eq!(calls[0], ("status".to_string(), None));
         assert_eq!(calls[1], ("sessions".to_string(), None));
         assert_eq!(
             calls[2],
+            ("timeline".to_string(), Some("wxid_alice".to_string()))
+        );
+        assert_eq!(calls[3], ("status".to_string(), None));
+        assert_eq!(calls[4], ("sessions".to_string(), None));
+        assert_eq!(
+            calls[5],
             ("timeline".to_string(), Some("wxid_alice".to_string()))
         );
         let _ = std::fs::remove_dir_all(dir);
