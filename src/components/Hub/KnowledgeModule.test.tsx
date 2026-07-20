@@ -361,7 +361,7 @@ describe("Hype logical skill rows", () => {
       const found = [...host.querySelectorAll(".hype-logical-skill-row")].find(
         (item) => item.textContent?.includes("Unknown-time skill"),
       );
-      expect(found).toBeTruthy();
+      if (!found) throw new Error("Unknown-time skill row was not rendered");
       return found;
     });
     expect(row.querySelector("time")?.textContent).toBe("使用时间未知");
@@ -391,7 +391,7 @@ describe("Hype logical skill rows", () => {
       const found = [...host.querySelectorAll(".hype-logical-skill-row")].find(
         (item) => item.textContent?.includes("Unknown-time skill"),
       );
-      expect(found).toBeTruthy();
+      if (!found) throw new Error("Unknown-time skill row was not rendered");
       return found;
     });
     await act(async () => {
