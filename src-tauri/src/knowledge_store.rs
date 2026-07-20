@@ -600,38 +600,62 @@ impl KnowledgeStore {
                 if assets.len() >= MAX_AGENT_ASSETS {
                     break;
                 }
-                if let Ok(metadata) = std::fs::metadata(&path) {
-                    if metadata.len() > MAX_ASSET_BYTES {
+                let is_skill_file = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.eq_ignore_ascii_case("SKILL.md"));
+                let (asset_root, asset_path, matched_source) = if is_skill_file {
+                    let Ok(canonical_path) = path.canonicalize() else {
+                        continue;
+                    };
+                    if !canonical_path.is_file()
+                        || !canonical_path
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .is_some_and(|name| name.eq_ignore_ascii_case("SKILL.md"))
+                        || !is_personal_skill_path(&canonical_path)
+                    {
                         continue;
                     }
-                }
-                let Ok(content) = std::fs::read_to_string(&path) else {
-                    continue;
-                };
-                let mut asset = parse_agent_asset(&root, &path, &content);
-                if root_skill_source.is_some() && asset.asset_type != "skill" {
-                    continue;
-                }
-                if asset.asset_type == "skill" {
-                    if !is_personal_skill_path(&path) {
-                        continue;
-                    }
-                    let canonical_path = path.canonicalize().unwrap_or_else(|_| path.clone());
+                    let canonical_root = root.canonicalize().ok();
                     let matched_source = skill_sources
                         .iter()
-                        .filter(|source| canonical_path.starts_with(&source.root))
-                        .max_by_key(|source| source.root.components().count())
-                        .or(root_skill_source.as_ref());
-                    if matched_source.is_some_and(|source| {
-                        source
-                            .excluded_prefixes
-                            .iter()
-                            .any(|prefix| path.starts_with(prefix))
-                    }) || is_unapproved_skill_cache(&path, matched_source)
+                        .filter(|source| skill_source_matches(source, &canonical_path))
+                        .max_by_key(|source| source.root.components().count());
+                    let recognized_by_scan_root = canonical_root
+                        .as_ref()
+                        .is_some_and(|root| canonical_path.starts_with(root));
+                    if matched_source.is_none() && !recognized_by_scan_root {
+                        continue;
+                    }
+                    if matched_source
+                        .is_some_and(|source| source_excludes_path(source, &canonical_path))
+                        || is_unapproved_skill_cache(&canonical_path, matched_source)
                     {
                         continue;
                     }
 
+                    (
+                        canonical_root.unwrap_or_else(|| root.clone()),
+                        canonical_path,
+                        matched_source,
+                    )
+                } else {
+                    (root.clone(), path.clone(), None)
+                };
+                if let Ok(metadata) = std::fs::metadata(&asset_path) {
+                    if metadata.len() > MAX_ASSET_BYTES {
+                        continue;
+                    }
+                }
+                let Ok(content) = std::fs::read_to_string(&asset_path) else {
+                    continue;
+                };
+                let mut asset = parse_agent_asset(&asset_root, &asset_path, &content);
+                if root_skill_source.is_some() && asset.asset_type != "skill" {
+                    continue;
+                }
+                if asset.asset_type == "skill" {
                     let description = skill_description(&content);
                     let (display_name_zh, summary_zh) =
                         chinese_skill_presentation(&asset.name, &description);
@@ -1177,6 +1201,27 @@ fn parse_agent_asset(root: &Path, path: &Path, content: &str) -> AgentAsset {
         display_name_zh: None,
         summary_zh: None,
     }
+}
+
+fn skill_source_matches(source: &SkillSource, canonical_path: &Path) -> bool {
+    if let Some(evidence_path) = &source.evidence_path {
+        return evidence_path == canonical_path;
+    }
+
+    source
+        .root
+        .canonicalize()
+        .ok()
+        .is_some_and(|root| canonical_path.starts_with(root))
+}
+
+fn source_excludes_path(source: &SkillSource, canonical_path: &Path) -> bool {
+    source.excluded_prefixes.iter().any(|prefix| {
+        prefix
+            .canonicalize()
+            .ok()
+            .is_some_and(|prefix| canonical_path.starts_with(prefix))
+    })
 }
 
 fn is_unapproved_skill_cache(path: &Path, source: Option<&SkillSource>) -> bool {
@@ -1983,6 +2028,82 @@ mod tests {
             release.usage_evidence[0].workspace.as_deref(),
             Some(project.to_string_lossy().as_ref())
         );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn session_evidence_attaches_only_to_exact_parent_skill() {
+        let root = temp_root("exact-skill-evidence");
+        let home = root.join("home");
+        let parent_skill = home.join(".codex/skills/parent/SKILL.md");
+        let nested_skill = home.join(".codex/skills/parent/nested/SKILL.md");
+        for (path, name) in [(&parent_skill, "parent"), (&nested_skill, "nested")] {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, format!("---\nname: {name}\ndescription: test\n---\n")).unwrap();
+        }
+        let session_dir = home.join(".codex/sessions");
+        std::fs::create_dir_all(&session_dir).unwrap();
+        std::fs::write(
+            session_dir.join("parent-session.jsonl"),
+            format!(
+                "{{\"type\":\"response_item\",\"payload\":{{\"type\":\"custom_tool_call\",\"name\":\"exec\",\"input\":\"cat {}\"}}}}\n",
+                parent_skill.display(),
+            ),
+        )
+        .unwrap();
+        let mut store = store_at(&root);
+
+        let assets = store
+            .scan_agent_assets_with_home(Some(Vec::new()), &home)
+            .unwrap();
+        let parent = assets
+            .iter()
+            .find(|asset| asset.name == "parent")
+            .expect("parent skill");
+        let nested = assets
+            .iter()
+            .find(|asset| asset.name == "nested")
+            .expect("nested skill");
+
+        assert_eq!(parent.usage_evidence.len(), 1);
+        assert!(nested.usage_evidence.is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn skill_scan_rejects_symlink_targets_outside_recognized_or_inside_system_roots() {
+        use std::os::unix::fs::symlink;
+
+        let root = temp_root("skill-symlink-safety");
+        let home = root.join("home");
+        let outside = root.join("outside/SKILL.md");
+        let system = home.join(".codex/skills/.system/secret/SKILL.md");
+        for (path, name) in [(&outside, "outside-secret"), (&system, "system-secret")] {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(
+                path,
+                format!("---\nname: {name}\ndescription: must not persist\n---\n"),
+            )
+            .unwrap();
+        }
+        let linked_outside = home.join(".agents/skills/linked-outside/SKILL.md");
+        let linked_system = home.join(".agents/skills/linked-system/SKILL.md");
+        for (link, target) in [(&linked_outside, &outside), (&linked_system, &system)] {
+            std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+            symlink(target, link).unwrap();
+        }
+        let mut store = store_at(&root);
+
+        let assets = store
+            .scan_agent_assets_with_home(Some(Vec::new()), &home)
+            .unwrap();
+
+        assert!(!assets.iter().any(|asset| {
+            asset.name == "outside-secret"
+                || asset.name == "system-secret"
+                || asset.content.contains("must not persist")
+        }));
         let _ = std::fs::remove_dir_all(&root);
     }
 

@@ -17,6 +17,7 @@ pub struct EnabledPlugin {
 #[derive(Debug, Clone)]
 pub struct SkillSource {
     pub root: PathBuf,
+    pub evidence_path: Option<PathBuf>,
     pub source: String,
     pub plugin: Option<String>,
     pub ownership: String,
@@ -71,6 +72,7 @@ pub fn discover_skill_sources_with_roots(
     let mut sources = vec![
         SkillSource {
             root: home.join(".claude/skills"),
+            evidence_path: None,
             source: "claude".into(),
             plugin: None,
             ownership: "created".into(),
@@ -80,6 +82,7 @@ pub fn discover_skill_sources_with_roots(
         },
         SkillSource {
             root: home.join(".agents/skills"),
+            evidence_path: None,
             source: "agents".into(),
             plugin: None,
             ownership: "created".into(),
@@ -89,6 +92,7 @@ pub fn discover_skill_sources_with_roots(
         },
         SkillSource {
             root: home.join(".codex/skills"),
+            evidence_path: None,
             source: "codex".into(),
             plugin: None,
             ownership: "created".into(),
@@ -98,6 +102,7 @@ pub fn discover_skill_sources_with_roots(
         },
         SkillSource {
             root: home.join(".qoder/skills"),
+            evidence_path: None,
             source: "qoder".into(),
             plugin: None,
             ownership: "installed".into(),
@@ -115,6 +120,7 @@ pub fn discover_skill_sources_with_roots(
             if root.is_dir() && name != "marketplaces" {
                 sources.push(SkillSource {
                     root,
+                    evidence_path: None,
                     source: "claude-plugin".into(),
                     plugin: Some(name),
                     ownership: "installed".into(),
@@ -135,6 +141,7 @@ pub fn discover_skill_sources_with_roots(
             if let Some(root) = newest_child_directory(&plugin_root) {
                 sources.push(SkillSource {
                     root,
+                    evidence_path: None,
                     source: "codex-plugin".into(),
                     plugin: Some(plugin.name),
                     ownership: "installed".into(),
@@ -289,6 +296,7 @@ fn discover_session_skill_sources_from_files_with_roots(
 
             sources.push(SkillSource {
                 root: root.to_path_buf(),
+                evidence_path: Some(canonical_skill_path),
                 source,
                 plugin,
                 ownership,
@@ -477,8 +485,18 @@ fn extract_absolute_skill_paths(input: &str) -> Vec<PathBuf> {
         let start = input[..filename]
             .char_indices()
             .rev()
-            .find(|(_, character)| is_path_boundary(*character))
+            .find(|(index, character)| {
+                matches!(character, '\'' | '"')
+                    && input[index + character.len_utf8()..filename].starts_with('/')
+            })
             .map(|(index, character)| index + character.len_utf8())
+            .or_else(|| {
+                input[..filename]
+                    .char_indices()
+                    .rev()
+                    .find(|(_, character)| is_path_boundary(*character))
+                    .map(|(index, character)| index + character.len_utf8())
+            })
             .unwrap_or(0);
         let candidate = &input[start..end];
         if candidate.starts_with('/') {
@@ -829,6 +847,44 @@ enabled = false
             extract_used_skill_paths_from_session(&session),
             paths.into_iter().map(PathBuf::from).collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn extracts_quoted_absolute_skill_paths_containing_spaces() {
+        let skill = "/Users/me/Projects/My Skills/release helper/SKILL.md";
+        let session = format!(
+            "{{\"type\":\"response_item\",\"payload\":{{\"type\":\"custom_tool_call\",\"name\":\"exec\",\"input\":\"cat \\\"{skill}\\\"\"}}}}\n\
+             {{\"type\":\"response_item\",\"payload\":{{\"type\":\"function_call\",\"name\":\"exec_command\",\"arguments\":\"{{\\\"cmd\\\":\\\"cat '{skill}'\\\"}}\"}}}}"
+        );
+
+        assert_eq!(
+            extract_used_skill_paths_from_session(&session),
+            vec![PathBuf::from(skill)]
+        );
+    }
+
+    #[test]
+    fn discovers_quoted_personal_skill_path_containing_spaces() {
+        let root = temp_root("session-spaced-path");
+        let home = root.join("home");
+        let skill = home.join(".codex/skills/My Skill/SKILL.md");
+        std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
+        std::fs::write(&skill, "---\nname: spaced\ndescription: test\n---\n").unwrap();
+        let session_path = root.join("spaced-session.jsonl");
+        std::fs::write(
+            &session_path,
+            format!(
+                "{{\"type\":\"response_item\",\"payload\":{{\"type\":\"custom_tool_call\",\"name\":\"exec\",\"input\":\"cat \\\"{}\\\"\"}}}}\n",
+                skill.display(),
+            ),
+        )
+        .unwrap();
+
+        let sources = discover_session_skill_sources_from_files(&home, &[session_path]);
+
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].usage_evidence.len(), 1);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

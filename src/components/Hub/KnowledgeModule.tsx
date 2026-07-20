@@ -1606,7 +1606,7 @@ function LogicalSkillRow({ skill }: { skill: LogicalSkill }) {
                       <time dateTime={validUsedAt?.toISOString()}>
                         {validUsedAt
                           ? validUsedAt.toLocaleString()
-                          : "时间未知"}
+                          : "使用时间未知"}
                       </time>
                     </div>
                   );

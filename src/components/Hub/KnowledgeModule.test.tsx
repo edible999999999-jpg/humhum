@@ -366,6 +366,12 @@ describe("Hype logical skill rows", () => {
     });
     expect(row.querySelector("time")?.textContent).toBe("使用时间未知");
     expect(row.querySelector("time")?.textContent).not.toBe("未发现使用记录");
+    await act(async () => {
+      row.querySelector<HTMLButtonElement>(".hype-asset-row")?.click();
+    });
+    expect(
+      row.querySelector(".hype-skill-session-row time")?.textContent,
+    ).toBe("使用时间未知");
 
     await act(async () => root.unmount());
   });
