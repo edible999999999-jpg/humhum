@@ -650,6 +650,22 @@ impl Drop for SyncFlagGuard<'_> {
     }
 }
 
+pub(crate) async fn run_immediately_then_interval<F, Fut>(
+    period: Duration,
+    mut task: F,
+) where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = ()>,
+{
+    let mut interval = tokio::time::interval(period);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    interval.tick().await;
+    loop {
+        task().await;
+        interval.tick().await;
+    }
+}
+
 fn discover_dws(home: &Path) -> Option<DwsExecutable> {
     discover_dws_with(find_dws_on_path(), home)
 }
@@ -836,6 +852,39 @@ mod tests {
         } else {
             "dws"
         }
+    }
+
+    #[tokio::test]
+    async fn periodic_task_runs_immediately_then_waits_for_the_interval() {
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let observed = calls.clone();
+        let task = tokio::spawn(run_immediately_then_interval(
+            Duration::from_millis(100),
+            move || {
+                observed.fetch_add(1, Ordering::SeqCst);
+                std::future::ready(())
+            },
+        ));
+
+        tokio::time::timeout(Duration::from_millis(100), async {
+            while calls.load(Ordering::SeqCst) == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("periodic task did not run immediately");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        tokio::time::sleep(Duration::from_millis(40)).await;
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        tokio::time::timeout(Duration::from_millis(300), async {
+            while calls.load(Ordering::SeqCst) < 2 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("periodic task did not run after its interval");
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        task.abort();
     }
 
     #[test]

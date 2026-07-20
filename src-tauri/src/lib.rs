@@ -256,23 +256,29 @@ pub fn run() {
             let dws_app = app_handle.clone();
             let dws_hush_store = hush_store.clone();
             tauri::async_runtime::spawn(async move {
-                let mut interval =
-                    tokio::time::interval(std::time::Duration::from_secs(5 * 60));
-                interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-                interval.tick().await;
-                loop {
-                    interval.tick().await;
-                    let config = dws_bridge.config_snapshot().await;
-                    if !config.auto_sync_enabled || dws_bridge.is_syncing() {
-                        continue;
-                    }
-                    match dws_bridge.sync(dws_hush_store.clone()).await {
-                        Ok(report) => {
-                            let _ = dws_app.emit("humhum://hush-message", &report);
+                dws_hush_bridge::run_immediately_then_interval(
+                    std::time::Duration::from_secs(5 * 60),
+                    move || {
+                        let dws_bridge = dws_bridge.clone();
+                        let dws_hush_store = dws_hush_store.clone();
+                        let dws_app = dws_app.clone();
+                        async move {
+                            let config = dws_bridge.config_snapshot().await;
+                            if !config.auto_sync_enabled || dws_bridge.is_syncing() {
+                                return;
+                            }
+                            match dws_bridge.sync(dws_hush_store).await {
+                                Ok(report) => {
+                                    let _ = dws_app.emit("humhum://hush-message", &report);
+                                }
+                                Err(error) => {
+                                    log::warn!("DingTalk DWS background sync failed: {error}")
+                                }
+                            }
                         }
-                        Err(error) => log::warn!("DingTalk DWS background sync failed: {error}"),
-                    }
-                }
+                    },
+                )
+                .await;
             });
 
             #[cfg(target_os = "macos")]
