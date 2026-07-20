@@ -1897,6 +1897,27 @@ mod tests {
     }
 
     #[test]
+    fn agent_asset_without_usage_evidence_deserializes_to_empty_vec() {
+        let asset: AgentAsset = serde_json::from_str(
+            r#"{
+                "id": "asset:legacy",
+                "asset_type": "skill",
+                "agent_id": "codex",
+                "name": "legacy",
+                "file_path": "/tmp/legacy/SKILL.md",
+                "relative_path": "legacy/SKILL.md",
+                "source": "codex",
+                "content": "legacy skill",
+                "tags": [],
+                "modified_at": null
+            }"#,
+        )
+        .unwrap();
+
+        assert!(asset.usage_evidence.is_empty());
+    }
+
+    #[test]
     fn save_preference_writes_and_reloads_from_vault() {
         let root = temp_root("save-pref");
         let mut store = store_at(&root);

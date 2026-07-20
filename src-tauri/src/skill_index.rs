@@ -5,6 +5,7 @@ use std::time::UNIX_EPOCH;
 use serde::{Deserialize, Serialize};
 
 const MAX_RECENT_SESSION_FILES: usize = 80;
+const MAX_SESSION_HEADER_BYTES: u64 = 64 * 1024;
 const MAX_SESSION_TAIL_BYTES: u64 = 2 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -232,7 +233,9 @@ pub fn discover_session_skill_sources_from_files(
         let Ok(content) = read_session_tail(session_file) else {
             continue;
         };
-        let session_context = extract_session_context(&content, session_file);
+        let session_context = read_session_header(session_file)
+            .map(|header| extract_session_context(&header, session_file))
+            .unwrap_or_else(|_| extract_session_context("", session_file));
         let file_modified_at = std::fs::metadata(session_file)
             .and_then(|metadata| metadata.modified())
             .ok()
@@ -500,6 +503,15 @@ fn read_session_tail(path: &Path) -> std::io::Result<String> {
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
+fn read_session_header(path: &Path) -> std::io::Result<String> {
+    let mut file = std::fs::File::open(path)?;
+    let mut bytes = Vec::with_capacity(MAX_SESSION_HEADER_BYTES as usize);
+    file.by_ref()
+        .take(MAX_SESSION_HEADER_BYTES)
+        .read_to_end(&mut bytes)?;
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
 fn newest_child_directory(root: &Path) -> Option<PathBuf> {
     let mut directories = std::fs::read_dir(root)
         .ok()?
@@ -623,6 +635,7 @@ mod tests {
         discover_skill_sources, extract_used_skill_paths_from_session, is_personal_skill_path,
         parse_enabled_codex_plugins, EnabledPlugin,
     };
+    use std::io::Write;
     use std::path::{Path, PathBuf};
 
     fn temp_root(tag: &str) -> PathBuf {
@@ -846,6 +859,109 @@ enabled = false
         assert_eq!(sources[0].usage_evidence.len(), 2);
         assert_eq!(sources[0].usage_evidence[0].session_id, "session-newer");
         assert_eq!(sources[0].usage_evidence[1].session_id, "session-older");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn session_evidence_reads_meta_from_bounded_header_for_large_transcript() {
+        let root = temp_root("session-evidence-header");
+        let home = root.join("home");
+        let skill = home.join(
+            ".codex/plugins/cache/openai-curated-remote/superpowers/6.1.1/skills/using-superpowers/SKILL.md",
+        );
+        std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
+        std::fs::write(&skill, "---\nname: test\ndescription: test\n---\n").unwrap();
+        let session_path = root.join("oversized-session.jsonl");
+        let mut session = std::fs::File::create(&session_path).unwrap();
+        writeln!(
+            session,
+            "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"session-header\",\"cwd\":\"/Users/me/header-project\"}}}}"
+        )
+        .unwrap();
+        session
+            .write_all(&vec![b'x'; (super::MAX_SESSION_TAIL_BYTES + 1) as usize])
+            .unwrap();
+        writeln!(
+            session,
+            "\n{{\"timestamp\":\"2026-07-20T11:30:00Z\",\"type\":\"response_item\",\"payload\":{{\"type\":\"custom_tool_call\",\"name\":\"exec\",\"input\":\"cat {}\"}}}}",
+            skill.display(),
+        )
+        .unwrap();
+
+        let sources = discover_session_skill_sources_from_files(&home, &[session_path]);
+
+        assert_eq!(sources[0].usage_evidence[0].session_id, "session-header");
+        assert_eq!(
+            sources[0].usage_evidence[0].workspace.as_deref(),
+            Some("/Users/me/header-project")
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn session_evidence_deduplicates_same_meta_id_across_transcripts() {
+        let root = temp_root("session-evidence-shared-id");
+        let home = root.join("home");
+        let skill = home.join(
+            ".codex/plugins/cache/openai-curated-remote/superpowers/6.1.1/skills/using-superpowers/SKILL.md",
+        );
+        std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
+        std::fs::write(&skill, "---\nname: test\ndescription: test\n---\n").unwrap();
+        let older_session = root.join("shared-id-older.jsonl");
+        let newer_session = root.join("shared-id-newer.jsonl");
+        for (path, timestamp) in [
+            (&older_session, "2026-07-20T08:30:00Z"),
+            (&newer_session, "2026-07-20T10:30:00Z"),
+        ] {
+            std::fs::write(
+                path,
+                format!(
+                    "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"session-shared\"}}}}\n\\
+                     {{\"timestamp\":\"{timestamp}\",\"type\":\"response_item\",\"payload\":{{\"type\":\"custom_tool_call\",\"name\":\"exec\",\"input\":\"cat {}\"}}}}\n",
+                    skill.display(),
+                ),
+            )
+            .unwrap();
+        }
+
+        let sources =
+            discover_session_skill_sources_from_files(&home, &[older_session, newer_session]);
+
+        assert_eq!(sources[0].usage_evidence.len(), 1);
+        assert_eq!(sources[0].usage_evidence[0].session_id, "session-shared");
+        assert_eq!(
+            sources[0].usage_evidence[0].used_at.as_deref(),
+            Some("2026-07-20T10:30:00+00:00")
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn session_evidence_falls_back_to_transcript_stem_without_meta() {
+        let root = temp_root("session-evidence-fallback");
+        let home = root.join("home");
+        let skill = home.join(
+            ".codex/plugins/cache/openai-curated-remote/superpowers/6.1.1/skills/using-superpowers/SKILL.md",
+        );
+        std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
+        std::fs::write(&skill, "---\nname: test\ndescription: test\n---\n").unwrap();
+        let session_path = root.join("session-without-meta.jsonl");
+        std::fs::write(
+            &session_path,
+            format!(
+                "{{\"timestamp\":\"2026-07-20T11:30:00Z\",\"type\":\"response_item\",\"payload\":{{\"type\":\"custom_tool_call\",\"name\":\"exec\",\"input\":\"cat {}\"}}}}\n",
+                skill.display(),
+            ),
+        )
+        .unwrap();
+
+        let sources = discover_session_skill_sources_from_files(&home, &[session_path]);
+
+        assert_eq!(
+            sources[0].usage_evidence[0].session_id,
+            "session-without-meta"
+        );
+        assert_eq!(sources[0].usage_evidence[0].workspace, None);
         let _ = std::fs::remove_dir_all(&root);
     }
 }
