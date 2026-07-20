@@ -3382,6 +3382,8 @@
 }
 
 .hub-room[data-room="humi"] .hub-room-content {
+  height: 100%;
+  min-height: 0;
   padding: 0;
 }
 
@@ -3403,21 +3405,31 @@
 }
 
 .humi-workspace {
+  position: relative;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.humi-workspace.is-operations-open {
   grid-template-columns: minmax(0, 1fr) 252px;
 }
 
 .humi-conversation-stage {
   position: relative;
+  display: grid;
   min-width: 0;
   min-height: 0;
-  padding: 28px 36px 20px;
+  grid-template-rows: minmax(0, 1fr) auto;
+  padding: 44px 36px 12px;
 }
 
 .humi-transcript {
   width: min(760px, 100%);
+  min-height: 0;
+  overflow-y: auto;
+  margin: 0 auto;
   gap: 30px;
-  padding: 72px 0 118px;
+  padding: 28px 0 24px;
 }
 
 .humi-message-row {
@@ -3465,14 +3477,46 @@
 }
 
 .humi-composer-shell {
-  position: absolute;
-  right: 36px;
-  bottom: 20px;
-  left: 36px;
+  position: relative;
+  inset: auto;
   width: auto;
   margin: 0;
   padding: 0;
   background: transparent;
+}
+
+.humi-operations-toggle {
+  position: absolute;
+  z-index: 7;
+  top: 12px;
+  right: 18px;
+  display: inline-grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid rgba(83, 101, 120, 0.14);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.88);
+  color: #4b5663;
+  box-shadow: 0 5px 14px rgba(63, 76, 92, 0.06);
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.humi-operations-toggle:hover {
+  border-color: rgba(55, 150, 178, 0.3);
+  background: rgba(255, 255, 255, 0.98);
+  color: #3292ad;
+  box-shadow: 0 7px 18px rgba(63, 76, 92, 0.1);
+}
+
+.humi-operations-toggle:focus-visible {
+  outline: 2px solid rgba(79, 166, 192, 0.42);
+  outline-offset: 2px;
 }
 
 .humi-composer {
@@ -3520,10 +3564,25 @@
   box-shadow: 0 12px 32px rgba(63, 76, 92, 0.12);
 }
 
+.humi-kernel-message {
+  position: absolute;
+  z-index: 6;
+  right: 36px;
+  bottom: 68px;
+  left: 36px;
+  width: min(760px, calc(100% - 72px));
+  margin: 0 auto;
+  color: #d66b6b;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
 .humi-operations {
   position: relative;
   z-index: 4;
+  height: 100%;
   min-width: 0;
+  min-height: 0;
   overflow-y: auto;
   padding: 46px 14px 18px;
   border-left: 1px solid rgba(67, 91, 112, 0.11);
@@ -4414,6 +4473,28 @@ button.hexa-report-metric {
     padding-left: 18px;
   }
 
+  .humi-workspace.is-operations-open {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .humi-workspace.is-operations-open .humi-operations {
+    position: absolute;
+    inset: 0 0 0 auto;
+    width: min(292px, calc(100% - 56px));
+    box-shadow: -12px 0 28px rgba(63, 76, 92, 0.1);
+  }
+
+  .hub-room[data-room="humi"] .humi-conversation-stage {
+    padding-right: 18px;
+    padding-left: 18px;
+  }
+
+  .hub-room[data-room="humi"] .humi-kernel-message {
+    right: 18px;
+    left: 18px;
+    width: min(760px, calc(100% - 36px));
+  }
+
   .hype-room-header {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -4513,7 +4594,8 @@ button.hexa-report-metric {
 
 @media (prefers-reduced-motion: reduce) {
   .hub-nav-rail-accent,
-  .humi-message-avatar.is-listening {
+  .humi-message-avatar.is-listening,
+  .humi-operations-toggle {
     animation: none;
     transition: none;
   }

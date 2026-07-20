@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   ArrowUp,
   ExternalLink,
+  PanelRight,
   Play,
   RefreshCw,
   SlidersHorizontal,
@@ -331,6 +332,7 @@ export function HumiModule({ onActivityChange, onOpenHexa }: HumiModuleProps) {
   const [operationsMessage, setOperationsMessage] = useState<string | null>(null);
   const [ttsPreviewing, setTtsPreviewing] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
+  const [operationsOpen, setOperationsOpen] = useState(false);
   const piRuntimeRef = useRef<HumiPiRuntime | null>(null);
   const [kernelPrompt, setKernelPrompt] = useState(
     "现在技能用得最多的是啥？"
@@ -613,8 +615,20 @@ export function HumiModule({ onActivityChange, onOpenHexa }: HumiModuleProps) {
 
   return (
     <div className="hub-module humi-room-module">
-      <div className="humi-workspace">
+      <div className={`humi-workspace ${operationsOpen ? "is-operations-open" : ""}`}>
         <div className="humi-conversation humi-conversation-stage">
+          <button
+            type="button"
+            className="humi-operations-toggle"
+            onClick={() => setOperationsOpen((open) => !open)}
+            aria-expanded={operationsOpen}
+            aria-controls="humi-operations-panel"
+            aria-label={operationsOpen ? "收起运行状态" : "展开运行状态"}
+            title={operationsOpen ? "收起运行状态" : "展开运行状态"}
+          >
+            <PanelRight size={17} strokeWidth={1.9} aria-hidden="true" />
+          </button>
+
           <div className="humi-transcript">
             {chatMessages.map((message) => (
               <div key={message.id} className={`humi-message-row humi-message-row-${message.role}`}>
@@ -774,26 +788,28 @@ export function HumiModule({ onActivityChange, onOpenHexa }: HumiModuleProps) {
           )}
 
           {kernelMessage && (
-            <div style={{ marginTop: 10, fontSize: 10, color: "#fca5a5", lineHeight: 1.5 }}>
+            <div className="humi-kernel-message">
               {kernelMessage}
             </div>
           )}
         </div>
 
-        <HumiOperationsRail
-          sessions={sessions}
-          stats={stats}
-          config={appConfig}
-          loading={operationsLoading}
-          ttsPreviewing={ttsPreviewing}
-          message={operationsMessage}
-          hexaAttention={hexaAttention}
-          onRefresh={() => void refreshOperations()}
-          onOpenHexa={() => onOpenHexa(hexaAttention.mostUrgentGoal?.id ?? null)}
-          onFocusSession={(session) => void focusSession(session)}
-          onToggleAutoConfirm={() => void toggleAutoConfirm()}
-          onPreviewTts={() => void previewTts()}
-        />
+        {operationsOpen && (
+          <HumiOperationsRail
+            sessions={sessions}
+            stats={stats}
+            config={appConfig}
+            loading={operationsLoading}
+            ttsPreviewing={ttsPreviewing}
+            message={operationsMessage}
+            hexaAttention={hexaAttention}
+            onRefresh={() => void refreshOperations()}
+            onOpenHexa={() => onOpenHexa(hexaAttention.mostUrgentGoal?.id ?? null)}
+            onFocusSession={(session) => void focusSession(session)}
+            onToggleAutoConfirm={() => void toggleAutoConfirm()}
+            onPreviewTts={() => void previewTts()}
+          />
+        )}
       </div>
     </div>
   );
@@ -832,7 +848,11 @@ function HumiOperationsRail({
     .replace(/Neural$/, "");
 
   return (
-    <aside className="humi-operations" aria-label="Humi 运行状态">
+    <aside
+      id="humi-operations-panel"
+      className="humi-operations"
+      aria-label="Humi 运行状态"
+    >
       <div className="humi-operations-header">
         <div>
           <strong>运行状态</strong>
