@@ -1660,6 +1660,7 @@
   color: #a85e25;
 }
 
+.hush-header-refresh .is-spinning,
 .hush-status-action .is-spinning {
   animation: hush-spin 850ms linear 120;
 }
@@ -2147,6 +2148,7 @@
     transition: none;
   }
 
+  .hush-header-refresh .is-spinning,
   .hush-status-action .is-spinning {
     animation: none;
   }

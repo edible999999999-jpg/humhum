@@ -605,6 +605,83 @@ describe("HushModule conversation state migration", () => {
   });
 });
 
+describe("HushModule DingTalk refresh", () => {
+  let view: { host: HTMLDivElement; root: Root } | null = null;
+
+  beforeEach(() => {
+    window.localStorage.clear();
+    listenMock.mockResolvedValue(() => undefined);
+  });
+
+  afterEach(async () => {
+    if (view) await disposeHushModule(view);
+    view = null;
+    window.localStorage.clear();
+    vi.clearAllMocks();
+  });
+
+  it("uses the header refresh to sync authenticated DingTalk messages", async () => {
+    let finishSync: ((report: unknown) => void) | undefined;
+    const syncResult = new Promise((resolve) => {
+      finishSync = resolve;
+    });
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "get_hush_dws_status") {
+        return Promise.resolve({
+          state: "ready",
+          message: "ready",
+          executable_source: "wukong",
+          executable_path: "/Users/example/.real/.bin/dws/bin/dws",
+          authenticated: true,
+          auto_sync_enabled: true,
+          sync_interval_minutes: 5,
+          last_success_at: null,
+          last_attempt_at: null,
+          syncing: false,
+          pending_sync: false,
+        });
+      }
+      if (command === "sync_hush_dws") return syncResult;
+      return Promise.resolve(defaultInvoke(command));
+    });
+    view = await renderHushModule();
+    invokeMock.mockClear();
+
+    const refresh = view.host.querySelector<HTMLButtonElement>(
+      'button[aria-label="同步并刷新钉钉消息"]',
+    );
+    expect(refresh).not.toBeNull();
+    await act(async () => {
+      refresh?.click();
+      await Promise.resolve();
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith("sync_hush_dws");
+    expect(refresh?.disabled).toBe(true);
+    expect(
+      refresh?.querySelector("svg")?.classList.contains("is-spinning"),
+    ).toBe(true);
+
+    await act(async () => {
+      finishSync?.({
+        conversations: 1,
+        examined_messages: 1,
+        imported_messages: 1,
+        duplicate_messages: 0,
+        pages: 1,
+        partial: false,
+        next_cursor: null,
+      });
+      await syncResult;
+      await Promise.resolve();
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith("get_hush_inbox");
+    expect(invokeMock).toHaveBeenCalledWith("get_hush_dws_status");
+    expect(refresh?.disabled).toBe(false);
+  });
+});
+
 describe("HushModule conversation presentation", () => {
   let view: { host: HTMLDivElement; root: Root } | null = null;
 

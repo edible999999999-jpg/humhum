@@ -484,6 +484,14 @@ export function HushModule() {
     }
   }, []);
 
+  const refreshHush = useCallback(async () => {
+    if (dwsStatus?.authenticated) {
+      await syncDws();
+      return;
+    }
+    await fetchInbox();
+  }, [dwsStatus?.authenticated, fetchInbox, syncDws]);
+
   const contacts = useMemo<DerivedContact[]>(() => {
     const map = new Map<string, DerivedContact>();
     for (const message of inbox?.messages ?? []) {
@@ -623,11 +631,19 @@ export function HushModule() {
         <button
           type="button"
           className="hush-header-refresh"
-          onClick={() => void fetchInbox()}
-          aria-label="刷新 Hush 会话"
-          title="刷新"
+          onClick={() => void refreshHush()}
+          disabled={dwsSyncing}
+          aria-label="同步并刷新钉钉消息"
+          title={
+            dwsStatus?.authenticated ? "同步并刷新钉钉消息" : "刷新本地消息"
+          }
         >
-          <RefreshCw size={16} strokeWidth={1.8} aria-hidden="true" />
+          <RefreshCw
+            className={dwsSyncing ? "is-spinning" : ""}
+            size={16}
+            strokeWidth={1.8}
+            aria-hidden="true"
+          />
         </button>
         <div className="hush-filter-control" aria-label="消息筛选">
           {(
