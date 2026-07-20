@@ -738,17 +738,14 @@ export function KnowledgeModule() {
   const ruleCount =
     data.agent_rules.length + discoveredRuleAssets.length + ruleNotes.length;
   const configuredAssetRoots = parseAssetRoots(assetRoots);
-  const scopedSkillAssets = filterAgentAssets(
-    assets,
-    assetScope,
-    "",
-    configuredAssetRoots,
+  const assetIsInScope = (asset: AgentAsset) =>
+    assetScope === "all" ||
+    isPersonalAgentAsset(asset, configuredAssetRoots);
+  const scopedSkillAssets = assets.filter(
+    (asset) => asset.asset_type === "skill" && assetIsInScope(asset),
   );
   const scopedNonSkillAssets = assets.filter(
-    (asset) =>
-      asset.asset_type !== "skill" &&
-      (assetScope === "all" ||
-        isPersonalAgentAsset(asset, configuredAssetRoots)),
+    (asset) => asset.asset_type !== "skill" && assetIsInScope(asset),
   );
   const logicalSkills = groupLogicalSkills(scopedSkillAssets);
   const filteredSkills = filterLogicalSkills(logicalSkills, searchQuery);
@@ -892,30 +889,35 @@ export function KnowledgeModule() {
             )}
           </div>
 
-          <div className="hype-asset-list">
-            <div className="hype-asset-list-header" aria-hidden="true">
-              <span>名称</span>
-              <span>可用 Agent</span>
-              <span>最近会话</span>
-              <span>最近使用</span>
-            </div>
-            {filteredAssetCount === 0 ? (
+          {filteredAssetCount === 0 ? (
+            <div className="hype-asset-list">
               <div className="hype-empty-state">
                 {assets.length === 0
                   ? "刷新后，Hype 会把本地 Agent 资产整理到这里。"
                   : "当前范围里没有匹配的资产。"}
               </div>
-            ) : (
-              <>
+            </div>
+          ) : (
+            <>
+              {filteredSkills.length > 0 && (
+                <div className="hype-asset-list">
+                  <div className="hype-asset-list-header" aria-hidden="true">
+                    <span>名称</span>
+                    <span>可用 Agent</span>
+                    <span>最近会话</span>
+                    <span>最近使用</span>
+                  </div>
                 {filteredSkills.map((skill) => (
                   <LogicalSkillRow key={skill.key} skill={skill} />
                 ))}
-                {filteredNonSkillAssets.map((asset) => (
-                  <AgentAssetRow key={asset.id} asset={asset} />
-                ))}
-              </>
-            )}
-          </div>
+                </div>
+              )}
+              <KnowledgeAssetSection
+                title="其他 Agent 资产"
+                assets={filteredNonSkillAssets}
+              />
+            </>
+          )}
 
           <details className="hype-asset-details">
             <summary>高级扫描设置与诊断</summary>

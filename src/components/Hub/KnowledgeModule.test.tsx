@@ -93,9 +93,11 @@ describe("Hype automatic skill freshness", () => {
       });
     });
 
-    expect(
-      invokeMock.mock.calls.filter(([command]) => command === "get_knowledge"),
-    ).toHaveLength(2);
+    await vi.waitFor(() => {
+      expect(
+        invokeMock.mock.calls.filter(([command]) => command === "get_knowledge"),
+      ).toHaveLength(2);
+    });
 
     await act(async () => root.unmount());
   });
@@ -188,6 +190,30 @@ describe("Hype logical skill rows", () => {
               ownership: "created",
               modified_at: "2026-07-18T09:00:00Z",
             },
+            {
+              id: "asset:typed-skill-custom-filename",
+              asset_type: "skill",
+              agent_id: "codex",
+              name: "Filename-independent skill",
+              file_path: "/Users/me/.codex/skills/custom-skill.md",
+              relative_path: "skills/custom-skill.md",
+              source: "codex",
+              content: "A scanner-confirmed skill.",
+              tags: [],
+              ownership: "created",
+            },
+            {
+              id: "asset:prompt-named-skill-file",
+              asset_type: "prompt",
+              agent_id: "codex",
+              name: "Prompt named skill descriptor",
+              file_path: "/Users/me/.codex/prompts/SKILL.md",
+              relative_path: "prompts/SKILL.md",
+              source: "codex",
+              content: "This remains a prompt.",
+              tags: [],
+              ownership: "created",
+            },
           ],
         });
       }
@@ -223,11 +249,17 @@ describe("Hype logical skill rows", () => {
         host.querySelectorAll(
           ".hype-logical-skill-row .hype-asset-name strong",
         ),
-      ).toHaveLength(1);
+      ).toHaveLength(2);
     });
+    const logicalSkillText = [...host.querySelectorAll(".hype-logical-skill-row")]
+      .map((row) => row.textContent)
+      .join(" ");
+    expect(logicalSkillText).toContain("Filename-independent skill");
+    expect(logicalSkillText).not.toContain("Prompt named skill descriptor");
     expect(host.textContent).toContain("2 个 Agent");
     expect(host.textContent).toContain("2 个会话");
     expect(host.textContent).toContain("Release prompt");
+    expect(host.textContent).toContain("Prompt named skill descriptor");
 
     const row = host.querySelector<HTMLButtonElement>(
       ".hype-logical-skill-row .hype-asset-row",
