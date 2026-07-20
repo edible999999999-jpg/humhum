@@ -27,6 +27,7 @@ func run(
 	}
 
 	data, err := source.Open(request, getenv)
+	clearKeyMap(request.Keys)
 	if err != nil {
 		_ = contract.Write(output, reader.Failure(request.Action, err))
 		return 3
@@ -42,4 +43,11 @@ func run(
 		return 3
 	}
 	return 0
+}
+
+func clearKeyMap(keys map[string]string) {
+	for salt, key := range keys {
+		keys[salt] = string(make([]byte, len(key)))
+		delete(keys, salt)
+	}
 }

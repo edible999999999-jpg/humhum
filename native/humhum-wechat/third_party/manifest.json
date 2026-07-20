@@ -1,0 +1,7 @@
+{
+  "r266WechatCliCommit": "065778319ca4a77debd265e65df913891d49ad58",
+  "r266WxkeyCommit": "9b70eecdde47a7172b19465c3f977c86b6050e8a",
+  "wcdbFile": "libWCDB.dylib",
+  "wcdbSha256": "bb7602ca165d7edfff58893760f53c2df36202548422c1be517c2de23e224376",
+  "goVersion": "1.26.5"
+}

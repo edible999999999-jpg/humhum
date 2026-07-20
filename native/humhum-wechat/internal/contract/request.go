@@ -29,8 +29,10 @@ func Decode(input io.Reader) (Request, *Failure) {
 		return Request{}, NewFailure("invalid_request", "Unable to read request")
 	}
 	if len(raw) > MaxRequestBytes {
+		clearBytes(raw)
 		return Request{}, NewFailure("request_too_large", "Request exceeds 262144 bytes")
 	}
+	defer clearBytes(raw)
 
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
@@ -47,6 +49,12 @@ func Decode(input io.Reader) (Request, *Failure) {
 		return Request{}, failure
 	}
 	return request, nil
+}
+
+func clearBytes(value []byte) {
+	for index := range value {
+		value[index] = 0
+	}
 }
 
 func (request Request) Validate() *Failure {

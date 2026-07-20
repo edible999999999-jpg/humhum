@@ -16,7 +16,7 @@
 - `sessions.types` is exactly `["private","group"]`; `timeline.includeMediaPaths` is exactly `false`.
 - `timeline.talker` must be non-empty, at most 512 UTF-8 bytes, and must not begin with `-`.
 - The reader has no network client, listener, updater, shell execution, general SQL, export, write-capable database operation, or WeChat UI automation.
-- Database opens use read-only WCDB flags and query-only pragmas; SQL identifiers are derived only from a lowercase SHA-256 talker hash and matched against `^[A-Za-z0-9_]+$`.
+- Database opens use read-only WCDB flags and query-only pragmas; WeChat message-table identifiers are derived only from the schema-required lowercase MD5 talker hash and matched against `^Msg_[a-f0-9]{32}$`. MD5 is used only for compatibility with WeChat's table naming, never for security.
 - Initial Hush sync remains 24 hours, incremental overlap remains 2 minutes, and auto-sync remains off until the user enables it.
 - Only incoming private and group messages are imported; no media files are copied.
 - Production builds do not discover or execute `wechat-cli` from `PATH`; external CLI fallback exists only under the Cargo feature `wechat-external-dev`.
@@ -628,12 +628,12 @@ ORDER BY sort_timestamp DESC, username DESC
 LIMIT ?
 ```
 
-Timeline table names are `Msg_` plus lowercase SHA-256 of the talker, and are accepted only when they match `^[A-Za-z0-9_]+$`. Each known `message_*.db` shard is inspected for that exact table; matching shards run:
+Timeline table names are `Msg_` plus the schema-required lowercase MD5 of the talker, and are accepted only when they match `^Msg_[a-f0-9]{32}$`. Each known `message_*.db` shard is inspected for that exact table; matching shards run:
 
 ```sql
 SELECT local_id, server_id, local_type, sort_seq,
        real_sender_id, create_time, message_content, source
-FROM Msg_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+FROM Msg_0123456789abcdef0123456789abcdef
 WHERE create_time >= ?
 ORDER BY sort_seq ASC, local_id ASC
 LIMIT ?
@@ -722,7 +722,7 @@ test("rejects forbidden dependencies and symbols", () => {
 
 test("accepts the reader allowlist", () => {
   assert.doesNotThrow(() => assertBoundary({
-    packages: ["bytes", "context", "crypto/sha256", "encoding/json", "os"],
+    packages: ["bytes", "context", "crypto/md5", "encoding/json", "os"],
     symbols: ["main.main", "purego.Dlopen"],
     strings: ["status", "sessions", "timeline"],
   }));
