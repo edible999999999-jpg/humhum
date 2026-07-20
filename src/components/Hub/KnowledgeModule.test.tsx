@@ -123,6 +123,112 @@ describe("Hype automatic skill freshness", () => {
   });
 });
 
+describe("Hype logical skill rows", () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+    sessionStorage.setItem("humhum:hype:auto-skill-scan-at", String(Date.now()));
+    invokeMock.mockReset();
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "get_knowledge") {
+        return Promise.resolve({
+          ...emptyKnowledge,
+          agent_assets: [
+            {
+              id: "asset:codex-humhum-hexa",
+              asset_type: "skill",
+              agent_id: "codex",
+              name: "humhum-hexa",
+              file_path: "/Users/me/.codex/skills/humhum-hexa/SKILL.md",
+              relative_path: "humhum-hexa/SKILL.md",
+              source: "codex",
+              content: "Codex copy",
+              tags: [],
+              ownership: "created",
+              usage_evidence: [
+                {
+                  session_id: "older-session",
+                  agent_id: "codex",
+                  session_path: "/Users/me/.codex/sessions/older.jsonl",
+                  workspace: "/Users/me/Projects/older-work",
+                  used_at: "2026-07-19T09:00:00Z",
+                },
+              ],
+            },
+            {
+              id: "asset:claude-humhum-hexa",
+              asset_type: "skill",
+              agent_id: "claude-code",
+              name: "HumHum_Hexa",
+              file_path: "/Users/me/.claude/skills/humhum-hexa/SKILL.md",
+              relative_path: "humhum-hexa/SKILL.md",
+              source: "claude",
+              content: "Claude copy",
+              tags: [],
+              ownership: "created",
+              usage_evidence: [
+                {
+                  session_id: "newest-session",
+                  agent_id: "claude-code",
+                  session_path: "/Users/me/.claude/sessions/newest.jsonl",
+                  workspace: "/Users/me/Projects/newest-work",
+                  used_at: "2026-07-20T09:00:00Z",
+                },
+              ],
+            },
+          ],
+        });
+      }
+      if (command === "check_hooks_status") return Promise.resolve({});
+      if (
+        command === "get_codex_bridge_health" ||
+        command === "check_qoder_acp_support" ||
+        command === "get_config"
+      ) {
+        return Promise.resolve(null);
+      }
+      return Promise.reject(new Error(`Unexpected invoke: ${command}`));
+    });
+  });
+
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("shows one skill row with newest sessions and every source in its details", async () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+
+    await act(async () => {
+      root.render(createElement(KnowledgeModule));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() => {
+      expect(host.querySelectorAll(".hype-asset-name strong")).toHaveLength(1);
+    });
+    expect(host.textContent).toContain("2 个 Agent");
+    expect(host.textContent).toContain("2 个会话");
+
+    const row = host.querySelector<HTMLButtonElement>(".hype-asset-row");
+    await act(async () => row?.click());
+
+    const expanded = host.querySelector(".hype-asset-expanded");
+    const details = expanded?.textContent ?? "";
+    const sourcePaths = [...(expanded?.querySelectorAll("code") ?? [])].map(
+      (code) => code.getAttribute("title"),
+    );
+    expect(sourcePaths).toContain("/Users/me/.codex/skills/humhum-hexa/SKILL.md");
+    expect(sourcePaths).toContain("/Users/me/.claude/skills/humhum-hexa/SKILL.md");
+    expect(details).toContain("~/.codex/skills/humhum-hexa/SKILL.md");
+    expect(details).toContain("~/.claude/skills/humhum-hexa/SKILL.md");
+    expect(details.indexOf("newest-work")).toBeLessThan(details.indexOf("older-work"));
+
+    await act(async () => root.unmount());
+  });
+});
+
 describe("Hype refresh routing", () => {
   it.each(["assets", "preferences", "rules", "memory"] as const)(
     "dispatches only the active %s refresh",

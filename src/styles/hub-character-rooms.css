@@ -1098,6 +1098,108 @@
   white-space: nowrap;
 }
 
+.hype-skill-evidence {
+  display: grid;
+  gap: 12px;
+  padding-top: 2px;
+}
+
+.hype-skill-evidence-section {
+  min-width: 0;
+  padding-top: 10px;
+  border-top: 1px solid rgba(116, 143, 165, 0.12);
+}
+
+.hype-skill-evidence-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.hype-skill-evidence-heading strong {
+  color: #445266;
+  font-size: 11px;
+}
+
+.hype-skill-evidence-heading span {
+  overflow: hidden;
+  color: #8a97a7;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hype-skill-session-list,
+.hype-skill-copy-list {
+  display: grid;
+  gap: 2px;
+}
+
+.hype-skill-session-row,
+.hype-skill-copy-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(120px, auto);
+  gap: 14px;
+  align-items: center;
+  min-height: 40px;
+  padding: 5px 8px;
+}
+
+.hype-skill-session-row + .hype-skill-session-row,
+.hype-skill-copy-row + .hype-skill-copy-row {
+  border-top: 1px solid rgba(116, 143, 165, 0.09);
+}
+
+.hype-skill-session-row > span,
+.hype-skill-copy-row > span {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.hype-skill-session-row strong,
+.hype-skill-session-row small,
+.hype-skill-copy-row strong,
+.hype-skill-copy-row small,
+.hype-skill-copy-row code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hype-skill-session-row strong,
+.hype-skill-copy-row strong {
+  color: #4f5e70;
+  font-size: 10px;
+}
+
+.hype-skill-session-row small,
+.hype-skill-copy-row small,
+.hype-skill-session-row time {
+  color: #8793a3;
+  font-size: 9px;
+}
+
+.hype-skill-session-row time {
+  white-space: nowrap;
+}
+
+.hype-skill-copy-row code {
+  color: #748195;
+  font-size: 9px;
+  text-align: right;
+}
+
+.hype-skill-evidence-empty {
+  margin: 0;
+  padding: 8px;
+  color: #8793a3;
+  font-size: 10px;
+}
+
 .hype-asset-tags {
   display: flex;
   flex-wrap: wrap;
@@ -1237,6 +1339,16 @@
   .hype-asset-row time {
     grid-column: 2;
     grid-row: 2;
+  }
+
+  .hype-skill-session-row,
+  .hype-skill-copy-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+
+  .hype-skill-copy-row code {
+    text-align: left;
   }
 }
 

@@ -6,6 +6,7 @@ import type {
   AgentRule,
   AppConfig,
   KnowledgeData,
+  LogicalSkill,
   MemoryItem,
   ObsidianNote,
   Preference,
@@ -14,8 +15,9 @@ import {
   agentAssetLastUsedTimestamp,
   agentAssetModifiedTimestamp,
   filterAgentAssets,
+  filterLogicalSkills,
   getAgentAssetSummary,
-  sortAgentAssetsByRecentUse,
+  groupLogicalSkills,
   sortByRecentUpdate,
   type AgentAssetScope,
 } from "./knowledgePresentation";
@@ -741,18 +743,8 @@ export function KnowledgeModule() {
     "",
     configuredAssetRoots,
   );
-  const assetTypeCounts = scopedAssets.reduce<Record<string, number>>((acc, asset) => {
-    acc[asset.asset_type] = (acc[asset.asset_type] || 0) + 1;
-    return acc;
-  }, {});
-  const filteredAssets = sortAgentAssetsByRecentUse(
-    filterAgentAssets(
-      assets,
-      assetScope,
-      searchQuery,
-      configuredAssetRoots,
-    ),
-  );
+  const logicalSkills = groupLogicalSkills(scopedAssets);
+  const filteredSkills = filterLogicalSkills(logicalSkills, searchQuery);
   const operationBusy =
     operationStatus?.tab === activeTab && operationStatus.kind === "busy";
   const refreshBusy =
@@ -839,7 +831,7 @@ export function KnowledgeModule() {
               onClick={() => setActiveTab(tab)}
             >
               {tab === "assets"
-                ? `我的技能 ${scopedAssets.length}`
+                ? `我的技能 ${logicalSkills.length}`
                 : tab === "preferences"
                   ? `我的偏好 ${preferenceCount}`
                   : tab === "rules"
@@ -875,28 +867,28 @@ export function KnowledgeModule() {
       {activeTab === "assets" && (
         <div className="hype-inventory">
           <div className="hype-inventory-summary">
-            <span>{filteredAssets.length} 项</span>
-            {Object.entries(assetTypeCounts).map(([type, count]) => (
-              <span key={type}>{type} {count}</span>
-            ))}
+            <span>{filteredSkills.length} 个技能</span>
+            <span>
+              {filteredSkills.reduce((sum, skill) => sum + skill.session_count, 0)} 个最近会话
+            </span>
           </div>
 
           <div className="hype-asset-list">
             <div className="hype-asset-list-header" aria-hidden="true">
               <span>名称</span>
-              <span>来源 / Agent</span>
-              <span>类型</span>
+              <span>可用 Agent</span>
+              <span>最近会话</span>
               <span>最近使用</span>
             </div>
-            {filteredAssets.length === 0 ? (
+            {filteredSkills.length === 0 ? (
               <div className="hype-empty-state">
                 {assets.length === 0
                   ? "刷新后，Hype 会把本地 Agent 资产整理到这里。"
                   : "当前范围里没有匹配的资产。"}
               </div>
             ) : (
-              filteredAssets.map((asset) => (
-                <AgentAssetRow key={asset.id} asset={asset} />
+              filteredSkills.map((skill) => (
+                <LogicalSkillRow key={skill.key} skill={skill} />
               ))
             )}
           </div>
@@ -1486,6 +1478,136 @@ function ReviewerPill({ label, ok, detail }: { label: string; ok: boolean; detai
       <div style={{ marginTop: 4, color: "#64748b", fontSize: 10, lineHeight: 1.35, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
         {detail}
       </div>
+    </div>
+  );
+}
+
+function LogicalSkillRow({ skill }: { skill: LogicalSkill }) {
+  const [expanded, setExpanded] = useState(false);
+  const title = skill.display_name_zh || skill.name;
+  const latestUsedAt = skill.latest_used_at
+    ? new Date(skill.latest_used_at)
+    : null;
+  const validLatestUsedAt =
+    latestUsedAt && Number.isFinite(latestUsedAt.getTime())
+      ? latestUsedAt
+      : null;
+
+  return (
+    <div className={`hype-asset-item ${expanded ? "is-expanded" : ""}`}>
+      <button
+        type="button"
+        className="hype-asset-row"
+        onClick={() => setExpanded((value) => !value)}
+        aria-expanded={expanded}
+      >
+        <span className="hype-asset-name">
+          <strong>{title}</strong>
+          <small>
+            {skill.display_name_zh
+              ? `${skill.summary} · 原名：${skill.name}`
+              : skill.summary}
+          </small>
+        </span>
+        <span className="hype-asset-source">
+          <span>{skill.agent_count} 个 Agent</span>
+          <small>
+            {skill.copies.length} 个安装来源
+            {skill.has_multiple_versions ? " · 多个版本" : ""}
+          </small>
+        </span>
+        <span
+          className="hype-asset-type"
+          style={{
+            color: skill.session_count > 0 ? "#0f9f78" : "#7b8798",
+            backgroundColor:
+              skill.session_count > 0
+                ? "rgba(52, 211, 153, 0.11)"
+                : "rgba(116, 143, 165, 0.09)",
+          }}
+        >
+          {skill.session_count} 个会话
+        </span>
+        <time dateTime={validLatestUsedAt?.toISOString()}>
+          {validLatestUsedAt
+            ? validLatestUsedAt.toLocaleString()
+            : "未发现使用记录"}
+        </time>
+      </button>
+
+      {expanded && (
+        <div className="hype-asset-expanded hype-skill-evidence">
+          <section className="hype-skill-evidence-section">
+            <div className="hype-skill-evidence-heading">
+              <strong>最近使用会话</strong>
+              <span>按最近使用时间排列</span>
+            </div>
+            {skill.sessions.length > 0 ? (
+              <div className="hype-skill-session-list">
+                {skill.sessions.map((session) => {
+                  const usedAt = session.used_at
+                    ? new Date(session.used_at)
+                    : null;
+                  const validUsedAt =
+                    usedAt && Number.isFinite(usedAt.getTime())
+                      ? usedAt
+                      : null;
+                  return (
+                    <div
+                      key={`${session.agent_id}:${session.session_id}`}
+                      className="hype-skill-session-row"
+                    >
+                      <span>
+                        <strong>
+                          {session.workspace
+                            ? compactHomePath(session.workspace)
+                            : session.session_id}
+                        </strong>
+                        <small>
+                          {session.agent_id} · {session.session_id}
+                        </small>
+                      </span>
+                      <time dateTime={validUsedAt?.toISOString()}>
+                        {validUsedAt
+                          ? validUsedAt.toLocaleString()
+                          : "时间未知"}
+                      </time>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="hype-skill-evidence-empty">
+                仅发现安装，未发现最近会话使用记录。
+              </p>
+            )}
+          </section>
+
+          <section className="hype-skill-evidence-section">
+            <div className="hype-skill-evidence-heading">
+              <strong>安装来源</strong>
+              <span>
+                {skill.has_multiple_versions
+                  ? "发现内容不同的版本"
+                  : "内容版本一致"}
+              </span>
+            </div>
+            <div className="hype-skill-copy-list">
+              {skill.copies.map((copy) => (
+                <div key={copy.id} className="hype-skill-copy-row">
+                  <span>
+                    <strong>{copy.agent_id}</strong>
+                    <small>{copy.ownership || "来源待确认"}</small>
+                  </span>
+                  <code title={copy.file_path}>
+                    {compactHomePath(copy.file_path)}
+                  </code>
+                </div>
+              ))}
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }
