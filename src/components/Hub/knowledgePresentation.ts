@@ -224,6 +224,12 @@ export function normalizeLogicalSkillName(name: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
+function parseableTimestamp(value?: string | null): number | null {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function parsedTimestamp(value?: string | null): number | null {
   return meaningfulAssetTimestamp(value);
 }
@@ -255,8 +261,8 @@ function isNewerEvidence(
   candidate: SkillUsageEvidence,
   current: SkillUsageEvidence,
 ): boolean {
-  const candidateTime = parsedTimestamp(candidate.used_at);
-  const currentTime = parsedTimestamp(current.used_at);
+  const candidateTime = parseableTimestamp(candidate.used_at);
+  const currentTime = parseableTimestamp(current.used_at);
   return candidateTime !== null &&
     (currentTime === null || candidateTime > currentTime);
 }

@@ -517,6 +517,38 @@ describe("logical skill presentation", () => {
     ]);
   });
 
+  it("retains the newest parseable pre-2000 evidence for duplicate sessions", () => {
+    const firstCopy = asset("/codex/legacy/SKILL.md", "legacy", {
+      name: "Legacy Skill",
+      usage_evidence: [
+        {
+          session_id: "legacy-session",
+          agent_id: "codex",
+          session_path: "/sessions/legacy-first",
+          used_at: "1970-01-01T00:00:00Z",
+        },
+      ],
+    });
+    const secondCopy = asset("/claude/legacy/SKILL.md", "legacy", {
+      agent_id: "claude",
+      name: "Legacy Skill",
+      usage_evidence: [
+        {
+          session_id: "legacy-session",
+          agent_id: "codex",
+          session_path: "/sessions/legacy-newest",
+          used_at: "1971-01-01T00:00:00Z",
+        },
+      ],
+    });
+
+    const [skill] = groupLogicalSkills([firstCopy, secondCopy]);
+
+    expect(skill?.sessions).toHaveLength(1);
+    expect(skill?.sessions[0]?.session_path).toBe("/sessions/legacy-newest");
+    expect(skill?.sessions[0]?.used_at).toBe("1971-01-01T00:00:00Z");
+  });
+
   it("orders real use, meaningful modification, then names with unknown dates last", () => {
     const recentUse = asset("/skills/recent-use/SKILL.md", "recent", {
       name: "recent-use",
