@@ -1,21 +1,127 @@
+// @vitest-environment happy-dom
+
 import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { act, createElement } from "react";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const { invokeMock } = vi.hoisted(() => ({
+  invokeMock: vi.fn(),
+}));
+
+vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
+
 import {
+  KnowledgeModule,
   KnowledgeLoadGate,
   KnowledgeSearchToolbar,
   dispatchKnowledgeRefresh,
   runKnowledgeOperation,
 } from "./KnowledgeModule";
 
+declare global {
+  // eslint-disable-next-line no-var
+  var IS_REACT_ACT_ENVIRONMENT: boolean | undefined;
+}
+
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+
 const knowledgeModuleSource = readFileSync(
-  new URL("./KnowledgeModule.tsx", import.meta.url),
+  resolve(process.cwd(), "src/components/Hub/KnowledgeModule.tsx"),
   "utf8",
 );
 const characterRoomStyles = readFileSync(
-  new URL("../../styles/hub-character-rooms.css", import.meta.url),
+  resolve(process.cwd(), "src/styles/hub-character-rooms.css"),
   "utf8",
 );
+
+const emptyKnowledge = {
+  preferences: [],
+  memory_items: [],
+  agent_rules: [],
+  agent_assets: [],
+  obsidian_notes: [],
+  obsidian_vault: null,
+};
+
+describe("Hype automatic skill freshness", () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+    invokeMock.mockReset();
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "get_knowledge") return Promise.resolve(emptyKnowledge);
+      if (command === "scan_agent_assets") return Promise.resolve([]);
+      if (command === "check_hooks_status") return Promise.resolve({});
+      if (
+        command === "get_codex_bridge_health" ||
+        command === "check_qoder_acp_support" ||
+        command === "get_config"
+      ) {
+        return Promise.resolve(null);
+      }
+      return Promise.reject(new Error(`Unexpected invoke: ${command}`));
+    });
+  });
+
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("rescans real skill usage on the first Hype visit", async () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+
+    await act(async () => {
+      root.render(createElement(KnowledgeModule));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("scan_agent_assets", {
+        roots: [
+          "~/.qoder",
+          "~/.qoderwork",
+          "~/.gemini",
+          "~/.qwen",
+          "~/.kimi",
+          "~/.pi",
+        ],
+      });
+    });
+
+    expect(
+      invokeMock.mock.calls.filter(([command]) => command === "get_knowledge"),
+    ).toHaveLength(2);
+
+    await act(async () => root.unmount());
+  });
+
+  it("reuses the recent scan when Hype is reopened", async () => {
+    sessionStorage.setItem("humhum:hype:auto-skill-scan-at", String(Date.now()));
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+
+    await act(async () => {
+      root.render(createElement(KnowledgeModule));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(
+      invokeMock.mock.calls.filter(([command]) => command === "scan_agent_assets"),
+    ).toHaveLength(0);
+    expect(
+      invokeMock.mock.calls.filter(([command]) => command === "get_knowledge"),
+    ).toHaveLength(1);
+
+    await act(async () => root.unmount());
+  });
+});
 
 describe("Hype refresh routing", () => {
   it.each(["assets", "preferences", "rules", "memory"] as const)(

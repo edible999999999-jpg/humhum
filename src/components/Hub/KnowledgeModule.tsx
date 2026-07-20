@@ -59,6 +59,30 @@ const DEFAULT_ASSET_ROOTS = [
   "~/.pi",
 ].join("\n");
 
+const HYPE_AUTO_SKILL_SCAN_KEY = "humhum:hype:auto-skill-scan-at";
+const HYPE_AUTO_SKILL_SCAN_INTERVAL_MS = 5 * 60 * 1000;
+
+function shouldAutomaticallyScanSkills(now = Date.now()): boolean {
+  try {
+    const previous = Number(sessionStorage.getItem(HYPE_AUTO_SKILL_SCAN_KEY));
+    return !Number.isFinite(previous) || now - previous >= HYPE_AUTO_SKILL_SCAN_INTERVAL_MS;
+  } catch {
+    return true;
+  }
+}
+
+function markAutomaticSkillScan(timestamp: number | null): void {
+  try {
+    if (timestamp === null) {
+      sessionStorage.removeItem(HYPE_AUTO_SKILL_SCAN_KEY);
+    } else {
+      sessionStorage.setItem(HYPE_AUTO_SKILL_SCAN_KEY, String(timestamp));
+    }
+  } catch {
+    // The scan still works when web storage is unavailable.
+  }
+}
+
 function parseAssetRoots(value: string): string[] {
   return value
     .split(/\n|,/)
@@ -395,9 +419,8 @@ export function KnowledgeModule() {
   }, []);
 
   useEffect(() => {
-    void fetchData().catch(() => undefined);
     void fetchReviewEngine();
-  }, [fetchData, fetchReviewEngine]);
+  }, [fetchReviewEngine]);
 
   const handleSave = async () => {
     if (!newContent.trim()) return;
@@ -463,7 +486,7 @@ export function KnowledgeModule() {
     );
   };
 
-  const handleScanAssets = async () => {
+  const handleScanAssets = useCallback(async (): Promise<boolean> => {
     setScanningAssets(true);
     setAssetError(null);
     setAssetScanSummary(null);
@@ -474,12 +497,40 @@ export function KnowledgeModule() {
       const agentCount = found.filter((asset) => asset.asset_type === "agent").length;
       setAssetScanSummary(`已整理 ${found.length} 项本地知识 · ${skillCount} 个个人技能 · ${agentCount} 个 Agent 配置`);
       await fetchData();
+      return true;
     } catch (error) {
       setAssetError(String(error));
+      return false;
     } finally {
       setScanningAssets(false);
     }
-  };
+  }, [assetRoots, fetchData]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadCurrentSkills = async () => {
+      try {
+        await fetchData();
+      } catch {
+        return;
+      }
+      if (cancelled || !shouldAutomaticallyScanSkills()) {
+        return;
+      }
+
+      markAutomaticSkillScan(Date.now());
+      const refreshed = await handleScanAssets();
+      if (!refreshed) {
+        markAutomaticSkillScan(null);
+      }
+    };
+
+    void loadCurrentSkills();
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchData, handleScanAssets]);
 
   const handleDiagnoseAssets = async () => {
     setScanningAssets(true);
@@ -741,7 +792,9 @@ export function KnowledgeModule() {
 
   const handleActiveRefresh = () => {
     void dispatchKnowledgeRefresh(activeTab, {
-      assets: handleScanAssets,
+      assets: async () => {
+        await handleScanAssets();
+      },
       preferences: handleRefreshPreferences,
       rules: handleScan,
       memory: handleRefreshMemory,
