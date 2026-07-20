@@ -8,6 +8,8 @@ build/
 
 # Tauri
 src-tauri/target/
+src-tauri/binaries/humhum-wechat-reader-*
+src-tauri/resources/wechat/libWCDB.dylib
 
 # IDE
 .vscode/

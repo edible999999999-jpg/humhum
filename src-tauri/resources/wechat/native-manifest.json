@@ -1,0 +1,16 @@
+{
+  "formatVersion": 1,
+  "reader": {
+    "file": "humhum-wechat-reader-aarch64-apple-darwin",
+    "sha256": "e02c5e26f0570ccacfda34424404fe52a28cd3260699377c959bf3df4ff487c6"
+  },
+  "wcdb": {
+    "file": "libWCDB.dylib",
+    "sha256": "bb7602ca165d7edfff58893760f53c2df36202548422c1be517c2de23e224376"
+  },
+  "provenance": {
+    "r266WechatCliCommit": "065778319ca4a77debd265e65df913891d49ad58",
+    "r266WxkeyCommit": "9b70eecdde47a7172b19465c3f977c86b6050e8a",
+    "goVersion": "1.26.5"
+  }
+}

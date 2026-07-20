@@ -434,6 +434,13 @@ func discoverWCDBLibrary() (string, error) {
 			"wechat",
 			"libWCDB.dylib",
 		)),
+		filepath.Clean(filepath.Join(
+			filepath.Dir(executable),
+			"..",
+			"resources",
+			"wechat",
+			"libWCDB.dylib",
+		)),
 		filepath.Join(filepath.Dir(executable), "wechat", "libWCDB.dylib"),
 	}
 	for _, candidate := range candidates {

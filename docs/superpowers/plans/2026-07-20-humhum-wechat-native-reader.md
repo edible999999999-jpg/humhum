@@ -763,7 +763,7 @@ The build script must:
 2. verify `process.platform === "darwin"` and `process.arch === "arm64"`;
 3. verify the WCDB dylib SHA-256 equals `third_party/manifest.json`;
 4. run `go test ./...`;
-5. run `go build -trimpath -buildvcs=true -ldflags "-s -w -buildid="`;
+5. run `go build -trimpath -buildvcs=false -ldflags "-s -w -buildid="`; source revisions remain explicit in the signed native manifest, avoiding a dirty-worktree bit that would make the reader hash self-referential;
 6. write the Tauri target filename;
 7. copy the verified WCDB dylib;
 8. calculate reader and library SHA-256 values;
