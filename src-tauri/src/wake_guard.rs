@@ -233,9 +233,8 @@ mod tests {
         let second = tokio::time::timeout(std::time::Duration::from_secs(2), async {
             loop {
                 let status = guard.reconcile_desired_state(true).await.unwrap();
-                if let Some(process_id) = status
-                    .process_id
-                    .filter(|process_id| *process_id != first)
+                if let Some(process_id) =
+                    status.process_id.filter(|process_id| *process_id != first)
                 {
                     break process_id;
                 }

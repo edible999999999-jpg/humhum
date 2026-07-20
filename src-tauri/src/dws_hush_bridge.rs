@@ -650,10 +650,8 @@ impl Drop for SyncFlagGuard<'_> {
     }
 }
 
-pub(crate) async fn run_immediately_then_interval<F, Fut>(
-    period: Duration,
-    mut task: F,
-) where
+pub(crate) async fn run_immediately_then_interval<F, Fut>(period: Duration, mut task: F)
+where
     F: FnMut() -> Fut,
     Fut: Future<Output = ()>,
 {
