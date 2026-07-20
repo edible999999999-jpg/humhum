@@ -34,6 +34,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.humhum.mobile.MobileRoleDashboard
 import com.humhum.mobile.app.HealthPermission
@@ -59,6 +62,9 @@ fun HumiRoomScreen(
     modifier: Modifier = Modifier,
 ) {
     val context = state.personalContext
+    val contextFreshness = context?.let {
+        personalContextFreshness(it.generatedAt(), it.expiresAt())
+    }
     var draft by rememberSaveable { mutableStateOf("") }
     var composerNotice by rememberSaveable { mutableStateOf(false) }
     val intro = context?.today()?.firstOrNull()?.let {
@@ -89,8 +95,12 @@ fun HumiRoomScreen(
                 Text(
                     text = when {
                         context == null -> "等待 Mac 的已授权个人上下文"
-                        context.today().isEmpty() -> "今天暂无明确条目 · ${if (state.personalContextFromCache) "加密缓存" else "刚刚同步"}"
-                        else -> "来自已确认的今天 · ${if (state.personalContextFromCache) "加密缓存" else "刚刚同步"}"
+                        context.today().isEmpty() ->
+                            "今天暂无明确条目 · ${contextFreshness?.label ?: "同步时间未知"}"
+                        state.personalContextFromCache ->
+                            "来自已确认的今天 · 加密缓存 · ${contextFreshness?.label ?: "同步时间未知"}"
+                        else ->
+                            "来自已确认的今天 · ${contextFreshness?.label ?: "同步时间未知"}"
                     },
                     style = MaterialTheme.typography.labelMedium,
                     color = Muted,
@@ -109,6 +119,9 @@ fun HumiRoomScreen(
                         "尚未发送：手机版 Humi 对话通道还没有接入，草稿已为你保留。",
                         style = MaterialTheme.typography.labelMedium,
                         color = Muted,
+                        modifier = Modifier.semantics {
+                            liveRegion = LiveRegionMode.Polite
+                        },
                     )
                 }
                 OutlinedTextField(
@@ -119,7 +132,7 @@ fun HumiRoomScreen(
                     },
                     placeholder = { Text("和 Humi 聊聊") },
                     leadingIcon = {
-                        Icon(Icons.Outlined.Mic, contentDescription = "语音输入")
+                        Icon(Icons.Outlined.Mic, contentDescription = null)
                     },
                     trailingIcon = {
                         IconButton(

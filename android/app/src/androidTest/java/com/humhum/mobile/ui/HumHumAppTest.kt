@@ -5,6 +5,7 @@ import androidx.activity.ComponentActivity
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasTestTag
@@ -161,8 +162,15 @@ class HumHumAppTest {
     fun manualPairingMaterialIsRecoveryOnly() {
         setContent(state = HumHumUiState())
 
+        val disclosure = compose.onNodeWithText("连接遇到问题")
+        val minimumTouchHeight = with(compose.density) { 48.dp.toPx() }
+
+        assertTrue(
+            "recovery disclosure is smaller than 48dp",
+            disclosure.fetchSemanticsNode().boundsInRoot.height >= minimumTouchHeight,
+        )
         compose.onNodeWithTag("manual-pairing-fields").assertDoesNotExist()
-        compose.onNodeWithText("连接遇到问题").performClick()
+        disclosure.performClick()
         compose.onNodeWithTag("manual-pairing-fields").assertIsDisplayed()
     }
 
@@ -276,6 +284,40 @@ class HumHumAppTest {
     }
 
     @Test
+    fun unavailableHumiVoiceInputIsDecorativeInsteadOfAnnouncingADeadControl() {
+        setContent(state = connectedState())
+
+        compose.onNodeWithContentDescription("语音输入").assertDoesNotExist()
+        compose.onNodeWithTag("humi-composer").assertIsDisplayed()
+    }
+
+    @Test
+    fun roomSwitchUsesAShortCrossfade() {
+        compose.mainClock.autoAdvance = false
+        var state by mutableStateOf(connectedState())
+        compose.setContent {
+            HumHumApp(
+                state = state,
+                callbacks = HumHumCallbacks(
+                    onSelectRole = { state = state.copy(selectedRole = it) },
+                ),
+            )
+        }
+        compose.mainClock.advanceTimeByFrame()
+
+        compose.onNodeWithText("Hush").performClick()
+        compose.mainClock.advanceTimeBy(80)
+
+        compose.onNodeWithTag("humi-room").assertExists()
+        compose.onNodeWithTag("hush-room").assertExists()
+
+        compose.mainClock.advanceTimeBy(200)
+        compose.onNodeWithTag("humi-room").assertDoesNotExist()
+        compose.onNodeWithTag("hush-room").assertExists()
+        compose.mainClock.autoAdvance = true
+    }
+
+    @Test
     fun hypeSearchIsTheFirstActionAfterItsPoster() {
         setContent(
             state = connectedState().copy(selectedRole = MobileRoleDashboard.Role.HYPE),
@@ -338,6 +380,44 @@ class HumHumAppTest {
         compose.onNodeWithText("允许").assertDoesNotExist()
         compose.onNodeWithText("发送").assertDoesNotExist()
         compose.onNodeWithText("只读观察", substring = true).assertIsDisplayed()
+    }
+
+    @Test
+    fun hexaOfflineSnapshotNeverShowsApprovalOrFollowUpControls() {
+        setContent(
+            state = connectedState().copy(
+                connection = ConnectionStatus.OFFLINE,
+                offlineSnapshot = true,
+                selectedRole = MobileRoleDashboard.Role.HEXA,
+                sessions = listOf(controllableSession()),
+            ),
+        )
+
+        compose.onNodeWithText("离线快照", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("允许").assertDoesNotExist()
+        compose.onNodeWithText("拒绝").assertDoesNotExist()
+        compose.onNodeWithTag("follow-up-draft").assertDoesNotExist()
+    }
+
+    @Test
+    fun expiredPersonalContextUsesStaleLanguageInsteadOfCurrentClaims() {
+        var state by mutableStateOf(
+            connectedState().copy(
+                personalContext = personalContext(expiresAt = "2000-01-01T00:00:00Z"),
+            ),
+        )
+        compose.setContent {
+            HumHumApp(
+                state = state,
+                callbacks = HumHumCallbacks(
+                    onSelectRole = { state = state.copy(selectedRole = it) },
+                ),
+            )
+        }
+
+        compose.onNodeWithText("已过期", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("Hush").performClick()
+        compose.onNodeWithText("旧快照", substring = true).assertIsDisplayed()
     }
 
     @Test
@@ -514,10 +594,12 @@ class HumHumAppTest {
         ),
     )
 
-    private fun personalContext() = Models.PersonalContext(
+    private fun personalContext(
+        expiresAt: String = "2026-07-20T09:00:00Z",
+    ) = Models.PersonalContext(
         1,
         "2026-07-19T09:00:00Z",
-        "2026-07-20T09:00:00Z",
+        expiresAt,
         listOf(
             Models.TodayItem(
                 "goal-1",

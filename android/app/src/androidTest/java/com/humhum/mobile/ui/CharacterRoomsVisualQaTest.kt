@@ -64,7 +64,7 @@ class CharacterRoomsVisualQaTest {
 
     @Test
     fun captureHealthUnavailableViewport() = capture(
-        connectedState(MobileRoleDashboard.Role.HUSH).copy(
+        connectedState(MobileRoleDashboard.Role.HUMI).copy(
             health = HealthUiState(
                 summary = HealthSummary(
                     steps = null,
@@ -83,7 +83,7 @@ class CharacterRoomsVisualQaTest {
 
     @Test
     fun captureHealthDeniedViewport() = capture(
-        connectedState(MobileRoleDashboard.Role.HUSH).copy(
+        connectedState(MobileRoleDashboard.Role.HUMI).copy(
             healthPermissions = HealthPermissionState(),
             health = HealthUiState(
                 summary = HealthSummary(

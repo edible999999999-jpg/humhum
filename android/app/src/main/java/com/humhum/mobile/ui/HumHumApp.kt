@@ -1,5 +1,7 @@
 package com.humhum.mobile.ui
 
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -98,15 +100,21 @@ private fun CompanionScaffold(
         },
     ) { padding ->
         Box(modifier = Modifier.padding(padding)) {
-            when (state.selectedRole) {
-                MobileRoleDashboard.Role.HUMI ->
-                    HumiRoomScreen(state, callbacks, Modifier.fillMaxSize())
-                MobileRoleDashboard.Role.HYPE ->
-                    HypeRoomScreen(state, Modifier.fillMaxSize())
-                MobileRoleDashboard.Role.HUSH ->
-                    HushRoomScreen(state, Modifier.fillMaxSize())
-                MobileRoleDashboard.Role.HEXA ->
-                    HexaScreen(state, callbacks, Modifier.fillMaxSize())
+            Crossfade(
+                targetState = state.selectedRole,
+                animationSpec = tween(durationMillis = 160),
+                label = "room-switch",
+            ) { role ->
+                when (role) {
+                    MobileRoleDashboard.Role.HUMI ->
+                        HumiRoomScreen(state, callbacks, Modifier.fillMaxSize())
+                    MobileRoleDashboard.Role.HYPE ->
+                        HypeRoomScreen(state, Modifier.fillMaxSize())
+                    MobileRoleDashboard.Role.HUSH ->
+                        HushRoomScreen(state, Modifier.fillMaxSize())
+                    MobileRoleDashboard.Role.HEXA ->
+                        HexaScreen(state, callbacks, Modifier.fillMaxSize())
+                }
             }
         }
     }

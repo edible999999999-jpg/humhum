@@ -82,4 +82,7 @@ data class HumHumUiState(
     val canControl: Boolean
         get() = scope == Models.Scope.CONTROL &&
             (connection == ConnectionStatus.CONNECTED || connection == ConnectionStatus.OFFLINE)
+
+    val canActOnSessions: Boolean
+        get() = canControl && !offlineSnapshot
 }

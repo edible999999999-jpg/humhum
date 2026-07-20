@@ -89,12 +89,16 @@ fun HexaScreen(
         item {
             Text(
                 text = if (state.canControl) {
-                    "控制权限 · 可以确认和追问"
+                    if (state.canActOnSessions) {
+                        "控制权限 · 可以确认和追问"
+                    } else {
+                        "离线快照 · 等待 Mac 在线后再确认或追问"
+                    }
                 } else {
                     "只读观察 · 不会替你执行操作"
                 },
                 style = MaterialTheme.typography.labelLarge,
-                color = if (state.canControl) Hexa else Muted,
+                color = if (state.canActOnSessions) Hexa else Muted,
                 modifier = Modifier
                     .padding(horizontal = 20.dp)
                     .testTag("hexa-permission"),
@@ -121,7 +125,7 @@ fun HexaScreen(
                     state.personalContext!!.agents().take(3).forEach { agent ->
                         RoomItem(
                             title = agent.name(),
-                            detail = agent.currentStep() ?: agent.status(),
+                            detail = "${agent.currentStep() ?: agent.status()} · ${relativeTimestampLabel(agent.updatedAt())}",
                             accent = Hexa,
                             meta = if (agent.needsUser()) "需要你" else agent.status(),
                         )
@@ -231,7 +235,7 @@ private fun HexaDecisionSection(
                         onResolve = { approved ->
                             callbacks.onResolve(session, action, approved)
                         },
-                        controlsVisible = state.canControl,
+                        controlsVisible = state.canActOnSessions,
                     )
                 }
             }
@@ -278,7 +282,7 @@ private fun SessionPanel(
                     }
                 }
             }
-            if (state.canControl && showActions) {
+            if (state.canActOnSessions && showActions) {
                 session.actions().forEach { action ->
                     ActionRow(
                         action = action,
@@ -287,7 +291,7 @@ private fun SessionPanel(
                     )
                 }
             }
-            if (state.canControl && session.canMessage()) {
+            if (state.canActOnSessions && session.canMessage()) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
                         value = draft,

@@ -103,6 +103,7 @@ class HumHumViewModelTest {
 
         assertEquals(ConnectionStatus.OFFLINE, viewModel.state.value.connection)
         assertTrue(viewModel.state.value.offlineSnapshot)
+        assertFalse(viewModel.state.value.canActOnSessions)
         assertEquals("12 分钟前同步", viewModel.state.value.statusMessage)
         assertEquals("cached", viewModel.state.value.sessions.single().id())
     }

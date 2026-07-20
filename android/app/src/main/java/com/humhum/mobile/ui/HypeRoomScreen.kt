@@ -35,6 +35,9 @@ fun HypeRoomScreen(
     modifier: Modifier = Modifier,
 ) {
     val context = state.personalContext
+    val contextFreshness = context?.let {
+        personalContextFreshness(it.generatedAt(), it.expiresAt())
+    }
     var query by remember { mutableStateOf("") }
     val knowledge = context?.knowledge().orEmpty().filter {
         query.isBlank() ||
@@ -54,7 +57,11 @@ fun HypeRoomScreen(
                         .padding(horizontal = 20.dp, vertical = 18.dp),
                     verticalArrangement = Arrangement.spacedBy(3.dp),
                 ) {
-                    Text("本次先整理", style = MaterialTheme.typography.labelLarge, color = Hype)
+                    Text(
+                        if (contextFreshness?.expired == true) "上次整理" else "本次先整理",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = Hype,
+                    )
                     Text(
                         context?.knowledge()?.firstOrNull()?.title() ?: "让知识在下一次直接可用",
                         style = MaterialTheme.typography.headlineMedium,
@@ -81,7 +88,7 @@ fun HypeRoomScreen(
         item {
             RoomSectionHeader(
                 title = "可复用能力",
-                trailing = context?.knowledge()?.size?.let { "$it 项" },
+                trailing = contextFreshness?.label ?: context?.knowledge()?.size?.let { "$it 项" },
                 modifier = Modifier.padding(horizontal = 20.dp),
             )
         }
@@ -97,7 +104,7 @@ fun HypeRoomScreen(
             item(key = knowledge.first().id()) {
                 RoomItem(
                     title = knowledge.first().title(),
-                    detail = "${knowledge.first().summary()} · 来自 Mac 知识库",
+                    detail = "${knowledge.first().summary()} · Mac 知识库 · ${contextFreshness?.label ?: "时间未知"}",
                     accent = Hype,
                     meta = if (knowledge.first().kind() == "skill") "Skill" else "笔记",
                     modifier = Modifier
@@ -108,7 +115,7 @@ fun HypeRoomScreen(
             items(knowledge.drop(1), key = { it.id() }) { item ->
                 RoomItem(
                     title = item.title(),
-                    detail = "${item.summary()} · 来自 Mac 知识库",
+                    detail = "${item.summary()} · Mac 知识库 · ${contextFreshness?.label ?: "时间未知"}",
                     accent = Hype,
                     meta = if (item.kind() == "skill") "Skill" else "笔记",
                     modifier = Modifier.padding(horizontal = 20.dp),

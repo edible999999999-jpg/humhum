@@ -23,7 +23,11 @@ fun HushRoomScreen(
     state: HumHumUiState,
     modifier: Modifier = Modifier,
 ) {
-    val inbox = state.personalContext?.inbox().orEmpty()
+    val context = state.personalContext
+    val contextFreshness = context?.let {
+        personalContextFreshness(it.generatedAt(), it.expiresAt())
+    }
+    val inbox = context?.inbox().orEmpty()
         .sortedByDescending { it.importance() }
     val priority = inbox.count { it.importance() >= 4 }
     LazyColumn(
@@ -41,7 +45,9 @@ fun HushRoomScreen(
             ) {
                 Text("Hush 注意到", style = MaterialTheme.typography.labelLarge, color = Hush)
                 Text(
-                    text = if (priority == 0) {
+                    text = if (contextFreshness?.expired == true && priority > 0) {
+                        "旧快照里有 $priority 个人需要留意"
+                    } else if (priority == 0) {
                         "今天没有需要你立刻处理的人"
                     } else {
                         "$priority 个人值得你今天回一下"
@@ -53,7 +59,7 @@ fun HushRoomScreen(
                 )
                 Text(
                     text = if (state.personalContextAuthorized) {
-                        "只读摘要 · 仅限已授权来源 · 不会自动发送回复"
+                        "只读摘要 · 已授权来源 · ${contextFreshness?.label ?: "同步时间未知"} · 不会自动发送回复"
                     } else {
                         "尚未授权消息来源 · 不会读取或发送回复"
                     },
@@ -82,7 +88,7 @@ fun HushRoomScreen(
             item(key = inbox.first().id()) {
                 RoomItem(
                     title = inbox.first().sender(),
-                    detail = inbox.first().preview(),
+                    detail = "${inbox.first().preview()} · ${relativeTimestampLabel(inbox.first().receivedAt())}",
                     accent = Hush,
                     meta = inbox.first().platform(),
                     modifier = Modifier
@@ -93,7 +99,7 @@ fun HushRoomScreen(
             items(inbox.drop(1), key = { it.id() }) { message ->
                 RoomItem(
                     title = message.sender(),
-                    detail = message.preview(),
+                    detail = "${message.preview()} · ${relativeTimestampLabel(message.receivedAt())}",
                     accent = Hush,
                     meta = message.platform(),
                     modifier = Modifier.padding(horizontal = 20.dp),
