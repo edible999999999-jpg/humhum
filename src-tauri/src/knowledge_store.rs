@@ -1,5 +1,6 @@
 use crate::skill_index::{
     chinese_skill_presentation, discover_skill_sources, is_personal_skill_path, SkillSource,
+    SkillUsageEvidence,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -96,6 +97,8 @@ pub struct AgentAsset {
     pub modified_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_used_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub usage_evidence: Vec<SkillUsageEvidence>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ownership: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -638,6 +641,7 @@ impl KnowledgeStore {
                     if let Some(source) = matched_source {
                         asset.source = source.source.clone();
                         asset.last_used_at = source.last_used_at.clone();
+                        asset.usage_evidence = source.usage_evidence.clone();
                         if let Some(plugin) = &source.plugin {
                             asset.tags.push(format!("plugin:{}", plugin));
                             asset.tags.sort();
@@ -1163,6 +1167,7 @@ fn parse_agent_asset(root: &Path, path: &Path, content: &str) -> AgentAsset {
         tags,
         modified_at,
         last_used_at: None,
+        usage_evidence: Vec::new(),
         ownership: None,
         display_name_zh: None,
         summary_zh: None,

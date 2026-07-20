@@ -2,6 +2,8 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
+use serde::{Deserialize, Serialize};
+
 const MAX_RECENT_SESSION_FILES: usize = 80;
 const MAX_SESSION_TAIL_BYTES: u64 = 2 * 1024 * 1024;
 
@@ -18,7 +20,17 @@ pub struct SkillSource {
     pub plugin: Option<String>,
     pub ownership: String,
     pub last_used_at: Option<String>,
+    pub usage_evidence: Vec<SkillUsageEvidence>,
     pub excluded_prefixes: Vec<PathBuf>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SkillUsageEvidence {
+    pub session_id: String,
+    pub agent_id: String,
+    pub session_path: String,
+    pub workspace: Option<String>,
+    pub used_at: Option<String>,
 }
 
 pub fn parse_enabled_codex_plugins(config: &str) -> Vec<EnabledPlugin> {
@@ -59,6 +71,7 @@ pub fn discover_skill_sources(home: &Path) -> Vec<SkillSource> {
             plugin: None,
             ownership: "created".into(),
             last_used_at: None,
+            usage_evidence: Vec::new(),
             excluded_prefixes: Vec::new(),
         },
         SkillSource {
@@ -67,6 +80,7 @@ pub fn discover_skill_sources(home: &Path) -> Vec<SkillSource> {
             plugin: None,
             ownership: "created".into(),
             last_used_at: None,
+            usage_evidence: Vec::new(),
             excluded_prefixes: Vec::new(),
         },
         SkillSource {
@@ -75,6 +89,7 @@ pub fn discover_skill_sources(home: &Path) -> Vec<SkillSource> {
             plugin: None,
             ownership: "created".into(),
             last_used_at: None,
+            usage_evidence: Vec::new(),
             excluded_prefixes: vec![home.join(".codex/skills/.system")],
         },
         SkillSource {
@@ -83,6 +98,7 @@ pub fn discover_skill_sources(home: &Path) -> Vec<SkillSource> {
             plugin: None,
             ownership: "installed".into(),
             last_used_at: None,
+            usage_evidence: Vec::new(),
             excluded_prefixes: Vec::new(),
         },
     ];
@@ -99,6 +115,7 @@ pub fn discover_skill_sources(home: &Path) -> Vec<SkillSource> {
                     plugin: Some(name),
                     ownership: "installed".into(),
                     last_used_at: None,
+                    usage_evidence: Vec::new(),
                     excluded_prefixes: Vec::new(),
                 });
             }
@@ -118,6 +135,7 @@ pub fn discover_skill_sources(home: &Path) -> Vec<SkillSource> {
                     plugin: Some(plugin.name),
                     ownership: "installed".into(),
                     last_used_at: None,
+                    usage_evidence: Vec::new(),
                     excluded_prefixes: Vec::new(),
                 });
             }
@@ -145,6 +163,11 @@ pub fn extract_used_skill_paths_from_session(content: &str) -> Vec<PathBuf> {
 struct SkillUsage {
     path: PathBuf,
     last_used_at: Option<String>,
+}
+
+struct SessionContext {
+    session_id: String,
+    workspace: Option<String>,
 }
 
 fn extract_used_skills_from_session(content: &str) -> Vec<SkillUsage> {
@@ -209,6 +232,7 @@ pub fn discover_session_skill_sources_from_files(
         let Ok(content) = read_session_tail(session_file) else {
             continue;
         };
+        let session_context = extract_session_context(&content, session_file);
         let file_modified_at = std::fs::metadata(session_file)
             .and_then(|metadata| metadata.modified())
             .ok()
@@ -242,9 +266,17 @@ pub fn discover_session_skill_sources_from_files(
                 continue;
             };
             let last_used_at = usage.last_used_at.or_else(|| file_modified_at.clone());
+            let evidence = SkillUsageEvidence {
+                session_id: session_context.session_id.clone(),
+                agent_id: "codex".to_string(),
+                session_path: session_file.to_string_lossy().to_string(),
+                workspace: session_context.workspace.clone(),
+                used_at: last_used_at.clone(),
+            };
             if let Some(existing) = sources.iter_mut().find(|source| source.root == root) {
                 existing.last_used_at =
                     newest_timestamp(existing.last_used_at.clone(), last_used_at);
+                merge_usage_evidence(&mut existing.usage_evidence, evidence);
                 continue;
             }
 
@@ -254,6 +286,7 @@ pub fn discover_session_skill_sources_from_files(
                 plugin: Some((*plugin).to_string()),
                 ownership: "used".into(),
                 last_used_at,
+                usage_evidence: vec![evidence],
                 excluded_prefixes: Vec::new(),
             });
         }
@@ -261,6 +294,91 @@ pub fn discover_session_skill_sources_from_files(
 
     sources.sort_by(|a, b| a.root.cmp(&b.root));
     sources
+}
+
+fn extract_session_context(content: &str, session_file: &Path) -> SessionContext {
+    let fallback_session_id = session_file
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default()
+        .to_string();
+
+    for line in content.lines() {
+        let Ok(entry) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if entry.get("type").and_then(serde_json::Value::as_str) != Some("session_meta") {
+            continue;
+        }
+
+        let payload = entry.get("payload");
+        return SessionContext {
+            session_id: payload
+                .and_then(|value| value.get("id"))
+                .and_then(serde_json::Value::as_str)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .unwrap_or(fallback_session_id),
+            workspace: payload
+                .and_then(|value| value.get("cwd"))
+                .and_then(serde_json::Value::as_str)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string),
+        };
+    }
+
+    SessionContext {
+        session_id: fallback_session_id,
+        workspace: None,
+    }
+}
+
+fn merge_usage_evidence(evidence: &mut Vec<SkillUsageEvidence>, incoming: SkillUsageEvidence) {
+    if let Some(existing) = evidence.iter_mut().find(|existing| {
+        existing.agent_id == incoming.agent_id && existing.session_id == incoming.session_id
+    }) {
+        if evidence_is_newer(&incoming, existing) {
+            *existing = incoming;
+        }
+    } else {
+        evidence.push(incoming);
+    }
+
+    evidence.sort_by(compare_usage_evidence);
+}
+
+fn evidence_is_newer(incoming: &SkillUsageEvidence, existing: &SkillUsageEvidence) -> bool {
+    match (&incoming.used_at, &existing.used_at) {
+        (Some(incoming), Some(existing)) => {
+            let incoming = chrono::DateTime::parse_from_rfc3339(incoming).ok();
+            let existing = chrono::DateTime::parse_from_rfc3339(existing).ok();
+            matches!((incoming, existing), (Some(incoming), Some(existing)) if incoming > existing)
+        }
+        (Some(_), None) => true,
+        _ => false,
+    }
+}
+
+fn compare_usage_evidence(
+    left: &SkillUsageEvidence,
+    right: &SkillUsageEvidence,
+) -> std::cmp::Ordering {
+    let recency = match (&left.used_at, &right.used_at) {
+        (Some(left), Some(right)) => match (
+            chrono::DateTime::parse_from_rfc3339(left).ok(),
+            chrono::DateTime::parse_from_rfc3339(right).ok(),
+        ) {
+            (Some(left), Some(right)) => right.cmp(&left),
+            _ => right.cmp(left),
+        },
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    };
+
+    recency
+        .then_with(|| left.agent_id.cmp(&right.agent_id))
+        .then_with(|| left.session_id.cmp(&right.session_id))
 }
 
 fn normalize_rfc3339_timestamp(value: &str) -> Option<String> {
@@ -656,6 +774,78 @@ enabled = false
             sources[0].last_used_at.as_deref(),
             Some("2026-07-19T09:30:00+00:00")
         );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn session_evidence_uses_meta_identity_and_deduplicates_calls() {
+        let root = temp_root("session-evidence-dedup");
+        let home = root.join("home");
+        let skill = home.join(
+            ".codex/plugins/cache/openai-curated-remote/superpowers/6.1.1/skills/using-superpowers/SKILL.md",
+        );
+        std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
+        std::fs::write(&skill, "---\nname: test\ndescription: test\n---\n").unwrap();
+        let session_path = root.join("session-fallback.jsonl");
+        std::fs::write(
+            &session_path,
+            format!(
+                "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"session-new\",\"cwd\":\"/Users/me/project\"}}}}\n\\
+                 {{\"timestamp\":\"2026-07-20T09:00:00Z\",\"type\":\"response_item\",\"payload\":{{\"type\":\"custom_tool_call\",\"name\":\"exec\",\"input\":\"cat {}\"}}}}\n\\
+                 {{\"timestamp\":\"2026-07-20T09:30:00Z\",\"type\":\"response_item\",\"payload\":{{\"type\":\"custom_tool_call\",\"name\":\"exec\",\"input\":\"cat {}\"}}}}\n",
+                skill.display(),
+                skill.display(),
+            ),
+        )
+        .unwrap();
+
+        let sources = discover_session_skill_sources_from_files(&home, &[session_path]);
+
+        assert_eq!(sources[0].usage_evidence.len(), 1);
+        assert_eq!(sources[0].usage_evidence[0].session_id, "session-new");
+        assert_eq!(
+            sources[0].usage_evidence[0].workspace.as_deref(),
+            Some("/Users/me/project")
+        );
+        assert_eq!(
+            sources[0].usage_evidence[0].used_at.as_deref(),
+            Some("2026-07-20T09:30:00+00:00")
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn session_evidence_sorts_transcripts_newest_first() {
+        let root = temp_root("session-evidence-order");
+        let home = root.join("home");
+        let skill = home.join(
+            ".codex/plugins/cache/openai-curated-remote/superpowers/6.1.1/skills/using-superpowers/SKILL.md",
+        );
+        std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
+        std::fs::write(&skill, "---\nname: test\ndescription: test\n---\n").unwrap();
+        let older_session = root.join("session-older.jsonl");
+        let newer_session = root.join("session-newer.jsonl");
+        for (path, session_id, timestamp) in [
+            (&older_session, "session-older", "2026-07-20T08:30:00Z"),
+            (&newer_session, "session-newer", "2026-07-20T10:30:00Z"),
+        ] {
+            std::fs::write(
+                path,
+                format!(
+                    "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{session_id}\"}}}}\n\\
+                     {{\"timestamp\":\"{timestamp}\",\"type\":\"response_item\",\"payload\":{{\"type\":\"custom_tool_call\",\"name\":\"exec\",\"input\":\"cat {}\"}}}}\n",
+                    skill.display(),
+                ),
+            )
+            .unwrap();
+        }
+
+        let sources =
+            discover_session_skill_sources_from_files(&home, &[older_session, newer_session]);
+
+        assert_eq!(sources[0].usage_evidence.len(), 2);
+        assert_eq!(sources[0].usage_evidence[0].session_id, "session-newer");
+        assert_eq!(sources[0].usage_evidence[1].session_id, "session-older");
         let _ = std::fs::remove_dir_all(&root);
     }
 }

@@ -6014,6 +6014,7 @@ mod humi_agent_kernel_tests {
             tags: Vec::new(),
             modified_at: None,
             last_used_at: None,
+            usage_evidence: Vec::new(),
             ownership: None,
             display_name_zh: None,
             summary_zh: None,
