@@ -175,6 +175,19 @@ describe("Hype logical skill rows", () => {
                 },
               ],
             },
+            {
+              id: "asset:release-prompt",
+              asset_type: "prompt",
+              agent_id: "codex",
+              name: "Release prompt",
+              file_path: "/Users/me/.codex/prompts/release.md",
+              relative_path: "prompts/release.md",
+              source: "codex",
+              content: "Keep releases reversible.",
+              tags: [],
+              ownership: "created",
+              modified_at: "2026-07-18T09:00:00Z",
+            },
           ],
         });
       }
@@ -206,12 +219,19 @@ describe("Hype logical skill rows", () => {
     });
 
     await vi.waitFor(() => {
-      expect(host.querySelectorAll(".hype-asset-name strong")).toHaveLength(1);
+      expect(
+        host.querySelectorAll(
+          ".hype-logical-skill-row .hype-asset-name strong",
+        ),
+      ).toHaveLength(1);
     });
     expect(host.textContent).toContain("2 个 Agent");
     expect(host.textContent).toContain("2 个会话");
+    expect(host.textContent).toContain("Release prompt");
 
-    const row = host.querySelector<HTMLButtonElement>(".hype-asset-row");
+    const row = host.querySelector<HTMLButtonElement>(
+      ".hype-logical-skill-row .hype-asset-row",
+    );
     await act(async () => row?.click());
 
     const expanded = host.querySelector(".hype-asset-expanded");

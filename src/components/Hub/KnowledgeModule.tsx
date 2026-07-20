@@ -18,6 +18,7 @@ import {
   filterLogicalSkills,
   getAgentAssetSummary,
   groupLogicalSkills,
+  isPersonalAgentAsset,
   sortByRecentUpdate,
   type AgentAssetScope,
 } from "./knowledgePresentation";
@@ -737,14 +738,28 @@ export function KnowledgeModule() {
   const ruleCount =
     data.agent_rules.length + discoveredRuleAssets.length + ruleNotes.length;
   const configuredAssetRoots = parseAssetRoots(assetRoots);
-  const scopedAssets = filterAgentAssets(
+  const scopedSkillAssets = filterAgentAssets(
     assets,
     assetScope,
     "",
     configuredAssetRoots,
   );
-  const logicalSkills = groupLogicalSkills(scopedAssets);
+  const scopedNonSkillAssets = assets.filter(
+    (asset) =>
+      asset.asset_type !== "skill" &&
+      (assetScope === "all" ||
+        isPersonalAgentAsset(asset, configuredAssetRoots)),
+  );
+  const logicalSkills = groupLogicalSkills(scopedSkillAssets);
   const filteredSkills = filterLogicalSkills(logicalSkills, searchQuery);
+  const filteredNonSkillAssets = sortByRecentUpdate(
+    scopedNonSkillAssets.filter((asset) =>
+      matchesAssetQuery(asset, searchQuery.trim().toLowerCase()),
+    ),
+  );
+  const scopedAssetCount = logicalSkills.length + scopedNonSkillAssets.length;
+  const filteredAssetCount =
+    filteredSkills.length + filteredNonSkillAssets.length;
   const operationBusy =
     operationStatus?.tab === activeTab && operationStatus.kind === "busy";
   const refreshBusy =
@@ -831,7 +846,7 @@ export function KnowledgeModule() {
               onClick={() => setActiveTab(tab)}
             >
               {tab === "assets"
-                ? `我的技能 ${logicalSkills.length}`
+                ? `Agent 资产 ${scopedAssetCount}`
                 : tab === "preferences"
                   ? `我的偏好 ${preferenceCount}`
                   : tab === "rules"
@@ -867,10 +882,14 @@ export function KnowledgeModule() {
       {activeTab === "assets" && (
         <div className="hype-inventory">
           <div className="hype-inventory-summary">
+            <span>{filteredAssetCount} 项</span>
             <span>{filteredSkills.length} 个技能</span>
             <span>
               {filteredSkills.reduce((sum, skill) => sum + skill.session_count, 0)} 个最近会话
             </span>
+            {filteredNonSkillAssets.length > 0 && (
+              <span>{filteredNonSkillAssets.length} 个其他资产</span>
+            )}
           </div>
 
           <div className="hype-asset-list">
@@ -880,16 +899,21 @@ export function KnowledgeModule() {
               <span>最近会话</span>
               <span>最近使用</span>
             </div>
-            {filteredSkills.length === 0 ? (
+            {filteredAssetCount === 0 ? (
               <div className="hype-empty-state">
                 {assets.length === 0
                   ? "刷新后，Hype 会把本地 Agent 资产整理到这里。"
                   : "当前范围里没有匹配的资产。"}
               </div>
             ) : (
-              filteredSkills.map((skill) => (
-                <LogicalSkillRow key={skill.key} skill={skill} />
-              ))
+              <>
+                {filteredSkills.map((skill) => (
+                  <LogicalSkillRow key={skill.key} skill={skill} />
+                ))}
+                {filteredNonSkillAssets.map((asset) => (
+                  <AgentAssetRow key={asset.id} asset={asset} />
+                ))}
+              </>
             )}
           </div>
 
@@ -1494,7 +1518,9 @@ function LogicalSkillRow({ skill }: { skill: LogicalSkill }) {
       : null;
 
   return (
-    <div className={`hype-asset-item ${expanded ? "is-expanded" : ""}`}>
+    <div
+      className={`hype-asset-item hype-logical-skill-row ${expanded ? "is-expanded" : ""}`}
+    >
       <button
         type="button"
         className="hype-asset-row"

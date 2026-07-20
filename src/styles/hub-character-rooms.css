@@ -1140,7 +1140,7 @@
 .hype-skill-session-row,
 .hype-skill-copy-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(120px, auto);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.75fr);
   gap: 14px;
   align-items: center;
   min-height: 40px;
@@ -1184,6 +1184,8 @@
 }
 
 .hype-skill-session-row time {
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
