@@ -1,0 +1,20 @@
+[
+  {
+    "talker": "team-alpha@chatroom",
+    "displayName": "Fixture Team",
+    "kind": "group",
+    "lastTimestamp": 1784471700
+  },
+  {
+    "talker": "friend-alpha",
+    "displayName": "Fixture Friend",
+    "kind": "private",
+    "lastTimestamp": 1784471520
+  },
+  {
+    "talker": "gh_fixture",
+    "displayName": "Fixture Official Account",
+    "kind": "official",
+    "lastTimestamp": 1784471760
+  }
+]

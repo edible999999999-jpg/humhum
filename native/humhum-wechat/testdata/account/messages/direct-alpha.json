@@ -1,0 +1,38 @@
+{
+  "talker": "friend-alpha",
+  "messages": [
+    {
+      "talker": "friend-alpha",
+      "localId": 1,
+      "serverId": "fixture-server-1",
+      "timestamp": 1784471400,
+      "sender": "Fixture Friend",
+      "senderWxid": "friend-alpha",
+      "incoming": true,
+      "kind": "text",
+      "text": "fixture hello"
+    },
+    {
+      "talker": "friend-alpha",
+      "localId": 2,
+      "serverId": "fixture-server-2",
+      "timestamp": 1784471460,
+      "sender": "Fixture Friend",
+      "senderWxid": "friend-alpha",
+      "incoming": true,
+      "kind": "image",
+      "text": "[图片]"
+    },
+    {
+      "talker": "friend-alpha",
+      "localId": 3,
+      "serverId": "fixture-server-3",
+      "timestamp": 1784471520,
+      "sender": "Fixture Self",
+      "senderWxid": "fixture-self",
+      "incoming": false,
+      "kind": "text",
+      "text": "fixture outgoing"
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "talker": "team-alpha@chatroom",
+  "messages": [
+    {
+      "talker": "team-alpha@chatroom",
+      "localId": 10,
+      "serverId": "fixture-server-10",
+      "timestamp": 1784471600,
+      "sender": "Fixture Member One",
+      "senderWxid": "member-one",
+      "incoming": true,
+      "kind": "text",
+      "text": "fixture group hello"
+    },
+    {
+      "talker": "team-alpha@chatroom",
+      "localId": 11,
+      "serverId": "fixture-server-11",
+      "timestamp": 1784471700,
+      "sender": "Fixture Member Two",
+      "senderWxid": "member-two",
+      "incoming": true,
+      "kind": "file",
+      "text": "[文件]"
+    }
+  ]
+}
