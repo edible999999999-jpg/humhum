@@ -34,6 +34,9 @@ use crate::stats_store::StatsStore;
 use crate::transcript_reader::parse_transcript_signals;
 use crate::user_safe_text::project_user_safe_text;
 use crate::wake_guard::{WakeGuardState, WakeGuardStatus};
+use crate::wechat_hush_bridge::{
+    WechatHushBridge, WechatHushStatus, WechatSyncReport,
+};
 use crate::window_focus;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -1256,11 +1259,13 @@ pub async fn get_agent_kernel_status(
 /// Return local social/work message connectors that Hush can prepare.
 #[tauri::command]
 pub async fn get_hush_connectors(
-    bridge: State<'_, Arc<DwsHushBridge>>,
+    dws_bridge: State<'_, Arc<DwsHushBridge>>,
+    wechat_bridge: State<'_, Arc<WechatHushBridge>>,
 ) -> Result<Vec<HushConnectorStatus>, String> {
     let dingtalk_candidates = hush_application_candidates("dingtalk");
     let wechat_candidates = hush_application_candidates("wechat");
-    let dws_status = bridge.status().await;
+    let dws_status = dws_bridge.status().await;
+    let wechat_status = wechat_bridge.status().await;
     let mut dingtalk = build_hush_connector(
         "dingtalk",
         "钉钉",
@@ -1275,16 +1280,21 @@ pub async fn get_hush_connectors(
     } else {
         "not-connected".to_string()
     };
-    Ok(vec![
-        dingtalk,
-        build_hush_connector(
-            "wechat",
-            "WeChat",
-            &wechat_candidates,
-            &["WeChat", "微信"],
-            "Next: configure a local export or notification bridge. We do not read private chat databases directly.",
-        ),
-    ])
+    let mut wechat = build_hush_connector(
+        "wechat",
+        "WeChat",
+        &wechat_candidates,
+        &["WeChat", "微信"],
+        "使用 HUMHUM 内置的本机只读读取器同步微信私聊和群聊。",
+    );
+    wechat.bridge_ready = wechat_status.live_read_ok;
+    wechat.status = wechat_status.message;
+    wechat.bridge_mode = if wechat_status.live_read_ok {
+        "humhum-native-read-only".to_string()
+    } else {
+        "not-connected".to_string()
+    };
+    Ok(vec![wechat, dingtalk])
 }
 
 /// Open the native app for a Hush connector. This is the first step before
@@ -1309,7 +1319,7 @@ pub async fn open_hush_connector(connector_id: String) -> Result<(), String> {
                 "WeChat",
                 &candidates,
                 &["WeChat", "微信"],
-                "Next: configure a local export or notification bridge. We do not read private chat databases directly.",
+                "使用 HUMHUM 内置的本机只读读取器同步微信私聊和群聊。",
             )
         }
         other => return Err(format!("Unknown Hush connector: {}", other)),
@@ -1383,6 +1393,44 @@ pub async fn set_hush_dws_auto_sync(
 #[tauri::command]
 pub async fn open_hush_dws_login(bridge: State<'_, Arc<DwsHushBridge>>) -> Result<(), String> {
     bridge.open_login().await
+}
+
+#[tauri::command]
+pub async fn get_hush_wechat_status(
+    bridge: State<'_, Arc<WechatHushBridge>>,
+) -> Result<WechatHushStatus, String> {
+    Ok(bridge.status().await)
+}
+
+#[tauri::command]
+pub async fn sync_hush_wechat(
+    app: AppHandle,
+    bridge: State<'_, Arc<WechatHushBridge>>,
+    store: State<'_, Arc<std::sync::Mutex<HushStore>>>,
+) -> Result<WechatSyncReport, String> {
+    let report = bridge.sync(store.inner().clone()).await?;
+    let _ = app.emit("humhum://hush-message", &report);
+    Ok(report)
+}
+
+#[tauri::command]
+pub async fn set_hush_wechat_auto_sync(
+    bridge: State<'_, Arc<WechatHushBridge>>,
+    enabled: bool,
+) -> Result<WechatHushStatus, String> {
+    bridge.set_auto_sync(enabled).await
+}
+
+#[tauri::command]
+pub async fn open_hush_wechat_setup(
+    bridge: State<'_, Arc<WechatHushBridge>>,
+) -> Result<(), String> {
+    bridge.open_setup_terminal().await
+}
+
+#[tauri::command]
+pub async fn open_hush_wechat_install() -> Result<(), String> {
+    WechatHushBridge::open_install_page().await
 }
 
 #[tauri::command]

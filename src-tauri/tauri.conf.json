@@ -69,6 +69,13 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "externalBin": [
+      "binaries/humhum-wechat-reader"
+    ],
+    "resources": {
+      "resources/wechat/libWCDB.dylib": "wechat/libWCDB.dylib",
+      "resources/wechat/native-manifest.json": "wechat/native-manifest.json"
+    },
     "icon": [
       "icons/icon.icns",
       "icons/icon.ico",

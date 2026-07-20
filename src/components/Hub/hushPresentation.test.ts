@@ -22,6 +22,7 @@ import {
 type TestConversationKind =
   | "dws-id"
   | "dws-chat"
+  | "wechat-chat"
   | "notification-thread"
   | "sender";
 
@@ -193,6 +194,43 @@ describe("Hush latest-message and attention ordering", () => {
 });
 
 describe("getHushConversationIdentity", () => {
+  it("groups real WeChat history by its stable talker instead of each sender", () => {
+    const first = getHushConversationIdentity({
+      platform: "wechat",
+      sender: "小明",
+      chat: "HUMHUM 项目群",
+      source_id: "wechat-native:43122059806@chatroom:1001",
+      raw: {
+        source: "wechat_native",
+        talker: "43122059806@chatroom",
+        conversation_kind: "group",
+      },
+    });
+    const second = getHushConversationIdentity({
+      platform: "wechat",
+      sender: "小红",
+      chat: "HUMHUM 项目群",
+      source_id: "wechat-native:43122059806@chatroom:1002",
+      raw: {
+        source: "wechat_native",
+        talker: "43122059806@chatroom",
+        conversation_kind: "group",
+      },
+    });
+
+    expect(first).toEqual({
+      id: canonicalId(
+        "wechat-chat",
+        "wechat",
+        "43122059806@chatroom",
+      ),
+      name: "HUMHUM 项目群",
+      legacyIds: ["wechat:小明"],
+    });
+    expect(second.id).toBe(first.id);
+    expect(second.name).toBe(first.name);
+  });
+
   it("keeps system notification threads separate for the same sender and platform", () => {
     const first = getHushConversationIdentity({
       platform: " WeChat ",

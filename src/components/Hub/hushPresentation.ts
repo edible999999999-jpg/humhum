@@ -66,6 +66,7 @@ export type HushChatScope = "direct" | "group" | "unknown";
 type HushConversationKind =
   | "dws-id"
   | "dws-chat"
+  | "wechat-chat"
   | "notification-thread"
   | "sender";
 
@@ -294,6 +295,27 @@ export function getHushConversationIdentity(
     }
   }
 
+  const isWechatHistory =
+    source === "wechat_native" ||
+    source === "wechat_cli" ||
+    sourceId?.startsWith("wechat-native:") === true ||
+    sourceId?.startsWith("wechat-cli:") === true;
+  if (isWechatHistory) {
+    const talker =
+      trimHushIdentityPart(message.raw?.talker) ??
+      extractWechatTalker(message.source_id);
+    if (talker) {
+      const chatName =
+        trimHushIdentityPart(message.chat) ??
+        trimHushIdentityPart(message.raw?.chat);
+      return {
+        id: createHushConversationId(platformKey, "wechat-chat", talker),
+        name: chatName || senderName,
+        legacyIds,
+      };
+    }
+  }
+
   const isMacNotification =
     source === "macos_notification_center" ||
     sourceId?.startsWith("com.tencent.xinwechat:") === true ||
@@ -321,6 +343,13 @@ export function getHushConversationIdentity(
     name: senderName,
     legacyIds,
   };
+}
+
+function extractWechatTalker(sourceId: string | null | undefined): string | null {
+  const match = sourceId
+    ?.trim()
+    .match(/^(?:wechat-native|wechat-cli):(.+):[^:]+$/i);
+  return trimHushIdentityPart(match?.[1]);
 }
 
 export function groupHushMessages(

@@ -43,6 +43,8 @@ mod transcript_reader;
 mod user_safe_text;
 mod wake_crypto;
 mod wake_guard;
+mod wechat_hush_bridge;
+mod wechat_native_runner;
 mod window_focus;
 mod wukong_watcher;
 
@@ -276,6 +278,35 @@ pub fn run() {
                 }
             });
 
+            // WeChat local history stays in strict read-only mode and imports
+            // only incoming messages into the local Hush inbox.
+            let wechat_bridge = Arc::new(
+                wechat_hush_bridge::WechatHushBridge::load_or_create(&dws_home)
+                    .map_err(std::io::Error::other)?,
+            );
+            app.manage(wechat_bridge.clone());
+            let wechat_app = app_handle.clone();
+            let wechat_hush_store = hush_store.clone();
+            tauri::async_runtime::spawn(async move {
+                let mut interval =
+                    tokio::time::interval(std::time::Duration::from_secs(5 * 60));
+                interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                interval.tick().await;
+                loop {
+                    interval.tick().await;
+                    let config = wechat_bridge.config_snapshot().await;
+                    if !config.auto_sync_enabled || wechat_bridge.is_syncing() {
+                        continue;
+                    }
+                    match wechat_bridge.sync(wechat_hush_store.clone()).await {
+                        Ok(report) => {
+                            let _ = wechat_app.emit("humhum://hush-message", &report);
+                        }
+                        Err(error) => log::warn!("WeChat background sync failed: {error}"),
+                    }
+                }
+            });
+
             #[cfg(target_os = "macos")]
             app.manage(Arc::new(std::sync::Mutex::new(
                 mac_notification_watcher::MacNotificationBridgeStatus::default(),
@@ -383,6 +414,11 @@ pub fn run() {
             commands::sync_hush_dws,
             commands::set_hush_dws_auto_sync,
             commands::open_hush_dws_login,
+            commands::get_hush_wechat_status,
+            commands::sync_hush_wechat,
+            commands::set_hush_wechat_auto_sync,
+            commands::open_hush_wechat_setup,
+            commands::open_hush_wechat_install,
             commands::get_hush_notification_bridge_status,
             commands::open_full_disk_access_settings,
             commands::diagnose_dingtalk_local_sources,

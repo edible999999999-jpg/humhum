@@ -12,6 +12,10 @@ rust-version = "1.89"
 name = "humhum_lib"
 crate-type = ["lib", "cdylib", "staticlib"]
 
+[features]
+default = []
+wechat-external-dev = []
+
 # The `objc` 0.2 crate's `sel_impl!` macro expands to `cfg(feature = "cargo-clippy")`,
 # which Rust's `unexpected_cfgs` lint flags because we declare no such feature.
 # Declaring it here as a known cfg silences those warnings crate-wide without

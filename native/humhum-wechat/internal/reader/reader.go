@@ -3,6 +3,7 @@ package reader
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/edible999999999-jpg/humhum/native/humhum-wechat/internal/contract"
 	"github.com/edible999999999-jpg/humhum/native/humhum-wechat/internal/source"
@@ -25,18 +26,42 @@ type statusData struct {
 }
 
 type sessionsData struct {
-	Sessions []source.Session `json:"sessions"`
+	Sessions []sessionOutput `json:"sessions"`
+}
+
+type sessionOutput struct {
+	Username      string                  `json:"username"`
+	DisplayName   string                  `json:"display_name"`
+	ChatType      source.ConversationKind `json:"chat_type"`
+	LastTimestamp int64                   `json:"last_timestamp"`
 }
 
 type timelineQuery struct {
-	Talker string `json:"talker"`
-	After  int64  `json:"after"`
-	Limit  int    `json:"limit"`
+	Talker      string `json:"talker"`
+	DisplayName string `json:"display_name"`
+	After       int64  `json:"after"`
+	Limit       int    `json:"limit"`
+}
+
+type messageID struct {
+	Talker      string `json:"talker"`
+	LocalID     int64  `json:"local_id"`
+	ServerIDStr string `json:"server_id_str,omitempty"`
+}
+
+type messageOutput struct {
+	ID         messageID `json:"id"`
+	TimeISO    string    `json:"time_iso"`
+	Sender     string    `json:"sender"`
+	SenderWXID string    `json:"sender_wxid,omitempty"`
+	IsFromMe   bool      `json:"is_from_me"`
+	Kind       string    `json:"kind"`
+	Text       string    `json:"text"`
 }
 
 type timelineData struct {
-	Query    timelineQuery    `json:"query"`
-	Messages []source.Message `json:"messages"`
+	Query    timelineQuery   `json:"query"`
+	Messages []messageOutput `json:"messages"`
 }
 
 func Handle(
@@ -60,19 +85,45 @@ func Handle(
 		if err != nil {
 			return Failure(request.Action, err)
 		}
-		return contract.Success(request.Action, sessionsData{Sessions: sessions})
+		output := make([]sessionOutput, len(sessions))
+		for index, session := range sessions {
+			output[index] = sessionOutput{
+				Username:      session.Talker,
+				DisplayName:   session.DisplayName,
+				ChatType:      session.Kind,
+				LastTimestamp: session.LastTimestamp,
+			}
+		}
+		return contract.Success(request.Action, sessionsData{Sessions: output})
 	case "timeline":
 		messages, err := data.Timeline(ctx, request.Talker, request.After, request.Limit)
 		if err != nil {
 			return Failure(request.Action, err)
 		}
+		output := make([]messageOutput, len(messages))
+		for index, message := range messages {
+			output[index] = messageOutput{
+				ID: messageID{
+					Talker:      message.Talker,
+					LocalID:     message.LocalID,
+					ServerIDStr: message.ServerID,
+				},
+				TimeISO:    time.Unix(message.Timestamp, 0).UTC().Format(time.RFC3339),
+				Sender:     message.Sender,
+				SenderWXID: message.SenderWXID,
+				IsFromMe:   !message.Incoming,
+				Kind:       message.Kind,
+				Text:       message.Text,
+			}
+		}
 		return contract.Success(request.Action, timelineData{
 			Query: timelineQuery{
-				Talker: request.Talker,
-				After:  request.After,
-				Limit:  request.Limit,
+				Talker:      request.Talker,
+				DisplayName: request.Talker,
+				After:       request.After,
+				Limit:       request.Limit,
 			},
-			Messages: messages,
+			Messages: output,
 		})
 	default:
 		return contract.Failed(

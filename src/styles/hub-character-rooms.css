@@ -1502,6 +1502,7 @@
 .hush-state-dot.is-permission_required,
 .hush-state-dot.is-source_missing,
 .hush-state-dot.is-authentication_required,
+.hush-state-dot.is-setup_required,
 .hush-state-dot.is-not_installed {
   background: #cb762e;
 }

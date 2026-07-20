@@ -251,6 +251,33 @@ interface DwsSyncReport {
   next_cursor: string | null;
 }
 
+interface WechatHushStatus {
+  state: "not_installed" | "setup_required" | "ready" | "syncing" | "error";
+  message: string;
+  executable_path: string | null;
+  readiness: string | null;
+  live_read_ok: boolean;
+  blocked_by: string | null;
+  next_action: string | null;
+  warnings: string[];
+  auto_sync_enabled: boolean;
+  sync_interval_minutes: number;
+  last_success_at: string | null;
+  last_attempt_at: string | null;
+  syncing: boolean;
+}
+
+interface WechatSyncReport {
+  conversations: number;
+  examined_messages: number;
+  imported_messages: number;
+  duplicate_messages: number;
+  skipped_sent_messages: number;
+  failed_conversations: number;
+  partial: boolean;
+  warnings: string[];
+}
+
 export function HushModule() {
   const { t } = useTranslation();
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -270,6 +297,14 @@ export function HushModule() {
   const [dwsSyncing, setDwsSyncing] = useState(false);
   const [dwsLoggingIn, setDwsLoggingIn] = useState(false);
   const [dwsAutoUpdating, setDwsAutoUpdating] = useState(false);
+  const [wechatStatus, setWechatStatus] =
+    useState<WechatHushStatus | null>(null);
+  const [wechatReport, setWechatReport] =
+    useState<WechatSyncReport | null>(null);
+  const [wechatSyncing, setWechatSyncing] = useState(false);
+  const [wechatPreparing, setWechatPreparing] = useState(false);
+  const [wechatAutoUpdating, setWechatAutoUpdating] = useState(false);
+  const [wechatOpeningInstall, setWechatOpeningInstall] = useState(false);
   const [connectorError, setConnectorError] = useState<string | null>(null);
   const [healthClearFailed, setHealthClearFailed] = useState(false);
   const [openingConnector, setOpeningConnector] = useState<string | null>(null);
@@ -395,6 +430,37 @@ export function HushModule() {
     return () => clearInterval(interval);
   }, [fetchDwsStatus]);
 
+  const fetchWechatStatus = useCallback(async () => {
+    try {
+      const status = await invoke<WechatHushStatus>(
+        "get_hush_wechat_status",
+      );
+      setWechatStatus(status);
+    } catch (error) {
+      setWechatStatus((current) => ({
+        state: "error",
+        message: String(error),
+        executable_path: current?.executable_path ?? null,
+        readiness: current?.readiness ?? null,
+        live_read_ok: false,
+        blocked_by: current?.blocked_by ?? null,
+        next_action: current?.next_action ?? null,
+        warnings: current?.warnings ?? [],
+        auto_sync_enabled: current?.auto_sync_enabled ?? false,
+        sync_interval_minutes: current?.sync_interval_minutes ?? 5,
+        last_success_at: current?.last_success_at ?? null,
+        last_attempt_at: current?.last_attempt_at ?? null,
+        syncing: false,
+      }));
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchWechatStatus();
+    const interval = setInterval(fetchWechatStatus, 10000);
+    return () => clearInterval(interval);
+  }, [fetchWechatStatus]);
+
   const openFullDiskAccess = useCallback(async () => {
     try {
       await invoke("open_full_disk_access_settings");
@@ -480,6 +546,62 @@ export function HushModule() {
       setConnectorError(String(error));
     } finally {
       setDwsAutoUpdating(false);
+    }
+  }, []);
+
+  const syncWechat = useCallback(async () => {
+    setWechatSyncing(true);
+    setConnectorError(null);
+    try {
+      const report = await invoke<WechatSyncReport>("sync_hush_wechat");
+      setWechatReport(report);
+      await Promise.all([fetchWechatStatus(), fetchInbox()]);
+    } catch (error) {
+      setConnectorError(String(error));
+      await fetchWechatStatus();
+    } finally {
+      setWechatSyncing(false);
+    }
+  }, [fetchInbox, fetchWechatStatus]);
+
+  const prepareWechat = useCallback(async () => {
+    setWechatPreparing(true);
+    setConnectorError(null);
+    try {
+      await invoke("open_hush_wechat_setup");
+      await fetchWechatStatus();
+    } catch (error) {
+      setConnectorError(String(error));
+    } finally {
+      setWechatPreparing(false);
+    }
+  }, [fetchWechatStatus]);
+
+  const openWechatInstall = useCallback(async () => {
+    setWechatOpeningInstall(true);
+    setConnectorError(null);
+    try {
+      await invoke("open_hush_wechat_install");
+    } catch (error) {
+      setConnectorError(String(error));
+    } finally {
+      setWechatOpeningInstall(false);
+    }
+  }, []);
+
+  const setWechatAutoSync = useCallback(async (enabled: boolean) => {
+    setWechatAutoUpdating(true);
+    setConnectorError(null);
+    try {
+      const status = await invoke<WechatHushStatus>(
+        "set_hush_wechat_auto_sync",
+        { enabled },
+      );
+      setWechatStatus(status);
+    } catch (error) {
+      setConnectorError(String(error));
+    } finally {
+      setWechatAutoUpdating(false);
     }
   }, []);
 
@@ -655,11 +777,17 @@ export function HushModule() {
         notificationBridge={notificationBridge}
         dwsStatus={dwsStatus}
         dwsReport={dwsReport}
+        wechatStatus={wechatStatus}
+        wechatReport={wechatReport}
         inbox={inbox}
         openingConnector={openingConnector}
         dwsSyncing={dwsSyncing}
         dwsLoggingIn={dwsLoggingIn}
         dwsAutoUpdating={dwsAutoUpdating}
+        wechatSyncing={wechatSyncing}
+        wechatPreparing={wechatPreparing}
+        wechatAutoUpdating={wechatAutoUpdating}
+        wechatOpeningInstall={wechatOpeningInstall}
         healthSource={healthSource}
         healthSignalsCount={healthSignals.length}
         healthAvailability={healthAvailability}
@@ -673,6 +801,10 @@ export function HushModule() {
         onSyncDws={syncDws}
         onLoginDws={loginDws}
         onAutoSyncChange={setDwsAutoSync}
+        onSyncWechat={syncWechat}
+        onPrepareWechat={prepareWechat}
+        onOpenWechatInstall={openWechatInstall}
+        onWechatAutoSyncChange={setWechatAutoSync}
         onRefreshInbox={fetchInbox}
         onClearInbox={clearInbox}
         onRequestHealthClear={() => {
@@ -760,11 +892,17 @@ function HushStatusArea({
   notificationBridge,
   dwsStatus,
   dwsReport,
+  wechatStatus,
+  wechatReport,
   inbox,
   openingConnector,
   dwsSyncing,
   dwsLoggingIn,
   dwsAutoUpdating,
+  wechatSyncing,
+  wechatPreparing,
+  wechatAutoUpdating,
+  wechatOpeningInstall,
   healthSource,
   healthSignalsCount,
   healthAvailability,
@@ -778,6 +916,10 @@ function HushStatusArea({
   onSyncDws,
   onLoginDws,
   onAutoSyncChange,
+  onSyncWechat,
+  onPrepareWechat,
+  onOpenWechatInstall,
+  onWechatAutoSyncChange,
   onRefreshInbox,
   onClearInbox,
   onRequestHealthClear,
@@ -789,11 +931,17 @@ function HushStatusArea({
   notificationBridge: NotificationBridgeStatus | null;
   dwsStatus: DwsHushStatus | null;
   dwsReport: DwsSyncReport | null;
+  wechatStatus: WechatHushStatus | null;
+  wechatReport: WechatSyncReport | null;
   inbox: HushInboxSummary | null;
   openingConnector: string | null;
   dwsSyncing: boolean;
   dwsLoggingIn: boolean;
   dwsAutoUpdating: boolean;
+  wechatSyncing: boolean;
+  wechatPreparing: boolean;
+  wechatAutoUpdating: boolean;
+  wechatOpeningInstall: boolean;
   healthSource: HushHealthSourceSummary;
   healthSignalsCount: number;
   healthAvailability: HushHealthAvailability;
@@ -807,6 +955,10 @@ function HushStatusArea({
   onSyncDws: () => void;
   onLoginDws: () => void;
   onAutoSyncChange: (enabled: boolean) => void;
+  onSyncWechat: () => void;
+  onPrepareWechat: () => void;
+  onOpenWechatInstall: () => void;
+  onWechatAutoSyncChange: (enabled: boolean) => void;
   onRefreshInbox: () => void;
   onClearInbox: () => void;
   onRequestHealthClear: () => void;
@@ -815,6 +967,7 @@ function HushStatusArea({
 }) {
   const notificationReady = notificationBridge?.state === "running";
   const dingTalkReady = Boolean(dwsStatus?.authenticated);
+  const wechatReady = Boolean(wechatStatus?.live_read_ok);
 
   return (
     <details className="hush-status-area">
@@ -824,8 +977,13 @@ function HushStatusArea({
           <span>连接与状态</span>
         </span>
         <span className="hush-status-summary-meta">
-          钉钉{dingTalkReady ? "已连接" : "未连接"} · WeChat
-          {notificationReady ? "已监听" : "未监听"} · {inbox?.total ?? 0} 条消息
+          微信
+          {wechatReady
+            ? "真实消息已连接"
+            : notificationReady
+              ? "通知预览已监听"
+              : "未连接"}{" "}
+          · 钉钉{dingTalkReady ? "已连接" : "未连接"} · {inbox?.total ?? 0} 条消息
         </span>
         <ChevronDown
           className="hush-status-chevron"
@@ -842,6 +1000,7 @@ function HushStatusArea({
           inbox={inbox}
           bridge={notificationBridge}
           dwsStatus={dwsStatus}
+          wechatStatus={wechatStatus}
         />
         <HushHealthSourcePanel
           summary={healthSource}
@@ -864,12 +1023,27 @@ function HushStatusArea({
                 connector={connector}
                 notificationActive={notificationReady}
                 dwsActive={connector.id === "dingtalk" && dingTalkReady}
+                localHistoryActive={
+                  connector.id === "wechat" && wechatReady
+                }
                 busy={openingConnector === connector.id}
                 onOpen={() => onOpenConnector(connector.id)}
               />
             ))}
           </div>
         </div>
+        <WechatLocalPanel
+          status={wechatStatus}
+          report={wechatReport}
+          syncing={wechatSyncing}
+          preparing={wechatPreparing}
+          autoUpdating={wechatAutoUpdating}
+          openingInstall={wechatOpeningInstall}
+          onSync={onSyncWechat}
+          onPrepare={onPrepareWechat}
+          onInstall={onOpenWechatInstall}
+          onAutoSyncChange={onWechatAutoSyncChange}
+        />
         <NotificationBridgePanel
           status={notificationBridge}
           onOpenSettings={onOpenSettings}
@@ -898,25 +1072,32 @@ function HushTruthPanel({
   inbox,
   bridge,
   dwsStatus,
+  wechatStatus,
 }: {
   inbox: HushInboxSummary | null;
   bridge: NotificationBridgeStatus | null;
   dwsStatus: DwsHushStatus | null;
+  wechatStatus: WechatHushStatus | null;
 }) {
   const dwsActive =
     dwsStatus?.authenticated &&
     ["ready", "syncing", "error"].includes(dwsStatus.state);
+  const wechatActive = Boolean(wechatStatus?.live_read_ok);
   const notificationActive = bridge?.state === "running";
-  const state = dwsActive
-    ? "钉钉消息已连接"
+  const state = wechatActive
+    ? "微信真实消息已连接"
+    : dwsActive
+      ? "钉钉消息已连接"
     : notificationActive
       ? "本地通知已连接"
       : "消息源尚未连接";
-  const detail = dwsActive
-    ? "Hush 通过本机 DWS 只读同步钉钉群聊和私聊，不发送或回复消息。"
+  const detail = wechatActive
+    ? "Hush 正在从本机微信数据库严格只读同步收到的私聊和群聊，消息不会上传，也不会自动回复。"
+    : dwsActive
+      ? "Hush 通过本机 DWS 只读同步钉钉群聊和私聊，不发送或回复消息。"
     : notificationActive
       ? "Hush 正在读取 macOS 投递的 WeChat 和钉钉通知预览，不访问私有聊天数据库。"
-      : "登录钉钉 DWS 后即可同步最近 24 小时的群聊和私聊。";
+      : "准备微信本地读取或登录钉钉 DWS 后，即可同步最近 24 小时的真实消息。";
 
   return (
     <div className="hush-truth-row">
@@ -1311,6 +1492,127 @@ export function HushHealthSourcePanel({
   );
 }
 
+function WechatLocalPanel({
+  status,
+  report,
+  syncing,
+  preparing,
+  autoUpdating,
+  openingInstall,
+  onSync,
+  onPrepare,
+  onInstall,
+  onAutoSyncChange,
+}: {
+  status: WechatHushStatus | null;
+  report: WechatSyncReport | null;
+  syncing: boolean;
+  preparing: boolean;
+  autoUpdating: boolean;
+  openingInstall: boolean;
+  onSync: () => void;
+  onPrepare: () => void;
+  onInstall: () => void;
+  onAutoSyncChange: (enabled: boolean) => void;
+}) {
+  const state = status?.state ?? "syncing";
+  const isSyncing = syncing || status?.syncing || state === "syncing";
+  const stateLabel: Record<WechatHushStatus["state"], string> = {
+    not_installed: "未安装",
+    setup_required: "待准备",
+    ready: "已就绪",
+    syncing: "同步中",
+    error: "需要处理",
+  };
+  const canSync = Boolean(status?.live_read_ok) && !isSyncing;
+  const syncLabel = status?.last_success_at
+    ? "同步新消息"
+    : "同步最近 24 小时";
+  const lastSuccess = status?.last_success_at
+    ? new Date(status.last_success_at).toLocaleString()
+    : "尚未同步";
+
+  return (
+    <div className="hush-status-row hush-wechat-row">
+      <span className={`hush-state-dot is-${state}`} aria-hidden="true" />
+      <div className="hush-status-row-copy">
+        <strong>微信真实消息 · {stateLabel[state]}</strong>
+        <span>{status?.message ?? "正在检查微信本地读取能力"}</span>
+        <span className="hush-status-secondary">
+          HUMHUM 内置只读内核 · 正文不离开本机 · 上次成功：{lastSuccess}
+        </span>
+        {state === "setup_required" && (
+          <span>
+            读取内核已经内置。安全提钥仍需完成签名与微信版本验证，当前版本不会启动
+            sudo、第三方 CLI 或远程服务。
+          </span>
+        )}
+        {status?.next_action && state !== "ready" && (
+          <span className="hush-status-secondary">{status.next_action}</span>
+        )}
+        <label className="hush-auto-sync">
+          <input
+            type="checkbox"
+            checked={status?.auto_sync_enabled ?? false}
+            disabled={!status?.live_read_ok || autoUpdating}
+            onChange={(event) => onAutoSyncChange(event.target.checked)}
+          />
+          每 {status?.sync_interval_minutes ?? 5} 分钟自动同步
+        </label>
+        {report && (
+          <div className="hush-sync-report">
+            <span>会话 {report.conversations}</span>
+            <span>已检查 {report.examined_messages}</span>
+            <span>新增 {report.imported_messages}</span>
+            <span>跳过自己 {report.skipped_sent_messages}</span>
+            {report.failed_conversations > 0 && (
+              <span>未读取 {report.failed_conversations}</span>
+            )}
+            {report.partial && <strong>本轮为部分结果，可稍后再次同步。</strong>}
+          </div>
+        )}
+      </div>
+      <div className="hush-status-actions">
+        {state === "not_installed" && (
+          <button
+            type="button"
+            className="hush-status-action"
+            onClick={onInstall}
+            disabled
+          >
+            <ExternalLink size={14} aria-hidden="true" />
+            {openingInstall ? "正在检查..." : "需要完整安装包"}
+          </button>
+        )}
+        {state === "setup_required" && (
+          <button
+            type="button"
+            className="hush-status-action"
+            onClick={onPrepare}
+            disabled
+          >
+            <ShieldCheck size={14} aria-hidden="true" />
+            {preparing ? "正在检查..." : "签名预览版开放"}
+          </button>
+        )}
+        <button
+          type="button"
+          className="hush-status-action"
+          onClick={onSync}
+          disabled={!canSync}
+        >
+          <RefreshCw
+            className={isSyncing ? "is-spinning" : ""}
+            size={14}
+            aria-hidden="true"
+          />
+          {isSyncing ? "同步中..." : syncLabel}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function DwsPanel({
   status,
   report,
@@ -1497,19 +1799,23 @@ function HushConnectorRow({
   connector,
   notificationActive,
   dwsActive,
+  localHistoryActive,
   busy,
   onOpen,
 }: {
   connector: HushConnectorStatus;
   notificationActive: boolean;
   dwsActive: boolean;
+  localHistoryActive: boolean;
   busy: boolean;
   onOpen: () => void;
 }) {
-  const sourceActive = dwsActive || notificationActive;
+  const sourceActive = localHistoryActive || dwsActive || notificationActive;
   const connectorIdentity = getHushPlatformIdentity(connector.name);
-  const statusLabel = dwsActive
-    ? "DWS 已连接"
+  const statusLabel = localHistoryActive
+    ? "真实消息已连接"
+    : dwsActive
+      ? "DWS 已连接"
     : notificationActive
       ? "通知桥已启用"
       : connector.bridge_ready

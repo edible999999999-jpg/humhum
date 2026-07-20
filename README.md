@@ -136,6 +136,26 @@ The native Android client pairs by scanning the short-lived QR code in Hexa. On 
 
 Android 0.3.15 adds a native Living Signals home with distinct Humi, Hype, Hush and Hexa tabs. Optional Health Connect sources provide daily steps, resting heart rate and sleep duration; permissions are requested one source at a time, the phone keeps only a seven-day encrypted delivery queue, and durable encrypted summaries live on the user's Mac. Phones without Health Connect can use the local step counter after explicit permission, while heart rate and sleep remain unavailable instead of being inferred.
 
+### Hush real WeChat messages (experimental)
+
+HUMHUM now includes its own networkless, read-only native reader for recent
+private and group messages in the local WeChat 4.x store. The executable accepts
+one typed JSON request on stdin and exposes only `status`, `sessions`, and
+`timeline`; it has no send, remote companion, updater, shell, or export path.
+The bundled reader and WCDB runtime are hash-verified before each launch.
+
+The minimum WCDB compatibility layer was independently reduced from an audited
+snapshot of [`r266-tech/wechat-cli`](https://github.com/r266-tech/wechat-cli);
+exact source commits and licenses are recorded in
+[`native/humhum-wechat/NOTICE.md`](./native/humhum-wechat/NOTICE.md). HUMHUM does
+not execute or download that third-party CLI.
+
+The current source preview validates the local WeChat build and database runtime,
+but real history remains blocked until HUMHUM ships a signed, explicitly
+authorized key-setup helper. It will not silently start `sudo`, modify WeChat, or
+send chat data to a server. Once unlocked, Hush imports incoming messages only
+into the local inbox and skips messages sent by the user.
+
 Anywhere requires a deployed HTTPS relay and an invite code configured in Hexa. See [Android setup](./docs/android-install.md) and [relay deployment](./relay/README.md). It is currently a self-hosted beta, not a promise that a public HUMHUM endpoint is already online.
 
 ## Data & privacy
@@ -147,7 +167,7 @@ HUMHUM is local-first — the data on your own machine is its advantage. All dur
 - `knowledge.json` — Hype's rules, Agent assets, and Obsidian index
 - `vault/preferences/*.md` and `vault/memory/*.md` — Hype's preference and memory source of truth; back up the whole `vault/` directory
 - `stats.json` — token and cost statistics
-- `hush-inbox.json` — Hush's local message inbox (up to 500 messages)
+- `hush-inbox.json` — Hush's local message inbox (up to 2,000 messages)
 - `hush/structured-signals.sqlite3` — encrypted, user-approved daily health summaries received from paired phones
 - `local-agent-memory.md` — Humi's local Agent memory
 
@@ -188,7 +208,9 @@ scripts/                # Edge TTS bridge, etc.
 - [ ] Public hosted HUMHUM Anywhere endpoint and iOS client
 - [ ] Cross-device preference and context sync
 - [x] Read-only macOS notification bridge for new WeChat and DingTalk messages
-- [ ] Rich Hush history bridges for user-approved chat exports
+- [ ] Signed key setup for the bundled read-only WeChat history reader
+- [x] DingTalk DWS history sync
+- [ ] Feishu message bridge through a local or official authorized source
 - [ ] Smart permission policies (learning your approval habits)
 - [ ] More Agent integrations and an open hook-protocol standard
 - [ ] Signed Windows release and full Linux support

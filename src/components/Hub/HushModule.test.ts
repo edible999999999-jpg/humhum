@@ -116,6 +116,23 @@ function defaultInvoke(command: string): unknown {
       pending_sync: false,
     };
   }
+  if (command === "get_hush_wechat_status") {
+    return {
+      state: "not_installed",
+      message: "当前版本未包含完整的微信本地读取组件",
+      executable_path: null,
+      readiness: null,
+      live_read_ok: false,
+      blocked_by: null,
+      next_action: "请安装包含原生微信读取器的 HUMHUM 正式版本",
+      warnings: [],
+      auto_sync_enabled: false,
+      sync_interval_minutes: 5,
+      last_success_at: null,
+      last_attempt_at: null,
+      syncing: false,
+    };
+  }
   throw new Error(`Unexpected invoke: ${command}`);
 }
 
@@ -517,6 +534,55 @@ describe("Hush health command registration", () => {
     expect(lib).toContain("commands::clear_hush_health_signals");
     expect(commands).toContain("pub async fn get_hush_health_signals");
     expect(commands).toContain("pub async fn clear_hush_health_signals");
+  });
+});
+
+describe("Hush WeChat local history connector", () => {
+  let view: { host: HTMLDivElement; root: Root } | null = null;
+
+  beforeEach(() => {
+    listenMock.mockResolvedValue(() => undefined);
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "get_hush_wechat_status") {
+        return Promise.resolve({
+          state: "setup_required",
+          message: "微信本地读取需要完成一次准备",
+          executable_path:
+            "/Applications/HumHum.app/Contents/MacOS/humhum-wechat-reader",
+          readiness: "blocked",
+          live_read_ok: false,
+          blocked_by: "key_coverage_incomplete",
+          next_action: "当前只读内核已就绪；安全提钥将在签名预览版开放",
+          warnings: [],
+          auto_sync_enabled: false,
+          sync_interval_minutes: 5,
+          last_success_at: null,
+          last_attempt_at: null,
+          syncing: false,
+        });
+      }
+      if (command === "open_hush_wechat_setup") return Promise.resolve();
+      return Promise.resolve(defaultInvoke(command));
+    });
+  });
+
+  afterEach(async () => {
+    if (view) await disposeHushModule(view);
+    view = null;
+    vi.clearAllMocks();
+  });
+
+  it("shows the honest native-reader setup boundary without launching bootstrap", async () => {
+    view = await renderHushModule();
+
+    expect(view.host.textContent).toContain("微信真实消息");
+    expect(view.host.textContent).toContain("待准备");
+    expect(view.host.textContent).toContain("当前版本不会启动");
+    expect(view.host.textContent).toContain("签名预览版开放");
+    expect(
+      buttonByText(view.host, "签名预览版开放").hasAttribute("disabled"),
+    ).toBe(true);
+    expect(invokeMock).not.toHaveBeenCalledWith("open_hush_wechat_setup");
   });
 });
 
@@ -955,12 +1021,17 @@ describe("Hush conversation UI contracts", () => {
       "get_hush_inbox",
       "get_hush_notification_bridge_status",
       "get_hush_dws_status",
+      "get_hush_wechat_status",
       "open_full_disk_access_settings",
       "open_hush_connector",
       "clear_hush_inbox",
       "sync_hush_dws",
       "open_hush_dws_login",
       "set_hush_dws_auto_sync",
+      "sync_hush_wechat",
+      "open_hush_wechat_setup",
+      "open_hush_wechat_install",
+      "set_hush_wechat_auto_sync",
     ];
 
     for (const command of commands) {
