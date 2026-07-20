@@ -3,9 +3,12 @@ import type { AgentAsset } from "@/types";
 import {
   agentAssetLastUsedTimestamp,
   agentAssetModifiedTimestamp,
+  filterLogicalSkills,
   filterAgentAssets,
   getAgentAssetSummary,
+  groupLogicalSkills,
   isPersonalAgentAsset,
+  normalizeLogicalSkillName,
   sortAgentAssetsByRecentUse,
   sortByRecentUpdate,
 } from "./knowledgePresentation";
@@ -380,6 +383,102 @@ describe("Hype module chronology", () => {
       "older",
       "unknown",
       "epoch",
+    ]);
+  });
+});
+
+
+describe("logical skill presentation", () => {
+  it("normalizes equivalent skill names to one key", () => {
+    expect(normalizeLogicalSkillName(" HumHum_Hexa ")).toBe("humhum-hexa");
+    expect(normalizeLogicalSkillName("HumHum-Hexa")).toBe("humhum-hexa");
+  });
+
+  it("groups copies, deduplicates sessions, and sorts the newest use first", () => {
+    const codexCopy = asset("/codex/humhum_hexa/SKILL.md", "# Codex HumHum Hexa", {
+      agent_id: "codex",
+      name: "humhum_hexa",
+      modified_at: "2026-07-18T09:00:00Z",
+      usage_evidence: [
+        {
+          session_id: "older-session",
+          agent_id: "codex",
+          session_path: "/sessions/older",
+          workspace: "/workspace/older",
+          used_at: "2026-07-18T10:00:00Z",
+        },
+        {
+          session_id: "newest-session",
+          agent_id: "codex",
+          session_path: "/sessions/newest-old-copy",
+          workspace: "/workspace/newest",
+          used_at: "2026-07-19T10:00:00Z",
+        },
+      ],
+    });
+    const claudeCopy = asset("/claude/HumHum-Hexa/SKILL.md", "# Claude HumHum Hexa", {
+      agent_id: "claude",
+      name: "HumHum-Hexa",
+      modified_at: "2026-07-19T09:00:00Z",
+      usage_evidence: [
+        {
+          session_id: "older-session",
+          agent_id: "codex",
+          session_path: "/sessions/older-copy",
+          workspace: "/workspace/older",
+          used_at: "2026-07-18T11:00:00Z",
+        },
+        {
+          session_id: "newest-session",
+          agent_id: "codex",
+          session_path: "/sessions/newest",
+          workspace: "/workspace/newest",
+          used_at: "2026-07-20T10:00:00Z",
+        },
+      ],
+    });
+
+    const skill = groupLogicalSkills([codexCopy, claudeCopy])[0];
+
+    expect(skill?.key).toBe("humhum-hexa");
+    expect(skill?.copies).toHaveLength(2);
+    expect(skill?.sessions.map((session) => session.session_id)).toEqual([
+      "newest-session",
+      "older-session",
+    ]);
+    expect(skill?.session_count).toBe(2);
+    expect(skill?.agent_count).toBe(2);
+    expect(skill?.has_multiple_versions).toBe(true);
+    expect(skill?.sessions[0]?.session_path).toBe("/sessions/newest");
+  });
+
+  it("keeps installed copies without evidence and searches session workspaces", () => {
+    const installedCopy = asset("/codex/installed/SKILL.md", "", {
+      name: "Installed Helper",
+      ownership: "installed",
+    });
+    const usedCopy = asset("/claude/workspace-helper/SKILL.md", "", {
+      agent_id: "claude",
+      name: "Workspace Helper",
+      summary_zh: "整理项目工作区",
+      usage_evidence: [
+        {
+          session_id: "workspace-session",
+          agent_id: "claude",
+          session_path: "/sessions/workspace",
+          workspace: "/Projects/HumHum",
+          used_at: "2026-07-20T12:00:00Z",
+        },
+      ],
+    });
+
+    const skills = groupLogicalSkills([installedCopy, usedCopy]);
+    const installed = skills.find((skill) => skill.key === "installed-helper");
+
+    expect(installed?.session_count).toBe(0);
+    expect(filterLogicalSkills(skills, "整理")).toHaveLength(1);
+    expect(filterLogicalSkills(skills, "Projects/HumHum").map((skill) => skill.key)).toEqual([
+      "workspace-helper",
     ]);
   });
 });

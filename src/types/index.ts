@@ -298,6 +298,29 @@ export interface AgentAsset {
   ownership?: "created" | "installed" | string | null;
   display_name_zh?: string | null;
   summary_zh?: string | null;
+  usage_evidence?: SkillUsageEvidence[];
+}
+
+export interface SkillUsageEvidence {
+  session_id: string;
+  agent_id: string;
+  session_path: string;
+  workspace?: string | null;
+  used_at?: string | null;
+}
+
+export interface LogicalSkill {
+  key: string;
+  name: string;
+  display_name_zh?: string | null;
+  summary: string;
+  copies: AgentAsset[];
+  sessions: SkillUsageEvidence[];
+  latest_used_at?: string | null;
+  latest_modified_at?: string | null;
+  session_count: number;
+  agent_count: number;
+  has_multiple_versions: boolean;
 }
 
 export interface KnowledgeData {

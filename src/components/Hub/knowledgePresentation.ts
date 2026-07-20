@@ -1,4 +1,4 @@
-import type { AgentAsset } from "@/types";
+import type { AgentAsset, LogicalSkill, SkillUsageEvidence } from "@/types";
 
 const EXCLUDED_AGENT_ASSET_PATHS = [
   "/.system/",
@@ -212,4 +212,162 @@ export function getAgentAssetSummary(asset: AgentAsset): string {
     .map(oneLine)
     .find(Boolean);
   return firstLine || "No description available.";
+}
+
+function normalizeSearchText(value: string): string {
+  return value.normalize("NFKC").trim().toLowerCase();
+}
+
+export function normalizeLogicalSkillName(name: string): string {
+  return normalizeSearchText(name)
+    .replace(/[\s_-]+/gu, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function parsedTimestamp(value?: string | null): number | null {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function compareNewest(left?: string | null, right?: string | null): number {
+  const leftTime = parsedTimestamp(left);
+  const rightTime = parsedTimestamp(right);
+  if (leftTime === null && rightTime === null) return 0;
+  if (leftTime === null) return 1;
+  if (rightTime === null) return -1;
+  return rightTime - leftTime;
+}
+
+function newestValue(values: Array<string | null | undefined>): string | null {
+  return values
+    .filter((value): value is string => parsedTimestamp(value) !== null)
+    .sort(compareNewest)[0] ?? null;
+}
+
+function normalizeContent(value: string): string {
+  return value.normalize("NFKC").replace(/\s+/gu, " ").trim();
+}
+
+function usageEvidenceKey(evidence: SkillUsageEvidence): string {
+  return `${evidence.agent_id}\u0000${evidence.session_id}`;
+}
+
+function isNewerEvidence(
+  candidate: SkillUsageEvidence,
+  current: SkillUsageEvidence,
+): boolean {
+  const candidateTime = parsedTimestamp(candidate.used_at);
+  const currentTime = parsedTimestamp(current.used_at);
+  return candidateTime !== null &&
+    (currentTime === null || candidateTime > currentTime);
+}
+
+function deduplicateUsageEvidence(copies: AgentAsset[]): SkillUsageEvidence[] {
+  const sessions = new Map<string, SkillUsageEvidence>();
+  for (const copy of copies) {
+    for (const evidence of copy.usage_evidence ?? []) {
+      const key = usageEvidenceKey(evidence);
+      const current = sessions.get(key);
+      if (!current || isNewerEvidence(evidence, current)) {
+        sessions.set(key, evidence);
+      }
+    }
+  }
+
+  return [...sessions.values()].sort((left, right) => {
+    const byUse = compareNewest(left.used_at, right.used_at);
+    return byUse || usageEvidenceKey(left).localeCompare(usageEvidenceKey(right));
+  });
+}
+
+export function groupLogicalSkills(assets: AgentAsset[]): LogicalSkill[] {
+  const grouped = new Map<string, AgentAsset[]>();
+  for (const asset of assets) {
+    const key = normalizeLogicalSkillName(asset.name);
+    const copies = grouped.get(key);
+    if (copies) {
+      copies.push(asset);
+    } else {
+      grouped.set(key, [asset]);
+    }
+  }
+
+  const skills = [...grouped.entries()].map(([key, copies]): LogicalSkill => {
+    const sessions = deduplicateUsageEvidence(copies);
+    const firstCopy = copies[0];
+    const localizedCopy = copies.find((copy) => copy.display_name_zh?.trim());
+    const summaryCopy = copies.find((copy) => copy.summary_zh?.trim()) ?? firstCopy;
+    const contentVariants = new Set(copies.map((copy) => normalizeContent(copy.content)));
+
+    return {
+      key,
+      name: firstCopy?.name ?? key,
+      display_name_zh: localizedCopy?.display_name_zh ?? null,
+      summary: summaryCopy ? getAgentAssetSummary(summaryCopy) : "",
+      copies,
+      sessions,
+      latest_used_at: newestValue(sessions.map((session) => session.used_at)),
+      latest_modified_at: newestValue(copies.map((copy) => copy.modified_at)),
+      session_count: sessions.length,
+      agent_count: new Set(copies.map((copy) => copy.agent_id)).size,
+      has_multiple_versions: contentVariants.size > 1,
+    };
+  });
+
+  return skills.sort((left, right) => {
+    const leftUsed = parsedTimestamp(left.latest_used_at);
+    const rightUsed = parsedTimestamp(right.latest_used_at);
+    if (leftUsed !== null || rightUsed !== null) {
+      if (leftUsed === null) return 1;
+      if (rightUsed === null) return -1;
+      if (leftUsed !== rightUsed) return rightUsed - leftUsed;
+    }
+
+    const leftModified = parsedTimestamp(left.latest_modified_at);
+    const rightModified = parsedTimestamp(right.latest_modified_at);
+    if (leftModified !== null || rightModified !== null) {
+      if (leftModified === null) return 1;
+      if (rightModified === null) return -1;
+      if (leftModified !== rightModified) return rightModified - leftModified;
+    }
+
+    return left.name.localeCompare(right.name);
+  });
+}
+
+export function filterLogicalSkills(
+  skills: LogicalSkill[],
+  query: string,
+): LogicalSkill[] {
+  const normalizedQuery = normalizeSearchText(query);
+  if (!normalizedQuery) return [...skills];
+
+  return skills.filter((skill) => {
+    const values = [
+      skill.key,
+      skill.name,
+      skill.display_name_zh ?? "",
+      skill.summary,
+      ...skill.copies.flatMap((copy) => [
+        copy.name,
+        copy.display_name_zh ?? "",
+        copy.summary_zh ?? "",
+        copy.agent_id,
+        copy.asset_type,
+        copy.file_path,
+        copy.relative_path,
+        copy.source,
+        copy.content,
+        ...copy.tags,
+      ]),
+      ...skill.sessions.flatMap((session) => [
+        session.session_id,
+        session.agent_id,
+        session.session_path,
+        session.workspace ?? "",
+      ]),
+    ];
+    return values.some((value) => normalizeSearchText(value).includes(normalizedQuery));
+  });
 }
