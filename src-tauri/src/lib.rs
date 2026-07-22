@@ -257,7 +257,7 @@ pub fn run() {
             let dws_hush_store = hush_store.clone();
             tauri::async_runtime::spawn(async move {
                 dws_hush_bridge::run_immediately_then_interval(
-                    std::time::Duration::from_secs(5 * 60),
+                    dws_hush_bridge::DWS_AUTO_SYNC_INTERVAL,
                     move || {
                         let dws_bridge = dws_bridge.clone();
                         let dws_hush_store = dws_hush_store.clone();

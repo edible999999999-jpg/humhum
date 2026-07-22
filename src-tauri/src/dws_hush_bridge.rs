@@ -19,6 +19,9 @@ const MAX_SYNC_MESSAGES: usize = 2_000;
 const INITIAL_SYNC_HOURS: i64 = 24;
 const INCREMENTAL_OVERLAP_MINUTES: i64 = 2;
 const DWS_COMMAND_TIMEOUT: Duration = Duration::from_secs(45);
+const DWS_AUTO_SYNC_INTERVAL_MINUTES: u64 = 1;
+pub(crate) const DWS_AUTO_SYNC_INTERVAL: Duration =
+    Duration::from_secs(DWS_AUTO_SYNC_INTERVAL_MINUTES * 60);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -54,7 +57,7 @@ impl Default for DwsHushConfig {
     fn default() -> Self {
         Self {
             auto_sync_enabled: false,
-            sync_interval_minutes: 5,
+            sync_interval_minutes: DWS_AUTO_SYNC_INTERVAL_MINUTES,
             last_success_at: None,
             last_attempt_at: None,
             pending_sync: None,
@@ -346,7 +349,7 @@ impl DwsHushBridge {
         fixed_executable: Option<DwsExecutable>,
         fixed_now: Option<DateTime<Utc>>,
     ) -> Result<Self, String> {
-        let config = if config_path.is_file() {
+        let mut config = if config_path.is_file() {
             let contents = std::fs::read_to_string(&config_path)
                 .map_err(|error| format!("无法读取钉钉同步设置：{error}"))?;
             serde_json::from_str(&contents)
@@ -354,6 +357,10 @@ impl DwsHushBridge {
         } else {
             DwsHushConfig::default()
         };
+        if config.sync_interval_minutes != DWS_AUTO_SYNC_INTERVAL_MINUTES {
+            config.sync_interval_minutes = DWS_AUTO_SYNC_INTERVAL_MINUTES;
+            write_config(&config_path, &config)?;
+        }
         Ok(Self {
             home_dir,
             config_path,
@@ -456,7 +463,7 @@ impl DwsHushBridge {
         {
             let mut config = self.config.lock().await;
             config.auto_sync_enabled = enabled;
-            config.sync_interval_minutes = 5;
+            config.sync_interval_minutes = DWS_AUTO_SYNC_INTERVAL_MINUTES;
             write_config(&self.config_path, &config)?;
         }
         Ok(self.status().await)
@@ -1205,7 +1212,33 @@ mod tests {
             serde_json::from_slice(&std::fs::read(temp.path().join("hush-dws.json")).unwrap())
                 .unwrap();
         assert!(persisted.auto_sync_enabled);
-        assert_eq!(persisted.sync_interval_minutes, 5);
+        assert_eq!(persisted.sync_interval_minutes, 1);
+    }
+
+    #[tokio::test]
+    async fn migrates_legacy_auto_sync_interval_to_one_minute() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            temp.path().join("hush-dws.json"),
+            serde_json::to_vec_pretty(&json!({
+                "auto_sync_enabled": true,
+                "sync_interval_minutes": 5,
+                "last_success_at": "2026-07-17T11:00:00Z",
+                "last_attempt_at": null,
+                "pending_sync": null
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let runner = Arc::new(FakeRunner::new(vec![]));
+
+        let bridge = test_bridge(temp.path(), runner);
+
+        assert_eq!(bridge.config_snapshot().await.sync_interval_minutes, 1);
+        let persisted: DwsHushConfig =
+            serde_json::from_slice(&std::fs::read(temp.path().join("hush-dws.json")).unwrap())
+                .unwrap();
+        assert_eq!(persisted.sync_interval_minutes, 1);
     }
 
     #[tokio::test]
