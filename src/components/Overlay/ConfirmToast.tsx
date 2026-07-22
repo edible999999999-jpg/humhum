@@ -28,30 +28,20 @@ export function ConfirmToast({ event, onConfirm }: ConfirmToastProps) {
     return () => clearInterval(timer);
   }, []);
 
-  // Force-dismiss after status becomes "sent" — safety net
-  useEffect(() => {
-    if (status !== "sent") return;
-    const timer = setTimeout(() => {
-      console.log("[ConfirmToast] Force-dismiss after sent");
-      dismiss("allow");
-    }, 1500);
-    return () => clearTimeout(timer);
-  }, [status, dismiss]);
-
   const handleClick = async (behavior: "allow" | "deny" | "allowAlways") => {
     setStatus("sending");
+    setErrorMsg("");
     console.log(`[ConfirmToast] Button clicked: ${behavior}, event_id: ${event.id}`);
 
     try {
       await invoke("respond_to_permission", { eventId: event.id, behavior });
       console.log("[ConfirmToast] IPC respond succeeded");
       setStatus("sent");
-      setTimeout(() => dismiss(behavior), 300);
+      dismiss(behavior);
     } catch (e) {
       console.error("[ConfirmToast] IPC respond failed:", e);
       setStatus("error");
       setErrorMsg(`Response failed: ${String(e)}`);
-      setTimeout(() => dismiss(behavior), 2000);
     }
   };
 
@@ -63,16 +53,19 @@ export function ConfirmToast({ event, onConfirm }: ConfirmToastProps) {
       {/* Header */}
       <div className="flex items-center justify-between px-3 pt-2.5 pb-1.5">
         <div className="flex items-center gap-2">
-          <div className="w-5 h-5 rounded-full flex items-center justify-center bg-amber-400/10 text-amber-400/80">
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 9v4M12 17h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
-            </svg>
-          </div>
+          <img
+            src="/mascots/expr/hexa/confirm.png"
+            alt="Hexa"
+            className="module-face"
+            style={{ width: 28, height: 28 }}
+            draggable={false}
+          />
           <span className="font-semibold text-[13px]" style={{ color: "#334155" }}>{t("confirm.title")}</span>
           <span className="confirm-tag confirm-tag-time">{timeLabel}</span>
           <span className="confirm-tag confirm-tag-client">{event.client_type || "CC"}</span>
         </div>
         <button
+          type="button"
           onClick={() => handleClick("deny")}
           disabled={status === "sending" || status === "sent"}
           className="text-xs transition-colors leading-none"
@@ -110,6 +103,7 @@ export function ConfirmToast({ event, onConfirm }: ConfirmToastProps) {
       {/* Action buttons */}
       <div className="flex gap-1.5 px-3 pb-2.5">
         <button
+          type="button"
           onClick={() => handleClick("deny")}
           disabled={status === "sending" || status === "sent"}
           className="confirm-btn confirm-btn-deny text-xs py-1.5"
@@ -117,6 +111,7 @@ export function ConfirmToast({ event, onConfirm }: ConfirmToastProps) {
           {t("confirm.deny")} <kbd className="confirm-kbd ml-1">N</kbd>
         </button>
         <button
+          type="button"
           onClick={() => handleClick("allowAlways")}
           disabled={status === "sending" || status === "sent"}
           className="confirm-btn confirm-btn-always text-xs py-1.5"
@@ -124,6 +119,7 @@ export function ConfirmToast({ event, onConfirm }: ConfirmToastProps) {
           {t("confirm.always")} <kbd className="confirm-kbd ml-1">A</kbd>
         </button>
         <button
+          type="button"
           onClick={() => handleClick("allow")}
           disabled={status === "sending" || status === "sent"}
           className="confirm-btn confirm-btn-allow text-xs py-1.5"

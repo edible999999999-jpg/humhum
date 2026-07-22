@@ -1220,6 +1220,15 @@ option {
   border-radius: 999px;
 }
 
+/* Module character face used inside overlay cards (Hexa/Hush/Hype). */
+.module-face {
+  flex: 0 0 auto;
+  object-fit: contain;
+  user-select: none;
+  -webkit-user-drag: none;
+  pointer-events: none;
+}
+
 .completion-bubble-copy {
   min-width: 0;
 }
@@ -1912,7 +1921,8 @@ button.hexa-report-metric.clickable {
 button.hexa-report-metric.clickable:hover,
 button.hexa-report-metric.clickable:focus-visible {
   background: rgba(56, 189, 248, 0.08);
-  outline: none;
+  outline: 2px solid rgba(14, 165, 233, 0.58);
+  outline-offset: -2px;
 }
 
 .hexa-report-metric + .hexa-report-metric {

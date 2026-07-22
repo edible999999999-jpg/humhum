@@ -535,6 +535,7 @@ describe("HushModule conversation state migration", () => {
   afterEach(async () => {
     if (view) await disposeHushModule(view);
     view = null;
+    vi.useRealTimers();
     window.localStorage.clear();
     vi.clearAllMocks();
   });
@@ -683,6 +684,40 @@ describe("HushModule DingTalk refresh", () => {
     expect(invokeMock).toHaveBeenCalledWith("get_hush_inbox");
     expect(invokeMock).toHaveBeenCalledWith("get_hush_dws_status");
     expect(refresh?.disabled).toBe(false);
+  });
+
+  it("does not overlap slow DingTalk status checks", async () => {
+    vi.useFakeTimers();
+    let finishStatus: ((status: unknown) => void) | undefined;
+    const slowStatus = new Promise((resolve) => {
+      finishStatus = resolve;
+    });
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "get_hush_dws_status") return slowStatus;
+      return Promise.resolve(defaultInvoke(command));
+    });
+
+    view = await renderHushModule();
+    const statusCalls = () => invokeMock.mock.calls.filter(
+      ([command]) => command === "get_hush_dws_status",
+    ).length;
+    expect(statusCalls()).toBe(1);
+
+    await act(async () => {
+      vi.advanceTimersByTime(120_000);
+      await Promise.resolve();
+    });
+    expect(statusCalls()).toBe(1);
+
+    await act(async () => {
+      finishStatus?.(defaultInvoke("get_hush_dws_status"));
+      await slowStatus;
+      await Promise.resolve();
+      vi.advanceTimersByTime(60_000);
+      await Promise.resolve();
+    });
+    expect(statusCalls()).toBe(2);
+    vi.useRealTimers();
   });
 });
 

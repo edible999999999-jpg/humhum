@@ -62,12 +62,12 @@ export function HubLayout() {
         <main className="hub-content">
           <HubRoom room={active}>
             <Suspense fallback={<div className="hub-loading" />}>
-              {active === "humi" && (
+              <div hidden={active !== "humi"} aria-hidden={active !== "humi"}>
                 <HumiModule
                   onActivityChange={setHumiActivity}
                   onOpenHexa={openHexaGoal}
                 />
-              )}
+              </div>
               {active === "hexa" && <HexaModule focusGoalId={hexaFocusGoalId} />}
               {active === "hype" && <KnowledgeModule />}
               {active === "hush" && <HushModule />}

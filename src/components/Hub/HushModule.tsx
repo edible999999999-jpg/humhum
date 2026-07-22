@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { runHushReplySkill } from "../../lib/hush/replySkill";
@@ -334,19 +334,6 @@ export function HushModule() {
     return () => clearInterval(interval);
   }, [fetchHealthSignals]);
 
-  useEffect(() => {
-    let disposed = false;
-    let unlisten: (() => void) | undefined;
-    listen("humhum://hush-message", () => fetchInbox()).then((stop) => {
-      if (disposed) stop();
-      else unlisten = stop;
-    });
-    return () => {
-      disposed = true;
-      unlisten?.();
-    };
-  }, [fetchInbox]);
-
   const fetchNotificationBridge = useCallback(async () => {
     try {
       const status = await invoke<NotificationBridgeStatus>(
@@ -369,32 +356,57 @@ export function HushModule() {
     return () => clearInterval(interval);
   }, [fetchNotificationBridge]);
 
-  const fetchDwsStatus = useCallback(async () => {
-    try {
-      const status = await invoke<DwsHushStatus>("get_hush_dws_status");
-      setDwsStatus(status);
-    } catch (error) {
-      setDwsStatus((current) => ({
-        state: "error",
-        message: String(error),
-        executable_source: current?.executable_source ?? null,
-        executable_path: current?.executable_path ?? null,
-        authenticated: current?.authenticated ?? false,
-        auto_sync_enabled: current?.auto_sync_enabled ?? false,
-        sync_interval_minutes: current?.sync_interval_minutes ?? 5,
-        last_success_at: current?.last_success_at ?? null,
-        last_attempt_at: current?.last_attempt_at ?? null,
-        syncing: false,
-        pending_sync: current?.pending_sync ?? false,
-      }));
-    }
+  const dwsStatusRequest = useRef<Promise<void> | null>(null);
+  const fetchDwsStatus = useCallback((): Promise<void> => {
+    if (dwsStatusRequest.current) return dwsStatusRequest.current;
+
+    const request = (async () => {
+      try {
+        const status = await invoke<DwsHushStatus>("get_hush_dws_status");
+        setDwsStatus(status);
+      } catch (error) {
+        setDwsStatus((current) => ({
+          state: "error",
+          message: String(error),
+          executable_source: current?.executable_source ?? null,
+          executable_path: current?.executable_path ?? null,
+          authenticated: current?.authenticated ?? false,
+          auto_sync_enabled: current?.auto_sync_enabled ?? false,
+          sync_interval_minutes: current?.sync_interval_minutes ?? 1,
+          last_success_at: current?.last_success_at ?? null,
+          last_attempt_at: current?.last_attempt_at ?? null,
+          syncing: false,
+          pending_sync: current?.pending_sync ?? false,
+        }));
+      }
+    })().finally(() => {
+      if (dwsStatusRequest.current === request) dwsStatusRequest.current = null;
+    });
+    dwsStatusRequest.current = request;
+    return request;
   }, []);
 
   useEffect(() => {
     fetchDwsStatus();
-    const interval = setInterval(fetchDwsStatus, 10000);
+    const interval = setInterval(fetchDwsStatus, 60_000);
     return () => clearInterval(interval);
   }, [fetchDwsStatus]);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    listen("humhum://hush-message", () => {
+      void fetchInbox();
+      void fetchDwsStatus();
+    }).then((stop) => {
+      if (disposed) stop();
+      else unlisten = stop;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [fetchDwsStatus, fetchInbox]);
 
   const openFullDiskAccess = useCallback(async () => {
     try {
@@ -1392,7 +1404,7 @@ function DwsPanel({
             disabled={!status?.authenticated || autoUpdating}
             onChange={(event) => onAutoSyncChange(event.target.checked)}
           />
-          每 {status?.sync_interval_minutes ?? 5} 分钟自动同步
+          每 {status?.sync_interval_minutes ?? 1} 分钟自动同步
         </label>
         {report && (
           <div className="hush-sync-report">

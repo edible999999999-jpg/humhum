@@ -39,26 +39,18 @@ export function CompletionPanel({ event, onDismiss }: CompletionPanelProps) {
       className="completion-bubble toast-enter pointer-events-auto"
       style={{ borderColor: accent.border }}
     >
-      <div
-        className="completion-bubble-icon"
-        style={{ background: accent.bg, color: accent.icon }}
-      >
-        {isCompleted ? (
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
-            <polyline points="20 6 9 17 4 12" />
-          </svg>
-        ) : (
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="12" cy="12" r="9" />
-            <path d="M8 12h8" />
-          </svg>
-        )}
-      </div>
+      <img
+        src="/mascots/expr/hexa/done.png"
+        alt="Hexa"
+        className="module-face"
+        style={{ width: 40, height: 40 }}
+        draggable={false}
+      />
       <div className="completion-bubble-copy">
         <div className="completion-bubble-title">{statusLabel}</div>
         <div className="completion-bubble-detail">{detail}</div>
       </div>
-      <button onClick={onDismiss} className="completion-bubble-close" aria-label="Dismiss">×</button>
+      <button type="button" onClick={onDismiss} className="completion-bubble-close" aria-label="关闭会话结束提示">×</button>
       <span className="completion-bubble-tail" />
     </div>
   );

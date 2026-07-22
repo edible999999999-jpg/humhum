@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import type { AppConfig } from "../../types";
 import { createHumiPiRuntime } from "../../lib/pi/runtime";
+import { isTauriRuntime } from "../../lib/tauriRuntime";
 import type { HumiPiRuntime } from "../../lib/pi/types";
 import type { HexaDevelopmentGoal, HexaGoalAttempt } from "../../hooks/hexaGoalMonitoring";
 import type { HexaWatchedSession } from "../../hooks/useHexaData";
@@ -391,7 +392,7 @@ export function HumiModule({ onActivityChange, onOpenHexa }: HumiModuleProps) {
       setQoderStatus(qoder);
       setAgentKernelStatus(kernel);
     } catch (e) {
-      setKernelMessage(`Kernel check failed: ${String(e)}`);
+      setKernelMessage(isTauriRuntime() ? `Kernel check failed: ${String(e)}` : null);
     }
   }, []);
 
@@ -669,8 +670,8 @@ export function HumiModule({ onActivityChange, onOpenHexa }: HumiModuleProps) {
               >
                 <SlidersHorizontal size={17} strokeWidth={1.9} aria-hidden="true" />
               </button>
-              <textarea className="humi-composer-input" value={kernelPrompt} onChange={(e) => setKernelPrompt(e.target.value)} onKeyDown={handleComposerKeyDown} placeholder="和 Humi 聊聊" rows={1} style={{ ...warmInputStyle, flex: 1, minHeight: 30, maxHeight: 120, resize: "vertical", border: 0, padding: "5px 0", background: "transparent", boxShadow: "none" }} />
-              <button className="humi-composer-send" onClick={() => void askHumi()} disabled={kernelLoading || !kernelPrompt.trim()} aria-label="Send message"><ArrowUp size={17} strokeWidth={2.3} aria-hidden="true" /></button>
+              <textarea aria-label="给 Humi 的消息" className="humi-composer-input" value={kernelPrompt} onChange={(e) => setKernelPrompt(e.target.value)} onKeyDown={handleComposerKeyDown} placeholder="和 Humi 聊聊" rows={1} style={{ ...warmInputStyle, flex: 1, minHeight: 30, maxHeight: 120, resize: "vertical", border: 0, padding: "5px 0", background: "transparent", boxShadow: "none" }} />
+              <button type="button" className="humi-composer-send" onClick={() => void askHumi()} disabled={kernelLoading || !kernelPrompt.trim()} aria-label="发送消息"><ArrowUp size={17} strokeWidth={2.3} aria-hidden="true" /></button>
             </div>
           </div>
 
@@ -697,12 +698,14 @@ export function HumiModule({ onActivityChange, onOpenHexa }: HumiModuleProps) {
                 />
               </div>
               <input
+                aria-label="工作目录"
                 value={kernelCwd}
                 onChange={(e) => setKernelCwd(e.target.value)}
                 placeholder="Working directory"
                 style={detailsInputStyle}
               />
               <textarea
+                aria-label="Agent 资源目录"
                 value={kernelRoots}
                 onChange={(e) => setKernelRoots(e.target.value)}
                 placeholder="Agent asset roots, one per line"

@@ -246,6 +246,7 @@ export function KnowledgeSearchToolbar({
           <Search size={18} strokeWidth={1.8} aria-hidden="true" />
           <span className="sr-only">搜索 Hype 知识库</span>
           <input
+            aria-label="自定义 AI 服务地址"
             value={query}
             onChange={(event) => onQueryChange(event.target.value)}
             placeholder="搜索技能、规则、偏好与记忆"
@@ -1459,12 +1460,14 @@ function ReviewEnginePanel({
       {showAdvanced && (
         <div style={{ display: "grid", gap: 8, paddingTop: 2 }}>
           <input
+            aria-label="自定义 AI 模型名称"
             value={piUrl}
             onChange={(event) => onPiUrlChange(event.target.value)}
             placeholder="https://api.openai.com/v1 或本地模型地址"
             className="kawaii-input"
           />
           <input
+            aria-label="自定义 AI 服务令牌"
             value={piModel}
             onChange={(event) => onPiModelChange(event.target.value)}
             placeholder="model name"

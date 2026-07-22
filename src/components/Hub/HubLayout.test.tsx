@@ -2,26 +2,45 @@
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { act, createElement } from "react";
+import { act, createElement, useEffect, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./HumiModule", async () => {
-  const { createElement } = await import("react");
   return {
     HumiModule: ({
       onOpenHexa,
     }: {
       onOpenHexa: (goalId: string | null) => void;
-    }) => createElement(
-      "button",
-      {
-        type: "button",
-        className: "humi-hexa-summary",
-        onClick: () => onOpenHexa("goal-critical"),
-      },
-      "1 个开发目标需要注意",
-    ),
+    }) => {
+      const [draft, setDraft] = useState(0);
+      useEffect(() => {
+        (globalThis as typeof globalThis & { __humiUnmounts?: number }).__humiUnmounts ??= 0;
+        return () => {
+          (globalThis as typeof globalThis & { __humiUnmounts?: number }).__humiUnmounts! += 1;
+        };
+      }, []);
+      return createElement("div", { className: "humi-test-module" },
+        createElement(
+          "button",
+          {
+            type: "button",
+            className: "humi-hexa-summary",
+            onClick: () => onOpenHexa("goal-critical"),
+          },
+          "1 个开发目标需要注意",
+        ),
+        createElement(
+          "button",
+          {
+            type: "button",
+            className: "humi-draft",
+            onClick: () => setDraft((value) => value + 1),
+          },
+          `draft ${draft}`,
+        ),
+      );
+    },
   };
 });
 
@@ -78,6 +97,7 @@ async function dispose(view: { host: HTMLDivElement; root: Root }) {
 
 afterEach(() => {
   document.body.innerHTML = "";
+  delete (globalThis as typeof globalThis & { __humiUnmounts?: number }).__humiUnmounts;
 });
 
 describe("Hub macOS window chrome", () => {
@@ -121,6 +141,30 @@ describe("Hub Hexa goal routing", () => {
     expect(
       view.host.querySelector('[data-focus-goal-id="goal-critical"]'),
     ).not.toBeNull();
+
+    await dispose(view);
+  });
+
+  it("keeps Humi mounted and preserves its state while visiting another room", async () => {
+    const view = await renderHubLayout();
+    const draftButton = view.host.querySelector<HTMLButtonElement>(".humi-draft");
+
+    await act(async () => {
+      draftButton?.click();
+      await Promise.resolve();
+    });
+    expect(draftButton?.textContent).toBe("draft 1");
+
+    const hushButton = Array.from(view.host.querySelectorAll<HTMLButtonElement>(".hub-nav-item"))
+      .find((button) => button.textContent?.includes("Hush"));
+    await act(async () => {
+      hushButton?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect((globalThis as typeof globalThis & { __humiUnmounts?: number }).__humiUnmounts).toBe(0);
+    expect(view.host.querySelector<HTMLButtonElement>(".humi-draft")?.textContent).toBe("draft 1");
 
     await dispose(view);
   });
