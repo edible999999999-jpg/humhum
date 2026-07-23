@@ -28,6 +28,7 @@ export function HubLayout() {
   const [hexaFocusGoalId, setHexaFocusGoalId] = useState<string | null>(null);
   const { t } = useTranslation();
   const subtitle = t("hub.subtitle");
+  const activeLabel = t(MODULES.find((module) => module.id === active)?.labelKey ?? "hub.title");
 
   const openHexaGoal = (goalId: string | null) => {
     setHexaFocusGoalId(goalId);
@@ -38,14 +39,13 @@ export function HubLayout() {
     <div className="hub-panel" data-active-room={active}>
       <div className="hub-titlebar" data-tauri-drag-region>
         <div className="hub-title-stack">
-          <span className="hub-title">{t("hub.title")}</span>
+          <span className="hub-title">{activeLabel} · {t("hub.title")}</span>
           {subtitle && <span className="hub-subtitle">{subtitle}</span>}
         </div>
       </div>
 
       <div className="hub-body">
-        {/* Sidebar */}
-        <nav className="hub-sidebar" aria-label={t("hub.title")}>
+        <nav className="hub-module-nav" aria-label={t("hub.title")}>
           {MODULES.map((m) => (
             <HubNavigationItem
               key={m.id}

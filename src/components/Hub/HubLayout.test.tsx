@@ -169,3 +169,20 @@ describe("Hub Hexa goal routing", () => {
     await dispose(view);
   });
 });
+
+describe("Hub top module navigation", () => {
+  it("renders the four rooms in a horizontal module navigation before content", async () => {
+    const view = await renderHubLayout();
+    const navigation = view.host.querySelector(".hub-module-nav");
+    const content = view.host.querySelector(".hub-content");
+
+    expect(navigation).not.toBeNull();
+    expect(navigation?.querySelectorAll(".hub-module-nav-item")).toHaveLength(4);
+    expect(view.host.querySelector(".hub-sidebar")).toBeNull();
+    expect(
+      navigation?.compareDocumentPosition(content as Node) ?? 0,
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+
+    await dispose(view);
+  });
+});

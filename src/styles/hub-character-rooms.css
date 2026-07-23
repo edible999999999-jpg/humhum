@@ -3392,40 +3392,68 @@
 
 .hub-title-stack {
   position: absolute;
-  width: 1px;
-  height: 1px;
+  left: 50%;
+  display: block;
+  max-width: calc(100% - 220px);
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.hub-title {
+  display: block;
   overflow: hidden;
-  clip-path: inset(50%);
+  color: #263241;
+  font-size: 11px;
+  font-weight: 800;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .hub-body {
   height: 100%;
+  flex-direction: column;
+  padding-top: 34px;
 }
 
-.hub-sidebar {
-  z-index: 3;
-  width: 76px;
-  gap: 0;
-  padding: 34px 0 18px;
-  border-right: 1px solid rgba(64, 77, 92, 0.09);
-  background: rgba(253, 254, 255, 0.78);
+.hub-module-nav {
+  z-index: 12;
+  display: flex;
+  min-height: 42px;
+  align-items: stretch;
+  justify-content: center;
+  gap: 2px;
+  padding: 0 12px;
+  overflow-x: auto;
+  border-top: 1px solid rgba(64, 77, 92, 0.06);
+  border-bottom: 1px solid rgba(64, 77, 92, 0.1);
+  background: rgba(253, 254, 255, 0.92);
+  scrollbar-width: none;
 }
 
-.hub-sidebar-item,
-.hub-sidebar-item:hover,
-.hub-sidebar-item.active {
-  width: 100%;
-  min-height: 82px;
-  padding: 10px 0;
+.hub-module-nav::-webkit-scrollbar {
+  display: none;
+}
+
+.hub-module-nav .hub-module-nav-item,
+.hub-module-nav .hub-module-nav-item:hover,
+.hub-module-nav .hub-module-nav-item.active {
+  position: relative;
+  width: auto;
+  min-width: 94px;
+  min-height: 41px;
+  flex-direction: row;
+  flex: 0 0 auto;
+  gap: 7px;
+  padding: 0 13px;
   border: 0;
   border-radius: 0;
   background: transparent;
   box-shadow: none;
 }
 
-.hub-sidebar-item:hover,
-.hub-sidebar-item.active {
+.hub-module-nav .hub-module-nav-item:hover,
+.hub-module-nav .hub-module-nav-item.active {
+  background: rgba(232, 241, 250, 0.56);
   transform: none;
 }
 
@@ -3438,26 +3466,27 @@
 
 .hub-sidebar-label {
   color: #606a76;
-  font-size: 10px;
-  font-weight: 600;
+  font-size: 11px;
+  font-weight: 750;
 }
 
 .hub-nav-rail-accent {
   position: absolute;
-  right: -1px;
-  top: 21px;
-  width: 2px;
-  height: 40px;
-  border-radius: 2px;
+  right: 10px;
+  bottom: 0;
+  left: 10px;
+  width: auto;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
   background: transparent;
   opacity: 0;
-  transform: scaleY(0.45);
+  transform: scaleX(0.45);
   transition: opacity 160ms ease, transform 160ms ease;
 }
 
 .hub-nav-item.active .hub-nav-rail-accent {
   opacity: 1;
-  transform: scaleY(1);
+  transform: scaleX(1);
 }
 
 .hub-nav-item-humi.active .hub-nav-rail-accent {
@@ -3499,6 +3528,8 @@
 }
 
 .hub-content {
+  flex: 1;
+  min-height: 0;
   overflow: hidden;
   padding: 0;
 }
