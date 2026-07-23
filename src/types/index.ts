@@ -165,6 +165,12 @@ export interface AppConfig {
     model: string;
     max_tokens: number;
   };
+  brain: {
+    schema_version: number;
+    initialized: boolean;
+    primary_provider?: "codex" | "qoder" | "claude";
+    fallback_enabled: boolean;
+  };
   pi: {
     url: string;
     token?: string;

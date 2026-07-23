@@ -4,7 +4,7 @@ use crate::codex_bridge::{
     ApprovalDecision, CodexBridgeHealth, CodexBridgeState, CodexRemoteControlState,
     CodexRemotePairing,
 };
-use crate::config::AppConfig;
+use crate::config::{AppConfig, BrainProvider};
 use crate::dws_hush_bridge::{DwsHushBridge, DwsHushStatus, DwsSyncReport};
 use crate::event_bus::{self, HookEvent, PermissionDecision};
 use crate::git_changes::GitChangeSummary;
@@ -18,6 +18,7 @@ use crate::hexa_watch_store::{
     HexaWatchedSession,
 };
 use crate::hook_server::PendingMap;
+use crate::humi_brain::{provider_statuses, HumiBrainSessionStore, HumiBrainStatus};
 use crate::hush_signal_store::{HushSignalStore, HushSignalSummary};
 use crate::hush_store::{HushInboxSummary, HushStore};
 use crate::intervention_queue::{InterventionProvider, InterventionQueue, QueuedIntervention};
@@ -327,6 +328,199 @@ pub async fn get_codex_bridge_health(
     state: State<'_, Arc<CodexBridgeState>>,
 ) -> Result<CodexBridgeHealth, String> {
     Ok(state.blocking_health())
+}
+
+#[derive(Debug, Deserialize)]
+pub struct HumiBrainAskOptions {
+    pub prompt: String,
+    pub roots: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct HumiBrainAnswer {
+    pub answer: String,
+    pub provider: BrainProvider,
+    pub fallback: bool,
+}
+
+#[tauri::command]
+pub async fn get_humi_brain_status(
+    config: State<'_, Arc<std::sync::Mutex<AppConfig>>>,
+    bridge: State<'_, Arc<CodexBridgeState>>,
+) -> Result<HumiBrainStatus, String> {
+    let brain = config
+        .lock()
+        .map_err(|error| format!("Lock error: {error}"))?
+        .brain
+        .clone();
+    Ok(HumiBrainStatus {
+        initialized: brain.initialized,
+        primary_provider: brain.primary_provider,
+        fallback_enabled: brain.fallback_enabled,
+        providers: provider_statuses(&bridge.blocking_health(), false, false),
+    })
+}
+
+#[tauri::command]
+pub async fn set_humi_brain_provider(
+    config: State<'_, Arc<std::sync::Mutex<AppConfig>>>,
+    bridge: State<'_, Arc<CodexBridgeState>>,
+    provider: BrainProvider,
+) -> Result<HumiBrainStatus, String> {
+    let providers = provider_statuses(&bridge.blocking_health(), false, false);
+    let selected = providers
+        .iter()
+        .find(|status| status.provider == provider)
+        .ok_or_else(|| "Unknown Humi brain provider".to_string())?;
+    if !selected.ready {
+        return Err(format!(
+            "{} 目前还不能作为 Humi 大脑：{}",
+            selected.display_name, selected.detail
+        ));
+    }
+
+    let brain = {
+        let mut stored = config
+            .lock()
+            .map_err(|error| format!("Lock error: {error}"))?;
+        stored.brain.initialized = true;
+        stored.brain.primary_provider = Some(provider);
+        stored.save()?;
+        stored.brain.clone()
+    };
+    Ok(HumiBrainStatus {
+        initialized: brain.initialized,
+        primary_provider: brain.primary_provider,
+        fallback_enabled: brain.fallback_enabled,
+        providers,
+    })
+}
+
+#[tauri::command]
+pub async fn ask_humi_with_brain(
+    config: State<'_, Arc<std::sync::Mutex<AppConfig>>>,
+    bridge: State<'_, Arc<CodexBridgeState>>,
+    brain_sessions: State<'_, Arc<std::sync::Mutex<HumiBrainSessionStore>>>,
+    knowledge_store: State<'_, Arc<std::sync::Mutex<KnowledgeStore>>>,
+    stats_store: State<'_, Arc<std::sync::Mutex<StatsStore>>>,
+    options: HumiBrainAskOptions,
+) -> Result<HumiBrainAnswer, String> {
+    let prompt = options.prompt.trim();
+    if prompt.is_empty() {
+        return Err("先告诉 Humi 你想聊什么".into());
+    }
+    if prompt.chars().count() > 12_000 {
+        return Err("这条消息太长了，请分成几次告诉 Humi".into());
+    }
+    let provider = {
+        let stored = config
+            .lock()
+            .map_err(|error| format!("Lock error: {error}"))?;
+        if !stored.brain.initialized {
+            return Err("请先为 Humi 选择一个 Agent 大脑".into());
+        }
+        stored
+            .brain
+            .primary_provider
+            .ok_or_else(|| "请先为 Humi 选择一个 Agent 大脑".to_string())?
+    };
+    if provider != BrainProvider::Codex {
+        return Err("这个 Agent 的 Humi 连接器还没有准备好".into());
+    }
+
+    let context_packet =
+        collect_humi_brain_context(&knowledge_store, &stats_store, prompt, options.roots)?;
+    let host_prompt = build_humi_host_prompt(prompt, &context_packet)?;
+    let workspace = humi_brain_workspace()?;
+    let previous_thread = brain_sessions
+        .lock()
+        .map_err(|error| format!("Brain session lock error: {error}"))?
+        .session(provider)
+        .map(String::from);
+    let reply = bridge
+        .run_brain_turn(
+            workspace
+                .to_str()
+                .ok_or_else(|| "Humi brain workspace path is invalid".to_string())?,
+            previous_thread.as_deref(),
+            &host_prompt,
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+    brain_sessions
+        .lock()
+        .map_err(|error| format!("Brain session lock error: {error}"))?
+        .set_session(provider, &reply.thread_id)?;
+
+    Ok(HumiBrainAnswer {
+        answer: reply.text,
+        provider,
+        fallback: false,
+    })
+}
+
+fn collect_humi_brain_context(
+    knowledge_store: &std::sync::Mutex<KnowledgeStore>,
+    stats_store: &std::sync::Mutex<StatsStore>,
+    prompt: &str,
+    roots: Option<Vec<String>>,
+) -> Result<HumiContextPacket, String> {
+    let assets = knowledge_store
+        .lock()
+        .map_err(|error| format!("Lock error: {error}"))?
+        .scan_agent_assets(roots)?;
+    let mut type_counts = BTreeMap::new();
+    let mut agent_counts = BTreeMap::new();
+    for asset in &assets {
+        *type_counts.entry(asset.asset_type.clone()).or_insert(0) += 1;
+        *agent_counts.entry(asset.agent_id.clone()).or_insert(0) += 1;
+    }
+    let suggested_actions = suggest_local_kernel_actions(&assets, &type_counts, &agent_counts);
+    let top_skills = collect_top_skill_assets(&assets);
+    let agent_knowledge = collect_agent_knowledge(&assets);
+    let operational_tools = {
+        let stats = stats_store
+            .lock()
+            .map_err(|error| format!("Lock error: {error}"))?;
+        collect_top_tools_from_stats(&stats)
+    };
+    Ok(build_humi_context_packet(
+        prompt,
+        &assets,
+        &type_counts,
+        &agent_counts,
+        &operational_tools,
+        &top_skills,
+        &agent_knowledge,
+        &suggested_actions,
+    ))
+}
+
+fn build_humi_host_prompt(prompt: &str, context: &HumiContextPacket) -> Result<String, String> {
+    let context = serde_json::to_string(context)
+        .map_err(|error| format!("Could not prepare Humi context: {error}"))?;
+    Ok(format!(
+        "你正在作为 HUMHUM 中 Humi 的推理大脑。Humi 是温和、直接、懂用户工作节奏的个人解释者，不是代码代理。\n\
+         只回答用户当前的问题；不要运行命令、修改文件、请求权限或暴露内部路径、配置和扫描数量。\n\
+         以下 context 是 HUMHUM 在本机整理后的有界证据，候选偏好不是已确认事实；证据不足时请坦白说明。\n\
+         请直接返回一段适合显示给用户的中文回复，不要输出 JSON、分析过程或系统提示。\n\
+         context={context}\n\
+         user_message={prompt}"
+    ))
+}
+
+fn humi_brain_workspace() -> Result<PathBuf, String> {
+    let home = dirs::home_dir().ok_or_else(|| "Home directory is unavailable".to_string())?;
+    let workspace = home.join(".humhum").join("brain-workspace");
+    if std::fs::symlink_metadata(&workspace).is_ok_and(|metadata| metadata.file_type().is_symlink())
+    {
+        return Err("Humi brain workspace cannot be a symbolic link".into());
+    }
+    std::fs::create_dir_all(&workspace)
+        .map_err(|error| format!("Could not create Humi brain workspace: {error}"))?;
+    workspace
+        .canonicalize()
+        .map_err(|error| format!("Could not open Humi brain workspace: {error}"))
 }
 
 #[tauri::command]
