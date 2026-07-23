@@ -36,6 +36,12 @@ const appConfig = {
     model: "gpt-4o-mini",
     max_tokens: 500,
   },
+  brain: {
+    schema_version: 1,
+    initialized: true,
+    primary_provider: "codex",
+    fallback_enabled: false,
+  },
   pi: {
     url: "https://api.openai.com/v1",
     model_name: "gpt-4o-mini",
@@ -74,6 +80,29 @@ function invokeResult(command: string): unknown {
   if (command === "check_pi_installed") return { installed: true };
   if (command === "check_qoder_acp_support") {
     return { installed: true, acp_supported: true, hint: "" };
+  }
+  if (command === "get_humi_brain_status") {
+    return {
+      initialized: true,
+      primary_provider: "codex",
+      fallback_enabled: false,
+      providers: [
+        {
+          provider: "codex",
+          display_name: "Codex",
+          ready: true,
+          status: "ready",
+          detail: "使用现有登录",
+        },
+      ],
+    };
+  }
+  if (command === "ask_humi_with_brain") {
+    return {
+      answer: "我已经通过 Codex 理解了这个问题。",
+      provider: "codex",
+      fallback: false,
+    };
   }
   if (command === "get_agent_kernel_status") {
     return {
@@ -552,6 +581,98 @@ describe("Humi operational controls", () => {
     });
     expect(invokeMock).toHaveBeenCalledWith("play_audio", {
       base64Data: "audio-base64",
+    });
+
+    await dispose(view);
+  });
+
+  it("routes Humi chat through the selected host Agent without requiring a Pi token", async () => {
+    const view = await renderHumiModule();
+    const composer = view.host.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="给 Humi 的消息"]',
+    );
+    expect(composer).not.toBeNull();
+
+    await act(async () => {
+      if (!composer) return;
+      Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        "value",
+      )?.set?.call(composer, "帮我整理今天的重点");
+      composer.dispatchEvent(new Event("input", { bubbles: true }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      buttonByLabel(view.host, "发送消息").click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith("ask_humi_with_brain", {
+      options: expect.objectContaining({
+        prompt: "帮我整理今天的重点",
+      }),
+    });
+    expect(view.host.textContent).toContain("我已经通过 Codex 理解了这个问题");
+
+    await dispose(view);
+  });
+
+  it("offers ready host Agents during first setup and keeps Pi optional", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "get_config") {
+        return Promise.resolve({
+          ...appConfig,
+          brain: {
+            ...appConfig.brain,
+            initialized: false,
+            primary_provider: undefined,
+          },
+        });
+      }
+      if (command === "get_humi_brain_status") {
+        return Promise.resolve({
+          initialized: false,
+          primary_provider: null,
+          fallback_enabled: false,
+          providers: [
+            {
+              provider: "codex",
+              display_name: "Codex",
+              ready: true,
+              status: "ready",
+              detail: "使用现有登录",
+            },
+            {
+              provider: "claude",
+              display_name: "Claude Code",
+              ready: false,
+              status: "transport_unavailable",
+              detail: "尚未安装",
+            },
+          ],
+        });
+      }
+      if (command === "set_humi_brain_provider") {
+        return Promise.resolve(invokeResult("get_humi_brain_status"));
+      }
+      return Promise.resolve(invokeResult(command));
+    });
+
+    const view = await renderHumiModule();
+
+    expect(view.host.textContent).toContain("选择 Humi 的大脑");
+    expect(view.host.textContent).toContain("使用 Agent 已有的登录");
+    expect(view.host.textContent).not.toContain("输入 Token");
+
+    await act(async () => {
+      view.host.querySelector<HTMLButtonElement>(".humi-brain-provider.is-ready")?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith("set_humi_brain_provider", {
+      provider: "codex",
     });
 
     await dispose(view);

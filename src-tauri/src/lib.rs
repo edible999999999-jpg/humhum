@@ -15,6 +15,7 @@ mod hexa_goal_store;
 mod hexa_protocol;
 mod hexa_watch_store;
 mod hook_server;
+mod humi_brain;
 #[allow(dead_code)]
 mod hush_signal_store;
 mod hush_store;
@@ -117,6 +118,10 @@ pub fn run() {
             let restore_awake_mode = config.ui.awake_mode;
             let analytics_enabled = config.ui.analytics_enabled;
             app.manage(Arc::new(std::sync::Mutex::new(config)));
+            app.manage(Arc::new(std::sync::Mutex::new(
+                humi_brain::HumiBrainSessionStore::load_default()
+                    .map_err(std::io::Error::other)?,
+            )));
 
             if let Some(home) = dirs::home_dir() {
                 if let Err(error) = commands::ensure_hook_script_installed(&home) {
@@ -339,6 +344,9 @@ pub fn run() {
             commands::set_wake_guard_enabled,
             commands::get_hook_port,
             commands::get_codex_bridge_health,
+            commands::get_humi_brain_status,
+            commands::set_humi_brain_provider,
+            commands::ask_humi_with_brain,
             commands::get_codex_remote_control,
             commands::get_hexa_bridge_sessions,
             commands::get_hexa_watched_agents,
