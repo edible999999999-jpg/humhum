@@ -84,6 +84,15 @@ function healthSignal(
 function defaultInvoke(command: string): unknown {
   if (command === "get_hush_health_signals") return [];
   if (command === "get_hush_connectors") return [];
+  if (command === "get_hush_egress_guard_status") {
+    return {
+      enforced: true,
+      policy_version: 1,
+      message:
+        "聊天正文仅保存在这台 Mac，不会发送给 AI、Relay、手机或外部服务。",
+      process_sandbox_available: true,
+    };
+  }
   if (command === "get_hush_inbox") {
     return {
       total: 0,
@@ -534,6 +543,89 @@ describe("Hush health command registration", () => {
     expect(lib).toContain("commands::clear_hush_health_signals");
     expect(commands).toContain("pub async fn get_hush_health_signals");
     expect(commands).toContain("pub async fn clear_hush_health_signals");
+  });
+});
+
+describe("Hush third-party egress guard", () => {
+  let view: { host: HTMLDivElement; root: Root } | null = null;
+
+  beforeEach(() => {
+    listenMock.mockResolvedValue(() => undefined);
+    invokeMock.mockImplementation((command: string) =>
+      Promise.resolve(defaultInvoke(command)),
+    );
+  });
+
+  afterEach(async () => {
+    if (view) await disposeHushModule(view);
+    view = null;
+    vi.clearAllMocks();
+  });
+
+  it("renders the enforced compiled policy as a persistent non-toggle row", async () => {
+    view = await renderHushModule();
+
+    expect(invokeMock).toHaveBeenCalledWith("get_hush_egress_guard_status");
+    expect(view.host.textContent).toContain("第三方传输已阻止");
+    expect(view.host.textContent).toContain(
+      "聊天正文仅保存在这台 Mac，不会发送给 AI、Relay、手机或外部服务。",
+    );
+    expect(
+      view.host.querySelector('[data-hush-egress-guard="enforced"]'),
+    ).not.toBeNull();
+    expect(
+      view.host.querySelector(
+        '[data-hush-egress-guard="enforced"] input, [data-hush-egress-guard="enforced"] button',
+      ),
+    ).toBeNull();
+  });
+
+  it("registers the compiled guard status command with Tauri", () => {
+    const lib = readFileSync(
+      resolve(process.cwd(), "src-tauri/src/lib.rs"),
+      "utf8",
+    );
+    const commands = readFileSync(
+      resolve(process.cwd(), "src-tauri/src/commands.rs"),
+      "utf8",
+    );
+
+    expect(lib).toContain("commands::get_hush_egress_guard_status");
+    expect(commands).toContain("pub fn get_hush_egress_guard_status");
+  });
+
+  it("does not claim enforcement when the compiled status is unavailable", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "get_hush_egress_guard_status") {
+        return Promise.reject(new Error("unavailable"));
+      }
+      return Promise.resolve(defaultInvoke(command));
+    });
+    view = await renderHushModule();
+
+    expect(view.host.textContent).not.toContain("第三方传输已阻止");
+    expect(view.host.textContent).toContain("防护状态不可确认");
+    expect(
+      view.host.querySelector('[data-hush-egress-guard="unavailable"]'),
+    ).not.toBeNull();
+  });
+
+  it("does not override a non-enforced backend status", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "get_hush_egress_guard_status") {
+        return Promise.resolve({
+          enforced: false,
+          policy_version: 1,
+          message: "policy unavailable",
+          process_sandbox_available: false,
+        });
+      }
+      return Promise.resolve(defaultInvoke(command));
+    });
+    view = await renderHushModule();
+
+    expect(view.host.textContent).not.toContain("第三方传输已阻止");
+    expect(view.host.textContent).toContain("防护状态不可确认");
   });
 });
 
@@ -1021,6 +1113,7 @@ describe("Hush conversation UI contracts", () => {
   it("retains every Hush invoke command and message listener", () => {
     const commands = [
       "get_hush_connectors",
+      "get_hush_egress_guard_status",
       "get_hush_inbox",
       "get_hush_notification_bridge_status",
       "get_hush_dws_status",

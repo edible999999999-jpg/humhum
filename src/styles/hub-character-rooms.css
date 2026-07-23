@@ -4017,6 +4017,53 @@
   padding: 4px 9px;
 }
 
+.hush-egress-guard {
+  display: flex;
+  min-height: 42px;
+  align-items: center;
+  gap: 10px;
+  margin: -4px 54px 10px 0;
+  padding: 7px 10px;
+  border: 1px solid rgba(29, 132, 91, 0.18);
+  border-radius: 7px;
+  background: rgba(240, 251, 246, 0.82);
+  color: #267258;
+}
+
+.hush-egress-guard > svg {
+  flex: 0 0 auto;
+}
+
+.hush-egress-guard > div {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.hush-egress-guard strong {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.hush-egress-guard span {
+  min-width: 0;
+  color: #58776b;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.hush-egress-guard.is-unavailable {
+  border-color: rgba(170, 112, 31, 0.2);
+  background: rgba(255, 249, 236, 0.88);
+  color: #8a5b1f;
+}
+
+.hush-egress-guard.is-unavailable span {
+  color: #7c6a50;
+}
+
 .hush-status-area {
   position: absolute;
   z-index: 8;
@@ -4071,7 +4118,7 @@
   position: relative;
   z-index: 2;
   width: calc(100% - 54px);
-  height: calc(100vh - 92px);
+  height: calc(100vh - 144px);
   grid-template-columns: minmax(250px, 34%) minmax(0, 1fr);
   border: 1px solid rgba(54, 105, 88, 0.14);
   border-radius: 8px;
@@ -4427,6 +4474,16 @@ button.hexa-report-metric {
     grid-template-columns: minmax(0, 1fr) 36px 38px;
   }
 
+  .hush-egress-guard {
+    margin-right: 0;
+  }
+
+  .hush-egress-guard > div {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 1px;
+  }
+
   .hush-room-identity {
     min-width: 0;
   }
@@ -4444,7 +4501,7 @@ button.hexa-report-metric {
   .hush-inbox-workspace {
     width: 100%;
     height: auto;
-    min-height: calc(100vh - 160px);
+    min-height: calc(100vh - 212px);
     grid-template-columns: minmax(0, 1fr);
   }
 

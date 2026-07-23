@@ -194,9 +194,6 @@ struct ReaderEnvelope {
 #[serde(rename_all = "camelCase")]
 struct ReaderFailure {
     code: String,
-    message: String,
-    #[serde(default)]
-    next_action: String,
 }
 
 pub(crate) struct WechatNativeRunner {
@@ -233,16 +230,27 @@ impl WechatNativeRunner {
             ));
         }
 
-        let mut command = Command::new(&self.executable_path);
+        let mut command = crate::hush_egress_guard::network_sandboxed_command(
+            &self.executable_path,
+        )
+        .map_err(|_| {
+            WechatReaderError::new(
+                "network_sandbox_unavailable",
+                "系统网络隔离不可用；为保护聊天隐私，微信本地读取已停止",
+            )
+        })?;
         command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
         configure_environment(&mut command);
-        let mut child = command
-            .spawn()
-            .map_err(|_| WechatReaderError::new("reader_not_bundled", "无法启动内置微信读取器"))?;
+        let mut child = command.spawn().map_err(|_| {
+            WechatReaderError::new(
+                "network_sandbox_unavailable",
+                "系统网络隔离不可用；为保护聊天隐私，微信本地读取已停止",
+            )
+        })?;
         let mut stdin = child
             .stdin
             .take()
@@ -296,6 +304,12 @@ impl WechatNativeRunner {
                 "微信读取输出超过安全上限",
             ));
         }
+        if !status.success() && stdout.is_empty() && stderr.is_empty() {
+            return Err(WechatReaderError::new(
+                "network_sandbox_unavailable",
+                "系统网络隔离不可用；为保护聊天隐私，微信本地读取已停止",
+            ));
+        }
         let stdout = String::from_utf8(stdout).map_err(|_| {
             WechatReaderError::new("malformed_reader_output", "微信读取输出不是 UTF-8")
         })?;
@@ -311,17 +325,11 @@ impl WechatNativeRunner {
         if !status.success() || !envelope.ok {
             let failure = envelope.error.unwrap_or(ReaderFailure {
                 code: "reader_failed".to_string(),
-                message: "微信本地读取失败".to_string(),
-                next_action: String::new(),
             });
-            let message = if failure.next_action.is_empty() {
-                failure.message
-            } else {
-                format!("{} {}", failure.message, failure.next_action)
-            };
+            let code = safe_error_code(&failure.code);
             return Err(WechatReaderError::new(
-                safe_error_code(&failure.code),
-                message,
+                code,
+                safe_reader_failure_message(code),
             ));
         }
         Ok(WechatCommandOutput {
@@ -431,10 +439,26 @@ fn safe_error_code(code: &str) -> &str {
         | "unsupported_wechat_build"
         | "key_coverage_incomplete"
         | "key_validation_failed"
+        | "network_sandbox_unavailable"
         | "wcdb_unavailable"
         | "schema_unsupported"
         | "query_timeout" => code,
         _ => "reader_failed",
+    }
+}
+
+fn safe_reader_failure_message(code: &str) -> &'static str {
+    match code {
+        "wechat_not_running" => "请先打开这台 Mac 上的微信",
+        "wechat_not_logged_in" => "请先在这台 Mac 上登录微信",
+        "full_disk_access_required" => "请授予 HUMHUM 完全磁盘访问权限",
+        "unsupported_wechat_build" => "当前微信版本尚未通过兼容验证",
+        "key_coverage_incomplete" | "key_validation_failed" => "微信本地读取准备尚未完成",
+        "network_sandbox_unavailable" => "系统网络隔离不可用；为保护聊天隐私，微信本地读取已停止",
+        "wcdb_unavailable" => "内置微信数据库组件不可用",
+        "schema_unsupported" => "本机微信数据结构尚未通过兼容验证",
+        "query_timeout" => "微信本地读取超时",
+        _ => "微信本地读取失败",
     }
 }
 
@@ -443,9 +467,11 @@ mod tests {
     use super::*;
     use sha2::{Digest, Sha256};
     use std::collections::BTreeMap;
+    use std::net::TcpListener;
     use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
-    use std::time::Duration;
+    use std::thread;
+    use std::time::{Duration, Instant};
     use tempfile::TempDir;
 
     const TEST_PROCESS_TIMEOUT: Duration = Duration::from_secs(10);
@@ -492,6 +518,88 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn native_runner_never_surfaces_upstream_error_details() {
+        let harness = NativeHarness::new(
+            r#"{"ok":false,"version":1,"action":"status","error":{"code":"wechat_not_running","message":"private-body-sentinel","nextAction":"private-contact-sentinel"}}"#,
+        );
+        let error = harness
+            .runner()
+            .run(
+                &WechatReaderRequest::status(BTreeMap::new()),
+                TEST_PROCESS_TIMEOUT,
+            )
+            .await
+            .unwrap_err();
+        let display = error.to_string();
+
+        assert_eq!(error.code(), "wechat_not_running");
+        assert!(!display.contains("private-body-sentinel"));
+        assert!(!display.contains("private-contact-sentinel"));
+    }
+
+    #[tokio::test]
+    async fn empty_nonzero_reader_exit_is_reported_as_sandbox_unavailable() {
+        let harness = NativeHarness::with_nonzero_without_output();
+        let error = harness
+            .runner()
+            .run(
+                &WechatReaderRequest::status(BTreeMap::new()),
+                TEST_PROCESS_TIMEOUT,
+            )
+            .await
+            .unwrap_err();
+
+        assert_eq!(error.code(), "network_sandbox_unavailable");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn native_runner_blocks_all_network_access() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let baseline = std::process::Command::new("/usr/bin/nc")
+            .args(["-z", "127.0.0.1", &port.to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .unwrap();
+        assert!(
+            baseline.success(),
+            "the unsandboxed network probe must work"
+        );
+        listener.accept().unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let acceptor = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_millis(750);
+            while Instant::now() < deadline {
+                match listener.accept() {
+                    Ok(_) => return true,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(_) => return false,
+                }
+            }
+            false
+        });
+        let harness = NativeHarness::with_network_probe(port);
+        let result = harness
+            .runner()
+            .run(
+                &WechatReaderRequest::status(BTreeMap::new()),
+                TEST_PROCESS_TIMEOUT,
+            )
+            .await
+            .unwrap();
+
+        assert!(result.stdout.contains("\"network\":\"blocked\""));
+        assert!(
+            !acceptor.join().unwrap(),
+            "the native reader reached a loopback listener"
+        );
+    }
+
+    #[tokio::test]
     async fn native_runner_rejects_tampered_identity_and_oversized_output() {
         let tampered = NativeHarness::new(r#"{"ok":true,"version":1,"action":"status","data":{}}"#);
         std::fs::write(tampered.executable_path(), "#!/bin/sh\nexit 0\n").unwrap();
@@ -533,6 +641,65 @@ mod tests {
                 shell_single_quote(stdout),
             );
             std::fs::write(&executable, script).unwrap();
+            let mut permissions = std::fs::metadata(&executable).unwrap().permissions();
+            permissions.set_mode(0o700);
+            std::fs::set_permissions(&executable, permissions).unwrap();
+            let wcdb = directory.path().join("libWCDB.dylib");
+            std::fs::write(&wcdb, b"fixture-wcdb").unwrap();
+            let manifest = serde_json::json!({
+                "formatVersion": 1,
+                "reader": {
+                    "file": "humhum-wechat-reader",
+                    "sha256": file_sha256(&executable),
+                },
+                "wcdb": {
+                    "file": "libWCDB.dylib",
+                    "sha256": file_sha256(&wcdb),
+                }
+            });
+            std::fs::write(
+                directory.path().join("native-manifest.json"),
+                serde_json::to_vec(&manifest).unwrap(),
+            )
+            .unwrap();
+            Self { directory }
+        }
+
+        fn with_network_probe(port: u16) -> Self {
+            let directory = tempfile::tempdir().unwrap();
+            let executable = directory.path().join("humhum-wechat-reader");
+            let script = format!(
+                "#!/bin/sh\n/bin/cat >/dev/null\nif /usr/bin/nc -z 127.0.0.1 {port} >/dev/null 2>&1; then network=allowed; else network=blocked; fi\n/usr/bin/printf '{{\"ok\":true,\"version\":1,\"action\":\"status\",\"data\":{{\"network\":\"%s\"}}}}\\n' \"$network\"\n"
+            );
+            std::fs::write(&executable, script).unwrap();
+            let mut permissions = std::fs::metadata(&executable).unwrap().permissions();
+            permissions.set_mode(0o700);
+            std::fs::set_permissions(&executable, permissions).unwrap();
+            let wcdb = directory.path().join("libWCDB.dylib");
+            std::fs::write(&wcdb, b"fixture-wcdb").unwrap();
+            let manifest = serde_json::json!({
+                "formatVersion": 1,
+                "reader": {
+                    "file": "humhum-wechat-reader",
+                    "sha256": file_sha256(&executable),
+                },
+                "wcdb": {
+                    "file": "libWCDB.dylib",
+                    "sha256": file_sha256(&wcdb),
+                }
+            });
+            std::fs::write(
+                directory.path().join("native-manifest.json"),
+                serde_json::to_vec(&manifest).unwrap(),
+            )
+            .unwrap();
+            Self { directory }
+        }
+
+        fn with_nonzero_without_output() -> Self {
+            let directory = tempfile::tempdir().unwrap();
+            let executable = directory.path().join("humhum-wechat-reader");
+            std::fs::write(&executable, "#!/bin/sh\n/bin/cat >/dev/null\nexit 71\n").unwrap();
             let mut permissions = std::fs::metadata(&executable).unwrap().permissions();
             permissions.set_mode(0o700);
             std::fs::set_permissions(&executable, permissions).unwrap();

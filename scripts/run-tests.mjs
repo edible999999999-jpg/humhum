@@ -10,7 +10,11 @@ export const HEXA_TEST_FILES = [
 const LOCAL_VITEST_ENTRY = fileURLToPath(
   new URL("../node_modules/vitest/vitest.mjs", import.meta.url),
 );
-const NODE_TEST_FILES = ["scripts/run-tests.test.mjs", ...HEXA_TEST_FILES];
+export const NODE_TEST_FILES = [
+  "scripts/run-tests.test.mjs",
+  "scripts/hush-egress-boundary.test.mjs",
+  ...HEXA_TEST_FILES,
+];
 
 export function buildTestCommands(vitestArgs = []) {
   return [

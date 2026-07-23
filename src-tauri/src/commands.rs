@@ -1256,6 +1256,11 @@ pub async fn get_agent_kernel_status(
     ))
 }
 
+#[tauri::command]
+pub fn get_hush_egress_guard_status() -> crate::hush_egress_guard::HushEgressGuardStatus {
+    crate::hush_egress_guard::status()
+}
+
 /// Return local social/work message connectors that Hush can prepare.
 #[tauri::command]
 pub async fn get_hush_connectors(

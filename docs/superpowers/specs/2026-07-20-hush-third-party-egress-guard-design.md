@@ -1,7 +1,7 @@
 # Hush Third-Party Egress Guard Design
 
 Date: 2026-07-20
-Status: Approved direction, implementation pending
+Status: Implemented
 
 ## Goal
 

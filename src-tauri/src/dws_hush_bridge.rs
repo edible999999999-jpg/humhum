@@ -133,15 +133,10 @@ impl DwsRunner for SystemDwsRunner {
             let output = tokio::time::timeout(timeout, command.output())
                 .await
                 .map_err(|_| "钉钉 DWS 命令超时，请稍后重试".to_string())?
-                .map_err(|error| format!("无法启动钉钉 DWS：{error}"))?;
+                .map_err(|_| "无法启动钉钉 DWS".to_string())?;
             let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
             if !output.status.success() {
-                let detail = if stderr.is_empty() { &stdout } else { &stderr };
-                return Err(format!(
-                    "钉钉 DWS 执行失败：{}",
-                    truncate_error_detail(detail)
-                ));
+                return Err("钉钉 DWS 执行失败，请稍后重试".to_string());
             }
             Ok(DwsCommandOutput { stdout })
         })
@@ -203,8 +198,6 @@ struct DwsEnvelope {
     success: bool,
     #[serde(default)]
     result: Option<DwsResult>,
-    #[serde(default)]
-    message: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -259,9 +252,7 @@ fn parse_page(output: &str) -> Result<DwsPage, String> {
     let envelope: DwsEnvelope =
         serde_json::from_str(output).map_err(|error| format!("无法解析钉钉 DWS 响应：{error}"))?;
     if !envelope.success {
-        return Err(envelope
-            .message
-            .unwrap_or_else(|| "钉钉 DWS 命令执行未成功".to_string()));
+        return Err("钉钉 DWS 命令执行未成功".to_string());
     }
     let result = envelope
         .result
@@ -670,11 +661,7 @@ fn find_dws_on_path() -> Option<PathBuf> {
 fn parse_authenticated(output: &str) -> Result<bool, String> {
     if let Ok(value) = serde_json::from_str::<Value>(output) {
         if value.get("success").and_then(Value::as_bool) == Some(false) {
-            let message = value
-                .get("message")
-                .and_then(Value::as_str)
-                .unwrap_or("钉钉 DWS 认证状态查询失败");
-            return Err(message.to_string());
+            return Err("钉钉 DWS 认证状态查询失败".to_string());
         }
         return Ok(value
             .get("authenticated")
@@ -752,11 +739,11 @@ fn normalize_message(
 
 fn dws_timestamp_to_rfc3339(value: &str) -> Result<String, String> {
     let naive = NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S")
-        .map_err(|error| format!("无法解析钉钉消息时间：{error}"))?;
+        .map_err(|_| "无法解析钉钉消息时间".to_string())?;
     Local
         .from_local_datetime(&naive)
         .earliest()
-        .ok_or_else(|| format!("无法确定钉钉消息时间：{value}"))
+        .ok_or_else(|| "无法确定钉钉消息时间".to_string())
         .map(|timestamp| timestamp.with_timezone(&Utc).to_rfc3339())
 }
 
@@ -778,21 +765,6 @@ fn write_config(path: &Path, config: &DwsHushConfig) -> Result<(), String> {
     std::fs::write(&temporary, contents)
         .map_err(|error| format!("无法写入钉钉同步设置：{error}"))?;
     std::fs::rename(&temporary, path).map_err(|error| format!("无法保存钉钉同步设置：{error}"))
-}
-
-fn truncate_error_detail(value: &str) -> String {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return "未提供错误详情".to_string();
-    }
-    let mut detail: String = trimmed.chars().take(800).collect();
-    for sensitive_key in ["access_token", "refresh_token", "client_secret"] {
-        if detail.to_lowercase().contains(sensitive_key) {
-            detail = "认证信息无效或已过期，请重新登录".to_string();
-            break;
-        }
-    }
-    detail
 }
 
 #[cfg(target_os = "macos")]
@@ -852,6 +824,47 @@ mod tests {
 
         assert_eq!(executable.path, standalone);
         assert_eq!(executable.source, DwsExecutableSource::Standalone);
+    }
+
+    #[test]
+    fn dws_envelope_errors_never_surface_upstream_details() {
+        let page_error =
+            parse_page(r#"{"success":false,"message":"private-body-sentinel","result":null}"#)
+                .unwrap_err();
+        let auth_error =
+            parse_authenticated(r#"{"success":false,"message":"private-contact-sentinel"}"#)
+                .unwrap_err();
+        let timestamp_error = dws_timestamp_to_rfc3339("private-id-sentinel").unwrap_err();
+
+        assert!(!page_error.contains("private-body-sentinel"));
+        assert!(!auth_error.contains("private-contact-sentinel"));
+        assert!(!timestamp_error.contains("private-id-sentinel"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn dws_process_errors_never_surface_stdout_or_stderr() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let executable = temp.path().join("dws");
+        std::fs::write(
+            &executable,
+            "#!/bin/sh\nprintf '%s' private-body-sentinel\nprintf '%s' private-contact-sentinel >&2\nexit 1\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let error = SystemDwsRunner
+            .run(
+                &executable,
+                &["auth".to_string(), "status".to_string()],
+                Duration::from_secs(2),
+            )
+            .await
+            .unwrap_err();
+
+        assert!(!error.contains("private-body-sentinel"));
+        assert!(!error.contains("private-contact-sentinel"));
     }
 
     #[test]

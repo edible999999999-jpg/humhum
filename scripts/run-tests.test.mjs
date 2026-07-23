@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  HEXA_TEST_FILES,
+  NODE_TEST_FILES,
   buildTestCommands,
   runTests,
 } from "./run-tests.mjs";
@@ -11,7 +11,7 @@ test("forwards optional arguments only to the local Vitest command", () => {
 
   assert.equal(commands.length, 2);
   assert.deepEqual(commands[0].args.slice(-2), ["run", "src/components/Hub/HushModule.test.ts"]);
-  assert.deepEqual(commands[1].args, ["--test", "scripts/run-tests.test.mjs", ...HEXA_TEST_FILES]);
+  assert.deepEqual(commands[1].args, ["--test", ...NODE_TEST_FILES]);
 });
 
 test("runs fixed Hexa tests after Vitest and preserves failures", () => {
@@ -23,7 +23,7 @@ test("runs fixed Hexa tests after Vitest and preserves failures", () => {
 
   assert.equal(success, 0);
   assert.equal(calls.length, 2);
-  assert.deepEqual(calls[1][1], ["--test", "scripts/run-tests.test.mjs", ...HEXA_TEST_FILES]);
+  assert.deepEqual(calls[1][1], ["--test", ...NODE_TEST_FILES]);
 
   const failure = runTests([], () => ({ status: 7, signal: null }));
   assert.equal(failure, 7);

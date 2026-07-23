@@ -9,7 +9,6 @@ const MAX_PREFERENCES: usize = 8;
 const MAX_HABITS: usize = 8;
 const MAX_MEMORIES: usize = 6;
 const MAX_KNOWLEDGE: usize = 8;
-const MAX_INBOX: usize = 8;
 const MAX_AGENTS: usize = 8;
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -127,6 +126,8 @@ pub(crate) struct MobileSourceKnowledge {
     pub kind: String,
 }
 
+#[cfg(test)]
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub(crate) struct MobileSourceInbox {
     pub id: String,
@@ -156,6 +157,8 @@ pub(crate) struct MobileContextSources {
     pub habits: Vec<MobileHabit>,
     pub memories: Vec<MobileSourceMemory>,
     pub knowledge: Vec<MobileSourceKnowledge>,
+    #[cfg(test)]
+    #[allow(dead_code)]
     pub inbox: Vec<MobileSourceInbox>,
     pub agents: Vec<MobileSourceAgent>,
 }
@@ -246,23 +249,6 @@ pub fn project_mobile_personal_context(app: &tauri::AppHandle) -> MobilePersonal
         }
     }
 
-    if let Some(store) = app.try_state::<Arc<Mutex<crate::hush_store::HushStore>>>() {
-        let store = store.lock().unwrap_or_else(|error| error.into_inner());
-        sources.inbox = store
-            .summary()
-            .messages
-            .into_iter()
-            .map(|message| MobileSourceInbox {
-                id: message.id,
-                sender: message.sender,
-                platform: message.platform,
-                preview: message.text,
-                received_at: message.received_at,
-                importance: message.importance,
-            })
-            .collect();
-    }
-
     if let Some(store) =
         app.try_state::<Arc<Mutex<crate::hexa_watch_store::HexaWatchStore>>>()
     {
@@ -301,9 +287,6 @@ pub(crate) fn project_mobile_personal_context_from_sources(
     sources
         .today
         .sort_by_key(|item| (item.status != "active", item.id.clone()));
-    sources
-        .inbox
-        .sort_by_key(|item| (std::cmp::Reverse(item.importance), item.received_at.clone()));
     sources
         .agents
         .sort_by_key(|item| (!item.needs_user, item.updated_at.clone()));
@@ -351,12 +334,7 @@ pub(crate) fn project_mobile_personal_context_from_sources(
             .filter_map(project_knowledge)
             .take(MAX_KNOWLEDGE)
             .collect(),
-        inbox: sources
-            .inbox
-            .into_iter()
-            .filter_map(project_inbox)
-            .take(MAX_INBOX)
-            .collect(),
+        inbox: Vec::new(),
         agents: sources
             .agents
             .into_iter()
@@ -417,17 +395,6 @@ fn project_knowledge(source: MobileSourceKnowledge) -> Option<MobileKnowledgeIte
         title: safe_required(&source.title, 180)?,
         summary: safe_required(&source.summary, 260)?,
         kind: safe_required(&source.kind, 24)?,
-    })
-}
-
-fn project_inbox(source: MobileSourceInbox) -> Option<MobileInboxItem> {
-    Some(MobileInboxItem {
-        id: safe_required(&source.id, 160)?,
-        sender: safe_required(&source.sender, 100)?,
-        platform: safe_required(&source.platform, 40)?,
-        preview: safe_required(&source.preview, 240)?,
-        received_at: safe_required(&source.received_at, 64)?,
-        importance: source.importance.min(5),
     })
 }
 
@@ -497,9 +464,9 @@ mod tests {
             }],
             inbox: vec![MobileSourceInbox {
                 id: "message-1".into(),
-                sender: "Peidong".into(),
+                sender: "private-sender-sentinel".into(),
                 platform: "dingtalk".into(),
-                preview: "附件在 /Volumes/team/secret.pdf".into(),
+                preview: "private-body-sentinel /Volumes/team/secret.pdf".into(),
                 received_at: "2026-07-19T08:00:00Z".into(),
                 importance: 5,
             }],
@@ -521,6 +488,12 @@ mod tests {
         assert_eq!(context.today.len(), 5);
         assert_eq!(context.preferences.len(), 8);
         assert_eq!(context.memories.len(), 6);
+        assert!(
+            context.inbox.is_empty(),
+            "Hush messages must never enter a mobile personal-context response"
+        );
+        assert!(!json.contains("private-sender-sentinel"));
+        assert!(!json.contains("private-body-sentinel"));
         assert!(!json.contains("/Users/"));
         assert!(!json.contains("/Volumes/"));
         assert!(!json.contains("~/"));

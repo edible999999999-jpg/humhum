@@ -256,7 +256,7 @@ impl HushStore {
 
         if let Some(source_id) = parsed.source_id.as_deref() {
             if self.contains_source_id(source_id) {
-                return Err(format!("Duplicate source message: {source_id}"));
+                return Err("Duplicate source message".to_string());
             }
         }
 
@@ -801,6 +801,7 @@ mod tests {
 
         let error = store.add_from_value(payload).unwrap_err();
         assert!(error.contains("Duplicate source message"));
+        assert!(!error.contains("wechat:abc"));
         assert_eq!(store.summary().total, 1);
 
         let _ = std::fs::remove_file(path);

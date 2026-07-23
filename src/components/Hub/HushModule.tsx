@@ -75,6 +75,13 @@ interface HushInboxSummary {
   messages: HushInboxMessage[];
 }
 
+interface HushEgressGuardStatus {
+  enforced: boolean;
+  policy_version: number;
+  message: string;
+  process_sandbox_available: boolean;
+}
+
 export interface HushHealthSignal {
   device_id: string;
   source_id: string;
@@ -286,6 +293,8 @@ export function HushModule() {
   const [conversationState, setConversationState] =
     useState<HushConversationState>(readStoredConversationState);
   const [connectors, setConnectors] = useState<HushConnectorStatus[]>([]);
+  const [egressGuard, setEgressGuard] =
+    useState<HushEgressGuardStatus | null>(null);
   const [inbox, setInbox] = useState<HushInboxSummary | null>(null);
   const [healthSignals, setHealthSignals] = useState<HushHealthSignal[]>([]);
   const [healthAvailability, setHealthAvailability] =
@@ -332,6 +341,12 @@ export function HushModule() {
   useEffect(() => {
     fetchConnectors();
   }, [fetchConnectors]);
+
+  useEffect(() => {
+    invoke<HushEgressGuardStatus>("get_hush_egress_guard_status")
+      .then(setEgressGuard)
+      .catch(() => setEgressGuard(null));
+  }, []);
 
   const fetchInbox = useCallback(async () => {
     try {
@@ -771,6 +786,8 @@ export function HushModule() {
         </div>
       </header>
 
+      <HushEgressGuardRow status={egressGuard} />
+
       <HushStatusArea
         connectors={connectors}
         connectorError={connectorError}
@@ -882,6 +899,31 @@ export function HushModule() {
           </section>
         </div>
       )}
+    </div>
+  );
+}
+
+function HushEgressGuardRow({
+  status,
+}: {
+  status: HushEgressGuardStatus | null;
+}) {
+  const enforced = status?.enforced === true;
+  return (
+    <div
+      className={`hush-egress-guard${enforced ? "" : " is-unavailable"}`}
+      data-hush-egress-guard={enforced ? "enforced" : "unavailable"}
+      aria-live="polite"
+    >
+      <ShieldCheck size={17} strokeWidth={1.9} aria-hidden="true" />
+      <div>
+        <strong>{enforced ? "第三方传输已阻止" : "防护状态不可确认"}</strong>
+        <span>
+          {enforced
+            ? status.message
+            : "无法读取本机编译策略状态，请重新启动 HUMHUM 后再使用 Hush。"}
+        </span>
+      </div>
     </div>
   );
 }

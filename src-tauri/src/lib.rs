@@ -15,6 +15,7 @@ mod hexa_goal_store;
 mod hexa_protocol;
 mod hexa_watch_store;
 mod hook_server;
+mod hush_egress_guard;
 #[allow(dead_code)]
 mod hush_signal_store;
 mod hush_store;
@@ -273,7 +274,7 @@ pub fn run() {
                         Ok(report) => {
                             let _ = dws_app.emit("humhum://hush-message", &report);
                         }
-                        Err(error) => log::warn!("DingTalk DWS background sync failed: {error}"),
+                        Err(_) => log::warn!("DingTalk DWS background sync failed"),
                     }
                 }
             });
@@ -302,7 +303,7 @@ pub fn run() {
                         Ok(report) => {
                             let _ = wechat_app.emit("humhum://hush-message", &report);
                         }
-                        Err(error) => log::warn!("WeChat background sync failed: {error}"),
+                        Err(_) => log::warn!("WeChat background sync failed"),
                     }
                 }
             });
@@ -405,6 +406,7 @@ pub fn run() {
             commands::get_agent_kernel_status,
             commands::run_local_agent_kernel,
             commands::get_hush_connectors,
+            commands::get_hush_egress_guard_status,
             commands::open_hush_connector,
             commands::get_hush_inbox,
             commands::clear_hush_inbox,

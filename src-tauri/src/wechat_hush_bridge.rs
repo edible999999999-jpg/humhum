@@ -441,25 +441,21 @@ impl WechatHushBridge {
                 .await
             {
                 Ok(output) => output,
-                Err(error) => {
+                Err(_) => {
                     report.failed_conversations += 1;
-                    report.warnings.push(format!(
-                        "{}：{}",
-                        display_session_name(&session),
-                        truncate_error_detail(&error)
-                    ));
+                    report
+                        .warnings
+                        .push("一个微信会话读取失败，可稍后重试".to_string());
                     continue;
                 }
             };
             let timeline = match parse_timeline_output(&output.stdout) {
                 Ok(timeline) => timeline,
-                Err(error) => {
+                Err(_) => {
                     report.failed_conversations += 1;
-                    report.warnings.push(format!(
-                        "{}：{}",
-                        display_session_name(&session),
-                        truncate_error_detail(&error)
-                    ));
+                    report
+                        .warnings
+                        .push("一个微信会话读取失败，可稍后重试".to_string());
                     continue;
                 }
             };
@@ -539,7 +535,10 @@ impl WechatHushBridge {
             .and_then(|value| value.to_str())
             .filter(|value| !value.is_empty())
             .ok_or_else(|| "无法确认当前用户，未启动微信准备".to_string())?;
-        let mut command = tokio::process::Command::new(helper);
+        let mut command =
+            crate::hush_egress_guard::network_sandboxed_command(&helper).map_err(|_| {
+                "系统网络隔离不可用；为保护聊天隐私，微信本地读取准备已停止".to_string()
+            })?;
         command
             .arg(action)
             .env_clear()
@@ -551,9 +550,9 @@ impl WechatHushBridge {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .kill_on_drop(true);
-        let mut child = command
-            .spawn()
-            .map_err(|error| format!("无法启动本机微信准备：{error}"))?;
+        let mut child = command.spawn().map_err(|_| {
+            "系统网络隔离不可用；为保护聊天隐私，微信本地读取准备已停止".to_string()
+        })?;
         let status = tokio::time::timeout(Duration::from_secs(11 * 60), child.wait())
             .await
             .map_err(|_| "微信准备超时，请保持微信登录后重试".to_string())?
@@ -662,19 +661,12 @@ fn user_facing_next_action(blocked_by: Option<&str>, fallback: Option<&str>) -> 
         Some("wechat_not_running") => "请先打开这台 Mac 上的微信",
         Some("wechat_not_logged_in") => "请先在这台 Mac 上登录微信",
         Some("full_disk_access_required") => "请在系统设置中授予 HUMHUM 完全磁盘访问权限",
+        Some("network_sandbox_unavailable") => "系统网络隔离不可用；为保护聊天隐私，微信读取已停止",
         Some("wcdb_unavailable") => "内置微信数据库组件不可用，请重新安装 HUMHUM",
         Some("schema_unsupported") => "本机微信数据结构尚未通过兼容验证，请等待 HUMHUM 更新",
         _ => fallback.unwrap_or_default(),
     };
     (!message.trim().is_empty()).then(|| message.to_string())
-}
-
-fn display_session_name(session: &WechatSession) -> &str {
-    if session.display_name.trim().is_empty() {
-        &session.username
-    } else {
-        &session.display_name
-    }
 }
 
 fn write_config(path: &Path, config: &WechatHushConfig) -> Result<(), String> {
@@ -763,20 +755,6 @@ fn is_fixed_lower_hex(value: &str, expected_len: usize) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
-fn truncate_error_detail(value: &str) -> String {
-    const MAX_CHARS: usize = 280;
-    let compact = value.split_whitespace().collect::<Vec<_>>().join(" ");
-    let mut chars = compact.chars();
-    let prefix: String = chars.by_ref().take(MAX_CHARS).collect();
-    if chars.next().is_some() {
-        format!("{prefix}…")
-    } else if prefix.is_empty() {
-        "未知错误".to_string()
-    } else {
-        prefix
-    }
-}
-
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 struct WechatReadiness {
     #[serde(default)]
@@ -844,16 +822,6 @@ struct CliEnvelope {
     ok: bool,
     #[serde(default)]
     data: Option<Value>,
-    #[serde(default)]
-    error: Option<CliError>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CliError {
-    #[serde(default)]
-    message: String,
-    #[serde(default, alias = "nextAction")]
-    next_action: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -878,16 +846,7 @@ fn parse_envelope(output: &str, label: &str) -> Result<Value, String> {
     let envelope: CliEnvelope = serde_json::from_str(output)
         .map_err(|error| format!("无法解析微信 {label} 响应：{error}"))?;
     if !envelope.ok {
-        let error = envelope.error.unwrap_or(CliError {
-            message: format!("微信 {label} 命令执行失败"),
-            next_action: String::new(),
-        });
-        let detail = if error.next_action.trim().is_empty() {
-            error.message
-        } else {
-            format!("{} {}", error.message, error.next_action)
-        };
-        return Err(detail.trim().to_string());
+        return Err(format!("微信 {label} 命令执行失败"));
     }
     envelope
         .data
@@ -1041,10 +1000,12 @@ mod tests {
     use serde_json::json;
     use std::collections::VecDeque;
     use std::future::Future;
+    use std::net::TcpListener;
     use std::pin::Pin;
     use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
     use std::sync::{Arc, Mutex};
-    use std::time::Duration;
+    use std::thread;
+    use std::time::{Duration, Instant};
     use uuid::Uuid;
 
     struct FakeRunner {
@@ -1196,6 +1157,126 @@ mod tests {
         assert!(load_external_wechat_keys(&home)
             .unwrap_err()
             .contains("格式"));
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn wxkey_setup_blocks_all_network_access() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let home = test_dir("wxkey-network-sandbox");
+        write_test_external_keys(&home);
+        let helper_dir = home.join(".local").join("share").join("wechat-cli");
+        std::fs::create_dir_all(&helper_dir).unwrap();
+        let helper = helper_dir.join("wxkey");
+        let report = home.join("network-report.txt");
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let baseline = std::process::Command::new("/usr/bin/nc")
+            .args(["-z", "127.0.0.1", &port.to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .unwrap();
+        assert!(
+            baseline.success(),
+            "the unsandboxed network probe must work"
+        );
+        listener.accept().unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let acceptor = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_millis(750);
+            while Instant::now() < deadline {
+                match listener.accept() {
+                    Ok(_) => return true,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(_) => return false,
+                }
+            }
+            false
+        });
+        std::fs::write(
+            &helper,
+            format!(
+                "#!/bin/sh\nif /usr/bin/nc -z 127.0.0.1 {port} >/dev/null 2>&1; then result=allowed; else result=blocked; fi\n/usr/bin/printf '%s' \"$result\" > '{}'\n",
+                report.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let bridge = WechatHushBridge::with_test_parts(
+            &home,
+            WechatExecutable {
+                path: home.join("humhum-wechat-reader"),
+            },
+            Arc::new(FakeRunner::new(Vec::new())),
+            chrono::Utc::now(),
+        )
+        .unwrap();
+
+        bridge.open_setup_terminal().await.unwrap();
+
+        assert_eq!(std::fs::read_to_string(report).unwrap(), "blocked");
+        assert!(
+            !acceptor.join().unwrap(),
+            "the wxkey helper reached a loopback listener"
+        );
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[tokio::test]
+    async fn sync_warnings_never_include_contact_or_upstream_error_details() {
+        let ready = json!({
+            "ok": true,
+            "data": { "status": { "readiness": "ready", "live_read_ok": true } }
+        })
+        .to_string();
+        let sessions = json!({
+            "ok": true,
+            "data": {
+                "sessions": [{
+                    "username": "private-talker-sentinel",
+                    "display_name": "private-contact-sentinel",
+                    "chat_type": "private",
+                    "last_timestamp": 1784471400
+                }]
+            }
+        })
+        .to_string();
+        let runner = Arc::new(FakeRunner::new(vec![
+            Ok(ready.as_str()),
+            Ok(sessions.as_str()),
+            Err("private-body-sentinel"),
+        ]));
+        let home = test_dir("redacted-warning");
+        std::fs::create_dir_all(&home).unwrap();
+        #[cfg(unix)]
+        write_test_external_keys(&home);
+        let bridge = WechatHushBridge::with_test_parts(
+            &home,
+            WechatExecutable {
+                path: home.join("humhum-wechat-reader"),
+            },
+            runner,
+            chrono::DateTime::parse_from_rfc3339("2026-07-19T15:00:00Z")
+                .unwrap()
+                .with_timezone(&chrono::Utc),
+        )
+        .unwrap();
+        let store = Arc::new(Mutex::new(HushStore::with_file_path(
+            home.join("hush-inbox.json"),
+        )));
+
+        let report = bridge.sync(store).await.unwrap();
+        let warnings = report.warnings.join(" ");
+
+        assert_eq!(report.failed_conversations, 1);
+        assert!(!warnings.contains("private-contact-sentinel"));
+        assert!(!warnings.contains("private-talker-sentinel"));
+        assert!(!warnings.contains("private-body-sentinel"));
         let _ = std::fs::remove_dir_all(home);
     }
 
