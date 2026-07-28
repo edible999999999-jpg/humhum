@@ -70,6 +70,44 @@ jobs:
             src-tauri/binaries/humhum-wechat-reader-aarch64-apple-darwin
           install -m 0644 "$wcdb" src-tauri/resources/wechat/libWCDB.dylib
 
+      - name: Import the Developer ID certificate
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          umask 077
+          certificate_path="$RUNNER_TEMP/developer-id.p12"
+          keychain_path="$RUNNER_TEMP/humhum-signing.keychain-db"
+          keychain_password="$(openssl rand -hex 24)"
+          python3 - "$certificate_path" <<'PY'
+          import base64
+          import os
+          import pathlib
+          import sys
+
+          encoded = "".join(os.environ["APPLE_CERTIFICATE"].split())
+          pathlib.Path(sys.argv[1]).write_bytes(
+              base64.b64decode(encoded, validate=True)
+          )
+          PY
+          security create-keychain -p "$keychain_password" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$keychain_password" "$keychain_path"
+          security import "$certificate_path" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -A \
+            -t cert \
+            -f pkcs12 \
+            -k "$keychain_path"
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s \
+            -k "$keychain_password" \
+            "$keychain_path"
+          security list-keychains -d user -s "$keychain_path"
+          security default-keychain -d user -s "$keychain_path"
+          echo "MACOS_KEYCHAIN_PATH=$keychain_path" >> "$GITHUB_ENV"
+
       - name: Prepare the notarization API key
         env:
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
@@ -80,15 +118,64 @@ jobs:
           printf '%s' "$APPLE_API_KEY_P8" > "$key_path"
           echo "APPLE_API_KEY_PATH=$key_path" >> "$GITHUB_ENV"
 
-      - name: Build, sign, and notarize
+      - name: Build the signed application
         env:
           CI: "true"
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: npm run tauri -- build --bundles app
+
+      - name: Finalize and notarize the application and DMG
+        env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-        run: npm run tauri -- build --bundles dmg
+        run: |
+          app_path="src-tauri/target/release/bundle/macos/HumHum.app"
+          reader="$app_path/Contents/MacOS/humhum-wechat-reader"
+          wcdb="$app_path/Contents/Resources/wechat/libWCDB.dylib"
+          test -d "$app_path"
+          test -f "$reader"
+          test -f "$wcdb"
+
+          codesign --force --options runtime --timestamp \
+            --sign "$APPLE_SIGNING_IDENTITY" "$reader"
+          codesign --force --options runtime --timestamp \
+            --sign "$APPLE_SIGNING_IDENTITY" "$wcdb"
+          npm run native:wechat:finalize-app -- "$app_path"
+          codesign --force --options runtime --timestamp \
+            --sign "$APPLE_SIGNING_IDENTITY" "$app_path"
+          codesign --verify --deep --strict --verbose=2 "$app_path"
+
+          app_zip="$RUNNER_TEMP/HumHum.app.zip"
+          ditto -c -k --keepParent "$app_path" "$app_zip"
+          xcrun notarytool submit "$app_zip" \
+            --key "$APPLE_API_KEY_PATH" \
+            --key-id "$APPLE_API_KEY" \
+            --issuer "$APPLE_API_ISSUER" \
+            --wait
+          xcrun stapler staple "$app_path"
+
+          version="$(node -p 'require("./package.json").version')"
+          dmg_dir="src-tauri/target/release/bundle/dmg"
+          dmg_path="$dmg_dir/HumHum_${version}_aarch64.dmg"
+          staging="$(mktemp -d)"
+          mkdir -p "$dmg_dir"
+          ditto "$app_path" "$staging/HumHum.app"
+          ln -s /Applications "$staging/Applications"
+          hdiutil create \
+            -volname "HumHum" \
+            -srcfolder "$staging" \
+            -ov \
+            -format UDZO \
+            "$dmg_path"
+          codesign --force --timestamp \
+            --sign "$APPLE_SIGNING_IDENTITY" "$dmg_path"
+          xcrun notarytool submit "$dmg_path" \
+            --key "$APPLE_API_KEY_PATH" \
+            --key-id "$APPLE_API_KEY" \
+            --issuer "$APPLE_API_ISSUER" \
+            --wait
+          xcrun stapler staple "$dmg_path"
 
       - name: Verify the notarized artifact
         run: |
@@ -99,7 +186,10 @@ jobs:
           hdiutil attach "$dmg_path" -nobrowse -readonly -mountpoint "$mount_dir"
           app_path="$(find "$mount_dir" -maxdepth 1 -name '*.app' -print -quit)"
           test -n "$app_path"
+          node scripts/finalize-wechat-app-runtime.mjs --verify "$app_path"
           xcrun stapler validate "$app_path"
+          xcrun stapler validate "$dmg_path"
+          codesign --verify --deep --strict --verbose=2 "$app_path"
           spctl -a -vvv -t exec "$app_path"
           hdiutil verify "$dmg_path"
           codesign --verify --verbose "$dmg_path"
@@ -118,4 +208,11 @@ jobs:
             gh release create "$RELEASE_TAG" "$DMG_PATH" "$CHECKSUM_PATH" \
               --title "HUMHUM $RELEASE_TAG" \
               --generate-notes
+          fi
+
+      - name: Remove the temporary signing keychain
+        if: always()
+        run: |
+          if [ -n "${MACOS_KEYCHAIN_PATH:-}" ]; then
+            security delete-keychain "$MACOS_KEYCHAIN_PATH" || true
           fi

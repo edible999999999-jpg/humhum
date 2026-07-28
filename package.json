@@ -26,6 +26,7 @@
     "native:wechat:test": "cd native/humhum-wechat && go test ./...",
     "native:wechat:check": "node scripts/check-wechat-reader-boundary.mjs",
     "native:wechat:build": "node scripts/build-wechat-reader.mjs",
+    "native:wechat:finalize-app": "node scripts/finalize-wechat-app-runtime.mjs",
     "preview": "vite preview",
     "tauri": "tauri",
     "hexa:watch": "node scripts/humhum-hexa.mjs watch",

@@ -8,11 +8,11 @@
 [中文文档](./README.zh-CN.md)
 
 <p align="center">
-  <a href="https://github.com/edible999999-jpg/humhum/releases/download/v0.3.17-beta.1/HumHum_0.3.17_aarch64.dmg"><strong>Download for macOS</strong></a>
+  <a href="https://github.com/edible999999-jpg/humhum/releases/download/v0.3.17-beta.2/HumHum_0.3.17_aarch64.dmg"><strong>Download for macOS</strong></a>
   ·
   <a href="https://github.com/edible999999999-jpg/humhum/releases/latest/download/HumHum_0.3.12_x64-setup.exe"><strong>Download Windows Preview</strong></a>
   ·
-  <a href="https://github.com/edible999999-jpg/humhum/releases/download/v0.3.17-beta.1/HUMHUM-Android-0.3.17.apk"><strong>Download Android APK</strong></a>
+  <a href="https://github.com/edible999999-jpg/humhum/releases/download/v0.3.17-beta.2/HUMHUM-Android-0.3.17.apk"><strong>Download Android APK</strong></a>
   ·
   <a href="https://yuxilab.cn/intro"><strong>Visit the website</strong></a>
   ·
