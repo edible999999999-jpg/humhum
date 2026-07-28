@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   ArrowUp,
   ExternalLink,
+  PanelRight,
   Play,
   RefreshCw,
   SlidersHorizontal,
@@ -11,6 +12,7 @@ import {
 } from "lucide-react";
 import type { AppConfig } from "../../types";
 import { createHumiPiRuntime } from "../../lib/pi/runtime";
+import { isTauriRuntime } from "../../lib/tauriRuntime";
 import type { HumiPiRuntime } from "../../lib/pi/types";
 import type { HexaDevelopmentGoal, HexaGoalAttempt } from "../../hooks/hexaGoalMonitoring";
 import type { HexaWatchedSession } from "../../hooks/useHexaData";
@@ -62,6 +64,29 @@ interface QoderAcpStatus {
   acp_supported: boolean;
   hint: string;
   error?: string | null;
+}
+
+type HumiBrainProvider = "codex" | "qoder" | "claude";
+
+interface HumiBrainProviderStatus {
+  provider: HumiBrainProvider;
+  display_name: string;
+  ready: boolean;
+  status: string;
+  detail: string;
+}
+
+interface HumiBrainStatus {
+  initialized: boolean;
+  primary_provider?: HumiBrainProvider | null;
+  fallback_enabled: boolean;
+  providers: HumiBrainProviderStatus[];
+}
+
+interface HumiBrainAnswer {
+  answer: string;
+  provider: HumiBrainProvider | "pi";
+  fallback: boolean;
 }
 
 interface LocalAgentKernelResult {
@@ -170,7 +195,7 @@ const DEFAULT_KERNEL_ROOTS = [
 ].join("\n");
 
 const HUMI_CHAT_STORAGE_KEY = "humhum:humi:chatMessages";
-const HUMI_ASK_TIMEOUT_MS = 45_000;
+const HUMI_ASK_TIMEOUT_MS = 100_000;
 const DEFAULT_HUMI_CHAT_MESSAGES: HumiChatMessage[] = [
   {
     id: "humi-welcome",
@@ -316,6 +341,7 @@ export function HumiModule({ onActivityChange, onOpenHexa }: HumiModuleProps) {
   const [hooksStatus, setHooksStatus] = useState<HooksStatus>({});
   const [piStatus, setPiStatus] = useState<PiInstallStatus | null>(null);
   const [qoderStatus, setQoderStatus] = useState<QoderAcpStatus | null>(null);
+  const [brainStatus, setBrainStatus] = useState<HumiBrainStatus | null>(null);
   const [kernelSession, setKernelSession] = useState<PiSessionStatus | null>(null);
   const [kernelLoading, setKernelLoading] = useState(false);
   const [kernelMessage, setKernelMessage] = useState<string | null>(null);
@@ -331,6 +357,7 @@ export function HumiModule({ onActivityChange, onOpenHexa }: HumiModuleProps) {
   const [operationsMessage, setOperationsMessage] = useState<string | null>(null);
   const [ttsPreviewing, setTtsPreviewing] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
+  const [operationsOpen, setOperationsOpen] = useState(false);
   const piRuntimeRef = useRef<HumiPiRuntime | null>(null);
   const [kernelPrompt, setKernelPrompt] = useState(
     "现在技能用得最多的是啥？"
@@ -378,18 +405,28 @@ export function HumiModule({ onActivityChange, onOpenHexa }: HumiModuleProps) {
 
   const fetchKernelStatus = useCallback(async () => {
     try {
-      const [config, pi, qoder, kernel] = await Promise.all([
+      const [config, pi, qoder, kernel, brain] = await Promise.all([
         invoke<AppConfig>("get_config"),
         invoke<PiInstallStatus>("check_pi_installed"),
         invoke<QoderAcpStatus>("check_qoder_acp_support"),
         invoke<AgentKernelStatus>("get_agent_kernel_status"),
+        invoke<HumiBrainStatus>("get_humi_brain_status"),
       ]);
       setAppConfig(config);
       setPiStatus(pi);
       setQoderStatus(qoder);
       setAgentKernelStatus(kernel);
+      setBrainStatus(brain);
     } catch (e) {
-      setKernelMessage(`Kernel check failed: ${String(e)}`);
+      setKernelMessage(isTauriRuntime() ? `Kernel check failed: ${String(e)}` : null);
+    }
+  }, []);
+
+  const refreshBrainStatus = useCallback(async () => {
+    try {
+      setBrainStatus(await invoke<HumiBrainStatus>("get_humi_brain_status"));
+    } catch {
+      // The existing setup state remains visible while the bridge reconnects.
     }
   }, []);
 
@@ -419,6 +456,12 @@ export function HumiModule({ onActivityChange, onOpenHexa }: HumiModuleProps) {
     const interval = setInterval(fetchStats, 15_000);
     return () => clearInterval(interval);
   }, [fetchStats]);
+
+  useEffect(() => {
+    if (brainStatus?.initialized) return;
+    const interval = setInterval(refreshBrainStatus, 3000);
+    return () => clearInterval(interval);
+  }, [brainStatus?.initialized, refreshBrainStatus]);
 
   useEffect(() => {
     if (!kernelSession || ["stopped", "error"].includes(kernelSession.state)) return;
@@ -463,7 +506,11 @@ export function HumiModule({ onActivityChange, onOpenHexa }: HumiModuleProps) {
 
   const askHumi = useCallback(async () => {
     if (!appConfig) {
-      setKernelMessage("还没有读取到 Pi 配置");
+      setKernelMessage("还没有读取到 Humi 配置");
+      return;
+    }
+    if (!appConfig.brain.initialized || !appConfig.brain.primary_provider) {
+      setKernelMessage("请先为 Humi 选择一个 Agent 大脑");
       return;
     }
     const prompt = kernelPrompt.trim();
@@ -477,32 +524,82 @@ export function HumiModule({ onActivityChange, onOpenHexa }: HumiModuleProps) {
     ]);
     setKernelPrompt("");
     try {
-      const runtime = piRuntimeRef.current ?? createHumiPiRuntime(appConfig, {
-        onProgress: ({ label }) => setHumiProgress(label),
-      });
-      piRuntimeRef.current = runtime;
-      const answer = await withTimeout(
-        runtime.ask(prompt),
+      const result = await withTimeout(
+        invoke<HumiBrainAnswer>("ask_humi_with_brain", {
+          options: {
+            prompt,
+            roots: kernelRoots
+              .split("\n")
+              .map((root) => root.trim())
+              .filter(Boolean),
+          },
+        }),
         HUMI_ASK_TIMEOUT_MS,
-        "Humi 等了太久还没有收到 AI 助手回复，请检查 URL、Token 或模型服务是否可用。",
+        "Humi 等了太久还没有收到 Agent 回复，请稍后再试。",
       );
       setChatMessages((messages) => [
         ...messages,
-        { id: `assistant-${Date.now()}`, role: "assistant", text: answer },
+        { id: `assistant-${Date.now()}`, role: "assistant", text: result.answer },
       ]);
-      setHumiProgress("我整理好啦");
+      setHumiProgress(`${result.provider === "codex" ? "Codex" : result.provider} 已帮我整理好`);
     } catch (e) {
-      const errorMessage = String(e instanceof Error ? e.message : e);
-      setKernelMessage(errorMessage);
-      setHumiProgress("这次没有连上 Pi");
-      setChatMessages((messages) => [
-        ...messages,
-        { id: `error-${Date.now()}`, role: "assistant", text: errorMessage || "我暂时没有连上 Pi，请检查 URL、Token 和 model_name。" },
-      ]);
+      if (appConfig.brain.fallback_enabled && appConfig.pi.token) {
+        try {
+          setHumiProgress("主 Agent 暂时不可用，正在使用 Pi 备用");
+          const runtime = piRuntimeRef.current ?? createHumiPiRuntime(appConfig, {
+            onProgress: ({ label }) => setHumiProgress(label),
+          });
+          piRuntimeRef.current = runtime;
+          const answer = await withTimeout(
+            runtime.ask(prompt),
+            HUMI_ASK_TIMEOUT_MS,
+            "Pi 备用服务没有及时回复。",
+          );
+          setChatMessages((messages) => [
+            ...messages,
+            { id: `assistant-${Date.now()}`, role: "assistant", text: answer },
+          ]);
+          setHumiProgress("Pi 备用已帮我整理好");
+        } catch (fallbackError) {
+          const errorMessage = String(
+            fallbackError instanceof Error ? fallbackError.message : fallbackError,
+          );
+          setKernelMessage(errorMessage);
+          setHumiProgress("这次没有连上 Agent");
+          setChatMessages((messages) => [
+            ...messages,
+            { id: `error-${Date.now()}`, role: "assistant", text: errorMessage },
+          ]);
+        }
+      } else {
+        const errorMessage = String(e instanceof Error ? e.message : e);
+        setKernelMessage(errorMessage);
+        setHumiProgress("这次没有连上 Agent");
+        setChatMessages((messages) => [
+          ...messages,
+          { id: `error-${Date.now()}`, role: "assistant", text: errorMessage },
+        ]);
+      }
     } finally {
       setKernelLoading(false);
     }
-  }, [appConfig, kernelLoading, kernelPrompt]);
+  }, [appConfig, kernelLoading, kernelPrompt, kernelRoots]);
+
+  const selectBrain = useCallback(async (provider: HumiBrainProvider) => {
+    setKernelLoading(true);
+    setKernelMessage(null);
+    try {
+      const status = await invoke<HumiBrainStatus>("set_humi_brain_provider", { provider });
+      const config = await invoke<AppConfig>("get_config");
+      setBrainStatus(status);
+      setAppConfig(config);
+      setHumiProgress(`${status.providers.find((item) => item.provider === provider)?.display_name ?? provider} 已连接`);
+    } catch (error) {
+      setKernelMessage(String(error));
+    } finally {
+      setKernelLoading(false);
+    }
+  }, []);
 
   const handleComposerKeyDown = useCallback(
     (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -613,9 +710,44 @@ export function HumiModule({ onActivityChange, onOpenHexa }: HumiModuleProps) {
 
   return (
     <div className="hub-module humi-room-module">
-      <div className="humi-workspace">
+      <div className={`humi-workspace ${operationsOpen ? "is-operations-open" : ""}`}>
         <div className="humi-conversation humi-conversation-stage">
+          <button
+            type="button"
+            className="humi-operations-toggle"
+            onClick={() => setOperationsOpen((open) => !open)}
+            aria-expanded={operationsOpen}
+            aria-controls="humi-operations-panel"
+            aria-label={operationsOpen ? "收起运行状态" : "展开运行状态"}
+            title={operationsOpen ? "收起运行状态" : "展开运行状态"}
+          >
+            <PanelRight size={17} strokeWidth={1.9} aria-hidden="true" />
+          </button>
+
           <div className="humi-transcript">
+            {brainStatus && !brainStatus.initialized && (
+              <div className="humi-brain-setup" role="group" aria-label="选择 Humi 大脑">
+                <div className="humi-brain-setup-copy">
+                  <strong>选择 Humi 的大脑</strong>
+                  <span>使用 Agent 已有的登录，不需要再填模型 Token。</span>
+                </div>
+                <div className="humi-brain-provider-list">
+                  {brainStatus.providers.map((provider) => (
+                    <button
+                      key={provider.provider}
+                      type="button"
+                      className={`humi-brain-provider ${provider.ready ? "is-ready" : ""}`}
+                      disabled={!provider.ready || kernelLoading}
+                      onClick={() => void selectBrain(provider.provider)}
+                      title={provider.detail}
+                    >
+                      <strong>{provider.display_name}</strong>
+                      <span>{provider.ready ? "可连接" : provider.detail}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             {chatMessages.map((message) => (
               <div key={message.id} className={`humi-message-row humi-message-row-${message.role}`}>
                 {message.role === "assistant" && (
@@ -655,8 +787,8 @@ export function HumiModule({ onActivityChange, onOpenHexa }: HumiModuleProps) {
               >
                 <SlidersHorizontal size={17} strokeWidth={1.9} aria-hidden="true" />
               </button>
-              <textarea className="humi-composer-input" value={kernelPrompt} onChange={(e) => setKernelPrompt(e.target.value)} onKeyDown={handleComposerKeyDown} placeholder="和 Humi 聊聊" rows={1} style={{ ...warmInputStyle, flex: 1, minHeight: 30, maxHeight: 120, resize: "vertical", border: 0, padding: "5px 0", background: "transparent", boxShadow: "none" }} />
-              <button className="humi-composer-send" onClick={() => void askHumi()} disabled={kernelLoading || !kernelPrompt.trim()} aria-label="Send message"><ArrowUp size={17} strokeWidth={2.3} aria-hidden="true" /></button>
+              <textarea aria-label="给 Humi 的消息" className="humi-composer-input" value={kernelPrompt} onChange={(e) => setKernelPrompt(e.target.value)} onKeyDown={handleComposerKeyDown} placeholder="和 Humi 聊聊" rows={1} style={{ ...warmInputStyle, flex: 1, minHeight: 30, maxHeight: 120, resize: "vertical", border: 0, padding: "5px 0", background: "transparent", boxShadow: "none" }} />
+              <button type="button" className="humi-composer-send" onClick={() => void askHumi()} disabled={kernelLoading || !kernelPrompt.trim()} aria-label="发送消息"><ArrowUp size={17} strokeWidth={2.3} aria-hidden="true" /></button>
             </div>
           </div>
 
@@ -664,31 +796,37 @@ export function HumiModule({ onActivityChange, onOpenHexa }: HumiModuleProps) {
             <div className="humi-details-panel">
               <div className="humi-details-status-grid">
                 <KernelStatusCard
-                  name="Pi Agent"
-                  ok={!!appConfig?.pi.token}
-                  detail={appConfig?.pi.token ? appConfig.pi.model_name : "请先配置 Token"}
-                  note="Bundled ReAct runtime"
+                  name="Humi 大脑"
+                  ok={!!brainStatus?.initialized}
+                  detail={
+                    brainStatus?.providers.find(
+                      (provider) => provider.provider === brainStatus.primary_provider,
+                    )?.display_name ?? "尚未选择"
+                  }
+                  note="使用 Agent 现有登录"
                 />
                 <KernelStatusCard
-                  name="Qoder ACP"
-                  ok={!!qoderStatus?.acp_supported}
+                  name="Pi 备用"
+                  ok={!!appConfig?.brain.fallback_enabled && !!appConfig?.pi.token}
                   detail={
-                    qoderStatus?.installed
-                      ? qoderStatus.acp_supported
-                        ? "ACP exposed"
-                        : "CLI detected, ACP not exposed"
-                      : qoderStatus?.error || "not installed"
+                    appConfig?.brain.fallback_enabled
+                      ? appConfig.pi.token
+                        ? appConfig.pi.model_name
+                        : "备用已开启，尚未配置"
+                      : "未开启"
                   }
-                  note={qoderStatus?.version || "Watcher fallback"}
+                  note="主 Agent 不可用时才使用"
                 />
               </div>
               <input
+                aria-label="工作目录"
                 value={kernelCwd}
                 onChange={(e) => setKernelCwd(e.target.value)}
                 placeholder="Working directory"
                 style={detailsInputStyle}
               />
               <textarea
+                aria-label="Agent 资源目录"
                 value={kernelRoots}
                 onChange={(e) => setKernelRoots(e.target.value)}
                 placeholder="Agent asset roots, one per line"
@@ -774,26 +912,28 @@ export function HumiModule({ onActivityChange, onOpenHexa }: HumiModuleProps) {
           )}
 
           {kernelMessage && (
-            <div style={{ marginTop: 10, fontSize: 10, color: "#fca5a5", lineHeight: 1.5 }}>
+            <div className="humi-kernel-message">
               {kernelMessage}
             </div>
           )}
         </div>
 
-        <HumiOperationsRail
-          sessions={sessions}
-          stats={stats}
-          config={appConfig}
-          loading={operationsLoading}
-          ttsPreviewing={ttsPreviewing}
-          message={operationsMessage}
-          hexaAttention={hexaAttention}
-          onRefresh={() => void refreshOperations()}
-          onOpenHexa={() => onOpenHexa(hexaAttention.mostUrgentGoal?.id ?? null)}
-          onFocusSession={(session) => void focusSession(session)}
-          onToggleAutoConfirm={() => void toggleAutoConfirm()}
-          onPreviewTts={() => void previewTts()}
-        />
+        {operationsOpen && (
+          <HumiOperationsRail
+            sessions={sessions}
+            stats={stats}
+            config={appConfig}
+            loading={operationsLoading}
+            ttsPreviewing={ttsPreviewing}
+            message={operationsMessage}
+            hexaAttention={hexaAttention}
+            onRefresh={() => void refreshOperations()}
+            onOpenHexa={() => onOpenHexa(hexaAttention.mostUrgentGoal?.id ?? null)}
+            onFocusSession={(session) => void focusSession(session)}
+            onToggleAutoConfirm={() => void toggleAutoConfirm()}
+            onPreviewTts={() => void previewTts()}
+          />
+        )}
       </div>
     </div>
   );
@@ -832,7 +972,11 @@ function HumiOperationsRail({
     .replace(/Neural$/, "");
 
   return (
-    <aside className="humi-operations" aria-label="Humi 运行状态">
+    <aside
+      id="humi-operations-panel"
+      className="humi-operations"
+      aria-label="Humi 运行状态"
+    >
       <div className="humi-operations-header">
         <div>
           <strong>运行状态</strong>

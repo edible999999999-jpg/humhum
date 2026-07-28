@@ -20,7 +20,11 @@ pub struct AppConfig {
     /// LLM summarizer configuration
     pub summarizer: SummarizerConfig,
 
-    /// Pi Agent provider configuration (the single source for Humi's Agent runtime)
+    /// Humi's selected host Agent. Provider credentials stay with the provider.
+    #[serde(default)]
+    pub brain: BrainConfig,
+
+    /// Optional Pi fallback configuration.
     #[serde(default)]
     pub pi: PiConfig,
 
@@ -73,6 +77,34 @@ pub struct SummarizerConfig {
     pub model: String,
     /// Max tokens for summary
     pub max_tokens: u32,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum BrainProvider {
+    Codex,
+    Qoder,
+    Claude,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct BrainConfig {
+    pub schema_version: u32,
+    pub initialized: bool,
+    pub primary_provider: Option<BrainProvider>,
+    pub fallback_enabled: bool,
+}
+
+impl Default for BrainConfig {
+    fn default() -> Self {
+        Self {
+            schema_version: 1,
+            initialized: false,
+            primary_provider: None,
+            fallback_enabled: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -193,6 +225,7 @@ impl Default for AppConfig {
                 model: "gpt-4o-mini".to_string(),
                 max_tokens: 500,
             },
+            brain: BrainConfig::default(),
             pi: PiConfig::default(),
             mobile_relay: MobileRelayConfig::default(),
             ui: UiConfig::default(),
@@ -282,12 +315,16 @@ impl AppConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::AppConfig;
+    use super::{AppConfig, BrainProvider};
 
     #[test]
-    fn defaults_include_a_single_pi_provider_configuration() {
+    fn defaults_require_an_explicit_host_agent_brain_selection() {
         let config = AppConfig::default();
 
+        assert_eq!(config.brain.schema_version, 1);
+        assert!(!config.brain.initialized);
+        assert_eq!(config.brain.primary_provider, None);
+        assert!(!config.brain.fallback_enabled);
         assert_eq!(config.pi.url, "https://api.openai.com/v1");
         assert_eq!(config.pi.model_name, "gpt-4o-mini");
         assert_eq!(config.pi.token, None);
@@ -302,6 +339,19 @@ mod tests {
         assert!(config.ui.analytics_enabled);
         assert!(!config.mobile_relay.enabled);
         assert_eq!(config.mobile_relay.base_url, None);
+    }
+
+    #[test]
+    fn persists_a_selected_host_agent_without_copying_credentials() {
+        let mut config = AppConfig::default();
+        config.brain.initialized = true;
+        config.brain.primary_provider = Some(BrainProvider::Codex);
+
+        let saved = serde_json::to_value(&config).unwrap();
+
+        assert_eq!(saved["brain"]["primary_provider"], "codex");
+        assert!(saved["brain"].get("token").is_none());
+        assert!(saved["brain"].get("url").is_none());
     }
 
     #[test]

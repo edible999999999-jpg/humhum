@@ -3,6 +3,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ErrorBoundary } from "./components/common/ErrorBoundary";
 import { IntroPage } from "./components/Intro/IntroPage";
 import { initBootstrap } from "./lib/bootstrap";
+import { isTauriRuntime } from "./lib/tauriRuntime";
 
 const PetView = lazy(() =>
   import("./components/Pet/PetView").then((mod) => ({ default: mod.PetView }))
@@ -20,16 +21,17 @@ const HubLayout = lazy(() =>
  * - "settings" window: renders the settings panel
  */
 export default function App() {
-  const [windowLabel, setWindowLabel] = useState<string>("main");
   const isIntroRoute =
     window.location.pathname === "/intro" ||
     window.location.search.includes("intro");
+  const runningInTauri = isTauriRuntime();
+  const [windowLabel, setWindowLabel] = useState<string>(() => runningInTauri ? "main" : "hub");
 
   useEffect(() => {
-    if (isIntroRoute) return;
+    if (isIntroRoute || !runningInTauri) return;
     const win = getCurrentWindow();
     setWindowLabel(win.label);
-  }, [isIntroRoute]);
+  }, [isIntroRoute, runningInTauri]);
 
   if (isIntroRoute) {
     return <IntroPage />;

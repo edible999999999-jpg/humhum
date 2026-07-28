@@ -6,17 +6,32 @@ import type {
   AgentRule,
   AppConfig,
   KnowledgeData,
+  LogicalSkill,
   MemoryItem,
   ObsidianNote,
   Preference,
 } from "@/types";
 import {
-  filterAgentAssets,
+  agentAssetLastUsedTimestamp,
+  agentAssetModifiedTimestamp,
+  countDistinctLogicalSkillSessions,
+  filterLogicalSkills,
   getAgentAssetSummary,
+  groupLogicalSkills,
+  isPersonalAgentAsset,
+  sortByRecentUpdate,
   type AgentAssetScope,
 } from "./knowledgePresentation";
 
 const CATEGORIES = ["coding_style", "tools", "workflow", "communication", "other"];
+
+export function getAgentAssetScanSummary(found: AgentAsset[]): string {
+  const skillCount = groupLogicalSkills(
+    found.filter((asset) => asset.asset_type === "skill"),
+  ).length;
+  const agentCount = found.filter((asset) => asset.asset_type === "agent").length;
+  return `已整理 ${found.length} 项本地知识 · ${skillCount} 个个人技能 · ${agentCount} 个 Agent 配置`;
+}
 
 const CATEGORY_COLORS: Record<string, string> = {
   coding_style: "#94eff4",
@@ -55,6 +70,30 @@ const DEFAULT_ASSET_ROOTS = [
   "~/.kimi",
   "~/.pi",
 ].join("\n");
+
+const HYPE_AUTO_SKILL_SCAN_KEY = "humhum:hype:auto-skill-scan-at";
+const HYPE_AUTO_SKILL_SCAN_INTERVAL_MS = 5 * 60 * 1000;
+
+function shouldAutomaticallyScanSkills(now = Date.now()): boolean {
+  try {
+    const previous = Number(sessionStorage.getItem(HYPE_AUTO_SKILL_SCAN_KEY));
+    return !Number.isFinite(previous) || now - previous >= HYPE_AUTO_SKILL_SCAN_INTERVAL_MS;
+  } catch {
+    return true;
+  }
+}
+
+function markAutomaticSkillScan(timestamp: number | null): void {
+  try {
+    if (timestamp === null) {
+      sessionStorage.removeItem(HYPE_AUTO_SKILL_SCAN_KEY);
+    } else {
+      sessionStorage.setItem(HYPE_AUTO_SKILL_SCAN_KEY, String(timestamp));
+    }
+  } catch {
+    // The scan still works when web storage is unavailable.
+  }
+}
 
 function parseAssetRoots(value: string): string[] {
   return value
@@ -207,6 +246,7 @@ export function KnowledgeSearchToolbar({
           <Search size={18} strokeWidth={1.8} aria-hidden="true" />
           <span className="sr-only">搜索 Hype 知识库</span>
           <input
+            aria-label="自定义 AI 服务地址"
             value={query}
             onChange={(event) => onQueryChange(event.target.value)}
             placeholder="搜索技能、规则、偏好与记忆"
@@ -392,9 +432,8 @@ export function KnowledgeModule() {
   }, []);
 
   useEffect(() => {
-    void fetchData().catch(() => undefined);
     void fetchReviewEngine();
-  }, [fetchData, fetchReviewEngine]);
+  }, [fetchReviewEngine]);
 
   const handleSave = async () => {
     if (!newContent.trim()) return;
@@ -460,23 +499,49 @@ export function KnowledgeModule() {
     );
   };
 
-  const handleScanAssets = async () => {
+  const handleScanAssets = useCallback(async (): Promise<boolean> => {
     setScanningAssets(true);
     setAssetError(null);
     setAssetScanSummary(null);
     try {
       const roots = parseAssetRoots(assetRoots);
       const found = await invoke<AgentAsset[]>("scan_agent_assets", { roots });
-      const skillCount = filterAgentAssets(found, "all", "").length;
-      const agentCount = found.filter((asset) => asset.asset_type === "agent").length;
-      setAssetScanSummary(`已整理 ${found.length} 项本地知识 · ${skillCount} 个个人技能 · ${agentCount} 个 Agent 配置`);
+      setAssetScanSummary(getAgentAssetScanSummary(found));
       await fetchData();
+      return true;
     } catch (error) {
       setAssetError(String(error));
+      return false;
     } finally {
       setScanningAssets(false);
     }
-  };
+  }, [assetRoots, fetchData]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadCurrentSkills = async () => {
+      try {
+        await fetchData();
+      } catch {
+        return;
+      }
+      if (cancelled || !shouldAutomaticallyScanSkills()) {
+        return;
+      }
+
+      markAutomaticSkillScan(Date.now());
+      const refreshed = await handleScanAssets();
+      if (!refreshed) {
+        markAutomaticSkillScan(null);
+      }
+    };
+
+    void loadCurrentSkills();
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchData, handleScanAssets]);
 
   const handleDiagnoseAssets = async () => {
     setScanningAssets(true);
@@ -622,15 +687,15 @@ export function KnowledgeModule() {
     ["memory", "daily", "project_context"].includes(note.note_type),
   );
 
-  const filteredPreferences = data.preferences.filter((preference) => {
+  const filteredPreferences = sortByRecentUpdate(data.preferences.filter((preference) => {
     if (!normalizedQuery) return true;
     return [
       preference.category,
       preference.content,
       preference.source,
     ].some((value) => value.toLowerCase().includes(normalizedQuery));
-  });
-  const filteredRules = data.agent_rules.filter((rule) => {
+  }));
+  const filteredRules = sortByRecentUpdate(data.agent_rules.filter((rule) => {
     if (!normalizedQuery) return true;
     return [
       rule.agent_id,
@@ -638,30 +703,30 @@ export function KnowledgeModule() {
       rule.file_path,
       rule.content,
     ].some((value) => value.toLowerCase().includes(normalizedQuery));
-  });
-  const filteredMemoryItems = data.memory_items.filter((item) => {
+  }));
+  const filteredMemoryItems = sortByRecentUpdate(data.memory_items.filter((item) => {
     if (!normalizedQuery) return true;
     return [item.agent_id, item.temperature, item.content].some((value) =>
       value.toLowerCase().includes(normalizedQuery),
     );
-  });
-  const filteredPreferenceAssets = preferenceAssets.filter((asset) =>
-    matchesAssetQuery(asset, normalizedQuery),
+  }));
+  const filteredPreferenceAssets = sortByRecentUpdate(
+    preferenceAssets.filter((asset) => matchesAssetQuery(asset, normalizedQuery)),
   );
-  const filteredRuleAssets = discoveredRuleAssets.filter((asset) =>
-    matchesAssetQuery(asset, normalizedQuery),
+  const filteredRuleAssets = sortByRecentUpdate(
+    discoveredRuleAssets.filter((asset) => matchesAssetQuery(asset, normalizedQuery)),
   );
-  const filteredMemoryAssets = memoryAssets.filter((asset) =>
-    matchesAssetQuery(asset, normalizedQuery),
+  const filteredMemoryAssets = sortByRecentUpdate(
+    memoryAssets.filter((asset) => matchesAssetQuery(asset, normalizedQuery)),
   );
-  const filteredPreferenceNotes = preferenceNotes.filter((note) =>
-    matchesNoteQuery(note, normalizedQuery),
+  const filteredPreferenceNotes = sortByRecentUpdate(
+    preferenceNotes.filter((note) => matchesNoteQuery(note, normalizedQuery)),
   );
-  const filteredRuleNotes = ruleNotes.filter((note) =>
-    matchesNoteQuery(note, normalizedQuery),
+  const filteredRuleNotes = sortByRecentUpdate(
+    ruleNotes.filter((note) => matchesNoteQuery(note, normalizedQuery)),
   );
-  const filteredMemoryNotes = memoryNotes.filter((note) =>
-    matchesNoteQuery(note, normalizedQuery),
+  const filteredMemoryNotes = sortByRecentUpdate(
+    memoryNotes.filter((note) => matchesNoteQuery(note, normalizedQuery)),
   );
 
   const typeCounts = memoryNotes.reduce<Record<string, number>>((acc, note) => {
@@ -680,22 +745,25 @@ export function KnowledgeModule() {
   const ruleCount =
     data.agent_rules.length + discoveredRuleAssets.length + ruleNotes.length;
   const configuredAssetRoots = parseAssetRoots(assetRoots);
-  const scopedAssets = filterAgentAssets(
-    assets,
-    assetScope,
-    "",
-    configuredAssetRoots,
+  const assetIsInScope = (asset: AgentAsset) =>
+    assetScope === "all" ||
+    isPersonalAgentAsset(asset, configuredAssetRoots);
+  const scopedSkillAssets = assets.filter(
+    (asset) => asset.asset_type === "skill" && assetIsInScope(asset),
   );
-  const assetTypeCounts = scopedAssets.reduce<Record<string, number>>((acc, asset) => {
-    acc[asset.asset_type] = (acc[asset.asset_type] || 0) + 1;
-    return acc;
-  }, {});
-  const filteredAssets = filterAgentAssets(
-    assets,
-    assetScope,
-    searchQuery,
-    configuredAssetRoots,
+  const scopedNonSkillAssets = assets.filter(
+    (asset) => asset.asset_type !== "skill" && assetIsInScope(asset),
   );
+  const logicalSkills = groupLogicalSkills(scopedSkillAssets);
+  const filteredSkills = filterLogicalSkills(logicalSkills, searchQuery);
+  const filteredNonSkillAssets = sortByRecentUpdate(
+    scopedNonSkillAssets.filter((asset) =>
+      matchesAssetQuery(asset, searchQuery.trim().toLowerCase()),
+    ),
+  );
+  const scopedAssetCount = logicalSkills.length + scopedNonSkillAssets.length;
+  const filteredAssetCount =
+    filteredSkills.length + filteredNonSkillAssets.length;
   const operationBusy =
     operationStatus?.tab === activeTab && operationStatus.kind === "busy";
   const refreshBusy =
@@ -736,7 +804,9 @@ export function KnowledgeModule() {
 
   const handleActiveRefresh = () => {
     void dispatchKnowledgeRefresh(activeTab, {
-      assets: handleScanAssets,
+      assets: async () => {
+        await handleScanAssets();
+      },
       preferences: handleRefreshPreferences,
       rules: handleScan,
       memory: handleRefreshMemory,
@@ -780,7 +850,7 @@ export function KnowledgeModule() {
               onClick={() => setActiveTab(tab)}
             >
               {tab === "assets"
-                ? `我的技能 ${scopedAssets.length}`
+                ? `Agent 资产 ${scopedAssetCount}`
                 : tab === "preferences"
                   ? `我的偏好 ${preferenceCount}`
                   : tab === "rules"
@@ -816,31 +886,45 @@ export function KnowledgeModule() {
       {activeTab === "assets" && (
         <div className="hype-inventory">
           <div className="hype-inventory-summary">
-            <span>{filteredAssets.length} 项</span>
-            {Object.entries(assetTypeCounts).map(([type, count]) => (
-              <span key={type}>{type} {count}</span>
-            ))}
+            <span>{filteredAssetCount} 项</span>
+            <span>{filteredSkills.length} 个技能</span>
+            <span>
+              {countDistinctLogicalSkillSessions(filteredSkills)} 个最近会话
+            </span>
+            {filteredNonSkillAssets.length > 0 && (
+              <span>{filteredNonSkillAssets.length} 个其他资产</span>
+            )}
           </div>
 
-          <div className="hype-asset-list">
-            <div className="hype-asset-list-header" aria-hidden="true">
-              <span>名称</span>
-              <span>来源 / Agent</span>
-              <span>类型</span>
-              <span>更新时间</span>
-            </div>
-            {filteredAssets.length === 0 ? (
+          {filteredAssetCount === 0 ? (
+            <div className="hype-asset-list">
               <div className="hype-empty-state">
                 {assets.length === 0
                   ? "刷新后，Hype 会把本地 Agent 资产整理到这里。"
                   : "当前范围里没有匹配的资产。"}
               </div>
-            ) : (
-              filteredAssets.map((asset) => (
-                <AgentAssetRow key={asset.id} asset={asset} />
-              ))
-            )}
-          </div>
+            </div>
+          ) : (
+            <>
+              {filteredSkills.length > 0 && (
+                <div className="hype-asset-list">
+                  <div className="hype-asset-list-header" aria-hidden="true">
+                    <span>名称</span>
+                    <span>可用 Agent</span>
+                    <span>最近会话</span>
+                    <span>最近使用</span>
+                  </div>
+                {filteredSkills.map((skill) => (
+                  <LogicalSkillRow key={skill.key} skill={skill} />
+                ))}
+                </div>
+              )}
+              <KnowledgeAssetSection
+                title="其他 Agent 资产"
+                assets={filteredNonSkillAssets}
+              />
+            </>
+          )}
 
           <details className="hype-asset-details">
             <summary>高级扫描设置与诊断</summary>
@@ -1376,12 +1460,14 @@ function ReviewEnginePanel({
       {showAdvanced && (
         <div style={{ display: "grid", gap: 8, paddingTop: 2 }}>
           <input
+            aria-label="自定义 AI 模型名称"
             value={piUrl}
             onChange={(event) => onPiUrlChange(event.target.value)}
             placeholder="https://api.openai.com/v1 或本地模型地址"
             className="kawaii-input"
           />
           <input
+            aria-label="自定义 AI 服务令牌"
             value={piModel}
             onChange={(event) => onPiModelChange(event.target.value)}
             placeholder="model name"
@@ -1431,10 +1517,145 @@ function ReviewerPill({ label, ok, detail }: { label: string; ok: boolean; detai
   );
 }
 
+function LogicalSkillRow({ skill }: { skill: LogicalSkill }) {
+  const [expanded, setExpanded] = useState(false);
+  const title = skill.display_name_zh || skill.name;
+  const latestUsedAt = skill.latest_used_at
+    ? new Date(skill.latest_used_at)
+    : null;
+  const validLatestUsedAt =
+    latestUsedAt && Number.isFinite(latestUsedAt.getTime())
+      ? latestUsedAt
+      : null;
+
+  return (
+    <div
+      className={`hype-asset-item hype-logical-skill-row ${expanded ? "is-expanded" : ""}`}
+    >
+      <button
+        type="button"
+        className="hype-asset-row"
+        onClick={() => setExpanded((value) => !value)}
+        aria-expanded={expanded}
+      >
+        <span className="hype-asset-name">
+          <strong>{title}</strong>
+          <small>
+            {skill.display_name_zh
+              ? `${skill.summary} · 原名：${skill.name}`
+              : skill.summary}
+          </small>
+        </span>
+        <span className="hype-asset-source">
+          <span>{skill.agent_count} 个 Agent</span>
+          <small>
+            {skill.copies.length} 个安装来源
+            {skill.has_multiple_versions ? " · 多个版本" : ""}
+          </small>
+        </span>
+        <span
+          className="hype-asset-type"
+          style={{
+            color: skill.session_count > 0 ? "#0f9f78" : "#7b8798",
+            backgroundColor:
+              skill.session_count > 0
+                ? "rgba(52, 211, 153, 0.11)"
+                : "rgba(116, 143, 165, 0.09)",
+          }}
+        >
+          {skill.session_count} 个会话
+        </span>
+        <time dateTime={validLatestUsedAt?.toISOString()}>
+          {validLatestUsedAt
+            ? validLatestUsedAt.toLocaleString()
+            : skill.session_count > 0
+              ? "使用时间未知"
+              : "未发现使用记录"}
+        </time>
+      </button>
+
+      {expanded && (
+        <div className="hype-asset-expanded hype-skill-evidence">
+          <section className="hype-skill-evidence-section">
+            <div className="hype-skill-evidence-heading">
+              <strong>最近使用会话</strong>
+              <span>按最近使用时间排列</span>
+            </div>
+            {skill.sessions.length > 0 ? (
+              <div className="hype-skill-session-list">
+                {skill.sessions.map((session) => {
+                  const usedAt = session.used_at
+                    ? new Date(session.used_at)
+                    : null;
+                  const validUsedAt =
+                    usedAt && Number.isFinite(usedAt.getTime())
+                      ? usedAt
+                      : null;
+                  return (
+                    <div
+                      key={`${session.agent_id}:${session.session_id}`}
+                      className="hype-skill-session-row"
+                    >
+                      <span>
+                        <strong>
+                          {session.workspace
+                            ? compactHomePath(session.workspace)
+                            : session.session_id}
+                        </strong>
+                        <small>
+                          {session.agent_id} · {session.session_id}
+                        </small>
+                      </span>
+                      <time dateTime={validUsedAt?.toISOString()}>
+                        {validUsedAt
+                          ? validUsedAt.toLocaleString()
+                          : "使用时间未知"}
+                      </time>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="hype-skill-evidence-empty">
+                仅发现安装，未发现最近会话使用记录。
+              </p>
+            )}
+          </section>
+
+          <section className="hype-skill-evidence-section">
+            <div className="hype-skill-evidence-heading">
+              <strong>安装来源</strong>
+              {skill.has_multiple_versions && (
+                <span>发现内容不同的版本</span>
+              )}
+            </div>
+            <div className="hype-skill-copy-list">
+              {skill.copies.map((copy) => (
+                <div key={copy.id} className="hype-skill-copy-row">
+                  <span>
+                    <strong>{copy.agent_id}</strong>
+                    <small>{copy.ownership || "来源待确认"}</small>
+                  </span>
+                  <code title={copy.file_path}>
+                    {compactHomePath(copy.file_path)}
+                  </code>
+                </div>
+              ))}
+            </div>
+          </section>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AgentAssetRow({ asset }: { asset: AgentAsset }) {
   const [expanded, setExpanded] = useState(false);
   const color = ASSET_TYPE_COLORS[asset.asset_type] || "#94eff4";
   const isSkill = asset.asset_type === "skill";
+  const displayTimestamp = isSkill
+    ? agentAssetLastUsedTimestamp(asset)
+    : agentAssetModifiedTimestamp(asset);
   const title = asset.display_name_zh || asset.name;
   const summary = asset.summary_zh || getAgentAssetSummary(asset);
   const ownershipLabel = asset.ownership === "used"
@@ -1469,8 +1690,10 @@ function AgentAssetRow({ asset }: { asset: AgentAsset }) {
         >
           {isSkill ? ownershipLabel : asset.asset_type}
         </span>
-        <time dateTime={asset.modified_at || undefined}>
-          {asset.modified_at ? new Date(asset.modified_at).toLocaleString() : "—"}
+        <time dateTime={displayTimestamp === null ? undefined : new Date(displayTimestamp).toISOString()}>
+          {displayTimestamp === null
+            ? isSkill ? "未发现使用记录" : "—"
+            : new Date(displayTimestamp).toLocaleString()}
         </time>
       </button>
 

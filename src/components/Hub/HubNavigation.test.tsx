@@ -91,6 +91,10 @@ describe("HubNavigationItem", () => {
     expect(html).not.toContain("hub-nav-state-dot");
   });
 
+  it.each(rooms)("renders %s as a compact top-navigation item", (room) => {
+    expect(renderNavigationItem(room)).toContain("hub-module-nav-item");
+  });
+
   it("marks the active item as the current page", () => {
     expect(renderNavigationItem("humi", true)).toContain('aria-current="page"');
     expect(renderNavigationItem("humi")).not.toContain("aria-current");

@@ -36,6 +36,12 @@ const appConfig = {
     model: "gpt-4o-mini",
     max_tokens: 500,
   },
+  brain: {
+    schema_version: 1,
+    initialized: true,
+    primary_provider: "codex",
+    fallback_enabled: false,
+  },
   pi: {
     url: "https://api.openai.com/v1",
     model_name: "gpt-4o-mini",
@@ -74,6 +80,29 @@ function invokeResult(command: string): unknown {
   if (command === "check_pi_installed") return { installed: true };
   if (command === "check_qoder_acp_support") {
     return { installed: true, acp_supported: true, hint: "" };
+  }
+  if (command === "get_humi_brain_status") {
+    return {
+      initialized: true,
+      primary_provider: "codex",
+      fallback_enabled: false,
+      providers: [
+        {
+          provider: "codex",
+          display_name: "Codex",
+          ready: true,
+          status: "ready",
+          detail: "使用现有登录",
+        },
+      ],
+    };
+  }
+  if (command === "ask_humi_with_brain") {
+    return {
+      answer: "我已经通过 Codex 理解了这个问题。",
+      provider: "codex",
+      fallback: false,
+    };
   }
   if (command === "get_agent_kernel_status") {
     return {
@@ -199,6 +228,13 @@ function buttonByLabel(host: HTMLElement, label: string): HTMLButtonElement {
   return button;
 }
 
+async function openOperations(host: HTMLElement): Promise<void> {
+  await act(async () => {
+    buttonByLabel(host, "展开运行状态").click();
+    await Promise.resolve();
+  });
+}
+
 describe("Humi operational controls", () => {
   beforeEach(() => {
     sessionStorage.clear();
@@ -212,19 +248,34 @@ describe("Humi operational controls", () => {
     document.body.innerHTML = "";
   });
 
-  it("keeps sessions, auto confirm, TTS and token stats visible beside chat", async () => {
+  it("keeps the operations rail collapsed by default and toggles it on demand", async () => {
     const view = await renderHumiModule();
 
+    expect(view.host.textContent).toContain("你好，我是 Humi");
+    expect(
+      view.host.querySelector('textarea[placeholder="和 Humi 聊聊"]'),
+    ).not.toBeNull();
+
+    const openButton = buttonByLabel(view.host, "展开运行状态");
+    expect(openButton.getAttribute("aria-expanded")).toBe("false");
+    expect(view.host.querySelector("#humi-operations-panel")).toBeNull();
+
+    await act(async () => openButton.click());
+
+    const closeButton = buttonByLabel(view.host, "收起运行状态");
+    expect(closeButton.getAttribute("aria-expanded")).toBe("true");
+    expect(view.host.querySelector("#humi-operations-panel")).not.toBeNull();
     expect(view.host.textContent).toContain("实时会话");
     expect(view.host.textContent).toContain("HUMHUM");
     expect(view.host.textContent).toContain("自动确认");
     expect(view.host.textContent).toContain("TTS 播报");
     expect(view.host.textContent).toContain("1.3M");
     expect(view.host.textContent).toContain("41 次会话");
-    expect(view.host.textContent).toContain("你好，我是 Humi");
-    expect(
-      view.host.querySelector('textarea[placeholder="和 Humi 聊聊"]'),
-    ).not.toBeNull();
+
+    await act(async () => closeButton.click());
+
+    expect(view.host.querySelector("#humi-operations-panel")).toBeNull();
+    expect(buttonByLabel(view.host, "展开运行状态")).not.toBeNull();
 
     await dispose(view);
   });
@@ -232,6 +283,7 @@ describe("Humi operational controls", () => {
   it("shows one compact Hexa attention summary and opens the most urgent goal", async () => {
     const onOpenHexa = vi.fn();
     const view = await renderHumiModule(onOpenHexa);
+    await openOperations(view.host);
 
     expect(view.host.textContent).toContain("1 个开发目标需要注意");
     expect(view.host.textContent).toContain("1 个验证失败");
@@ -325,6 +377,7 @@ describe("Humi operational controls", () => {
     });
     const onOpenHexa = vi.fn();
     const view = await renderHumiModule(onOpenHexa);
+    await openOperations(view.host);
 
     expect(view.host.textContent).toContain("4 个开发目标需要注意");
     expect(view.host.textContent).toContain("1 个验证失败");
@@ -394,6 +447,7 @@ describe("Humi operational controls", () => {
     });
     const onOpenHexa = vi.fn();
     const view = await renderHumiModule(onOpenHexa);
+    await openOperations(view.host);
 
     await act(async () => {
       view.host.querySelector<HTMLButtonElement>(".humi-hexa-summary")?.click();
@@ -421,6 +475,7 @@ describe("Humi operational controls", () => {
     });
     const onOpenHexa = vi.fn();
     const view = await renderHumiModule(onOpenHexa);
+    await openOperations(view.host);
 
     expect(view.host.textContent).toContain("1 个开发目标需要注意");
     expect(view.host.textContent).toContain("0 个验证失败");
@@ -444,6 +499,7 @@ describe("Humi operational controls", () => {
     });
     const onOpenHexa = vi.fn();
     const view = await renderHumiModule(onOpenHexa);
+    await openOperations(view.host);
 
     expect(view.host.textContent).toContain("1 个开发目标需要注意");
     expect(view.host.textContent).toContain("1 个验证失败");
@@ -470,6 +526,7 @@ describe("Humi operational controls", () => {
     });
 
     const view = await renderHumiModule();
+    await openOperations(view.host);
 
     expect(view.host.textContent).toContain("实时会话");
     expect(view.host.textContent).toContain("自动确认");
@@ -481,6 +538,7 @@ describe("Humi operational controls", () => {
 
   it("opens the selected Agent session", async () => {
     const view = await renderHumiModule();
+    await openOperations(view.host);
 
     await act(async () => {
       buttonByLabel(view.host, "打开会话 HUMHUM").click();
@@ -496,6 +554,7 @@ describe("Humi operational controls", () => {
 
   it("persists global auto confirm and can preview the configured voice", async () => {
     const view = await renderHumiModule();
+    await openOperations(view.host);
 
     await act(async () => {
       buttonByLabel(view.host, "自动确认所有权限").click();
@@ -522,6 +581,98 @@ describe("Humi operational controls", () => {
     });
     expect(invokeMock).toHaveBeenCalledWith("play_audio", {
       base64Data: "audio-base64",
+    });
+
+    await dispose(view);
+  });
+
+  it("routes Humi chat through the selected host Agent without requiring a Pi token", async () => {
+    const view = await renderHumiModule();
+    const composer = view.host.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="给 Humi 的消息"]',
+    );
+    expect(composer).not.toBeNull();
+
+    await act(async () => {
+      if (!composer) return;
+      Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        "value",
+      )?.set?.call(composer, "帮我整理今天的重点");
+      composer.dispatchEvent(new Event("input", { bubbles: true }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      buttonByLabel(view.host, "发送消息").click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith("ask_humi_with_brain", {
+      options: expect.objectContaining({
+        prompt: "帮我整理今天的重点",
+      }),
+    });
+    expect(view.host.textContent).toContain("我已经通过 Codex 理解了这个问题");
+
+    await dispose(view);
+  });
+
+  it("offers ready host Agents during first setup and keeps Pi optional", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "get_config") {
+        return Promise.resolve({
+          ...appConfig,
+          brain: {
+            ...appConfig.brain,
+            initialized: false,
+            primary_provider: undefined,
+          },
+        });
+      }
+      if (command === "get_humi_brain_status") {
+        return Promise.resolve({
+          initialized: false,
+          primary_provider: null,
+          fallback_enabled: false,
+          providers: [
+            {
+              provider: "codex",
+              display_name: "Codex",
+              ready: true,
+              status: "ready",
+              detail: "使用现有登录",
+            },
+            {
+              provider: "claude",
+              display_name: "Claude Code",
+              ready: false,
+              status: "transport_unavailable",
+              detail: "尚未安装",
+            },
+          ],
+        });
+      }
+      if (command === "set_humi_brain_provider") {
+        return Promise.resolve(invokeResult("get_humi_brain_status"));
+      }
+      return Promise.resolve(invokeResult(command));
+    });
+
+    const view = await renderHumiModule();
+
+    expect(view.host.textContent).toContain("选择 Humi 的大脑");
+    expect(view.host.textContent).toContain("使用 Agent 已有的登录");
+    expect(view.host.textContent).not.toContain("输入 Token");
+
+    await act(async () => {
+      view.host.querySelector<HTMLButtonElement>(".humi-brain-provider.is-ready")?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith("set_humi_brain_provider", {
+      provider: "codex",
     });
 
     await dispose(view);

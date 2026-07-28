@@ -12,7 +12,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
 use tauri::{Emitter, Manager};
-use tokio::sync::{Mutex as AsyncMutex, RwLock as AsyncRwLock};
+use tokio::sync::{oneshot, Mutex as AsyncMutex, RwLock as AsyncRwLock};
 
 use transport::{IncomingMessage, JsonRpcTransport};
 
@@ -100,6 +100,8 @@ pub enum CodexBridgeError {
     ApprovalNotFound,
     ApprovalExpired,
     InvalidAnswer,
+    BrainBusy,
+    BrainTimeout,
     Transport(String),
     InvalidResponse(String),
 }
@@ -115,6 +117,8 @@ impl fmt::Display for CodexBridgeError {
             Self::ApprovalNotFound => "This approval is no longer waiting",
             Self::ApprovalExpired => "This approval has expired",
             Self::InvalidAnswer => "The question answer is invalid",
+            Self::BrainBusy => "Humi is already waiting for Codex",
+            Self::BrainTimeout => "Codex did not finish Humi's reply in time",
             Self::Transport(message) | Self::InvalidResponse(message) => message,
         };
         write!(formatter, "{message}")
@@ -130,6 +134,94 @@ struct PendingCodexRequest {
     session_id: String,
     turn_id: Option<String>,
     expires_at: chrono::DateTime<chrono::Utc>,
+}
+
+struct BrainTurnCollector {
+    turn_id: Option<String>,
+    text: String,
+    sender: Option<oneshot::Sender<Result<String, String>>>,
+}
+
+impl BrainTurnCollector {
+    fn new(sender: oneshot::Sender<Result<String, String>>) -> Self {
+        Self {
+            turn_id: None,
+            text: String::new(),
+            sender: Some(sender),
+        }
+    }
+
+    fn bind_turn(&mut self, turn_id: &str) {
+        self.turn_id = Some(turn_id.to_string());
+    }
+
+    fn observe(&mut self, event: &HexaEvent) -> bool {
+        if self
+            .turn_id
+            .as_deref()
+            .zip(event.turn_id.as_deref())
+            .is_some_and(|(expected, actual)| expected != actual)
+        {
+            return false;
+        }
+
+        match event.kind {
+            HexaEventKind::AssistantTextDelta => {
+                if let Some(delta) = event.payload.get("delta").and_then(Value::as_str) {
+                    self.text.push_str(delta);
+                }
+                false
+            }
+            HexaEventKind::AssistantTextCompleted => {
+                if self.text.is_empty() {
+                    if let Some(text) = event.payload.get("text").and_then(Value::as_str) {
+                        self.text.push_str(text);
+                    }
+                }
+                false
+            }
+            HexaEventKind::TurnCompleted => {
+                let text = self.text.trim().to_string();
+                self.finish(if text.is_empty() {
+                    Err("Codex completed without a Humi reply".to_string())
+                } else {
+                    Ok(text)
+                });
+                true
+            }
+            HexaEventKind::TurnFailed
+            | HexaEventKind::TurnInterrupted
+            | HexaEventKind::ErrorReported => {
+                let message = event
+                    .payload
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("Codex could not complete Humi's reply");
+                self.finish(Err(message.to_string()));
+                true
+            }
+            HexaEventKind::ApprovalRequested | HexaEventKind::UserQuestionRequested => {
+                self.finish(Err(
+                    "Humi's read-only Codex session requested an interactive action".to_string(),
+                ));
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn finish(&mut self, result: Result<String, String>) {
+        if let Some(sender) = self.sender.take() {
+            let _ = sender.send(result);
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
+pub struct CodexBrainReply {
+    pub thread_id: String,
+    pub turn_id: String,
+    pub text: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -161,6 +253,7 @@ pub struct CodexBridgeState {
     transport: AsyncRwLock<Option<Arc<JsonRpcTransport>>>,
     attached_threads: AsyncMutex<HashSet<String>>,
     pending_requests: Mutex<std::collections::HashMap<String, PendingCodexRequest>>,
+    brain_turns: Mutex<HashMap<String, BrainTurnCollector>>,
     recovered_transcripts: Mutex<HashMap<String, TranscriptRevision>>,
     remote_control: RwLock<CodexRemoteControlState>,
 }
@@ -173,6 +266,7 @@ impl Default for CodexBridgeState {
             transport: AsyncRwLock::new(None),
             attached_threads: AsyncMutex::new(HashSet::new()),
             pending_requests: Mutex::new(std::collections::HashMap::new()),
+            brain_turns: Mutex::new(HashMap::new()),
             recovered_transcripts: Mutex::new(HashMap::new()),
             remote_control: RwLock::new(CodexRemoteControlState::default()),
         }
@@ -449,6 +543,155 @@ impl CodexBridgeState {
             .and_then(|turn| string_at(turn, "id"))
             .map(String::from)
             .ok_or_else(|| CodexBridgeError::InvalidResponse("Codex did not start a turn".into()))
+    }
+
+    pub async fn run_brain_turn(
+        &self,
+        workspace: &str,
+        previous_thread_id: Option<&str>,
+        message: &str,
+    ) -> Result<CodexBrainReply, CodexBridgeError> {
+        let message = message.trim();
+        if message.is_empty() {
+            return Err(CodexBridgeError::EmptyMessage);
+        }
+        let path = Path::new(workspace);
+        if !path.is_absolute() || !path.is_dir() {
+            return Err(CodexBridgeError::InvalidWorkspace);
+        }
+
+        let transport = self.connected_transport().await?;
+        let thread_id = match previous_thread_id {
+            Some(thread_id) => match self.resume_brain_thread(&transport, thread_id).await {
+                Ok(thread_id) => thread_id,
+                Err(error) => {
+                    log::warn!("Could not resume Humi Codex thread: {error}");
+                    self.start_brain_thread(&transport, workspace).await?
+                }
+            },
+            None => self.start_brain_thread(&transport, workspace).await?,
+        };
+
+        let (sender, receiver) = oneshot::channel();
+        {
+            let mut turns = self
+                .brain_turns
+                .lock()
+                .map_err(|_| CodexBridgeError::BrainBusy)?;
+            if turns.contains_key(&thread_id) {
+                return Err(CodexBridgeError::BrainBusy);
+            }
+            turns.insert(thread_id.clone(), BrainTurnCollector::new(sender));
+        }
+
+        let response = match transport
+            .request(
+                "turn/start",
+                json!({
+                    "threadId": thread_id,
+                    "input": [{"type": "text", "text": message, "text_elements": []}],
+                    "approvalPolicy": "never",
+                    "approvalsReviewer": "user"
+                }),
+            )
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => {
+                if let Ok(mut turns) = self.brain_turns.lock() {
+                    turns.remove(&thread_id);
+                }
+                return Err(CodexBridgeError::Transport(error.to_string()));
+            }
+        };
+        let turn_id = response
+            .get("turn")
+            .and_then(|turn| string_at(turn, "id"))
+            .map(String::from)
+            .ok_or_else(|| {
+                if let Ok(mut turns) = self.brain_turns.lock() {
+                    turns.remove(&thread_id);
+                }
+                CodexBridgeError::InvalidResponse("Codex did not start Humi's turn".into())
+            })?;
+        if let Ok(mut turns) = self.brain_turns.lock() {
+            if let Some(collector) = turns.get_mut(&thread_id) {
+                collector.bind_turn(&turn_id);
+            }
+        }
+
+        let result = tokio::time::timeout(std::time::Duration::from_secs(90), receiver).await;
+        if let Ok(mut turns) = self.brain_turns.lock() {
+            turns.remove(&thread_id);
+        }
+        let text = result
+            .map_err(|_| CodexBridgeError::BrainTimeout)?
+            .map_err(|_| CodexBridgeError::InvalidResponse("Codex reply channel closed".into()))?
+            .map_err(CodexBridgeError::InvalidResponse)?;
+
+        Ok(CodexBrainReply {
+            thread_id,
+            turn_id,
+            text,
+        })
+    }
+
+    async fn start_brain_thread(
+        &self,
+        transport: &Arc<JsonRpcTransport>,
+        workspace: &str,
+    ) -> Result<String, CodexBridgeError> {
+        let response = transport
+            .request(
+                "thread/start",
+                json!({
+                    "cwd": workspace,
+                    "approvalPolicy": "never",
+                    "approvalsReviewer": "user",
+                    "serviceName": "humhum_humi"
+                }),
+            )
+            .await
+            .map_err(|error| CodexBridgeError::Transport(error.to_string()))?;
+        let thread_id = response
+            .get("thread")
+            .and_then(|thread| string_at(thread, "id"))
+            .map(String::from)
+            .ok_or_else(|| {
+                CodexBridgeError::InvalidResponse("Codex did not return a Humi thread".into())
+            })?;
+        self.attached_threads.lock().await.insert(thread_id.clone());
+        Ok(thread_id)
+    }
+
+    async fn resume_brain_thread(
+        &self,
+        transport: &Arc<JsonRpcTransport>,
+        thread_id: &str,
+    ) -> Result<String, CodexBridgeError> {
+        let response = transport
+            .request(
+                "thread/resume",
+                json!({
+                    "threadId": thread_id,
+                    "approvalPolicy": "never",
+                    "approvalsReviewer": "user"
+                }),
+            )
+            .await
+            .map_err(|error| CodexBridgeError::Transport(error.to_string()))?;
+        let resumed_id = response
+            .get("thread")
+            .and_then(|thread| string_at(thread, "id"))
+            .map(String::from)
+            .ok_or_else(|| {
+                CodexBridgeError::InvalidResponse("Codex did not resume Humi's thread".into())
+            })?;
+        self.attached_threads
+            .lock()
+            .await
+            .insert(resumed_id.clone());
+        Ok(resumed_id)
     }
 
     pub async fn interrupt(&self, thread_id: &str, turn_id: &str) -> Result<(), CodexBridgeError> {
@@ -802,6 +1045,14 @@ impl CodexBridgeState {
         event: HexaEvent,
         sync_watch: bool,
     ) -> bool {
+        if let Ok(mut turns) = self.brain_turns.lock() {
+            let finished = turns
+                .get_mut(&event.session_id)
+                .is_some_and(|turn| turn.observe(&event));
+            if finished {
+                turns.remove(&event.session_id);
+            }
+        }
         let projection = self.projections.lock().ok().and_then(|mut store| {
             store.apply(&event);
             store.session(&event.session_id).cloned()
@@ -1510,6 +1761,49 @@ mod tests {
     use super::*;
     use crate::hexa_watch_store::HexaWatchRegisterRequest;
     use serde_json::json;
+
+    #[tokio::test]
+    async fn brain_turn_collector_ignores_other_turns_and_returns_the_reply() {
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let mut collector = BrainTurnCollector::new(sender);
+        collector.bind_turn("turn-humi");
+
+        assert!(!collector.observe(&HexaEvent {
+            event_id: "event-other".into(),
+            session_id: "thread-humi".into(),
+            provider: "codex".into(),
+            provider_thread_id: Some("thread-humi".into()),
+            turn_id: Some("turn-other".into()),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            kind: HexaEventKind::AssistantTextDelta,
+            payload: json!({"delta": "wrong"}),
+            sensitivity: HexaSensitivity::Private,
+        }));
+        assert!(!collector.observe(&HexaEvent {
+            event_id: "event-delta".into(),
+            session_id: "thread-humi".into(),
+            provider: "codex".into(),
+            provider_thread_id: Some("thread-humi".into()),
+            turn_id: Some("turn-humi".into()),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            kind: HexaEventKind::AssistantTextDelta,
+            payload: json!({"delta": "你好，"}),
+            sensitivity: HexaSensitivity::Private,
+        }));
+        assert!(collector.observe(&HexaEvent {
+            event_id: "event-complete".into(),
+            session_id: "thread-humi".into(),
+            provider: "codex".into(),
+            provider_thread_id: Some("thread-humi".into()),
+            turn_id: Some("turn-humi".into()),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            kind: HexaEventKind::TurnCompleted,
+            payload: json!({"status": "completed"}),
+            sensitivity: HexaSensitivity::Private,
+        }));
+
+        assert_eq!(receiver.await.unwrap().unwrap(), "你好，");
+    }
 
     #[cfg(unix)]
     async fn resume_test_transport() -> Arc<JsonRpcTransport> {

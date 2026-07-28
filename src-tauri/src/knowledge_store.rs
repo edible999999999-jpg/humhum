@@ -1,8 +1,10 @@
 use crate::skill_index::{
-    chinese_skill_presentation, discover_skill_sources, is_personal_skill_path, SkillSource,
+    chinese_skill_presentation, discover_skill_sources_with_roots, is_personal_skill_path,
+    SkillSource, SkillUsageEvidence,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use sha2::{Digest, Sha256};
 use std::collections::{HashSet, VecDeque};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -26,6 +28,8 @@ pub struct Preference {
     pub content: String,
     pub source: String,
     pub priority: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modified_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -35,6 +39,8 @@ pub struct AgentRule {
     pub rule_type: String,
     pub file_path: String,
     pub content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modified_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,6 +49,8 @@ pub struct MemoryItem {
     pub agent_id: String,
     pub content: String,
     pub temperature: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modified_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -86,8 +94,14 @@ pub struct AgentAsset {
     pub relative_path: String,
     pub source: String,
     pub content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_hash: Option<String>,
     pub tags: Vec<String>,
     pub modified_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_used_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub usage_evidence: Vec<SkillUsageEvidence>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ownership: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -150,6 +164,14 @@ fn read_private_text(path: &Path) -> Option<String> {
         );
     }
     std::fs::read_to_string(path).ok()
+}
+
+fn file_modified_at(path: &Path) -> Option<String> {
+    std::fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .ok()
+        .map(chrono::DateTime::<chrono::Utc>::from)
+        .map(|modified_at| modified_at.to_rfc3339())
 }
 
 impl KnowledgeStore {
@@ -292,7 +314,8 @@ impl KnowledgeStore {
         &self.data
     }
 
-    pub fn save_preference(&mut self, pref: Preference) {
+    pub fn save_preference(&mut self, mut pref: Preference) {
+        pref.modified_at = Some(chrono::Utc::now().to_rfc3339());
         self.write_preference_file(&pref);
         if let Some(existing) = self.data.preferences.iter_mut().find(|p| p.id == pref.id) {
             *existing = pref;
@@ -302,7 +325,8 @@ impl KnowledgeStore {
         self.save();
     }
 
-    pub fn save_memory(&mut self, item: MemoryItem) {
+    pub fn save_memory(&mut self, mut item: MemoryItem) {
+        item.modified_at = Some(chrono::Utc::now().to_rfc3339());
         self.write_memory_file(&item);
         if let Some(existing) = self.data.memory_items.iter_mut().find(|m| m.id == item.id) {
             *existing = item;
@@ -493,6 +517,7 @@ impl KnowledgeStore {
                             rule_type: rule_type.to_string(),
                             file_path: rule_file.to_string_lossy().to_string(),
                             content: truncate_content(&content, 2000),
+                            modified_at: file_modified_at(&rule_file),
                         });
                     }
                 }
@@ -550,7 +575,7 @@ impl KnowledgeStore {
         home: &Path,
     ) -> Result<Vec<AgentAsset>, String> {
         let roots = resolve_agent_asset_roots_with_home(roots, home);
-        let skill_sources = discover_skill_sources(home);
+        let skill_sources = discover_skill_sources_with_roots(home, &roots);
         let mut scan_roots = roots
             .into_iter()
             .map(|path| (path, None))
@@ -575,37 +600,62 @@ impl KnowledgeStore {
                 if assets.len() >= MAX_AGENT_ASSETS {
                     break;
                 }
-                if let Ok(metadata) = std::fs::metadata(&path) {
-                    if metadata.len() > MAX_ASSET_BYTES {
+                let is_skill_file = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.eq_ignore_ascii_case("SKILL.md"));
+                let (asset_root, asset_path, matched_source) = if is_skill_file {
+                    let Ok(canonical_path) = path.canonicalize() else {
+                        continue;
+                    };
+                    if !canonical_path.is_file()
+                        || !canonical_path
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .is_some_and(|name| name.eq_ignore_ascii_case("SKILL.md"))
+                        || !is_personal_skill_path(&canonical_path)
+                    {
                         continue;
                     }
-                }
-                let Ok(content) = std::fs::read_to_string(&path) else {
-                    continue;
-                };
-                let mut asset = parse_agent_asset(&root, &path, &content);
-                if root_skill_source.is_some() && asset.asset_type != "skill" {
-                    continue;
-                }
-                if asset.asset_type == "skill" {
-                    if !is_personal_skill_path(&path) {
-                        continue;
-                    }
+                    let canonical_root = root.canonicalize().ok();
                     let matched_source = skill_sources
                         .iter()
-                        .filter(|source| path.starts_with(&source.root))
-                        .max_by_key(|source| source.root.components().count())
-                        .or(root_skill_source.as_ref());
-                    if matched_source.is_some_and(|source| {
-                        source
-                            .excluded_prefixes
-                            .iter()
-                            .any(|prefix| path.starts_with(prefix))
-                    }) || is_unapproved_skill_cache(&path, matched_source)
+                        .filter(|source| skill_source_matches(source, &canonical_path))
+                        .max_by_key(|source| source.root.components().count());
+                    let recognized_by_scan_root = canonical_root
+                        .as_ref()
+                        .is_some_and(|root| canonical_path.starts_with(root));
+                    if matched_source.is_none() && !recognized_by_scan_root {
+                        continue;
+                    }
+                    if matched_source
+                        .is_some_and(|source| source_excludes_path(source, &canonical_path))
+                        || is_unapproved_skill_cache(&canonical_path, matched_source)
                     {
                         continue;
                     }
 
+                    (
+                        canonical_root.unwrap_or_else(|| root.clone()),
+                        canonical_path,
+                        matched_source,
+                    )
+                } else {
+                    (root.clone(), path.clone(), None)
+                };
+                if let Ok(metadata) = std::fs::metadata(&asset_path) {
+                    if metadata.len() > MAX_ASSET_BYTES {
+                        continue;
+                    }
+                }
+                let Ok(content) = std::fs::read_to_string(&asset_path) else {
+                    continue;
+                };
+                let mut asset = parse_agent_asset(&asset_root, &asset_path, &content);
+                if root_skill_source.is_some() && asset.asset_type != "skill" {
+                    continue;
+                }
+                if asset.asset_type == "skill" {
                     let description = skill_description(&content);
                     let (display_name_zh, summary_zh) =
                         chinese_skill_presentation(&asset.name, &description);
@@ -618,6 +668,8 @@ impl KnowledgeStore {
                     asset.summary_zh = Some(summary_zh);
                     if let Some(source) = matched_source {
                         asset.source = source.source.clone();
+                        asset.last_used_at = source.last_used_at.clone();
+                        asset.usage_evidence = source.usage_evidence.clone();
                         if let Some(plugin) = &source.plugin {
                             asset.tags.push(format!("plugin:{}", plugin));
                             asset.tags.sort();
@@ -1140,12 +1192,36 @@ fn parse_agent_asset(root: &Path, path: &Path, content: &str) -> AgentAsset {
         relative_path,
         source: root.to_string_lossy().to_string(),
         content: truncate_content(content, 2400),
+        content_hash: Some(format!("{:x}", Sha256::digest(content.as_bytes()))),
         tags,
         modified_at,
+        last_used_at: None,
+        usage_evidence: Vec::new(),
         ownership: None,
         display_name_zh: None,
         summary_zh: None,
     }
+}
+
+fn skill_source_matches(source: &SkillSource, canonical_path: &Path) -> bool {
+    if let Some(evidence_path) = &source.evidence_path {
+        return evidence_path == canonical_path;
+    }
+
+    source
+        .root
+        .canonicalize()
+        .ok()
+        .is_some_and(|root| canonical_path.starts_with(root))
+}
+
+fn source_excludes_path(source: &SkillSource, canonical_path: &Path) -> bool {
+    source.excluded_prefixes.iter().any(|prefix| {
+        prefix
+            .canonicalize()
+            .ok()
+            .is_some_and(|prefix| canonical_path.starts_with(prefix))
+    })
 }
 
 fn is_unapproved_skill_cache(path: &Path, source: Option<&SkillSource>) -> bool {
@@ -1768,6 +1844,7 @@ fn preference_from_markdown(path: &Path, content: &str) -> Option<Preference> {
         content: body.trim().to_string(),
         source: frontmatter_string(&frontmatter, "source").unwrap_or_default(),
         priority: frontmatter_u8(&frontmatter, "priority"),
+        modified_at: file_modified_at(path),
     })
 }
 
@@ -1786,6 +1863,7 @@ fn memory_from_markdown(path: &Path, content: &str) -> Option<MemoryItem> {
         agent_id: frontmatter_string(&frontmatter, "agent_id").unwrap_or_default(),
         content: body.trim().to_string(),
         temperature,
+        modified_at: file_modified_at(path),
     })
 }
 
@@ -1869,6 +1947,167 @@ mod tests {
     }
 
     #[test]
+    fn agent_asset_without_usage_evidence_deserializes_to_empty_vec() {
+        let asset: AgentAsset = serde_json::from_str(
+            r#"{
+                "id": "asset:legacy",
+                "asset_type": "skill",
+                "agent_id": "codex",
+                "name": "legacy",
+                "file_path": "/tmp/legacy/SKILL.md",
+                "relative_path": "legacy/SKILL.md",
+                "source": "codex",
+                "content": "legacy skill",
+                "tags": [],
+                "modified_at": null
+            }"#,
+        )
+        .unwrap();
+
+        assert!(asset.usage_evidence.is_empty());
+        assert!(asset.content_hash.is_none());
+    }
+
+    #[test]
+    fn agent_asset_hash_uses_full_content_before_preview_truncation() {
+        let root = Path::new("/tmp/humhum-hash-test");
+        let shared_prefix = "x".repeat(2_500);
+        let first = parse_agent_asset(
+            root,
+            &root.join("first/SKILL.md"),
+            &format!("{shared_prefix}first-tail"),
+        );
+        let second = parse_agent_asset(
+            root,
+            &root.join("second/SKILL.md"),
+            &format!("{shared_prefix}second-tail"),
+        );
+
+        assert_eq!(first.content, second.content);
+        assert!(first.content_hash.is_some());
+        assert_ne!(first.content_hash, second.content_hash);
+    }
+
+    #[test]
+    fn configured_project_skill_receives_session_evidence() {
+        let root = temp_root("configured-project-skill-evidence");
+        let home = root.join("home");
+        let project = root.join("project");
+        let skill = project.join(".agents/skills/release/SKILL.md");
+        std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
+        std::fs::write(
+            &skill,
+            "---\nname: release\ndescription: Release helper\n---\n",
+        )
+        .unwrap();
+        let session_dir = home.join(".codex/sessions");
+        std::fs::create_dir_all(&session_dir).unwrap();
+        std::fs::write(
+            session_dir.join("project-session.jsonl"),
+            format!(
+                "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"project-session\",\"cwd\":\"{}\"}}}}\n\
+                 {{\"timestamp\":\"2026-07-20T13:00:00Z\",\"type\":\"response_item\",\"payload\":{{\"type\":\"custom_tool_call\",\"name\":\"exec\",\"input\":\"cat {}\"}}}}\n",
+                project.display(),
+                skill.display(),
+            ),
+        )
+        .unwrap();
+        let mut store = store_at(&root);
+
+        let assets = store
+            .scan_agent_assets_with_home(Some(vec![project.to_string_lossy().to_string()]), &home)
+            .unwrap();
+
+        let release = assets
+            .iter()
+            .find(|asset| asset.name == "release")
+            .expect("configured project skill");
+        assert_eq!(release.usage_evidence.len(), 1);
+        assert_eq!(release.usage_evidence[0].session_id, "project-session");
+        assert_eq!(
+            release.usage_evidence[0].workspace.as_deref(),
+            Some(project.to_string_lossy().as_ref())
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn session_evidence_attaches_only_to_exact_parent_skill() {
+        let root = temp_root("exact-skill-evidence");
+        let home = root.join("home");
+        let parent_skill = home.join(".codex/skills/parent/SKILL.md");
+        let nested_skill = home.join(".codex/skills/parent/nested/SKILL.md");
+        for (path, name) in [(&parent_skill, "parent"), (&nested_skill, "nested")] {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, format!("---\nname: {name}\ndescription: test\n---\n")).unwrap();
+        }
+        let session_dir = home.join(".codex/sessions");
+        std::fs::create_dir_all(&session_dir).unwrap();
+        std::fs::write(
+            session_dir.join("parent-session.jsonl"),
+            format!(
+                "{{\"type\":\"response_item\",\"payload\":{{\"type\":\"custom_tool_call\",\"name\":\"exec\",\"input\":\"cat {}\"}}}}\n",
+                parent_skill.display(),
+            ),
+        )
+        .unwrap();
+        let mut store = store_at(&root);
+
+        let assets = store
+            .scan_agent_assets_with_home(Some(Vec::new()), &home)
+            .unwrap();
+        let parent = assets
+            .iter()
+            .find(|asset| asset.name == "parent")
+            .expect("parent skill");
+        let nested = assets
+            .iter()
+            .find(|asset| asset.name == "nested")
+            .expect("nested skill");
+
+        assert_eq!(parent.usage_evidence.len(), 1);
+        assert!(nested.usage_evidence.is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn skill_scan_rejects_symlink_targets_outside_recognized_or_inside_system_roots() {
+        use std::os::unix::fs::symlink;
+
+        let root = temp_root("skill-symlink-safety");
+        let home = root.join("home");
+        let outside = root.join("outside/SKILL.md");
+        let system = home.join(".codex/skills/.system/secret/SKILL.md");
+        for (path, name) in [(&outside, "outside-secret"), (&system, "system-secret")] {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(
+                path,
+                format!("---\nname: {name}\ndescription: must not persist\n---\n"),
+            )
+            .unwrap();
+        }
+        let linked_outside = home.join(".agents/skills/linked-outside/SKILL.md");
+        let linked_system = home.join(".agents/skills/linked-system/SKILL.md");
+        for (link, target) in [(&linked_outside, &outside), (&linked_system, &system)] {
+            std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+            symlink(target, link).unwrap();
+        }
+        let mut store = store_at(&root);
+
+        let assets = store
+            .scan_agent_assets_with_home(Some(Vec::new()), &home)
+            .unwrap();
+
+        assert!(!assets.iter().any(|asset| {
+            asset.name == "outside-secret"
+                || asset.name == "system-secret"
+                || asset.content.contains("must not persist")
+        }));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn save_preference_writes_and_reloads_from_vault() {
         let root = temp_root("save-pref");
         let mut store = store_at(&root);
@@ -1878,6 +2117,7 @@ mod tests {
             content: "简洁优先".into(),
             source: "humi".into(),
             priority: 4,
+            modified_at: None,
         });
 
         let md = root.join("vault").join("preferences").join("pref-42.md");
@@ -1894,6 +2134,7 @@ mod tests {
         assert_eq!(prefs[0].id, "pref-42");
         assert_eq!(prefs[0].content, "简洁优先");
         assert_eq!(prefs[0].priority, 4);
+        assert!(prefs[0].modified_at.is_some());
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -1908,6 +2149,7 @@ mod tests {
             content: "临时".into(),
             source: "humi".into(),
             priority: 1,
+            modified_at: None,
         });
         let md = root.join("vault").join("preferences").join("pref-del.md");
         assert!(md.exists());
@@ -1929,6 +2171,7 @@ mod tests {
             agent_id: "claude-code".into(),
             content: "用户在做本地 Agent 中枢".into(),
             temperature: "hot".into(),
+            modified_at: None,
         });
 
         let md = root.join("vault").join("memory").join("mem-1.md");
@@ -1939,6 +2182,7 @@ mod tests {
         assert_eq!(persisted.memory_items.len(), 1);
 
         let reloaded = store_at(&root);
+        assert!(reloaded.get_all().memory_items[0].modified_at.is_some());
         let items = &reloaded.get_all().memory_items;
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].id, "mem-1");
@@ -1959,6 +2203,7 @@ mod tests {
                 content: "旧 JSON 里的偏好".into(),
                 source: "import".into(),
                 priority: 2,
+                modified_at: None,
             }],
             ..Default::default()
         };
@@ -2148,7 +2393,7 @@ mod tests {
         std::fs::write(
             &session,
             format!(
-                "{{\"type\":\"response_item\",\"payload\":{{\"type\":\"custom_tool_call\",\"name\":\"exec\",\"input\":\"cat {}\"}}}}\n",
+                "{{\"timestamp\":\"2026-07-19T09:30:00Z\",\"type\":\"response_item\",\"payload\":{{\"type\":\"custom_tool_call\",\"name\":\"exec\",\"input\":\"cat {}\"}}}}\n",
                 used.display()
             ),
         )
@@ -2180,6 +2425,7 @@ mod tests {
         assert!(skills.iter().any(|asset| {
             asset.name == "using-superpowers"
                 && asset.ownership.as_deref() == Some("used")
+                && asset.last_used_at.as_deref() == Some("2026-07-19T09:30:00+00:00")
                 && asset.tags.iter().any(|tag| tag == "plugin:superpowers")
         }));
         assert!(assets
@@ -2267,12 +2513,14 @@ mod tests {
             content: "keep preference".into(),
             source: "manual".into(),
             priority: 3,
+            modified_at: None,
         });
         store.save_memory(MemoryItem {
             id: "memory-1".into(),
             agent_id: "codex".into(),
             content: "keep memory".into(),
             temperature: "warm".into(),
+            modified_at: None,
         });
         store.data.agent_rules.push(AgentRule {
             id: manual_rule_id.clone(),
@@ -2280,6 +2528,7 @@ mod tests {
             rule_type: "manual".into(),
             file_path: rule_path.to_string_lossy().into_owned(),
             content: "keep manual rule".into(),
+            modified_at: None,
         });
         store.data.agent_rules.push(AgentRule {
             id: unavailable_rule_id.clone(),
@@ -2287,6 +2536,7 @@ mod tests {
             rule_type: "AGENTS.md".into(),
             file_path: unavailable_rule_path.to_string_lossy().into_owned(),
             content: "keep rule from unavailable root".into(),
+            modified_at: None,
         });
 
         let scan_roots = vec![scan_root, other_scan_root, unavailable_scan_root];
@@ -2483,12 +2733,14 @@ mod tests {
                 content: "请使用中文".into(),
                 source: "legacy".into(),
                 priority: 4,
+                modified_at: None,
             }],
             memory_items: vec![MemoryItem {
                 id: "memory-existing".into(),
                 agent_id: "codex".into(),
                 content: "正在构建 HUMHUM".into(),
                 temperature: "hot".into(),
+                modified_at: None,
             }],
             ..Default::default()
         };

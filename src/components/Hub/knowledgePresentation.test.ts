@@ -1,9 +1,17 @@
 import { describe, expect, it } from "vitest";
 import type { AgentAsset } from "@/types";
 import {
+  agentAssetLastUsedTimestamp,
+  agentAssetModifiedTimestamp,
+  countDistinctLogicalSkillSessions,
+  filterLogicalSkills,
   filterAgentAssets,
   getAgentAssetSummary,
+  groupLogicalSkills,
   isPersonalAgentAsset,
+  normalizeLogicalSkillName,
+  sortAgentAssetsByRecentUse,
+  sortByRecentUpdate,
 } from "./knowledgePresentation";
 
 function asset(
@@ -314,5 +322,355 @@ describe("filterAgentAssets", () => {
         "",
       ),
     ).toEqual([custom]);
+  });
+});
+
+describe("recent skill usage presentation", () => {
+  it("sorts real usage first and newest to oldest", () => {
+    const oldUse = asset("/Users/me/.codex/skills/old/SKILL.md", "", {
+      name: "Old use",
+      last_used_at: "2026-07-18T09:00:00Z",
+      modified_at: "2026-07-20T09:00:00Z",
+    });
+    const newUse = asset("/Users/me/.codex/skills/new/SKILL.md", "", {
+      name: "New use",
+      last_used_at: "2026-07-19T09:00:00Z",
+      modified_at: "2026-01-01T09:00:00Z",
+    });
+    const neverUsed = asset("/Users/me/.codex/skills/never/SKILL.md", "", {
+      name: "Never used",
+      modified_at: "2026-07-20T10:00:00Z",
+    });
+    const epochMetadata = asset("/Users/me/.codex/skills/epoch/SKILL.md", "", {
+      name: "Epoch metadata",
+      modified_at: "1970-01-01T00:00:01Z",
+    });
+
+    expect(sortAgentAssetsByRecentUse([epochMetadata, neverUsed, oldUse, newUse])).toEqual([
+      newUse,
+      oldUse,
+      neverUsed,
+      epochMetadata,
+    ]);
+  });
+
+  it("treats Unix epoch metadata as unknown instead of a user-facing date", () => {
+    expect(agentAssetModifiedTimestamp({
+      ...asset("/Users/me/.codex/plugins/cache/example/SKILL.md"),
+      modified_at: "1970-01-01T00:00:01Z",
+    })).toBeNull();
+    expect(agentAssetLastUsedTimestamp({
+      ...asset("/Users/me/.codex/plugins/cache/example/SKILL.md"),
+      last_used_at: "1970-01-01T00:00:01Z",
+    })).toBeNull();
+    expect(agentAssetLastUsedTimestamp({
+      ...asset("/Users/me/.codex/skills/recent/SKILL.md"),
+      last_used_at: "2026-07-19T09:00:00Z",
+    })).toBe(Date.parse("2026-07-19T09:00:00Z"));
+  });
+});
+
+describe("Hype module chronology", () => {
+  it("sorts updated records newest first and keeps unknown dates last", () => {
+    const records = [
+      { id: "unknown" },
+      { id: "older", modified_at: "2026-07-18T09:00:00Z" },
+      { id: "epoch", modified_at: "1970-01-01T00:00:01Z" },
+      { id: "newer", modified_at: "2026-07-20T09:00:00Z" },
+    ];
+
+    expect(sortByRecentUpdate(records).map((record) => record.id)).toEqual([
+      "newer",
+      "older",
+      "unknown",
+      "epoch",
+    ]);
+  });
+});
+
+
+describe("logical skill presentation", () => {
+  it("normalizes equivalent skill names to one key", () => {
+    expect(normalizeLogicalSkillName(" HumHum_Hexa ")).toBe("humhum-hexa");
+    expect(normalizeLogicalSkillName("HumHum-Hexa")).toBe("humhum-hexa");
+  });
+
+  it("groups copies, deduplicates sessions, and sorts the newest use first", () => {
+    const codexCopy = asset("/codex/humhum_hexa/SKILL.md", "# Codex HumHum Hexa", {
+      agent_id: "codex",
+      name: "humhum_hexa",
+      modified_at: "2026-07-18T09:00:00Z",
+      usage_evidence: [
+        {
+          session_id: "older-session",
+          agent_id: "codex",
+          session_path: "/sessions/older",
+          workspace: "/workspace/older",
+          used_at: "2026-07-18T10:00:00Z",
+        },
+        {
+          session_id: "newest-session",
+          agent_id: "codex",
+          session_path: "/sessions/newest-old-copy",
+          workspace: "/workspace/newest",
+          used_at: "2026-07-19T10:00:00Z",
+        },
+      ],
+    });
+    const claudeCopy = asset("/claude/HumHum-Hexa/SKILL.md", "# Claude HumHum Hexa", {
+      agent_id: "claude",
+      name: "HumHum-Hexa",
+      modified_at: "2026-07-19T09:00:00Z",
+      usage_evidence: [
+        {
+          session_id: "older-session",
+          agent_id: "codex",
+          session_path: "/sessions/older-copy",
+          workspace: "/workspace/older",
+          used_at: "2026-07-18T11:00:00Z",
+        },
+        {
+          session_id: "newest-session",
+          agent_id: "codex",
+          session_path: "/sessions/newest",
+          workspace: "/workspace/newest",
+          used_at: "2026-07-20T10:00:00Z",
+        },
+      ],
+    });
+
+    const skill = groupLogicalSkills([codexCopy, claudeCopy])[0];
+
+    expect(skill?.key).toBe("humhum-hexa");
+    expect(skill?.copies).toHaveLength(2);
+    expect(skill?.sessions.map((session) => session.session_id)).toEqual([
+      "newest-session",
+      "older-session",
+    ]);
+    expect(skill?.session_count).toBe(2);
+    expect(skill?.agent_count).toBe(2);
+    expect(skill?.has_multiple_versions).toBe(true);
+    expect(skill?.sessions[0]?.session_path).toBe("/sessions/newest");
+  });
+
+  it("detects full-content divergence when persisted previews are identical", () => {
+    const firstCopy = {
+      ...asset("/codex/long/SKILL.md", "x".repeat(2_400), {
+        name: "Long Skill",
+      }),
+      content_hash: "hash-first-tail",
+    };
+    const secondCopy = {
+      ...asset("/claude/long/SKILL.md", "x".repeat(2_400), {
+        agent_id: "claude",
+        name: "Long Skill",
+      }),
+      content_hash: "hash-second-tail",
+    };
+
+    const [skill] = groupLogicalSkills([firstCopy, secondCopy]);
+
+    expect(skill?.has_multiple_versions).toBe(true);
+  });
+
+  it("prefers matching full-content hashes over divergent previews", () => {
+    const firstCopy = {
+      ...asset("/codex/same/SKILL.md", "truncated preview one", {
+        name: "Same Skill",
+      }),
+      content_hash: "same-full-content-hash",
+    };
+    const secondCopy = {
+      ...asset("/claude/same/SKILL.md", "truncated preview two", {
+        agent_id: "claude",
+        name: "Same Skill",
+      }),
+      content_hash: "same-full-content-hash",
+    };
+
+    const [skill] = groupLogicalSkills([firstCopy, secondCopy]);
+
+    expect(skill?.has_multiple_versions).toBe(false);
+  });
+
+  it("falls back to normalized previews when legacy copies have no hash", () => {
+    const firstCopy = asset("/codex/legacy/SKILL.md", "same\ncontent", {
+      name: "Legacy Skill",
+    });
+    const secondCopy = asset("/claude/legacy/SKILL.md", " same   content ", {
+      agent_id: "claude",
+      name: "Legacy Skill",
+    });
+
+    const [skill] = groupLogicalSkills([firstCopy, secondCopy]);
+
+    expect(skill?.has_multiple_versions).toBe(false);
+  });
+
+  it("keeps installed copies without evidence and searches session workspaces", () => {
+    const installedCopy = asset("/codex/installed/SKILL.md", "", {
+      name: "Installed Helper",
+      ownership: "installed",
+    });
+    const usedCopy = asset("/claude/workspace-helper/SKILL.md", "", {
+      agent_id: "claude",
+      name: "Workspace Helper",
+      summary_zh: "整理项目工作区",
+      usage_evidence: [
+        {
+          session_id: "workspace-session",
+          agent_id: "claude",
+          session_path: "/sessions/workspace",
+          workspace: "/Projects/HumHum",
+          used_at: "2026-07-20T12:00:00Z",
+        },
+      ],
+    });
+
+    const skills = groupLogicalSkills([installedCopy, usedCopy]);
+    const installed = skills.find((skill) => skill.key === "installed-helper");
+
+    expect(installed?.session_count).toBe(0);
+    expect(filterLogicalSkills(skills, "整理")).toHaveLength(1);
+    expect(filterLogicalSkills(skills, "Projects/HumHum").map((skill) => skill.key)).toEqual([
+      "workspace-helper",
+    ]);
+  });
+
+  it("keeps the same session ID when usage belongs to different Agents", () => {
+    const codexCopy = asset("/codex/shared/SKILL.md", "shared", {
+      agent_id: "codex",
+      name: "Shared Skill",
+      usage_evidence: [
+        {
+          session_id: "same-session",
+          agent_id: "codex",
+          session_path: "/codex/sessions/same",
+          used_at: "2026-07-20T10:00:00Z",
+        },
+      ],
+    });
+    const claudeCopy = asset("/claude/shared/SKILL.md", "shared", {
+      agent_id: "claude",
+      name: "Shared Skill",
+      usage_evidence: [
+        {
+          session_id: "same-session",
+          agent_id: "claude",
+          session_path: "/claude/sessions/same",
+          used_at: "2026-07-20T10:00:00Z",
+        },
+      ],
+    });
+
+    const [skill] = groupLogicalSkills([codexCopy, claudeCopy]);
+
+    expect(skill?.session_count).toBe(2);
+    expect(skill?.sessions.map((session) => session.agent_id)).toEqual([
+      "claude",
+      "codex",
+    ]);
+  });
+
+  it("globally deduplicates the same Agent session across logical skills", () => {
+    const sharedEvidence = {
+      session_id: "shared-session",
+      agent_id: "codex",
+      session_path: "/sessions/shared",
+      used_at: "2026-07-20T10:00:00Z",
+    };
+    const skills = groupLogicalSkills([
+      asset("/codex/first/SKILL.md", "first", {
+        name: "First Skill",
+        usage_evidence: [sharedEvidence],
+      }),
+      asset("/codex/second/SKILL.md", "second", {
+        name: "Second Skill",
+        usage_evidence: [sharedEvidence],
+      }),
+    ]);
+
+    expect(countDistinctLogicalSkillSessions(skills)).toBe(1);
+  });
+
+  it("retains the newest parseable pre-2000 evidence for duplicate sessions", () => {
+    const firstCopy = asset("/codex/legacy/SKILL.md", "legacy", {
+      name: "Legacy Skill",
+      usage_evidence: [
+        {
+          session_id: "legacy-session",
+          agent_id: "codex",
+          session_path: "/sessions/legacy-first",
+          used_at: "1970-01-01T00:00:00Z",
+        },
+      ],
+    });
+    const secondCopy = asset("/claude/legacy/SKILL.md", "legacy", {
+      agent_id: "claude",
+      name: "Legacy Skill",
+      usage_evidence: [
+        {
+          session_id: "legacy-session",
+          agent_id: "codex",
+          session_path: "/sessions/legacy-newest",
+          used_at: "1971-01-01T00:00:00Z",
+        },
+      ],
+    });
+
+    const [skill] = groupLogicalSkills([firstCopy, secondCopy]);
+
+    expect(skill?.sessions).toHaveLength(1);
+    expect(skill?.sessions[0]?.session_path).toBe("/sessions/legacy-newest");
+    expect(skill?.sessions[0]?.used_at).toBe("1971-01-01T00:00:00Z");
+  });
+
+  it("orders real use, meaningful modification, then names with unknown dates last", () => {
+    const recentUse = asset("/skills/recent-use/SKILL.md", "recent", {
+      name: "recent-use",
+      modified_at: "2026-01-01T00:00:00Z",
+      usage_evidence: [
+        {
+          session_id: "recent-session",
+          agent_id: "codex",
+          session_path: "/sessions/recent",
+          used_at: "2026-07-20T12:00:00Z",
+        },
+      ],
+    });
+    const modifiedOnly = asset("/skills/modified-only/SKILL.md", "modified", {
+      name: "modified-only",
+      modified_at: "2026-07-19T12:00:00Z",
+    });
+    const invalidDate = asset("/skills/alpha-unknown/SKILL.md", "invalid", {
+      name: "alpha-unknown",
+      modified_at: "not-a-date",
+    });
+    const epochDate = asset("/skills/beta-unknown/SKILL.md", "epoch", {
+      name: "beta-unknown",
+      modified_at: "1970-01-01T00:00:01Z",
+    });
+    const epochUse = asset("/skills/epoch-use/SKILL.md", "epoch use", {
+      name: "epoch-use",
+      usage_evidence: [
+        {
+          session_id: "epoch-session",
+          agent_id: "codex",
+          session_path: "/sessions/epoch",
+          used_at: "1970-01-01T00:00:01Z",
+        },
+      ],
+    });
+
+    expect(
+      groupLogicalSkills([epochDate, epochUse, invalidDate, modifiedOnly, recentUse])
+        .map((skill) => skill.name),
+    ).toEqual([
+      "recent-use",
+      "modified-only",
+      "alpha-unknown",
+      "beta-unknown",
+      "epoch-use",
+    ]);
   });
 });

@@ -6,6 +6,8 @@ import { Bubble } from "./Bubble";
 import { PetCanvas } from "./PetCanvas";
 import { BubbleParticles, useBubbleTrail } from "./BubbleTrail";
 import { SessionDashboard } from "./SessionDashboard";
+import { useExpression } from "./expression/useExpression";
+import { expressionForEvent, nextAmbientExpression } from "./expression/triggers";
 import {
   drainLatestPetWindowResize,
   resizePetWindow,
@@ -28,6 +30,7 @@ import { t } from "../../lib/i18n";
 import { setLanguage } from "../../lib/i18n";
 import { getPathBasename } from "../../lib/path-display";
 import { pointerMovedBeyondDragThreshold } from "./petPointerInteraction";
+import { clearLatestTimeout, scheduleLatestTimeout } from "./latestTimeout";
 import type { PipelineState } from "../../lib/pipeline";
 import type { AppConfig, HookEvent, VoiceCommand, TranscriptEntry } from "../../types";
 
@@ -45,6 +48,7 @@ const PIPELINE_TO_PET: Record<PipelineState, string> = {
 };
 
 const COMPACT_HEIGHT = 210;
+const PEEK_HEIGHT = 290;
 const OVERLAY_HEIGHT = 460;
 const PERMISSION_HEIGHT = 650;
 const CONTEXT_MENU_WIDTH = 148;
@@ -56,6 +60,7 @@ export function PetView() {
   const { petState, setPetState } = usePetState();
   const { latestEvent } = useEventBus();
   const { pause: pauseAudio, play: playAudio, state: audioState } = useAudioQueue();
+  const { active: activeExpression, fire: fireExpression } = useExpression();
   const [summaryText, setSummaryText] = useState("");
   const [permissionQueue, setPermissionQueue] = useState<HookEvent[]>([]);
   const [notification, setNotification] = useState<TranscriptEntry | null>(null);
@@ -73,6 +78,15 @@ export function PetView() {
   const clickCount = useRef(0);
   const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const configRef = useRef<AppConfig | null>(null);
+  const completionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const notificationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const petStateResetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => {
+    clearLatestTimeout(completionTimer);
+    clearLatestTimeout(notificationTimer);
+    clearLatestTimeout(petStateResetTimer);
+  }, []);
 
   useEffect(() => {
     invoke<AppConfig>("get_config").then((cfg) => {
@@ -165,7 +179,9 @@ export function PetView() {
     ? PERMISSION_HEIGHT
     : hasActiveOverlay
       ? OVERLAY_HEIGHT
-      : COMPACT_HEIGHT;
+      : activeExpression
+        ? PEEK_HEIGHT
+        : COMPACT_HEIGHT;
 
   useEffect(() => {
     requestedWindowHeight.current = targetHeight;
@@ -304,12 +320,20 @@ export function PetView() {
   useEffect(() => {
     if (!latestEvent) return;
 
+    clearLatestTimeout(petStateResetTimer);
+    completionSpeaking.current = false;
+
     const eventName = latestEvent.hook_event_name;
     const payload = latestEvent.payload as Record<string, unknown>;
     const pipeline = getPipeline();
     const eventToolName = (payload.tool_name as string) || null;
 
     console.log("[PetView] Event received:", eventName, "pipeline:", pipeline ? "OK" : "NULL");
+
+    // Fire the corresponding bubble peek. The Director owns timing + cooldown,
+    // so callers below only need to manage state / toasts, not the peek itself.
+    const exprId = expressionForEvent(latestEvent);
+    if (exprId) fireExpression(exprId);
 
     if (isPetPresenceEvent(latestEvent)) {
       setPrimaryClient(latestEvent.client_type);
@@ -379,8 +403,11 @@ export function PetView() {
       setPetState("completed");
       setCompletionEvent(latestEvent);
       completionSpeaking.current = true;
-      setTimeout(() => {
-        setCompletionEvent(null);
+      const eventId = latestEvent.id;
+      scheduleLatestTimeout(completionTimer, () => {
+        setCompletionEvent((current) => current?.id === eventId ? null : current);
+      }, 8000);
+      scheduleLatestTimeout(petStateResetTimer, () => {
         completionSpeaking.current = false;
         setPetState("idle");
       }, 8000);
@@ -405,7 +432,10 @@ export function PetView() {
         timestamp: new Date(),
         type: "system",
       });
-      setTimeout(() => setNotification(null), 5000);
+      const notificationId = latestEvent.id;
+      scheduleLatestTimeout(notificationTimer, () => {
+        setNotification((current) => current?.id === notificationId ? null : current);
+      }, 5000);
       if (
         nativeNotificationKind(eventName, eventToolName) === "message" &&
         shouldSendNativeNotification("message", configRef.current?.ui.notifications)
@@ -420,14 +450,14 @@ export function PetView() {
         pipeline.processEvent(latestEvent).catch(console.error);
       } else {
         setPetState("processing");
-        setTimeout(() => setPetState("idle"), 3000);
+        scheduleLatestTimeout(petStateResetTimer, () => setPetState("idle"), 3000);
       }
     } else if (eventName === "PostToolUseFailure") {
       const failureMessage = [payload.message, payload.error, payload.tool_error]
         .find((value): value is string => typeof value === "string") ?? "";
       playSound(failureSoundEvent(failureMessage), configRef.current?.ui.sounds);
       setPetState("error");
-      setTimeout(() => setPetState("idle"), 5000);
+      scheduleLatestTimeout(petStateResetTimer, () => setPetState("idle"), 5000);
       if (pipeline) {
         pipeline.processEvent(latestEvent).catch(console.error);
       }
@@ -456,7 +486,25 @@ export function PetView() {
         }, 60000);
       }
     }
-  }, [latestEvent, setPetState]);
+  }, [latestEvent, setPetState, fireExpression]);
+
+  // --- Ambient Hype peek: give the pet variety while the agent is working ---
+  // Tool-activity events (PreToolUse/PostToolUse) are frequent and card-less, so
+  // they're the natural "agent is busy" signal. We throttle to once per window
+  // so the Hype faces appear periodically, not on every single tool call.
+  const AMBIENT_INTERVAL_MS = 20000;
+  const lastAmbientAtRef = useRef(0);
+  useEffect(() => {
+    if (!latestEvent) return;
+    const name = latestEvent.hook_event_name;
+    if (name !== "PreToolUse" && name !== "PostToolUse") return;
+    const toolName = (latestEvent.payload as Record<string, unknown>)?.tool_name;
+    if (toolName === "AskUserQuestion") return;
+    const now = Date.now();
+    if (now - lastAmbientAtRef.current < AMBIENT_INTERVAL_MS) return;
+    lastAmbientAtRef.current = now;
+    fireExpression(nextAmbientExpression());
+  }, [latestEvent, fireExpression]);
 
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
@@ -540,6 +588,15 @@ export function PetView() {
       ? summaryText || getBubbleText(petState)
       : getBubbleText(petState);
 
+  // Every overlay card (completion / confirm / notification / question) now
+  // embeds its own character face in the header. So the standalone peek bubble
+  // must stand down whenever a card is up — otherwise the same event shows two
+  // bubbles. The standalone peek only remains for card-less events (e.g. the
+  // failure "concern" peek, and future Hype skill peeks).
+  const cardShowing =
+    !!pendingPermission || !!notification || !!completionEvent || !!questionEvent;
+  const peekExpression = cardShowing ? null : activeExpression;
+
   const hasOverlay = !!pendingPermission || !!notification || !!questionEvent;
 
   // Ensure cursor events are never ignored at the OS level
@@ -608,8 +665,16 @@ export function PetView() {
         </div>
       )}
 
-      {/* Bubble */}
-      {!showDashboard && <Bubble state={petState} text={bubbleText} />}
+      {/* Bubble — active expression peek wins over the legacy state caption,
+          but only when no overlay card is showing (cards carry their own face). */}
+      {!showDashboard && (
+        <Bubble
+          state={petState}
+          text={peekExpression ? peekExpression.text : bubbleText}
+          character={peekExpression?.character}
+          image={peekExpression?.image}
+        />
+      )}
 
       {/* Pet body — draggable, click → dashboard, right-click → command menu */}
       <div

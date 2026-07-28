@@ -71,6 +71,16 @@ function selectorRule(root: Root, selector: string): Rule | undefined {
   return match;
 }
 
+function lastSelectorRule(root: Root, selector: string): Rule | undefined {
+  let match: Rule | undefined;
+  root.walkRules((rule) => {
+    if (rule.parent?.type === "root" && rule.selectors.includes(selector)) {
+      match = rule;
+    }
+  });
+  return match;
+}
+
 function declaration(rule: Rule | undefined, property: string): string | undefined {
   let value: string | undefined;
   rule?.walkDecls(property, (node) => {
@@ -292,6 +302,48 @@ describe("approved room composition contracts", () => {
     expect(humiSource).toContain("humi-conversation-stage");
     expect(humiSource).toContain("humi-message-avatar");
     expect(humiSource).not.toContain("humi-room-utility-header");
+  });
+
+  it("lets Humi fill the room and keeps the composer in the bottom layout row", () => {
+    const roomContent = lastSelectorRule(
+      characterRoomStyleRoot,
+      '.hub-room[data-room="humi"] .hub-room-content',
+    );
+    const workspace = lastSelectorRule(
+      characterRoomStyleRoot,
+      ".humi-workspace",
+    );
+    const openWorkspace = lastSelectorRule(
+      characterRoomStyleRoot,
+      ".humi-workspace.is-operations-open",
+    );
+    const conversation = lastSelectorRule(
+      characterRoomStyleRoot,
+      ".humi-conversation-stage",
+    );
+    const transcript = lastSelectorRule(
+      characterRoomStyleRoot,
+      ".humi-transcript",
+    );
+    const composer = lastSelectorRule(
+      characterRoomStyleRoot,
+      ".humi-composer-shell",
+    );
+
+    expect(declaration(roomContent, "height")).toBe("100%");
+    expect(declaration(workspace, "grid-template-columns")).toBe(
+      "minmax(0, 1fr)",
+    );
+    expect(declaration(openWorkspace, "grid-template-columns")).toBe(
+      "minmax(0, 1fr) 252px",
+    );
+    expect(declaration(conversation, "display")).toBe("grid");
+    expect(declaration(conversation, "grid-template-rows")).toBe(
+      "minmax(0, 1fr) auto",
+    );
+    expect(declaration(transcript, "overflow-y")).toBe("auto");
+    expect(declaration(composer, "position")).toBe("relative");
+    expect(declaration(composer, "bottom")).toBeUndefined();
   });
 
   it("keeps Hype's identity and dominant search action in one compact room header", () => {

@@ -1,21 +1,409 @@
+// @vitest-environment happy-dom
+
 import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { act, createElement } from "react";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const { invokeMock } = vi.hoisted(() => ({
+  invokeMock: vi.fn(),
+}));
+
+vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
+
 import {
+  KnowledgeModule,
   KnowledgeLoadGate,
   KnowledgeSearchToolbar,
   dispatchKnowledgeRefresh,
+  getAgentAssetScanSummary,
   runKnowledgeOperation,
 } from "./KnowledgeModule";
 
+declare global {
+  // eslint-disable-next-line no-var
+  var IS_REACT_ACT_ENVIRONMENT: boolean | undefined;
+}
+
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+
 const knowledgeModuleSource = readFileSync(
-  new URL("./KnowledgeModule.tsx", import.meta.url),
+  resolve(process.cwd(), "src/components/Hub/KnowledgeModule.tsx"),
   "utf8",
 );
 const characterRoomStyles = readFileSync(
-  new URL("../../styles/hub-character-rooms.css", import.meta.url),
+  resolve(process.cwd(), "src/styles/hub-character-rooms.css"),
   "utf8",
 );
+
+const emptyKnowledge = {
+  preferences: [],
+  memory_items: [],
+  agent_rules: [],
+  agent_assets: [],
+  obsidian_notes: [],
+  obsidian_vault: null,
+};
+
+describe("Hype asset refresh summary", () => {
+  it("counts unique logical skills using declared asset types", () => {
+    const baseSkill = {
+      id: "asset:codex-release",
+      asset_type: "skill",
+      agent_id: "codex",
+      name: "Release Helper",
+      file_path: "/Users/me/.codex/skills/release/SKILL.md",
+      relative_path: "release/SKILL.md",
+      source: "codex",
+      content: "release",
+      tags: [],
+    };
+    const assets = [
+      baseSkill,
+      {
+        ...baseSkill,
+        id: "asset:claude-release",
+        agent_id: "claude",
+        name: "release_helper",
+        file_path: "/Users/me/.claude/skills/release/SKILL.md",
+      },
+      {
+        ...baseSkill,
+        id: "asset:prompt-skill-filename",
+        asset_type: "prompt",
+        name: "Prompt descriptor",
+        file_path: "/Users/me/.codex/prompts/SKILL.md",
+      },
+      {
+        ...baseSkill,
+        id: "asset:agent",
+        asset_type: "agent",
+        name: "Builder Agent",
+        file_path: "/Users/me/.codex/agents/builder.md",
+      },
+    ];
+
+    expect(getAgentAssetScanSummary(assets)).toBe(
+      "已整理 4 项本地知识 · 1 个个人技能 · 1 个 Agent 配置",
+    );
+  });
+});
+
+describe("Hype automatic skill freshness", () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+    invokeMock.mockReset();
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "get_knowledge") return Promise.resolve(emptyKnowledge);
+      if (command === "scan_agent_assets") return Promise.resolve([]);
+      if (command === "check_hooks_status") return Promise.resolve({});
+      if (
+        command === "get_codex_bridge_health" ||
+        command === "check_qoder_acp_support" ||
+        command === "get_config"
+      ) {
+        return Promise.resolve(null);
+      }
+      return Promise.reject(new Error(`Unexpected invoke: ${command}`));
+    });
+  });
+
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("rescans real skill usage on the first Hype visit", async () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+
+    await act(async () => {
+      root.render(createElement(KnowledgeModule));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith("scan_agent_assets", {
+        roots: [
+          "~/.qoder",
+          "~/.qoderwork",
+          "~/.gemini",
+          "~/.qwen",
+          "~/.kimi",
+          "~/.pi",
+        ],
+      });
+    });
+
+    await vi.waitFor(() => {
+      expect(
+        invokeMock.mock.calls.filter(([command]) => command === "get_knowledge"),
+      ).toHaveLength(2);
+    });
+
+    await act(async () => root.unmount());
+  });
+
+  it("reuses the recent scan when Hype is reopened", async () => {
+    sessionStorage.setItem("humhum:hype:auto-skill-scan-at", String(Date.now()));
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+
+    await act(async () => {
+      root.render(createElement(KnowledgeModule));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(
+      invokeMock.mock.calls.filter(([command]) => command === "scan_agent_assets"),
+    ).toHaveLength(0);
+    expect(
+      invokeMock.mock.calls.filter(([command]) => command === "get_knowledge"),
+    ).toHaveLength(1);
+
+    await act(async () => root.unmount());
+  });
+});
+
+describe("Hype logical skill rows", () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+    sessionStorage.setItem("humhum:hype:auto-skill-scan-at", String(Date.now()));
+    invokeMock.mockReset();
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "get_knowledge") {
+        return Promise.resolve({
+          ...emptyKnowledge,
+          agent_assets: [
+            {
+              id: "asset:codex-humhum-hexa",
+              asset_type: "skill",
+              agent_id: "codex",
+              name: "humhum-hexa",
+              file_path: "/Users/me/.codex/skills/humhum-hexa/SKILL.md",
+              relative_path: "humhum-hexa/SKILL.md",
+              source: "codex",
+              content: "Codex copy",
+              tags: [],
+              ownership: "created",
+              usage_evidence: [
+                {
+                  session_id: "older-session",
+                  agent_id: "codex",
+                  session_path: "/Users/me/.codex/sessions/older.jsonl",
+                  workspace: "/Users/me/Projects/older-work",
+                  used_at: "2026-07-19T09:00:00Z",
+                },
+              ],
+            },
+            {
+              id: "asset:claude-humhum-hexa",
+              asset_type: "skill",
+              agent_id: "claude-code",
+              name: "HumHum_Hexa",
+              file_path: "/Users/me/.claude/skills/humhum-hexa/SKILL.md",
+              relative_path: "humhum-hexa/SKILL.md",
+              source: "claude",
+              content: "Claude copy",
+              tags: [],
+              ownership: "created",
+              usage_evidence: [
+                {
+                  session_id: "newest-session",
+                  agent_id: "claude-code",
+                  session_path: "/Users/me/.claude/sessions/newest.jsonl",
+                  workspace: "/Users/me/Projects/newest-work",
+                  used_at: "2026-07-20T09:00:00Z",
+                },
+              ],
+            },
+            {
+              id: "asset:unknown-time-skill",
+              asset_type: "skill",
+              agent_id: "claude-code",
+              name: "Unknown-time skill",
+              file_path: "/Users/me/.claude/skills/unknown-time/SKILL.md",
+              relative_path: "unknown-time/SKILL.md",
+              source: "claude",
+              content: "Unknown time copy",
+              tags: [],
+              ownership: "created",
+              usage_evidence: [
+                {
+                  session_id: "newest-session",
+                  agent_id: "claude-code",
+                  session_path: "/Users/me/.claude/sessions/newest.jsonl",
+                  workspace: "/Users/me/Projects/newest-work",
+                  used_at: null,
+                },
+              ],
+            },
+            {
+              id: "asset:release-prompt",
+              asset_type: "prompt",
+              agent_id: "codex",
+              name: "Release prompt",
+              file_path: "/Users/me/.codex/prompts/release.md",
+              relative_path: "prompts/release.md",
+              source: "codex",
+              content: "Keep releases reversible.",
+              tags: [],
+              ownership: "created",
+              modified_at: "2026-07-18T09:00:00Z",
+            },
+            {
+              id: "asset:typed-skill-custom-filename",
+              asset_type: "skill",
+              agent_id: "codex",
+              name: "Filename-independent skill",
+              file_path: "/Users/me/.codex/skills/custom-skill.md",
+              relative_path: "skills/custom-skill.md",
+              source: "codex",
+              content: "A scanner-confirmed skill.",
+              tags: [],
+              ownership: "created",
+            },
+            {
+              id: "asset:prompt-named-skill-file",
+              asset_type: "prompt",
+              agent_id: "codex",
+              name: "Prompt named skill descriptor",
+              file_path: "/Users/me/.codex/prompts/SKILL.md",
+              relative_path: "prompts/SKILL.md",
+              source: "codex",
+              content: "This remains a prompt.",
+              tags: [],
+              ownership: "created",
+            },
+          ],
+        });
+      }
+      if (command === "check_hooks_status") return Promise.resolve({});
+      if (
+        command === "get_codex_bridge_health" ||
+        command === "check_qoder_acp_support" ||
+        command === "get_config"
+      ) {
+        return Promise.resolve(null);
+      }
+      return Promise.reject(new Error(`Unexpected invoke: ${command}`));
+    });
+  });
+
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("shows one skill row with newest sessions and every source in its details", async () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+
+    await act(async () => {
+      root.render(createElement(KnowledgeModule));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() => {
+      expect(
+        host.querySelectorAll(
+          ".hype-logical-skill-row .hype-asset-name strong",
+        ),
+      ).toHaveLength(3);
+    });
+    const logicalSkillText = [...host.querySelectorAll(".hype-logical-skill-row")]
+      .map((row) => row.textContent)
+      .join(" ");
+    expect(logicalSkillText).toContain("Filename-independent skill");
+    expect(logicalSkillText).not.toContain("Prompt named skill descriptor");
+    expect(host.textContent).toContain("2 个 Agent");
+    expect(host.textContent).toContain("2 个会话");
+    expect(host.textContent).toContain("Release prompt");
+    expect(host.textContent).toContain("Prompt named skill descriptor");
+
+    const row = host.querySelector<HTMLButtonElement>(
+      ".hype-logical-skill-row .hype-asset-row",
+    );
+    await act(async () => row?.click());
+
+    const expanded = host.querySelector(".hype-asset-expanded");
+    const details = expanded?.textContent ?? "";
+    const sourcePaths = [...(expanded?.querySelectorAll("code") ?? [])].map(
+      (code) => code.getAttribute("title"),
+    );
+    expect(sourcePaths).toContain("/Users/me/.codex/skills/humhum-hexa/SKILL.md");
+    expect(sourcePaths).toContain("/Users/me/.claude/skills/humhum-hexa/SKILL.md");
+    expect(details).toContain("~/.codex/skills/humhum-hexa/SKILL.md");
+    expect(details).toContain("~/.claude/skills/humhum-hexa/SKILL.md");
+    expect(details.indexOf("newest-work")).toBeLessThan(details.indexOf("older-work"));
+
+    await act(async () => root.unmount());
+  });
+
+  it("shows unknown usage time when sessions exist without a meaningful timestamp", async () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+
+    await act(async () => {
+      root.render(createElement(KnowledgeModule));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const row = await vi.waitFor(() => {
+      const found = [...host.querySelectorAll(".hype-logical-skill-row")].find(
+        (item) => item.textContent?.includes("Unknown-time skill"),
+      );
+      if (!found) throw new Error("Unknown-time skill row was not rendered");
+      return found;
+    });
+    expect(row.querySelector("time")?.textContent).toBe("使用时间未知");
+    expect(row.querySelector("time")?.textContent).not.toBe("未发现使用记录");
+    await act(async () => {
+      row.querySelector<HTMLButtonElement>(".hype-asset-row")?.click();
+    });
+    expect(
+      row.querySelector(".hype-skill-session-row time")?.textContent,
+    ).toBe("使用时间未知");
+
+    await act(async () => root.unmount());
+  });
+
+  it("omits version evidence when skill content does not differ", async () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+
+    await act(async () => {
+      root.render(createElement(KnowledgeModule));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const row = await vi.waitFor(() => {
+      const found = [...host.querySelectorAll(".hype-logical-skill-row")].find(
+        (item) => item.textContent?.includes("Unknown-time skill"),
+      );
+      if (!found) throw new Error("Unknown-time skill row was not rendered");
+      return found;
+    });
+    await act(async () => {
+      row.querySelector<HTMLButtonElement>(".hype-asset-row")?.click();
+    });
+
+    expect(row.textContent).not.toContain("内容版本一致");
+    expect(row.textContent).not.toContain("发现内容不同的版本");
+
+    await act(async () => root.unmount());
+  });
+});
 
 describe("Hype refresh routing", () => {
   it.each(["assets", "preferences", "rules", "memory"] as const)(

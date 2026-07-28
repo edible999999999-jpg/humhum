@@ -63,7 +63,7 @@ export function HubNavigationItem({
   return (
     <button
       type="button"
-      className={`hub-sidebar-item hub-nav-item hub-nav-item-${room} ${active ? "active" : ""}`}
+      className={`hub-sidebar-item hub-module-nav-item hub-nav-item hub-nav-item-${room} ${active ? "active" : ""}`}
       onClick={onSelect}
       aria-label={label}
       aria-current={active ? "page" : undefined}

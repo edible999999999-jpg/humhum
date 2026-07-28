@@ -165,6 +165,12 @@ export interface AppConfig {
     model: string;
     max_tokens: number;
   };
+  brain: {
+    schema_version: number;
+    initialized: boolean;
+    primary_provider?: "codex" | "qoder" | "claude";
+    fallback_enabled: boolean;
+  };
   pi: {
     url: string;
     token?: string;
@@ -235,6 +241,7 @@ export interface Preference {
   content: string;
   source: string;
   priority: number;
+  modified_at?: string | null;
 }
 
 export interface AgentRule {
@@ -243,6 +250,7 @@ export interface AgentRule {
   rule_type: string;
   file_path: string;
   content: string;
+  modified_at?: string | null;
 }
 
 export interface MemoryItem {
@@ -250,6 +258,7 @@ export interface MemoryItem {
   agent_id: string;
   content: string;
   temperature: string;
+  modified_at?: string | null;
 }
 
 export interface ObsidianVaultConfig {
@@ -289,11 +298,36 @@ export interface AgentAsset {
   relative_path: string;
   source: string;
   content: string;
+  content_hash?: string | null;
   tags: string[];
   modified_at?: string | null;
+  last_used_at?: string | null;
   ownership?: "created" | "installed" | string | null;
   display_name_zh?: string | null;
   summary_zh?: string | null;
+  usage_evidence?: SkillUsageEvidence[];
+}
+
+export interface SkillUsageEvidence {
+  session_id: string;
+  agent_id: string;
+  session_path: string;
+  workspace?: string | null;
+  used_at?: string | null;
+}
+
+export interface LogicalSkill {
+  key: string;
+  name: string;
+  display_name_zh?: string | null;
+  summary: string;
+  copies: AgentAsset[];
+  sessions: SkillUsageEvidence[];
+  latest_used_at?: string | null;
+  latest_modified_at?: string | null;
+  session_count: number;
+  agent_count: number;
+  has_multiple_versions: boolean;
 }
 
 export interface KnowledgeData {

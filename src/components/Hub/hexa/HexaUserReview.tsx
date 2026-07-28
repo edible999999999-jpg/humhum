@@ -66,7 +66,7 @@ export function HexaUserReview({
       </div>
       {rating && (
         <div className="hexa-review-note">
-          <input className="kawaii-input" value={summary} onChange={(event) => setSummary(event.target.value)} placeholder="可选：说说哪里做得好，或哪里需要改进" />
+          <input aria-label="本轮复盘补充说明" className="kawaii-input" value={summary} onChange={(event) => setSummary(event.target.value)} placeholder="可选：说说哪里做得好，或哪里需要改进" />
           <button type="button" className="kawaii-toggle-btn connected" onClick={() => void save()} disabled={state === "saving"}>
             <Save size={14} /> {state === "saved" ? "已记录" : "记录复盘"}
           </button>

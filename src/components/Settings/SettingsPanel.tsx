@@ -38,6 +38,21 @@ interface SoundPackInfo {
   available_events: SoundEvent[];
 }
 
+type HumiBrainProvider = "codex" | "qoder" | "claude";
+
+interface HumiBrainStatus {
+  initialized: boolean;
+  primary_provider?: HumiBrainProvider | null;
+  fallback_enabled: boolean;
+  providers: Array<{
+    provider: HumiBrainProvider;
+    display_name: string;
+    ready: boolean;
+    status: string;
+    detail: string;
+  }>;
+}
+
 const LANG_TO_STT: Record<string, string> = { zh: "zh-CN", en: "en-US" };
 
 export function SettingsPanel({ onClose }: SettingsPanelProps) {
@@ -61,11 +76,13 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
   const [soundPacks, setSoundPacks] = useState<SoundPackInfo[]>([]);
   const [soundPackLoading, setSoundPackLoading] = useState(false);
   const [statsClearing, setStatsClearing] = useState(false);
+  const [brainStatus, setBrainStatus] = useState<HumiBrainStatus | null>(null);
+  const [brainChanging, setBrainChanging] = useState(false);
 
   useEffect(() => {
     (async () => {
       try {
-        const [cfg, status, clientList, awake, autostart, remote, packs] = await Promise.all([
+        const [cfg, status, clientList, awake, autostart, remote, packs, brain] = await Promise.all([
           invoke<AppConfig>("get_config"),
           invoke<Record<string, boolean>>("check_hooks_status"),
           invoke<Array<{ id: string; name: string }>>("get_supported_clients"),
@@ -73,6 +90,7 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
           invoke<boolean>("get_launch_at_login"),
           invoke<RemoteBridgeStatus>("get_remote_bridge_status"),
           invoke<SoundPackInfo[]>("get_sound_packs"),
+          invoke<HumiBrainStatus>("get_humi_brain_status"),
         ]);
         setConfig(cfg as AppConfig);
         setLanguage((cfg as AppConfig).ui.language as "zh" | "en");
@@ -82,6 +100,7 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
         setLaunchAtLogin(autostart);
         setRemoteBridge(remote);
         setSoundPacks(packs);
+        setBrainStatus(brain);
         setRemoteTarget(remote.target ?? "");
       } catch (e) {
         console.error("Failed to load settings:", e);
@@ -96,6 +115,9 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
       invoke<RemoteBridgeStatus>("get_remote_bridge_status")
         .then(setRemoteBridge)
         .catch(() => undefined);
+      invoke<HumiBrainStatus>("get_humi_brain_status")
+        .then(setBrainStatus)
+        .catch(() => undefined);
     }, 3000);
     return () => clearInterval(interval);
   }, []);
@@ -103,8 +125,11 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
   const handleSave = useCallback(async () => {
     if (!config) return;
     const piUrl = config.pi.url.trim().replace(/\/$/, "");
-    if (!piUrl || !config.pi.model_name.trim()) {
-      setMessage({ type: "error", text: "请填写 Pi 的 URL 和 model_name" });
+    if (
+      config.brain.fallback_enabled &&
+      (!piUrl || !config.pi.model_name.trim() || !config.pi.token?.trim())
+    ) {
+      setMessage({ type: "error", text: "开启 Pi 备用时，请填写 URL、Token 和 model_name" });
       return;
     }
     setSaving(true);
@@ -129,6 +154,28 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
       setSaving(false);
     }
   }, [config]);
+
+  const handleBrainSelect = useCallback(async (provider: HumiBrainProvider) => {
+    setBrainChanging(true);
+    setMessage(null);
+    try {
+      const status = await invoke<HumiBrainStatus>("set_humi_brain_provider", { provider });
+      setBrainStatus(status);
+      setConfig((current) => current ? {
+        ...current,
+        brain: {
+          ...current.brain,
+          initialized: true,
+          primary_provider: provider,
+        },
+      } : current);
+      setMessage({ type: "success", text: `${status.providers.find((item) => item.provider === provider)?.display_name ?? provider} 已成为 Humi 大脑` });
+    } catch (error) {
+      setMessage({ type: "error", text: String(error) });
+    } finally {
+      setBrainChanging(false);
+    }
+  }, []);
 
   const handleClearStats = async () => {
     setStatsClearing(true);
@@ -843,54 +890,100 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
           </div>
         </KawaiiCard>
 
-        {/* Pi Agent — the only model configuration Humi needs */}
-        <KawaiiCard icon="~" title="Pi Agent" subtitle="Humi 的聊天和理解都由 Pi 负责">
+        <KawaiiCard icon="~" title="Humi 大脑" subtitle="使用 Agent 已有登录，Pi 仅作可选备用">
           <div className="space-y-3">
             <div>
-              <label className="kawaii-label">URL</label>
+              <label className="kawaii-label">主要 Agent</label>
+              <select
+                value={config.brain.primary_provider ?? ""}
+                onChange={(event) => {
+                  const provider = event.target.value as HumiBrainProvider;
+                  if (provider) void handleBrainSelect(provider);
+                }}
+                disabled={brainChanging}
+                className="kawaii-input"
+              >
+                <option value="">选择一个可用 Agent</option>
+                {brainStatus?.providers.map((provider) => (
+                  <option
+                    key={provider.provider}
+                    value={provider.provider}
+                    disabled={!provider.ready}
+                  >
+                    {provider.display_name}
+                    {provider.ready ? "" : ` · ${provider.detail}`}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <label className="flex items-center justify-between gap-3">
+              <span>
+                <strong className="block text-sm text-white/85">Pi 备用</strong>
+                <span className="text-xs text-white/50">主要 Agent 无法连接时才使用</span>
+              </span>
               <input
-                type="url"
-                value={config.pi.url}
-                onChange={(e) =>
-                  updateConfig((c) => ({
-                    ...c,
-                    pi: { ...c.pi, url: e.target.value },
+                type="checkbox"
+                checked={config.brain.fallback_enabled}
+                onChange={(event) =>
+                  updateConfig((current) => ({
+                    ...current,
+                    brain: {
+                      ...current.brain,
+                      fallback_enabled: event.target.checked,
+                    },
                   }))
                 }
-                placeholder="https://api.openai.com/v1"
-                className="kawaii-input"
               />
-            </div>
-            <div>
-              <label className="kawaii-label">Token</label>
-              <input
-                type="password"
-                value={config.pi.token ?? ""}
-                onChange={(e) =>
-                  updateConfig((c) => ({
-                    ...c,
-                    pi: { ...c.pi, token: e.target.value || undefined },
-                  }))
-                }
-                placeholder="输入 Token"
-                className="kawaii-input"
-              />
-            </div>
-            <div>
-              <label className="kawaii-label">model_name</label>
-              <input
-                type="text"
-                value={config.pi.model_name}
-                onChange={(e) =>
-                  updateConfig((c) => ({
-                    ...c,
-                    pi: { ...c.pi, model_name: e.target.value },
-                  }))
-                }
-                placeholder="gpt-4o-mini"
-                className="kawaii-input"
-              />
-            </div>
+            </label>
+            {config.brain.fallback_enabled && (
+              <>
+                <div>
+                  <label className="kawaii-label">URL</label>
+                  <input
+                    type="url"
+                    value={config.pi.url}
+                    onChange={(e) =>
+                      updateConfig((c) => ({
+                        ...c,
+                        pi: { ...c.pi, url: e.target.value },
+                      }))
+                    }
+                    placeholder="https://api.openai.com/v1"
+                    className="kawaii-input"
+                  />
+                </div>
+                <div>
+                  <label className="kawaii-label">Token</label>
+                  <input
+                    type="password"
+                    value={config.pi.token ?? ""}
+                    onChange={(e) =>
+                      updateConfig((c) => ({
+                        ...c,
+                        pi: { ...c.pi, token: e.target.value || undefined },
+                      }))
+                    }
+                    placeholder="输入 Token"
+                    className="kawaii-input"
+                  />
+                </div>
+                <div>
+                  <label className="kawaii-label">model_name</label>
+                  <input
+                    type="text"
+                    value={config.pi.model_name}
+                    onChange={(e) =>
+                      updateConfig((c) => ({
+                        ...c,
+                        pi: { ...c.pi, model_name: e.target.value },
+                      }))
+                    }
+                    placeholder="gpt-4o-mini"
+                    className="kawaii-input"
+                  />
+                </div>
+              </>
+            )}
           </div>
         </KawaiiCard>
 

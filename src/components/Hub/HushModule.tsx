@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { runHushReplySkill } from "../../lib/hush/replySkill";
 import {
   ChevronDown,
   ExternalLink,
@@ -18,6 +19,7 @@ import {
   compareHushContacts,
   filterHushContacts,
   filterHushContactsByName,
+  formatHushConversationTime,
   formatHushMessageText,
   getHushChatScope,
   getHushConversationScope,
@@ -27,7 +29,6 @@ import {
   getHushPlatformIdentity,
   getHushPriorityLabel,
   getHushUnreadCount,
-  getVisibleHushSuggestedReply,
   groupHushMessages,
   migrateHushConversationState,
   parseHushConversationState,
@@ -383,19 +384,6 @@ export function HushModule() {
     return () => clearInterval(interval);
   }, [fetchHealthSignals]);
 
-  useEffect(() => {
-    let disposed = false;
-    let unlisten: (() => void) | undefined;
-    listen("humhum://hush-message", () => fetchInbox()).then((stop) => {
-      if (disposed) stop();
-      else unlisten = stop;
-    });
-    return () => {
-      disposed = true;
-      unlisten?.();
-    };
-  }, [fetchInbox]);
-
   const fetchNotificationBridge = useCallback(async () => {
     try {
       const status = await invoke<NotificationBridgeStatus>(
@@ -418,30 +406,39 @@ export function HushModule() {
     return () => clearInterval(interval);
   }, [fetchNotificationBridge]);
 
-  const fetchDwsStatus = useCallback(async () => {
-    try {
-      const status = await invoke<DwsHushStatus>("get_hush_dws_status");
-      setDwsStatus(status);
-    } catch (error) {
-      setDwsStatus((current) => ({
-        state: "error",
-        message: String(error),
-        executable_source: current?.executable_source ?? null,
-        executable_path: current?.executable_path ?? null,
-        authenticated: current?.authenticated ?? false,
-        auto_sync_enabled: current?.auto_sync_enabled ?? false,
-        sync_interval_minutes: current?.sync_interval_minutes ?? 5,
-        last_success_at: current?.last_success_at ?? null,
-        last_attempt_at: current?.last_attempt_at ?? null,
-        syncing: false,
-        pending_sync: current?.pending_sync ?? false,
-      }));
-    }
+  const dwsStatusRequest = useRef<Promise<void> | null>(null);
+  const fetchDwsStatus = useCallback((): Promise<void> => {
+    if (dwsStatusRequest.current) return dwsStatusRequest.current;
+
+    const request = (async () => {
+      try {
+        const status = await invoke<DwsHushStatus>("get_hush_dws_status");
+        setDwsStatus(status);
+      } catch (error) {
+        setDwsStatus((current) => ({
+          state: "error",
+          message: String(error),
+          executable_source: current?.executable_source ?? null,
+          executable_path: current?.executable_path ?? null,
+          authenticated: current?.authenticated ?? false,
+          auto_sync_enabled: current?.auto_sync_enabled ?? false,
+          sync_interval_minutes: current?.sync_interval_minutes ?? 1,
+          last_success_at: current?.last_success_at ?? null,
+          last_attempt_at: current?.last_attempt_at ?? null,
+          syncing: false,
+          pending_sync: current?.pending_sync ?? false,
+        }));
+      }
+    })().finally(() => {
+      if (dwsStatusRequest.current === request) dwsStatusRequest.current = null;
+    });
+    dwsStatusRequest.current = request;
+    return request;
   }, []);
 
   useEffect(() => {
     fetchDwsStatus();
-    const interval = setInterval(fetchDwsStatus, 10000);
+    const interval = setInterval(fetchDwsStatus, 60_000);
     return () => clearInterval(interval);
   }, [fetchDwsStatus]);
 
@@ -475,6 +472,23 @@ export function HushModule() {
     const interval = setInterval(fetchWechatStatus, 10000);
     return () => clearInterval(interval);
   }, [fetchWechatStatus]);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    listen("humhum://hush-message", () => {
+      void fetchInbox();
+      void fetchDwsStatus();
+      void fetchWechatStatus();
+    }).then((stop) => {
+      if (disposed) stop();
+      else unlisten = stop;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [fetchDwsStatus, fetchInbox, fetchWechatStatus]);
 
   const openFullDiskAccess = useCallback(async () => {
     try {
@@ -620,6 +634,19 @@ export function HushModule() {
     }
   }, []);
 
+  const refreshHush = useCallback(async () => {
+    const tasks: Promise<unknown>[] = [fetchInbox()];
+    if (dwsStatus?.authenticated) tasks.push(syncDws());
+    if (wechatStatus?.readiness === "ready") tasks.push(syncWechat());
+    await Promise.all(tasks);
+  }, [
+    dwsStatus?.authenticated,
+    fetchInbox,
+    syncDws,
+    syncWechat,
+    wechatStatus?.readiness,
+  ]);
+
   const contacts = useMemo<DerivedContact[]>(() => {
     const map = new Map<string, DerivedContact>();
     for (const message of inbox?.messages ?? []) {
@@ -759,11 +786,19 @@ export function HushModule() {
         <button
           type="button"
           className="hush-header-refresh"
-          onClick={() => void fetchInbox()}
-          aria-label="刷新 Hush 会话"
-          title="刷新"
+          onClick={() => void refreshHush()}
+          disabled={dwsSyncing}
+          aria-label="同步并刷新钉钉消息"
+          title={
+            dwsStatus?.authenticated ? "同步并刷新钉钉消息" : "刷新本地消息"
+          }
         >
-          <RefreshCw size={16} strokeWidth={1.8} aria-hidden="true" />
+          <RefreshCw
+            className={dwsSyncing ? "is-spinning" : ""}
+            size={16}
+            strokeWidth={1.8}
+            aria-hidden="true"
+          />
         </button>
         <div className="hush-filter-control" aria-label="消息筛选">
           {(
@@ -881,6 +916,7 @@ export function HushModule() {
           <section className="hush-message-pane" aria-label="消息记录">
             {selectedContact ? (
               <ConversationDetail
+                key={`${selectedContact.id}:${selectedContact.lastMessageTime}`}
                 contact={selectedContact}
                 attention={conversationState.attentionIds.includes(
                   selectedContact.id,
@@ -1718,7 +1754,7 @@ function DwsPanel({
             disabled={!status?.authenticated || autoUpdating}
             onChange={(event) => onAutoSyncChange(event.target.checked)}
           />
-          每 {status?.sync_interval_minutes ?? 5} 分钟自动同步
+          每 {status?.sync_interval_minutes ?? 1} 分钟自动同步
         </label>
         {report && (
           <div className="hush-sync-report">
@@ -1808,7 +1844,6 @@ function LiveInboxPanel({
         ) : (
           <div className="hush-live-list">
             {messages.slice(0, 8).map((message) => {
-              const suggestedReply = getVisibleHushSuggestedReply(message);
               const scope = getHushChatScope(message);
               return (
                 <div className="hush-live-row" key={message.id}>
@@ -1820,12 +1855,6 @@ function LiveInboxPanel({
                   </small>
                   {message.preview_limited && (
                     <small>{t("hub.hush.bridge.limitedPreview")}</small>
-                  )}
-                  {suggestedReply && (
-                    <small>
-                      建议回复：
-                      {formatHushMessageText(suggestedReply)}
-                    </small>
                   )}
                 </div>
               );
@@ -1952,8 +1981,11 @@ export function HushContactRow({
         <span className="hush-contact-copy">
           <span className="hush-contact-heading">
             <strong>{contact.name}</strong>
-            <time dateTime={contact.lastMessageTime}>
-              {formatTime(contact.lastMessageTime)}
+            <time
+              dateTime={contact.lastMessageTime}
+              title={new Date(contact.lastMessageTime).toLocaleString()}
+            >
+              {formatHushConversationTime(contact.lastMessageTime)}
             </time>
           </span>
           <span className="hush-contact-sources">
@@ -2006,8 +2038,45 @@ function ConversationDetail({
   attention: boolean;
 }) {
   const { t } = useTranslation();
+  const [replySuggestion, setReplySuggestion] = useState<string | null>(null);
+  const [replyError, setReplyError] = useState<string | null>(null);
+  const [replyLoading, setReplyLoading] = useState(false);
   const groups = groupHushMessages(contact.messages);
   const conversationScope = getHushConversationScope(contact.messages);
+  const replyContext = contact.messages
+    .filter((message) => !message.preview_limited && message.text.trim())
+    .sort(
+      (left, right) =>
+        Date.parse(left.received_at) - Date.parse(right.received_at),
+    )
+    .map(({ sender, text, received_at }) => ({
+      sender,
+      text,
+      received_at,
+    }));
+  const canSuggest =
+    conversationScope === "direct" && replyContext.length > 0;
+
+  const requestReplySuggestion = async () => {
+    if (!canSuggest || replyLoading) return;
+    setReplyLoading(true);
+    setReplyError(null);
+    try {
+      const suggestion = await runHushReplySkill({
+        conversationName: contact.name,
+        messages: replyContext,
+      });
+      setReplySuggestion(suggestion);
+    } catch (error) {
+      setReplyError(
+        error instanceof Error
+          ? error.message
+          : "暂时没有生成建议，请稍后重试。",
+      );
+    } finally {
+      setReplyLoading(false);
+    }
+  };
 
   return (
     <div className="hush-conversation-detail">
@@ -2046,32 +2115,54 @@ function ConversationDetail({
               </time>
             </header>
             <div className="hush-message-lines">
-              {group.messages.map((message) => {
-                const suggestedReply = getVisibleHushSuggestedReply(message);
-                return (
-                  <div className="hush-message-line" key={message.id}>
-                    <p>{message.text}</p>
-                    {message.preview_limited && (
-                      <div className="hush-message-warning">
-                        {t("hub.hush.bridge.limitedPreview")}
-                      </div>
-                    )}
-                    {suggestedReply && (
-                      <div className="hush-message-suggestion">
-                        <MessageCircle size={13} aria-hidden="true" />
-                        <span>
-                          {t("hub.hush.suggestedReplies")}：
-                          {suggestedReply}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+              {group.messages.map((message) => (
+                <div className="hush-message-line" key={message.id}>
+                  <p>{message.text}</p>
+                  {message.preview_limited && (
+                    <div className="hush-message-warning">
+                      {t("hub.hush.bridge.limitedPreview")}
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
           </section>
         ))}
       </div>
+
+      {canSuggest && (
+        <div className="hush-reply-skill">
+          {replySuggestion && (
+            <div
+              className="hush-reply-skill-suggestion"
+              aria-live="polite"
+            >
+              <MessageCircle size={14} aria-hidden="true" />
+              <span>{replySuggestion}</span>
+            </div>
+          )}
+          {replyError && (
+            <div className="hush-reply-skill-error" role="status">
+              {replyError}
+            </div>
+          )}
+          <button
+            type="button"
+            className="hush-reply-skill-trigger"
+            disabled={replyLoading}
+            onClick={() => void requestReplySuggestion()}
+          >
+            <MessageCircle size={14} aria-hidden="true" />
+            {replyLoading
+              ? "正在生成..."
+              : replySuggestion
+                ? "重新生成"
+                : replyError
+                  ? "重试建议"
+                  : "建议回复"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
