@@ -35,9 +35,7 @@ use crate::stats_store::StatsStore;
 use crate::transcript_reader::parse_transcript_signals;
 use crate::user_safe_text::project_user_safe_text;
 use crate::wake_guard::{WakeGuardState, WakeGuardStatus};
-use crate::wechat_hush_bridge::{
-    WechatHushBridge, WechatHushStatus, WechatSyncReport,
-};
+use crate::wechat_hush_bridge::{WechatHushBridge, WechatHushStatus, WechatSyncReport};
 use crate::window_focus;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -268,15 +266,40 @@ pub async fn get_mobile_bridge_status(
 pub async fn enable_mobile_bridge(
     app: AppHandle,
     state: State<'_, Arc<MobileBridgeState>>,
+    config: State<'_, Arc<std::sync::Mutex<AppConfig>>>,
 ) -> Result<MobileBridgeStatus, String> {
-    state.inner().enable(app).await
+    let status = state.inner().enable(app).await?;
+    let save_result = persist_mobile_access_preference(config.inner(), true);
+    if let Err(error) = save_result {
+        let _ = state.disable();
+        return Err(format!(
+            "Mobile access started but its restart preference could not be saved: {error}"
+        ));
+    }
+    Ok(status)
 }
 
 #[tauri::command]
 pub async fn disable_mobile_bridge(
     state: State<'_, Arc<MobileBridgeState>>,
+    config: State<'_, Arc<std::sync::Mutex<AppConfig>>>,
 ) -> Result<MobileBridgeStatus, String> {
+    persist_mobile_access_preference(config.inner(), false)?;
     state.disable()
+}
+
+pub(crate) fn persist_mobile_access_preference(
+    config: &Arc<std::sync::Mutex<AppConfig>>,
+    enabled: bool,
+) -> Result<(), String> {
+    let mut config = config
+        .lock()
+        .map_err(|error| format!("Lock error: {error}"))?;
+    let mut updated = config.clone();
+    updated.mobile_access_enabled = enabled;
+    updated.save()?;
+    *config = updated;
+    Ok(())
 }
 
 #[tauri::command]
@@ -823,6 +846,23 @@ pub async fn hexa_send_opencode_message(
     .await
 }
 
+#[tauri::command]
+pub async fn hexa_send_qoder_message(
+    store: State<'_, Arc<std::sync::Mutex<SessionStore>>>,
+    queue: State<'_, Arc<std::sync::Mutex<InterventionQueue>>>,
+    session_id: String,
+    message: String,
+) -> Result<CodexSendReceipt, String> {
+    enqueue_and_deliver_cli_message(
+        &store,
+        &queue,
+        InterventionProvider::Qoder,
+        &session_id,
+        &message,
+    )
+    .await
+}
+
 pub(crate) async fn enqueue_and_deliver_cli_message(
     store: &std::sync::Mutex<SessionStore>,
     queue: &std::sync::Mutex<InterventionQueue>,
@@ -830,12 +870,21 @@ pub(crate) async fn enqueue_and_deliver_cli_message(
     session_id: &str,
     message: &str,
 ) -> Result<CodexSendReceipt, String> {
-    let (client_type, label) = match provider {
-        InterventionProvider::Claude => ("claude-code", "Claude"),
-        InterventionProvider::OpenCode => ("opencode", "OpenCode"),
+    let (workspace, qoder_surface) = match provider {
+        InterventionProvider::Claude => (
+            cli_followup_workspace(store, session_id, "claude-code", "Claude")?,
+            None,
+        ),
+        InterventionProvider::OpenCode => (
+            cli_followup_workspace(store, session_id, "opencode", "OpenCode")?,
+            None,
+        ),
+        InterventionProvider::Qoder => {
+            let (workspace, surface) = qoder_followup_target(store, session_id)?;
+            (workspace, Some(surface))
+        }
         InterventionProvider::Codex => return Err("Codex uses the app-server transport".into()),
     };
-    let workspace = cli_followup_workspace(store, session_id, client_type, label)?;
     let entry = queue
         .lock()
         .map_err(|error| format!("Queue lock error: {error}"))?
@@ -857,6 +906,15 @@ pub(crate) async fn enqueue_and_deliver_cli_message(
         }
         InterventionProvider::OpenCode => {
             deliver_queued_opencode_message(queue, &entry.id, &workspace).await
+        }
+        InterventionProvider::Qoder => {
+            deliver_queued_qoder_message(
+                queue,
+                &entry.id,
+                &workspace,
+                qoder_surface.expect("Qoder surface is resolved with its workspace"),
+            )
+            .await
         }
         InterventionProvider::Codex => unreachable!(),
     };
@@ -991,6 +1049,31 @@ pub async fn hexa_retry_opencode_message(
 }
 
 #[tauri::command]
+pub async fn hexa_retry_qoder_message(
+    store: State<'_, Arc<std::sync::Mutex<SessionStore>>>,
+    queue: State<'_, Arc<std::sync::Mutex<InterventionQueue>>>,
+    intervention_id: String,
+) -> Result<CodexSendReceipt, String> {
+    let entry = queue
+        .lock()
+        .map_err(|error| format!("Queue lock error: {error}"))?
+        .entries()
+        .into_iter()
+        .find(|entry| entry.id == intervention_id)
+        .ok_or_else(|| format!("Queued intervention not found: {intervention_id}"))?;
+    if entry.provider != InterventionProvider::Qoder {
+        return Err("Queued intervention is not a Qoder message".into());
+    }
+    let (workspace, surface) = qoder_followup_target(&store, &entry.thread_id)?;
+    deliver_queued_qoder_message(&queue, &intervention_id, &workspace, surface).await?;
+    Ok(CodexSendReceipt {
+        status: "delivered".into(),
+        turn_id: None,
+        intervention_id,
+    })
+}
+
+#[tauri::command]
 pub async fn discard_queued_intervention(
     queue: State<'_, Arc<std::sync::Mutex<InterventionQueue>>>,
     intervention_id: String,
@@ -1065,6 +1148,31 @@ fn cli_followup_workspace(
         .ok_or_else(|| format!("{label} session has no known workspace"))
 }
 
+fn qoder_followup_target(
+    store: &std::sync::Mutex<SessionStore>,
+    session_id: &str,
+) -> Result<(PathBuf, crate::qoder_followup::QoderSurface), String> {
+    let store = store
+        .lock()
+        .map_err(|error| format!("Session lock error: {error}"))?;
+    let session = store
+        .get_all_sessions_with_history()
+        .into_iter()
+        .find(|session| session.session_id == session_id)
+        .ok_or_else(|| "Qoder session is no longer known to HUMHUM".to_string())?;
+    let surface = match session.client_type.as_str() {
+        "qoder" => crate::qoder_followup::QoderSurface::Ide,
+        "qoderwork" => crate::qoder_followup::QoderSurface::Work,
+        _ => return Err("Only local Qoder sessions can receive phone tasks".into()),
+    };
+    let workspace = session
+        .cwd
+        .as_deref()
+        .map(PathBuf::from)
+        .ok_or_else(|| "Qoder session has no known workspace".to_string())?;
+    Ok((workspace, surface))
+}
+
 async fn deliver_queued_claude_message(
     queue: &std::sync::Mutex<InterventionQueue>,
     intervention_id: &str,
@@ -1117,6 +1225,40 @@ async fn deliver_queued_opencode_message(
     }
     match crate::opencode_followup::send_followup(&entry.thread_id, workspace, &entry.message).await
     {
+        Ok(()) => queue
+            .lock()
+            .map_err(|error| format!("Queue lock error after delivery: {error}"))?
+            .mark_delivered(intervention_id),
+        Err(error) => {
+            queue
+                .lock()
+                .map_err(|lock_error| format!("{error}; queue lock error: {lock_error}"))?
+                .mark_failed(intervention_id, &error)
+                .map_err(|queue_error| format!("{error}; queue update failed: {queue_error}"))?;
+            Err(error)
+        }
+    }
+}
+
+async fn deliver_queued_qoder_message(
+    queue: &std::sync::Mutex<InterventionQueue>,
+    intervention_id: &str,
+    workspace: &Path,
+    surface: crate::qoder_followup::QoderSurface,
+) -> Result<(), String> {
+    let entry = queue
+        .lock()
+        .map_err(|error| format!("Queue lock error: {error}"))?
+        .mark_sending(intervention_id)?;
+    if entry.provider != InterventionProvider::Qoder {
+        let message = "Queued intervention is not a Qoder message";
+        queue
+            .lock()
+            .map_err(|error| format!("{message}; queue lock error: {error}"))?
+            .mark_failed(intervention_id, message)?;
+        return Err(message.into());
+    }
+    match crate::qoder_followup::send_followup(surface, workspace, &entry.message).await {
         Ok(()) => queue
             .lock()
             .map_err(|error| format!("Queue lock error after delivery: {error}"))?
@@ -1536,6 +1678,75 @@ pub async fn get_hush_inbox(
 }
 
 #[tauri::command]
+pub async fn prepare_hush_reply(
+    message_id: String,
+    body: String,
+    store: State<'_, Arc<std::sync::Mutex<HushStore>>>,
+    reply_state: State<'_, Arc<crate::hush_reply::HushReplyState>>,
+    dws_bridge: State<'_, Arc<DwsHushBridge>>,
+) -> Result<crate::hush_reply::HushReplyPreview, String> {
+    let message = store
+        .lock()
+        .map_err(|error| format!("无法锁定 Hush 消息库：{error}"))?
+        .summary()
+        .messages
+        .into_iter()
+        .find(|message| message.id == message_id)
+        .ok_or_else(|| "没有找到这条 Hush 消息，请刷新后重试".to_string())?;
+    let preview = reply_state.prepare(&message, &body, chrono::Utc::now())?;
+
+    let preparation = match preview.platform.as_str() {
+        "wechat" | "weixin" => {
+            crate::hush_reply::prepare_wechat_draft(&preview.conversation, &preview.body).await
+        }
+        "dingtalk" | "dingding" => {
+            let status = dws_bridge.status().await;
+            if !status.authenticated {
+                Err("钉钉 DWS 尚未登录，请先在连接与状态中完成登录".to_string())
+            } else if dirs::home_dir()
+                .as_deref()
+                .and_then(crate::hush_reply::dws_executable)
+                .is_none()
+            {
+                Err("未找到钉钉 DWS，请先在连接与状态中完成安装".to_string())
+            } else {
+                Ok(())
+            }
+        }
+        _ => Err("这个消息来源暂不支持安全回复".to_string()),
+    };
+    if let Err(error) = preparation {
+        reply_state.cancel(&preview.confirmation_id);
+        return Err(error);
+    }
+    Ok(preview)
+}
+
+#[tauri::command]
+pub async fn confirm_hush_reply(
+    confirmation_id: String,
+    reply_state: State<'_, Arc<crate::hush_reply::HushReplyState>>,
+) -> Result<crate::hush_reply::HushReplyReceipt, String> {
+    let pending = reply_state.take(&confirmation_id, chrono::Utc::now())?;
+    match &pending.target {
+        crate::hush_reply::HushReplyTarget::WechatConversation(conversation) => {
+            crate::hush_reply::confirm_wechat_send(conversation).await?;
+        }
+        crate::hush_reply::HushReplyTarget::DingtalkOpenId(open_dingtalk_id) => {
+            let home = dirs::home_dir()
+                .ok_or_else(|| "无法确定当前用户目录，钉钉回复未发送".to_string())?;
+            crate::hush_reply::send_dingtalk_direct(&home, open_dingtalk_id, &pending.body).await?;
+        }
+    }
+    Ok(crate::hush_reply::HushReplyReceipt {
+        platform: pending.platform,
+        conversation: pending.conversation,
+        sent_at: chrono::Utc::now().to_rfc3339(),
+        status: "sent".to_string(),
+    })
+}
+
+#[tauri::command]
 pub async fn clear_hush_inbox(
     store: State<'_, Arc<std::sync::Mutex<HushStore>>>,
 ) -> Result<(), String> {
@@ -1592,6 +1803,22 @@ pub async fn set_hush_dws_auto_sync(
 #[tauri::command]
 pub async fn open_hush_dws_login(bridge: State<'_, Arc<DwsHushBridge>>) -> Result<(), String> {
     bridge.open_login().await
+}
+
+#[tauri::command]
+pub async fn open_hush_dws_install() -> Result<(), String> {
+    const DWS_RELEASES_URL: &str =
+        "https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli/releases/latest";
+    let status = tokio::process::Command::new("/usr/bin/open")
+        .arg(DWS_RELEASES_URL)
+        .status()
+        .await
+        .map_err(|_| "无法打开钉钉 DWS 官方下载页".to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err("无法打开钉钉 DWS 官方下载页".to_string())
+    }
 }
 
 #[tauri::command]

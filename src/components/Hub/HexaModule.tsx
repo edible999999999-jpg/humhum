@@ -271,7 +271,7 @@ export async function startOrRefreshMobilePairing(
 ): Promise<MobilePairingInfo> {
   if (!state.enabled) await onEnable();
   return onPair(
-    pairing?.scope ?? "read",
+    pairing?.scope ?? "control",
     pairing?.network ?? "lan",
     pairing?.personal_context ?? true,
   );
@@ -362,11 +362,15 @@ export function HexaMobilePairingCard({
           <div className="hexa-mobile-pairing-copy">
             <div className="hexa-mobile-pairing-title">
               <Smartphone size={16} />
-              <span>在手机查看 Hexa</span>
+              <span>用手机控制 Hexa</span>
             </div>
             <div className="hexa-mobile-pairing-detail">Android HUMHUM 扫码连接</div>
             <div className="hexa-mobile-pairing-status">
-              {pairing.network === "tailnet" ? "Tailnet" : "同一 Wi-Fi"} · {pairing.scope === "control" ? "可控制" : "只读"} · 剩余 {Math.max(1, Math.ceil(secondsRemaining / 60))} 分钟
+              {state.relay_url
+                ? "Anywhere 加密跨网"
+                : pairing.network === "tailnet"
+                  ? "Tailnet"
+                  : "同一 Wi-Fi"} · {pairing.scope === "control" ? "可控制" : "只读"} · 剩余 {Math.max(1, Math.ceil(secondsRemaining / 60))} 分钟
             </div>
             <button
               type="button"
@@ -387,13 +391,13 @@ export function HexaMobilePairingCard({
         <div className="hexa-mobile-affordance">
           <Smartphone size={17} aria-hidden="true" />
           <div className="hexa-mobile-affordance-copy">
-            <strong>在手机查看 Hexa</strong>
+            <strong>用手机控制 Hexa</strong>
             <span>
               {error ?? (state.paired_devices > 0
                 ? `已连接 ${state.paired_devices} 台设备，也可以重新配对`
                 : "生成二维码后，用 Android HUMHUM 扫描")}
             </span>
-            <small>默认只读 · 同步个人上下文 · 5 分钟有效</small>
+            <small>默认可控制 · 同步个人上下文 · 5 分钟有效</small>
           </div>
           <button
             type="button"
@@ -1188,7 +1192,7 @@ export function HexaMobileAccessPanel({
     : false;
   const detail = pairing
     ? pairingQrVisible
-      ? `${copied ? "Android 配对资料已复制 · " : ""}配对码 ${pairing.code} · ${pairing.network === "tailnet" ? "Tailnet" : "同网 LAN"} · ${pairing.scope === "control" ? "可控制" : "只读"} · 剩余 ${Math.ceil(pairingSeconds / 60)} 分钟`
+      ? `${copied ? "Android 配对资料已复制 · " : ""}配对码 ${pairing.code} · ${state.relay_url ? "Anywhere 加密跨网" : pairing.network === "tailnet" ? "Tailnet" : "同网 LAN"} · ${pairing.scope === "control" ? "可控制" : "只读"} · 剩余 ${Math.ceil(pairingSeconds / 60)} 分钟`
       : "配对二维码已过期，请重新生成"
     : state.enabled
       ? `${state.lan_url ?? state.url} · ${state.paired_devices} 台设备`
@@ -1312,7 +1316,7 @@ export function HexaMobileAccessPanel({
                 Android 打开 HUMHUM，点击“扫描电脑配对二维码”。
               </span>
               <small>
-                {`${pairing.network === "tailnet" ? "Tailnet" : "同一网络"} · ${pairing.scope === "control" ? "可控制" : "只读"} · ${pairingSeconds} 秒`}
+                {`${state.relay_url ? "Anywhere 加密跨网" : pairing.network === "tailnet" ? "Tailnet" : "同一网络"} · ${pairing.scope === "control" ? "可控制" : "只读"} · ${pairingSeconds} 秒`}
               </small>
             </div>
           </div>

@@ -15,8 +15,9 @@ mod hexa_goal_store;
 mod hexa_protocol;
 mod hexa_watch_store;
 mod hook_server;
-mod hush_egress_guard;
 mod humi_brain;
+mod hush_egress_guard;
+mod hush_reply;
 #[allow(dead_code)]
 mod hush_signal_store;
 mod hush_store;
@@ -33,6 +34,7 @@ mod openclaw_hook;
 mod openclaw_transcript;
 mod opencode_followup;
 mod pi_sidecar;
+mod qoder_followup;
 mod qoder_log_watcher;
 mod remote_bridge;
 mod session_store;
@@ -52,6 +54,39 @@ mod wukong_watcher;
 
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
+
+fn mobile_restore_retry_delay(attempt: usize) -> Option<std::time::Duration> {
+    [1_u64, 2, 4, 8, 16]
+        .get(attempt)
+        .copied()
+        .map(std::time::Duration::from_secs)
+}
+
+async fn restore_mobile_access(
+    bridge: Arc<mobile_bridge::MobileBridgeState>,
+    app: tauri::AppHandle,
+) {
+    let mut attempt = 0;
+    loop {
+        match bridge.enable(app.clone()).await {
+            Ok(_) => return,
+            Err(error) => {
+                let Some(delay) = mobile_restore_retry_delay(attempt) else {
+                    log::warn!(
+                        "Could not restore HUMHUM mobile access after bounded retries: {error}"
+                    );
+                    return;
+                };
+                log::warn!(
+                    "Could not restore HUMHUM mobile access yet; retrying in {}s",
+                    delay.as_secs()
+                );
+                tokio::time::sleep(delay).await;
+                attempt += 1;
+            }
+        }
+    }
+}
 
 pub fn run() {
     env_logger::init();
@@ -120,6 +155,7 @@ pub fn run() {
             };
             #[cfg(target_os = "macos")]
             let restore_awake_mode = config.ui.awake_mode;
+            let should_restore_mobile_access = config.mobile_access_enabled;
             let analytics_enabled = config.ui.analytics_enabled;
             app.manage(Arc::new(std::sync::Mutex::new(config)));
             app.manage(Arc::new(std::sync::Mutex::new(
@@ -158,10 +194,17 @@ pub fn run() {
                 )
                 .map_err(std::io::Error::other)?;
                 app.manage(Arc::new(std::sync::Mutex::new(hush_signal_store)));
-                let mobile_bridge =
+                let mobile_bridge = Arc::new(
                     mobile_bridge::MobileBridgeState::load_or_create(&home.join(".humhum"))
-                        .map_err(std::io::Error::other)?;
-                app.manage(Arc::new(mobile_bridge));
+                        .map_err(std::io::Error::other)?,
+                );
+                app.manage(mobile_bridge.clone());
+                if should_restore_mobile_access {
+                    let mobile_app = app_handle.clone();
+                    tauri::async_runtime::spawn(async move {
+                        restore_mobile_access(mobile_bridge, mobile_app).await;
+                    });
+                }
                 app.manage(Arc::new(remote_bridge::RemoteBridgeState::default()));
 
                 // Hexa watched sessions are agent-declared high-confidence supervision targets.
@@ -253,6 +296,7 @@ pub fn run() {
             // Hush inbox store (persistent)
             let hush_store = Arc::new(std::sync::Mutex::new(hush_store::HushStore::new()));
             app.manage(hush_store.clone());
+            app.manage(Arc::new(hush_reply::HushReplyState::default()));
 
             // DingTalk DWS is a read-only, local-first Hush source.
             let dws_home = dirs::home_dir()
@@ -400,10 +444,12 @@ pub fn run() {
             commands::hexa_send_codex_message,
             commands::hexa_send_claude_message,
             commands::hexa_send_opencode_message,
+            commands::hexa_send_qoder_message,
             commands::get_intervention_queue,
             commands::hexa_retry_codex_message,
             commands::hexa_retry_claude_message,
             commands::hexa_retry_opencode_message,
+            commands::hexa_retry_qoder_message,
             commands::discard_queued_intervention,
             commands::hexa_interrupt_codex_turn,
             commands::hexa_resolve_codex_approval,
@@ -421,12 +467,15 @@ pub fn run() {
             commands::get_hush_egress_guard_status,
             commands::open_hush_connector,
             commands::get_hush_inbox,
+            commands::prepare_hush_reply,
+            commands::confirm_hush_reply,
             commands::clear_hush_inbox,
             commands::get_hush_health_signals,
             commands::clear_hush_health_signals,
             commands::get_hush_dws_status,
             commands::sync_hush_dws,
             commands::set_hush_dws_auto_sync,
+            commands::open_hush_dws_install,
             commands::open_hush_dws_login,
             commands::get_hush_wechat_status,
             commands::sync_hush_wechat,
@@ -484,6 +533,27 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running HumHum");
+}
+
+#[cfg(test)]
+mod startup_tests {
+    use super::mobile_restore_retry_delay;
+
+    #[test]
+    fn mobile_restore_uses_a_bounded_backoff() {
+        let delays = (0..6).map(mobile_restore_retry_delay).collect::<Vec<_>>();
+        assert_eq!(
+            delays,
+            vec![
+                Some(std::time::Duration::from_secs(1)),
+                Some(std::time::Duration::from_secs(2)),
+                Some(std::time::Duration::from_secs(4)),
+                Some(std::time::Duration::from_secs(8)),
+                Some(std::time::Duration::from_secs(16)),
+                None,
+            ]
+        );
+    }
 }
 
 #[cfg(target_os = "windows")]

@@ -78,3 +78,20 @@ test("Hush UI and local ingestion errors have no remote or sensitive log sink", 
     /(?:DingTalk DWS|WeChat) background sync failed:[^"\n]*\{error\}/,
   );
 });
+
+test("Hush reply drafting stays local and every send crosses the confirmation commands", () => {
+  const replySkill = fs.readFileSync(
+    path.join(repoRoot, "src/lib/hush/replySkill.ts"),
+    "utf8",
+  );
+  assert.doesNotMatch(replySkill, /\bfetch\s*\(/);
+  assert.doesNotMatch(replySkill, /@tauri-apps|providers|openai|anthropic|mobile_relay/);
+
+  const replyComposer = fs.readFileSync(
+    path.join(repoRoot, "src/components/Hub/HushReplyComposer.tsx"),
+    "utf8",
+  );
+  assert.match(replyComposer, /"prepare_hush_reply"/);
+  assert.match(replyComposer, /"confirm_hush_reply"/);
+  assert.doesNotMatch(replyComposer, /\bfetch\s*\(/);
+});

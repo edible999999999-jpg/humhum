@@ -244,11 +244,23 @@ async fn handle_mobile_enable(
     app_handle: tauri::AppHandle,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     let state = app_handle.state::<Arc<MobileBridgeState>>().inner().clone();
-    match state.enable(app_handle).await {
-        Ok(status) => Ok(json_response(
-            StatusCode::OK,
-            &serde_json::to_value(status).unwrap_or_default(),
-        )),
+    match state.enable(app_handle.clone()).await {
+        Ok(status) => {
+            let config = app_handle.state::<Arc<std::sync::Mutex<crate::config::AppConfig>>>();
+            match crate::commands::persist_mobile_access_preference(config.inner(), true) {
+                Ok(()) => Ok(json_response(
+                    StatusCode::OK,
+                    &serde_json::to_value(status).unwrap_or_default(),
+                )),
+                Err(error) => {
+                    let _ = state.disable();
+                    Ok(json_response(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        &serde_json::json!({ "error": error }),
+                    ))
+                }
+            }
+        }
         Err(error) => Ok(json_response(
             StatusCode::BAD_REQUEST,
             &serde_json::json!({ "error": error }),
@@ -260,6 +272,13 @@ async fn handle_mobile_disable(
     app_handle: tauri::AppHandle,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     let state = app_handle.state::<Arc<MobileBridgeState>>();
+    let config = app_handle.state::<Arc<std::sync::Mutex<crate::config::AppConfig>>>();
+    if let Err(error) = crate::commands::persist_mobile_access_preference(config.inner(), false) {
+        return Ok(json_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &serde_json::json!({ "error": error }),
+        ));
+    }
     match state.disable() {
         Ok(status) => Ok(json_response(
             StatusCode::OK,

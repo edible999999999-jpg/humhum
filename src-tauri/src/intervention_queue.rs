@@ -21,6 +21,7 @@ pub enum InterventionProvider {
     Claude,
     #[serde(rename = "opencode", alias = "open_code")]
     OpenCode,
+    Qoder,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -362,6 +363,9 @@ mod tests {
                 "continue",
             )
             .unwrap();
+        queue
+            .enqueue_for(InterventionProvider::Qoder, "qoder-session", "continue")
+            .unwrap();
 
         assert_eq!(entry.provider, InterventionProvider::Claude);
         let reloaded = InterventionQueue::load_or_create(temp.path()).unwrap();
@@ -373,6 +377,10 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&InterventionProvider::OpenCode).unwrap(),
             "\"opencode\""
+        );
+        assert_eq!(
+            serde_json::to_string(&InterventionProvider::Qoder).unwrap(),
+            "\"qoder\""
         );
     }
 

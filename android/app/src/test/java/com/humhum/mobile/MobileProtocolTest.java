@@ -141,6 +141,14 @@ public class MobileProtocolTest {
         assertEquals("summarize the result", body.getString("message"));
         assertThrows(IllegalStateException.class,
                 () -> MobileProtocol.messageRequest(session, "hello", Models.Scope.READ));
+
+        Models.Session qoder = new Models.Session(
+                "qoder-1", "qoderwork", "humhum", "active", "2026-07-12T00:00:00Z",
+                false, true, java.util.List.of());
+        assertEquals(
+                "qoderwork",
+                new JSONObject(MobileProtocol.messageRequest(
+                        qoder, "continue", Models.Scope.CONTROL).body()).getString("provider"));
     }
 
     @Test

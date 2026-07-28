@@ -8,11 +8,11 @@
 **让所有 Agent 围绕你工作** —— 个人生活的 Agent 中枢
 
 <p align="center">
-  <a href="https://github.com/edible999999999-jpg/humhum/releases/download/v0.3.15-beta.1/HumHum_0.3.15_aarch64.dmg"><strong>下载 macOS 版</strong></a>
+  <a href="https://github.com/edible999999-jpg/humhum/releases/download/v0.3.17-beta.1/HumHum_0.3.17_aarch64.dmg"><strong>下载 macOS 版</strong></a>
   ·
   <a href="https://github.com/edible999999999-jpg/humhum/releases/latest/download/HumHum_0.3.12_x64-setup.exe"><strong>下载 Windows 预览版</strong></a>
   ·
-  <a href="https://github.com/edible999999999-jpg/humhum/releases/download/v0.3.15-beta.1/HUMHUM-Android-0.3.15-Xiaomi.zip"><strong>下载 Android / 小米版</strong></a>
+  <a href="https://github.com/edible999999-jpg/humhum/releases/download/v0.3.17-beta.1/HUMHUM-Android-0.3.17.apk"><strong>下载 Android APK</strong></a>
   ·
   <a href="https://yuxilab.cn/intro"><strong>访问官网</strong></a>
   ·
@@ -59,7 +59,7 @@ Hype 管理你的个人 Agent 知识库。它不是又一个 Agent，而是个�
 
 Hush 从你的视角整理个人、社交、工作与家庭的消息。它联通钉钉、微信、X、Meta 等不同来源，把消息重新组织成你能理解的关系层级：家人、朋友、工作、兴趣与每日重要信息。
 
-Hush **不替你说话**，只帮你看见真正该回应的人：父母的消息被及时提醒和总结，快乐大家群里的暖心话不被工作消息淹没，X 上最重要的每日 AI 动态也可以整理成一份轻量摘要。当你需要回应时，Hush 给出一个温柔的句式建议，但最终是否回复、如何回复，始终由你决定。本地消息桥接默认只读，且必须经你授权。
+Hush **不擅自替你说话**，只帮你看见真正该回应的人：父母的消息被及时提醒和总结，快乐大家群里的暖心话不被工作消息淹没，X 上最重要的每日 AI 动态也可以整理成一份轻量摘要。当你需要回应时，Hush 可以先在本机起草；只有你核对收件人与正文并逐条确认后，才会送往对应的微信或钉钉单聊。本地消息桥接默认只读，且必须经你授权。
 
 > 它不是自动社交工具，而是帮你守住关系温度的个人消息助手。
 
@@ -132,11 +132,11 @@ npm run tauri build -- --bundles nsis
 
 ## Android 手机端
 
-Android 0.3.15 以 Humi 的 **Living Signals** 作为首页，并保留 Humi、Hype、Hush、Hexa 四个固定角色入口。手机可查看 Agent 会话、处理授权、发送追问，并在 Hush 中按数据源单独开启每日步数、静息心率和睡眠时长。健康权限默认关闭；HUMHUM 只读取确定性的日汇总，不读取路线、位置、原始心率样本或医疗记录，也不会推断“恢复分”。
+Android 0.3.17 以 Humi 的 **Living Signals** 作为首页，并保留 Humi、Hype、Hush、Hexa 四个固定角色入口。手机可查看 Codex、Claude、OpenCode、Qoder 与 QoderWork 会话，处理授权并发送后续任务；Hush 中的健康来源仍按步数、静息心率和睡眠时长分别授权。健康权限默认关闭；HUMHUM 只读取确定性的日汇总，不读取路线、位置、原始心率样本或医疗记录，也不会推断“恢复分”。
 
-配对时，在 Mac 的 Hexa 右上角开启移动访问并生成五分钟二维码，然后用 Android App 扫描。同一局域网会使用证书锁定的 HTTPS 直连；启用了内测版 **HUMHUM Anywhere** 时，手机处于 5G 或其他 Wi-Fi 也可以通过端到端加密中继连接。中继只保存有界密文和凭据摘要，无法读取会话、审批、追问或健康汇总。详见 [Android 安装与配对说明](./docs/android-install.md)。
+配对时，在 Mac 的 Hexa 右上角点 **用手机控制 Hexa**，刷新五分钟二维码，然后用 Android App 扫描。扫码后无需再次填写地址、配对码或指纹。同一局域网会使用证书锁定的 HTTPS 直连；二维码包含内测版 **HUMHUM Anywhere** 邀请时，手机处于 5G 或其他 Wi-Fi 也会优先通过端到端加密中继连接。中继只保存有界密文和凭据摘要，无法读取会话、审批、后续任务或健康汇总。详见 [Android 安装与配对说明](./docs/android-install.md)。
 
-小米手机建议下载并解压 `HUMHUM-Android-0.3.15-Xiaomi.zip`，再从系统文件管理器打开其中的 APK。不要直接从微信或浏览器的临时下载通知启动 APK，否则部分 MIUI / HyperOS 版本可能出现 `open failed: ENOENT`。
+小米手机优先直接下载 `HUMHUM-Android-0.3.17.apk`，等下载完成后从系统“文件管理”中的 `Download` 目录打开。若微信或浏览器的临时下载通知仍出现 `open failed: ENOENT`，改用 `HUMHUM-Android-0.3.17-Xiaomi.zip`，先解压到本机 `Download` 目录，再打开其中的 APK。
 
 ### Hush 微信真实消息（实验）
 
@@ -151,10 +151,13 @@ HUMHUM 已内置自己的无网络、只读原生读取器，用于读取本机�
 [`native/humhum-wechat/NOTICE.md`](./native/humhum-wechat/NOTICE.md)。
 HUMHUM 不执行也不下载该第三方 CLI。
 
-当前源码预览已经能验证微信版本与数据库运行时，但真实历史消息仍会保持
-“待准备”，直到签名并经过兼容验证的安全提钥助手发布。当前版本不会偷偷启动
-`sudo`、修改微信或把聊天数据传给服务器。完成解锁后，Hush 也只会把收到的
-消息导入本机收件箱，并跳过用户自己发出的消息。
+当前兼容路径可以使用用户明确安装的 `~/.local/share/wechat-cli/wxkey` 作为本机
+提钥助手。Hush 的“准备本机读取”只会调用其 `bootstrap` 或 `setup` 动作，所有
+输出都会丢弃；HUMHUM 不调用第三方查询、远程 companion、更新、导出或 SQL
+能力。读取到的正文只进入 `~/.humhum/hush-inbox.json`，不会进入 Anywhere、
+Relay、手机或 AI。微信回复会先把草稿填入微信，再弹出原生确认框；只有你点
+“确认发送”后才按回车。钉钉回复同样需要逐条确认，并通过官方 DWS 的 stdin
+发送，正文不会出现在进程参数或日志中。
 
 ## 数据与隐私
 
@@ -202,11 +205,12 @@ scripts/                # Edge TTS bridge 等
 
 ## 路线图
 
-- [x] Android 手机端扫码配对、远程状态查看、审批与追问
+- [x] Android 手机端扫码配对、跨网查看与控制 Codex / Claude / Qoder 会话
 - [ ] 跨设备偏好与上下文同步
 - [x] macOS 微信与钉钉新通知只读桥接
 - [ ] 为内置微信只读历史读取器提供签名的安全提钥
 - [x] 钉钉 DWS 历史同步
+- [x] 微信 / 钉钉单聊本机起草与逐条确认发送
 - [ ] 飞书本地/官方授权消息桥
 - [ ] 智能权限策略（学习你的审批习惯）
 - [ ] 更多 Agent 接入与开放 Hook 协议标准

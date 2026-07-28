@@ -1,17 +1,17 @@
-# HUMHUM Android 0.3.15
+# HUMHUM Android 0.3.17
 
-HUMHUM Android is the native phone companion for the desktop Mobile Bridge. It supports Android 8.0 and newer, including current Xiaomi and Redmi phones. Version 0.3.15 can pair through HUMHUM Anywhere while the phone is on 5G or another Wi-Fi; LAN and optional Tailscale access remain private-network fallbacks.
+HUMHUM Android is the native phone companion for the desktop Mobile Bridge. It supports Android 8.0 and newer, including current Xiaomi and Redmi phones. Version 0.3.17 can pair through HUMHUM Anywhere while the phone is on 5G or another Wi-Fi; LAN and optional Tailscale access remain private-network fallbacks.
 
 ## Installable APK
 
-- Release APK: `build/releases/HUMHUM-Android-0.3.15.apk`
-- Xiaomi transfer ZIP: `build/releases/HUMHUM-Android-0.3.15-Xiaomi.zip`
-- Play-compatible bundle: `build/releases/HUMHUM-Android-0.3.15.aab`
+- Release APK: `build/releases/HUMHUM-Android-0.3.17.apk`
+- Xiaomi transfer ZIP: `build/releases/HUMHUM-Android-0.3.17-Xiaomi.zip`
+- Play-compatible bundle: `build/releases/HUMHUM-Android-0.3.17.aab`
 - Package: `com.humhum.mobile`
-- Version: `0.3.15` (`versionCode 15`)
-- APK SHA-256: `38c323640665422dfd175110184b2a0a9a2e3e3536d0883b2fe2ccba5cbce073`
-- AAB SHA-256: `f41c2de772301271b2407f42c49235fa14929702e3444b7065b5eaa151cc1d4f`
-- Xiaomi ZIP SHA-256: `91ad36fe08abb709bf9405fe8f27461074c3737c24dd8fef992f645a3a871e2c`
+- Version: `0.3.17` (`versionCode 17`)
+- APK SHA-256: `7dadbbbb506bf78d5625ec88a0335f05efa88400d150fec5b22e5c2b22c69d04`
+- AAB SHA-256: `87af49caf94bfe4ec5f0ac24106e6db5e6c4bb931d6b599c1e666e2ddf9aa3b3`
+- Xiaomi ZIP SHA-256: `ee4799f42c1ce41cea5db32432042953d141abba899652ec3a7f7db1ae58fe6e`
 - Release certificate SHA-256: `C2:8C:FF:BE:03:98:B2:DB:58:DB:B7:14:DD:39:4F:06:36:CB:55:A6:90:EE:FE:6F:DA:20:2A:78:ED:4E:12:F8`
 
 The APK and AAB use HUMHUM's durable local release certificate. They are installable and update-compatible with later builds signed by the same key, but they have not been published to Xiaomi GetApps or Google Play.
@@ -22,9 +22,10 @@ If a debug build is already installed, uninstall it once before installing the r
 
 ### From The Phone
 
-1. Send the APK to the phone without renaming it.
-2. Open it in Files and allow that file source to install unknown apps when HyperOS or MIUI asks.
-3. Install and open HUMHUM.
+1. Download `HUMHUM-Android-0.3.17.apk` completely.
+2. Open Xiaomi File Manager, enter the local `Download` folder, and open the APK there. Do not launch it from WeChat's or the browser's temporary download notification; that provider can lose the file and report `open failed: ENOENT`.
+3. If the direct APK still opens through a temporary provider, download `HUMHUM-Android-0.3.17-Xiaomi.zip`, extract it into `Download`, then open the APK from the extracted folder.
+4. Allow File Manager to install unknown apps when HyperOS or MIUI asks, then install and open HUMHUM.
 
 ### With USB Debugging
 
@@ -32,14 +33,14 @@ Connect an authorized phone, then run:
 
 ```bash
 adb install -r \
-  build/releases/HUMHUM-Android-0.3.15.apk
+  build/releases/HUMHUM-Android-0.3.17.apk
 ```
 
 Put Android SDK Platform Tools on `PATH` first. On Windows, `adb.exe` is commonly under `%LOCALAPPDATA%\Android\Sdk\platform-tools`.
 
 ## Pair With The Desktop
 
-1. Install HUMHUM 0.3.15 on both the Mac and Android phone.
+1. Install HUMHUM 0.3.17 on both the Mac and Android phone.
 2. Open HUMHUM Hub on the desktop, choose Hexa, and enable mobile access. For cross-network pairing, wait until Hexa reports that Anywhere is connected.
 3. Generate a read-only or control pairing QR code. Control scope is required for approvals and follow-up messages.
 4. In the Android app, tap **扫描电脑配对二维码**, allow camera access, and scan within five minutes.
@@ -49,7 +50,7 @@ The QR contains only five-minute pairing material and temporary, independently s
 
 ## Living Signals And Health Data
 
-Version 0.3.15 opens on Humi's **Living Signals** view instead of a configuration form. Humi combines the day's opt-in body summary with current Agent sessions into a short route. Hype keeps the knowledge view honest, Hush owns private data sources, and Hexa keeps session review, approvals and follow-up controls. The four role tabs stay visible; connection, permissions, background behavior and deletion live under the gear icon.
+Version 0.3.17 opens on Humi's **Living Signals** view instead of a configuration form. Humi combines the day's opt-in body summary with current Agent sessions into a short route. Hype keeps the knowledge view honest, Hush owns private data sources, and Hexa keeps session review, approvals and follow-up controls. The four role tabs stay visible; connection, permissions, background behavior and deletion live under the gear icon.
 
 Health access is off by default and is never requested during pairing. In **Hush > 数据来源**, steps, resting heart rate and sleep are enabled separately through Android's system permission sheet. Health Connect is preferred. If it is unavailable, only daily steps can fall back to the phone's step counter after Activity Recognition permission; resting heart rate and sleep remain unavailable rather than being guessed.
 
@@ -85,7 +86,7 @@ Background monitoring is visible and user-controlled. It uses Android's `remoteM
 
 For the invite-only Anywhere beta, Hexa can connect each newly paired phone to a self-hosted encrypted relay. Pairing creates independent Mac-to-phone and phone-to-Mac channels. The relay receives only AES-256-GCM ciphertext, opaque channel IDs, sequence numbers, timestamps and credential digests; it never receives readable session names, conversations, approvals, follow-ups, device names or encryption keys. Public relay URLs must use HTTPS, while loopback HTTP is accepted only for local development.
 
-Version 0.3.15 Anywhere QR pairings use the relay first for reads, writes, app startup, network recovery, and background monitoring, avoiding an eight-second attempt against an unreachable home address. Older local pairings keep certificate-pinned LAN or Tailnet first and may recover through Anywhere only after a safe connection failure. Certificate failures, rejected credentials and malformed responses always fail closed. In remote mode the same redacted session list, bounded recent conversation, allow-once/deny and short follow-up controls travel end-to-end encrypted. The header says **远程连接** so the route is visible without exposing server settings. Read-only pairings remain read-only, every remote action has a five-minute expiry and opaque request ID, and the Mac persists command consumption before execution to prevent network retries from running an action twice.
+Version 0.3.17 Anywhere QR pairings use the relay first for reads, writes, app startup, network recovery, and background monitoring, avoiding an eight-second attempt against an unreachable home address. Older local pairings keep certificate-pinned LAN or Tailnet first and may recover through Anywhere only after a safe connection failure. Certificate failures, rejected credentials and malformed responses always fail closed. In remote mode the same redacted session list, bounded recent conversation, allow-once/deny and short follow-up controls travel end-to-end encrypted. The header says **远程连接** so the route is visible without exposing server settings. Read-only pairings remain read-only, every remote action has a five-minute expiry and opaque request ID, and the Mac persists command consumption before execution to prevent network retries from running an action twice.
 
 The optional background monitor can decrypt scoped snapshots into the same Android-Keystore-protected local cache. If it receives a foreground action response first, it hands that response to the Activity instead of discarding it. Android force-stop and aggressive Xiaomi process killing remain operating-system boundaries; production FCM or Xiaomi Push is still needed to wake a fully reclaimed process reliably.
 
@@ -130,7 +131,7 @@ This proves Android platform lifecycle behavior, not Xiaomi-specific battery-man
 - Automatic QR pairing from Hexa through temporary encrypted relay channels, with strict parsing, a phone-only response key, and five-minute expiry.
 - Read-only and control pairing scopes.
 - Allow-once/deny for supported Agent approvals.
-- Text follow-ups for known Codex, Claude Code, and OpenCode sessions.
+- Text tasks for known Codex, Claude Code, OpenCode, Qoder, and QoderWork sessions.
 - Explicit, Activity-only disclosure of up to 12 bounded recent user/Agent messages for supported Codex, Claude and OpenClaw transcripts.
 - Foreground session refresh every 10 seconds.
 - Optional background monitoring with a persistent notification, authenticated realtime private-network wake, legacy 15-second polling fallback, bounded retry, approval deduplication, and opt-in reboot restoration.
@@ -144,7 +145,7 @@ This proves Android platform lifecycle behavior, not Xiaomi-specific battery-man
 
 The APK requests network state, internet, foreground remote messaging, notification, opt-in boot restoration, and camera permissions. Camera access is requested only after the user opens the QR scanner, camera hardware is optional, and paste/manual pairing remains available. Firebase Messaging adds bounded wake-lock and C2DM receive permissions plus one package-scoped AndroidX receiver permission. HUMHUM does not request direct battery exemption, all-package visibility, location, nearby-device, contacts, files, microphone, overlay, or accessibility access.
 
-Not yet verified or shipped: physical-phone 5G evidence for 0.3.15, production-configured FCM delivery, Xiaomi Push, physical HyperOS process-reclaim survival, full encrypted transcript history, attachments, iOS packaging, store distribution, or automatic updates. Xiaomi Push additionally requires an approved Xiaomi developer account, a registered package with AppID/AppKey, server-side AppSecret, and the region-appropriate Xiaomi SDK; none of those credentials are present on this machine, so the release does not pretend to initialize that provider. See Xiaomi's official [enablement guide](https://dev.mi.com/xiaomihyperos/documentation/detail?pId=1691) and [Android AAR integration guide](https://dev.mi.com/xiaomihyperos/documentation/detail?pId=1544).
+Not yet verified or shipped: physical-phone 5G evidence for 0.3.17, production-configured FCM delivery, Xiaomi Push, physical HyperOS process-reclaim survival, full encrypted transcript history, attachments, iOS packaging, store distribution, or automatic updates. Xiaomi Push additionally requires an approved Xiaomi developer account, a registered package with AppID/AppKey, server-side AppSecret, and the region-appropriate Xiaomi SDK; none of those credentials are present on this machine, so the release does not pretend to initialize that provider. See Xiaomi's official [enablement guide](https://dev.mi.com/xiaomihyperos/documentation/detail?pId=1691) and [Android AAR integration guide](https://dev.mi.com/xiaomihyperos/documentation/detail?pId=1544).
 
 ## Build With FCM
 

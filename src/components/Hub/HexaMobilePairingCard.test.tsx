@@ -166,9 +166,9 @@ describe("HexaMobilePairingCard", () => {
       />,
     );
 
-    expect(html).toContain("在手机查看 Hexa");
+    expect(html).toContain("用手机控制 Hexa");
     expect(html).toContain('aria-label="生成配对二维码"');
-    expect(html).toContain("默认只读");
+    expect(html).toContain("默认可控制");
   });
 
   it("shows the active QR, expiry and an explicit refresh action", () => {
@@ -188,6 +188,24 @@ describe("HexaMobilePairingCard", () => {
     expect(html).toContain('data-expanded="true"');
     expect(html).toContain("同一 Wi-Fi");
     expect(html).toMatch(/剩余 [1-5] 分钟/);
+  });
+
+  it("labels relay-backed pairing as Anywhere instead of LAN", () => {
+    const html = renderToStaticMarkup(
+      <HexaMobilePairingCard
+        state={{
+          ...enabledBridge,
+          relay_status: "connected",
+          relay_url: "https://relay.example.com",
+        }}
+        pairing={{ ...activePairing, scope: "control" }}
+        onEnable={vi.fn()}
+        onPair={vi.fn()}
+      />,
+    );
+
+    expect(html).toContain("Anywhere 加密跨网");
+    expect(html).not.toContain("同一 Wi-Fi");
   });
 
   it("floats the expanded QR over the workbench instead of changing header height", () => {
@@ -215,7 +233,7 @@ describe("HexaMobilePairingCard", () => {
     expect(html).not.toContain("hexa-mobile-pairing-panel");
   });
 
-  it("enables mobile access before generating the first read-only LAN QR", async () => {
+  it("enables mobile access before generating the first remote-control QR", async () => {
     const onEnable = vi.fn(async () => enabledBridge);
     const onPair = vi.fn(async () => activePairing);
 
@@ -227,7 +245,7 @@ describe("HexaMobilePairingCard", () => {
     );
 
     expect(onEnable).toHaveBeenCalledOnce();
-    expect(onPair).toHaveBeenCalledWith("read", "lan", true);
+    expect(onPair).toHaveBeenCalledWith("control", "lan", true);
     expect(onEnable.mock.invocationCallOrder[0]).toBeLessThan(onPair.mock.invocationCallOrder[0]!);
   });
 
@@ -360,6 +378,39 @@ describe("Hexa supervision room presentation", () => {
       /color:\s*rgba\(255,\s*255,\s*255/i,
     );
     expect(hexaModuleSource).toContain('className="hexa-binding-stack"');
+  });
+
+  it("describes relay-backed mobile setup as Anywhere across the detailed panel", () => {
+    const MobilePanel = bindingPanels.HexaMobileAccessPanel;
+    if (!MobilePanel) {
+      throw new Error("Missing Hexa mobile access panel export");
+    }
+
+    const html = renderToStaticMarkup(
+      <MobilePanel
+        state={{
+          ...enabledBridge,
+          relay_status: "connected",
+          relay_url: "https://relay.example.com",
+        }}
+        pairing={{ ...activePairing, scope: "control" }}
+        relayConfig={{
+          enabled: true,
+          base_url: "https://relay.example.com",
+          invite_code: "configured",
+        }}
+        onEnable={vi.fn()}
+        onDisable={vi.fn()}
+        onPair={vi.fn()}
+        onRevoke={vi.fn()}
+        onRevokeDevice={vi.fn()}
+        onConfigureRelay={vi.fn()}
+      />,
+    );
+
+    expect(html.match(/Anywhere 加密跨网/g)).toHaveLength(2);
+    expect(html).not.toContain("同网 LAN");
+    expect(html).not.toContain("同一网络");
   });
 
   it("transitions selection and resolves the latest session when the selected run disappears", async () => {

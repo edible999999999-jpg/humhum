@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { runHushReplySkill } from "../../lib/hush/replySkill";
 import {
   ChevronDown,
   ExternalLink,
@@ -40,6 +39,7 @@ import {
   type HushFilter,
   type HushInboxMessage,
 } from "./hushPresentation";
+import { HushReplyComposer } from "./HushReplyComposer";
 
 export {
   compareHushContacts,
@@ -305,6 +305,7 @@ export function HushModule() {
   const [dwsStatus, setDwsStatus] = useState<DwsHushStatus | null>(null);
   const [dwsReport, setDwsReport] = useState<DwsSyncReport | null>(null);
   const [dwsSyncing, setDwsSyncing] = useState(false);
+  const [dwsOpeningInstall, setDwsOpeningInstall] = useState(false);
   const [dwsLoggingIn, setDwsLoggingIn] = useState(false);
   const [dwsAutoUpdating, setDwsAutoUpdating] = useState(false);
   const [wechatStatus, setWechatStatus] =
@@ -562,6 +563,18 @@ export function HushModule() {
       setDwsLoggingIn(false);
     }
   }, [fetchDwsStatus]);
+
+  const openDwsInstall = useCallback(async () => {
+    setDwsOpeningInstall(true);
+    setConnectorError(null);
+    try {
+      await invoke("open_hush_dws_install");
+    } catch (error) {
+      setConnectorError(String(error));
+    } finally {
+      setDwsOpeningInstall(false);
+    }
+  }, []);
 
   const setDwsAutoSync = useCallback(async (enabled: boolean) => {
     setDwsAutoUpdating(true);
@@ -834,6 +847,7 @@ export function HushModule() {
         inbox={inbox}
         openingConnector={openingConnector}
         dwsSyncing={dwsSyncing}
+        dwsOpeningInstall={dwsOpeningInstall}
         dwsLoggingIn={dwsLoggingIn}
         dwsAutoUpdating={dwsAutoUpdating}
         wechatSyncing={wechatSyncing}
@@ -851,6 +865,7 @@ export function HushModule() {
         onOpenConnector={openConnector}
         onOpenSettings={openFullDiskAccess}
         onSyncDws={syncDws}
+        onInstallDws={openDwsInstall}
         onLoginDws={loginDws}
         onAutoSyncChange={setDwsAutoSync}
         onSyncWechat={syncWechat}
@@ -975,6 +990,7 @@ function HushStatusArea({
   inbox,
   openingConnector,
   dwsSyncing,
+  dwsOpeningInstall,
   dwsLoggingIn,
   dwsAutoUpdating,
   wechatSyncing,
@@ -992,6 +1008,7 @@ function HushStatusArea({
   onOpenConnector,
   onOpenSettings,
   onSyncDws,
+  onInstallDws,
   onLoginDws,
   onAutoSyncChange,
   onSyncWechat,
@@ -1014,6 +1031,7 @@ function HushStatusArea({
   inbox: HushInboxSummary | null;
   openingConnector: string | null;
   dwsSyncing: boolean;
+  dwsOpeningInstall: boolean;
   dwsLoggingIn: boolean;
   dwsAutoUpdating: boolean;
   wechatSyncing: boolean;
@@ -1031,6 +1049,7 @@ function HushStatusArea({
   onOpenConnector: (connectorId: string) => void;
   onOpenSettings: () => void;
   onSyncDws: () => void;
+  onInstallDws: () => void;
   onLoginDws: () => void;
   onAutoSyncChange: (enabled: boolean) => void;
   onSyncWechat: () => void;
@@ -1130,9 +1149,11 @@ function HushStatusArea({
           status={dwsStatus}
           report={dwsReport}
           syncing={dwsSyncing}
+          openingInstall={dwsOpeningInstall}
           loggingIn={dwsLoggingIn}
           autoUpdating={dwsAutoUpdating}
           onSync={onSyncDws}
+          onInstall={onInstallDws}
           onLogin={onLoginDws}
           onAutoSyncChange={onAutoSyncChange}
         />
@@ -1695,18 +1716,22 @@ function DwsPanel({
   status,
   report,
   syncing,
+  openingInstall,
   loggingIn,
   autoUpdating,
   onSync,
+  onInstall,
   onLogin,
   onAutoSyncChange,
 }: {
   status: DwsHushStatus | null;
   report: DwsSyncReport | null;
   syncing: boolean;
+  openingInstall: boolean;
   loggingIn: boolean;
   autoUpdating: boolean;
   onSync: () => void;
+  onInstall: () => void;
   onLogin: () => void;
   onAutoSyncChange: (enabled: boolean) => void;
 }) {
@@ -1767,6 +1792,17 @@ function DwsPanel({
         )}
       </div>
       <div className="hush-status-actions">
+        {state === "not_installed" && (
+          <button
+            type="button"
+            className="hush-status-action"
+            onClick={onInstall}
+            disabled={openingInstall}
+          >
+            <ExternalLink size={14} aria-hidden="true" />
+            {openingInstall ? "正在打开..." : "安装官方 DWS"}
+          </button>
+        )}
         {state === "authentication_required" && (
           <button
             type="button"
@@ -2038,9 +2074,6 @@ function ConversationDetail({
   attention: boolean;
 }) {
   const { t } = useTranslation();
-  const [replySuggestion, setReplySuggestion] = useState<string | null>(null);
-  const [replyError, setReplyError] = useState<string | null>(null);
-  const [replyLoading, setReplyLoading] = useState(false);
   const groups = groupHushMessages(contact.messages);
   const conversationScope = getHushConversationScope(contact.messages);
   const replyContext = contact.messages
@@ -2054,29 +2087,21 @@ function ConversationDetail({
       text,
       received_at,
     }));
-  const canSuggest =
-    conversationScope === "direct" && replyContext.length > 0;
-
-  const requestReplySuggestion = async () => {
-    if (!canSuggest || replyLoading) return;
-    setReplyLoading(true);
-    setReplyError(null);
-    try {
-      const suggestion = await runHushReplySkill({
-        conversationName: contact.name,
-        messages: replyContext,
-      });
-      setReplySuggestion(suggestion);
-    } catch (error) {
-      setReplyError(
-        error instanceof Error
-          ? error.message
-          : "暂时没有生成建议，请稍后重试。",
-      );
-    } finally {
-      setReplyLoading(false);
-    }
-  };
+  const replyTarget =
+    conversationScope === "direct"
+      ? [...contact.messages]
+          .filter(
+            (message) =>
+              !message.preview_limited &&
+              ["wechat", "weixin", "dingtalk", "dingding"].includes(
+                message.platform.trim().toLowerCase(),
+              ),
+          )
+          .sort(
+            (left, right) =>
+              Date.parse(right.received_at) - Date.parse(left.received_at),
+          )[0]
+      : undefined;
 
   return (
     <div className="hush-conversation-detail">
@@ -2130,39 +2155,11 @@ function ConversationDetail({
         ))}
       </div>
 
-      {canSuggest && (
-        <div className="hush-reply-skill">
-          {replySuggestion && (
-            <div
-              className="hush-reply-skill-suggestion"
-              aria-live="polite"
-            >
-              <MessageCircle size={14} aria-hidden="true" />
-              <span>{replySuggestion}</span>
-            </div>
-          )}
-          {replyError && (
-            <div className="hush-reply-skill-error" role="status">
-              {replyError}
-            </div>
-          )}
-          <button
-            type="button"
-            className="hush-reply-skill-trigger"
-            disabled={replyLoading}
-            onClick={() => void requestReplySuggestion()}
-          >
-            <MessageCircle size={14} aria-hidden="true" />
-            {replyLoading
-              ? "正在生成..."
-              : replySuggestion
-                ? "重新生成"
-                : replyError
-                  ? "重试建议"
-                  : "建议回复"}
-          </button>
-        </div>
-      )}
+      <HushReplyComposer
+        conversationName={contact.name}
+        targetMessageId={replyTarget?.id ?? null}
+        messages={replyContext}
+      />
     </div>
   );
 }

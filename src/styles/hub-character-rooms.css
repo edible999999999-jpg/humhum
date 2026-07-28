@@ -2124,20 +2124,68 @@
   line-height: 1.4;
 }
 
-.hush-reply-skill {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 8px;
+.hush-reply-composer {
+  display: grid;
+  gap: 9px;
   margin-top: 18px;
   padding-top: 14px;
   border-top: 1px solid rgba(69, 113, 101, 0.1);
 }
 
-.hush-reply-skill-trigger {
+.hush-reply-composer-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.hush-reply-composer-heading > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.hush-reply-composer-heading strong {
+  overflow: hidden;
+  color: #344941;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hush-reply-composer-heading span {
+  color: #81918b;
+  font-size: 9px;
+}
+
+.hush-reply-composer textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 74px;
+  resize: vertical;
+  padding: 10px 11px;
+  border: 1px solid rgba(66, 139, 115, 0.2);
+  border-radius: 7px;
+  outline: none;
+  background: rgba(255, 255, 255, 0.78);
+  color: #30443c;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.hush-reply-composer textarea:focus {
+  border-color: rgba(66, 139, 115, 0.46);
+  box-shadow: 0 0 0 2px rgba(66, 139, 115, 0.08);
+}
+
+.hush-reply-local-draft,
+.hush-reply-prepare,
+.hush-reply-confirmation button {
   display: inline-flex;
   min-height: 30px;
   align-items: center;
+  justify-content: center;
   gap: 6px;
   padding: 6px 10px;
   border: 1px solid rgba(66, 139, 115, 0.22);
@@ -2149,33 +2197,79 @@
   cursor: pointer;
 }
 
-.hush-reply-skill-trigger:hover:not(:disabled) {
+.hush-reply-local-draft:hover:not(:disabled),
+.hush-reply-prepare:hover:not(:disabled) {
   border-color: rgba(66, 139, 115, 0.36);
   background: rgba(229, 247, 240, 0.94);
 }
 
-.hush-reply-skill-trigger:disabled {
+.hush-reply-local-draft:disabled,
+.hush-reply-prepare:disabled,
+.hush-reply-confirmation button:disabled {
   cursor: wait;
   opacity: 0.62;
 }
 
-.hush-reply-skill-suggestion {
+.hush-reply-local-draft {
+  flex: 0 0 auto;
+}
+
+.hush-reply-prepare {
+  justify-self: end;
+}
+
+.hush-reply-confirmation {
   display: flex;
-  width: min(100%, 520px);
-  align-items: flex-start;
-  gap: 7px;
-  padding: 9px 10px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 11px;
   border-left: 2px solid rgba(197, 110, 37, 0.46);
   border-radius: 0 7px 7px 0;
   background: rgba(255, 240, 222, 0.56);
-  color: #775234;
-  font-size: 11px;
-  line-height: 1.55;
 }
 
-.hush-reply-skill-suggestion svg {
+.hush-reply-confirmation > div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.hush-reply-confirmation strong {
+  color: #775234;
+  font-size: 11px;
+}
+
+.hush-reply-confirmation span {
+  color: #8a6b52;
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.hush-reply-confirmation button {
   flex: 0 0 auto;
-  margin-top: 1px;
+  border-color: rgba(197, 110, 37, 0.28);
+  background: rgba(255, 249, 241, 0.92);
+  color: #9a5b26;
+}
+
+.hush-reply-sent,
+.hush-reply-unavailable {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(69, 113, 101, 0.1);
+  color: #5b746a;
+  font-size: 10px;
+}
+
+.hush-reply-sent {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+  color: #397c66;
 }
 
 .hush-reply-skill-error {

@@ -91,9 +91,9 @@ function defaultInvoke(command: string): unknown {
   if (command === "get_hush_egress_guard_status") {
     return {
       enforced: true,
-      policy_version: 1,
+      policy_version: 2,
       message:
-        "聊天正文仅保存在这台 Mac，不会发送给 AI、Relay、手机或外部服务。",
+        "聊天正文仅保存在这台 Mac，不会发送给 AI、Relay、手机或其他第三方；只有你逐条确认的回复会送往对应的微信或钉钉会话。",
       process_sandbox_available: true,
     };
   }
@@ -572,7 +572,7 @@ describe("Hush third-party egress guard", () => {
     expect(invokeMock).toHaveBeenCalledWith("get_hush_egress_guard_status");
     expect(view.host.textContent).toContain("第三方传输已阻止");
     expect(view.host.textContent).toContain(
-      "聊天正文仅保存在这台 Mac，不会发送给 AI、Relay、手机或外部服务。",
+      "聊天正文仅保存在这台 Mac，不会发送给 AI、Relay、手机或其他第三方；只有你逐条确认的回复会送往对应的微信或钉钉会话。",
     );
     expect(
       view.host.querySelector('[data-hush-egress-guard="enforced"]'),
@@ -619,7 +619,7 @@ describe("Hush third-party egress guard", () => {
       if (command === "get_hush_egress_guard_status") {
         return Promise.resolve({
           enforced: false,
-          policy_version: 1,
+          policy_version: 2,
           message: "policy unavailable",
           process_sandbox_available: false,
         });
@@ -1007,7 +1007,7 @@ describe("HushModule conversation presentation", () => {
     expect(detail()).toContain("work · P0 · 特别关注");
   });
 
-  it("shows one on-demand reply action for a direct chat without prefilled suggestions", async () => {
+  it("shows a local editable reply composer only after selecting a direct chat", async () => {
     view = await renderHushModule();
     const directContact = Array.from(
       view.host.querySelectorAll<HTMLButtonElement>(".hush-contact-select"),
@@ -1016,7 +1016,7 @@ describe("HushModule conversation presentation", () => {
     expect(directContact).toBeDefined();
     expect(
       Array.from(view.host.querySelectorAll("button")).filter(
-        (button) => button.textContent?.trim() === "建议回复",
+        (button) => button.textContent?.trim() === "本地起草",
       ),
     ).toHaveLength(0);
 
@@ -1029,15 +1029,14 @@ describe("HushModule conversation presentation", () => {
     ).toHaveLength(0);
     expect(
       Array.from(view.host.querySelectorAll("button")).filter(
-        (button) => button.textContent?.trim() === "建议回复",
+        (button) => button.textContent?.trim() === "本地起草",
       ),
     ).toHaveLength(1);
-    expect(view.host.textContent).not.toContain(
-      "建议回复：收到，我会按这条信息推进，有结果后回复你。",
-    );
+    expect(view.host.querySelector(".hush-reply-composer textarea")).not.toBeNull();
+    expect(view.host.textContent).toContain("草稿留在本机，发送前逐条确认");
   });
 
-  it("runs the reply Skill once on demand and shows one contextual suggestion", async () => {
+  it("creates one local draft on demand without sending it", async () => {
     view = await renderHushModule();
     const directContact = Array.from(
       view.host.querySelectorAll<HTMLButtonElement>(".hush-contact-select"),
@@ -1048,7 +1047,7 @@ describe("HushModule conversation presentation", () => {
     });
     expect(runHushReplySkillMock).not.toHaveBeenCalled();
 
-    const trigger = buttonByText(view.host, "建议回复");
+    const trigger = buttonByText(view.host, "本地起草");
     await act(async () => {
       trigger.click();
       await Promise.resolve();
@@ -1067,11 +1066,14 @@ describe("HushModule conversation presentation", () => {
       ],
     });
     expect(
-      view.host.querySelectorAll(".hush-reply-skill-suggestion"),
-    ).toHaveLength(1);
-    expect(
-      view.host.querySelector(".hush-reply-skill-suggestion")?.textContent,
-    ).toContain("可以，明天下午三点我有空，我们到时同步。");
+      view.host.querySelector<HTMLTextAreaElement>(
+        ".hush-reply-composer textarea",
+      )?.value,
+    ).toBe("可以，明天下午三点我有空，我们到时同步。");
+    expect(invokeMock).not.toHaveBeenCalledWith(
+      "confirm_hush_reply",
+      expect.anything(),
+    );
   });
 
   it("moves a newly starred conversation ahead of newer normal conversations", async () => {
@@ -1286,10 +1288,10 @@ describe("Hush conversation UI contracts", () => {
     );
   });
 
-  it("keeps reply suggestions on demand instead of rendering stored message replies", () => {
+  it("keeps replies local and delegates confirmation to the safe composer", () => {
     expect(hushModuleSource).not.toContain("getVisibleHushSuggestedReply");
     expect(hushModuleSource).not.toContain("hush-message-suggestion");
-    expect(hushModuleSource).toContain("runHushReplySkill");
+    expect(hushModuleSource).toContain("HushReplyComposer");
     expect(hushModuleSource).toContain('conversationScope === "direct"');
     expect(hushModuleSource).toContain("getHushConversationScopeLabel");
   });
@@ -1306,6 +1308,7 @@ describe("Hush conversation UI contracts", () => {
       "open_hush_connector",
       "clear_hush_inbox",
       "sync_hush_dws",
+      "open_hush_dws_install",
       "open_hush_dws_login",
       "set_hush_dws_auto_sync",
       "sync_hush_wechat",
@@ -1318,6 +1321,12 @@ describe("Hush conversation UI contracts", () => {
       expect(hushModuleSource).toContain(`"${command}"`);
     }
     expect(hushModuleSource).toContain('"humhum://hush-message"');
+  });
+
+  it("offers the official DWS installer before asking for DingTalk login", () => {
+    expect(hushModuleSource).toContain('state === "not_installed"');
+    expect(hushModuleSource).toContain("onInstallDws");
+    expect(hushModuleSource).toContain("安装官方 DWS");
   });
 
   it("keeps Hush radii bounded and disables loading motion when requested", () => {

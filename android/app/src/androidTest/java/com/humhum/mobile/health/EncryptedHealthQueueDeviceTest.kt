@@ -25,22 +25,23 @@ class EncryptedHealthQueueDeviceTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val queue = EncryptedHealthQueue(context)
         queue.clear()
+        val recordedAt = Instant.parse("2026-07-17T13:00:00Z")
         val signal = HealthSignal.forLocalDay(
             metric = HealthMetric.STEPS,
             value = 6_342.0,
             source = HealthSource.HEALTH_CONNECT,
             day = LocalDate.of(2026, 7, 17),
             zone = ZoneOffset.UTC,
-            capturedAt = Instant.parse("2026-07-17T13:00:00Z"),
+            capturedAt = recordedAt,
         )
 
-        queue.enqueue(listOf(signal), Instant.parse("2026-07-17T13:00:00Z"))
+        queue.enqueue(listOf(signal), recordedAt)
 
         val encryptedFile = File(context.noBackupFilesDir, EncryptedHealthQueue.FILE_NAME)
         assertTrue(encryptedFile.isFile)
         assertFalse(encryptedFile.readBytes().toString(Charsets.ISO_8859_1).contains("6342"))
 
-        val restored = EncryptedHealthQueue(context).peekBatch(31)
+        val restored = EncryptedHealthQueue(context).peekBatch(31, recordedAt)
         assertEquals(listOf(signal), restored)
     }
 

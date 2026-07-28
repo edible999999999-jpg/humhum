@@ -4,11 +4,11 @@ use std::process::Stdio;
 use std::sync::OnceLock;
 use tokio::process::Command;
 
-const POLICY_VERSION: u8 = 1;
+const POLICY_VERSION: u8 = 2;
 const SANDBOX_EXECUTABLE: &str = "/usr/bin/sandbox-exec";
 const SANDBOX_PREFLIGHT_EXECUTABLE: &str = "/usr/bin/true";
 const NETWORK_DENY_PROFILE: &str = "(version 1)\n(allow default)\n(deny network*)";
-const POLICY_MESSAGE: &str = "聊天正文仅保存在这台 Mac，不会发送给 AI、Relay、手机或外部服务。";
+const POLICY_MESSAGE: &str = "聊天正文仅保存在这台 Mac，不会发送给 AI、Relay、手机或其他第三方；只有你逐条确认的回复会送往对应的微信或钉钉会话。";
 const SANDBOX_ERROR: &str = "系统网络隔离不可用；为保护聊天隐私，微信本地读取已停止";
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -115,10 +115,11 @@ mod tests {
     fn compiled_policy_is_always_enforced_and_has_no_disable_flag() {
         let status = status();
         assert!(status.enforced);
-        assert_eq!(status.policy_version, 1);
+        assert_eq!(status.policy_version, 2);
         assert!(status
             .message
-            .contains("不会发送给 AI、Relay、手机或外部服务"));
+            .contains("不会发送给 AI、Relay、手机或其他第三方"));
+        assert!(status.message.contains("逐条确认"));
     }
 
     #[cfg(target_os = "macos")]

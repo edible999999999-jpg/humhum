@@ -166,9 +166,7 @@ pub(crate) struct MobileContextSources {
 pub fn project_mobile_personal_context(app: &tauri::AppHandle) -> MobilePersonalContext {
     let mut sources = MobileContextSources::default();
 
-    if let Some(store) =
-        app.try_state::<Arc<Mutex<crate::knowledge_store::KnowledgeStore>>>()
-    {
+    if let Some(store) = app.try_state::<Arc<Mutex<crate::knowledge_store::KnowledgeStore>>>() {
         let store = store.lock().unwrap_or_else(|error| error.into_inner());
         let knowledge = store.get_all();
         sources.preferences = knowledge
@@ -249,9 +247,7 @@ pub fn project_mobile_personal_context(app: &tauri::AppHandle) -> MobilePersonal
         }
     }
 
-    if let Some(store) =
-        app.try_state::<Arc<Mutex<crate::hexa_watch_store::HexaWatchStore>>>()
-    {
+    if let Some(store) = app.try_state::<Arc<Mutex<crate::hexa_watch_store::HexaWatchStore>>>() {
         let store = store.lock().unwrap_or_else(|error| error.into_inner());
         sources.agents = store
             .sessions()
@@ -481,8 +477,7 @@ mod tests {
             }],
         };
 
-        let context =
-            project_mobile_personal_context_from_sources(sources, "2026-07-19T09:00:00Z");
+        let context = project_mobile_personal_context_from_sources(sources, "2026-07-19T09:00:00Z");
         let json = serde_json::to_string(&context).expect("context serializes");
 
         assert_eq!(context.today.len(), 5);

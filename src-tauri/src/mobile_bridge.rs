@@ -814,7 +814,10 @@ fn parse_anywhere_request_with_capability(
             decision,
         } => {
             if !scope.allows_control()
-                || !matches!(provider.as_str(), "codex" | "claude" | "claude-code")
+                || !matches!(
+                    provider.as_str(),
+                    "codex" | "claude" | "claude-code" | "qoder" | "qoderwork"
+                )
                 || !valid_anywhere_identifier(id)
                 || !matches!(decision.as_str(), "allow_once" | "deny")
             {
@@ -831,7 +834,7 @@ fn parse_anywhere_request_with_capability(
                 || !valid_anywhere_identifier(session_id)
                 || !matches!(
                     provider.as_str(),
-                    "codex" | "claude" | "claude-code" | "opencode"
+                    "codex" | "claude" | "claude-code" | "opencode" | "qoder" | "qoderwork"
                 )
                 || message.trim().is_empty()
                 || message_chars > 20_000
@@ -904,7 +907,7 @@ async fn execute_anywhere_request(
                 };
                 let pending = app
                     .try_state::<crate::hook_server::PendingMap>()
-                    .ok_or("Claude permission bridge is starting")?;
+                    .ok_or("Agent permission bridge is starting")?;
                 crate::commands::resolve_hook_permission(
                     pending.inner(),
                     &id,
@@ -943,6 +946,7 @@ async fn execute_anywhere_request(
                         crate::intervention_queue::InterventionProvider::Claude
                     }
                     "opencode" => crate::intervention_queue::InterventionProvider::OpenCode,
+                    "qoder" | "qoderwork" => crate::intervention_queue::InterventionProvider::Qoder,
                     _ => return Err("Unsupported Agent provider".into()),
                 };
                 let store = app
@@ -1053,16 +1057,7 @@ async fn run_wake_observer(
             if let Some(cursor) = page["cursor"].as_str() {
                 if secret.command.is_some() {
                     let state = anywhere_states.entry(secret.device_id.clone()).or_default();
-                    sync_anywhere_device(
-                        &bridge,
-                        &app,
-                        secret,
-                        auth,
-                        &page,
-                        cursor,
-                        state,
-                    )
-                    .await;
+                    sync_anywhere_device(&bridge, &app, secret, auth, &page, cursor, state).await;
                 } else {
                     publisher.observe(&secret.device_id, cursor);
                 }
@@ -1638,29 +1633,25 @@ async fn run_temporary_relay_pairing(
             }
             let (scope, personal_context) =
                 match claim_temporary_pairing(&bridge, &relay_id, &request.code, now) {
-                Ok(capabilities) => capabilities,
-                Err(error) => {
-                    let body = serde_json::json!({
-                        "ok": false,
-                        "error": error
-                    });
-                    let _ = publish_temporary_pairing_body(
-                        &client,
-                        &mut secret,
-                        &request.request_id,
-                        &body,
-                    )
+                    Ok(capabilities) => capabilities,
+                    Err(error) => {
+                        let body = serde_json::json!({
+                            "ok": false,
+                            "error": error
+                        });
+                        let _ = publish_temporary_pairing_body(
+                            &client,
+                            &mut secret,
+                            &request.request_id,
+                            &body,
+                        )
+                        .await;
+                        continue;
+                    }
+                };
+            let completed =
+                complete_temporary_pairing(&bridge, &request.device_name, scope, personal_context)
                     .await;
-                    continue;
-                }
-            };
-            let completed = complete_temporary_pairing(
-                &bridge,
-                &request.device_name,
-                scope,
-                personal_context,
-            )
-            .await;
             let (body, paired_device_id) = match completed {
                 Ok(completed) => {
                     let body = sealed_temporary_pairing_body(&request, completed.value, now);
@@ -2269,22 +2260,20 @@ async fn handle_mobile_request(
                 json_error(StatusCode::UNAUTHORIZED, "Pair this device first")
             }
         }
-        (&Method::GET, "/api/personal-context") => {
-            match request_device_auth(&request, &bridge) {
-                Some(device) if device.personal_context => json_response(
-                    StatusCode::OK,
-                    &serde_json::to_value(
-                        crate::mobile_personal_context::project_mobile_personal_context(&app),
-                    )
-                    .unwrap_or_default(),
-                ),
-                Some(_) => json_error(
-                    StatusCode::FORBIDDEN,
-                    "Personal context is not authorized for this device",
-                ),
-                None => json_error(StatusCode::UNAUTHORIZED, "Pair this device first"),
-            }
-        }
+        (&Method::GET, "/api/personal-context") => match request_device_auth(&request, &bridge) {
+            Some(device) if device.personal_context => json_response(
+                StatusCode::OK,
+                &serde_json::to_value(
+                    crate::mobile_personal_context::project_mobile_personal_context(&app),
+                )
+                .unwrap_or_default(),
+            ),
+            Some(_) => json_error(
+                StatusCode::FORBIDDEN,
+                "Personal context is not authorized for this device",
+            ),
+            None => json_error(StatusCode::UNAUTHORIZED, "Pair this device first"),
+        },
         (&Method::POST, "/api/session/conversation") => {
             read_mobile_session_conversation(request, &app, &bridge).await
         }
@@ -2686,8 +2675,7 @@ async fn pair_device(
                 challenge_scope,
                 challenge_personal_context,
             )
-        })
-    {
+        }) {
         Ok(device) => device,
         Err(_) => {
             return json_error(
@@ -3022,6 +3010,7 @@ fn provider_transcript_root(provider: &str, home_dir: &Path) -> Option<PathBuf> 
         "codex" => Some(home_dir.join(".codex/sessions")),
         "claude" | "claude-code" => Some(home_dir.join(".claude/projects")),
         "openclaw" => Some(home_dir.join(".openclaw/agents")),
+        "qoderwork" => Some(home_dir.join(".qoderwork/projects")),
         _ => None,
     }
 }
@@ -3184,6 +3173,7 @@ async fn send_mobile_agent_message(
     let provider = match input.provider.as_str() {
         "claude" | "claude-code" => crate::intervention_queue::InterventionProvider::Claude,
         "opencode" => crate::intervention_queue::InterventionProvider::OpenCode,
+        "qoder" | "qoderwork" => crate::intervention_queue::InterventionProvider::Qoder,
         _ => return json_error(StatusCode::BAD_REQUEST, "Unsupported Agent provider"),
     };
     let store = app
@@ -3212,7 +3202,7 @@ async fn send_mobile_agent_message(
 }
 
 #[derive(Deserialize)]
-struct MobileClaudePermissionRequest {
+struct MobileHookPermissionRequest {
     event_id: String,
     decision: String,
 }
@@ -3228,7 +3218,7 @@ async fn resolve_mobile_claude_permission(
     if body.len() > 4096 {
         return json_error(StatusCode::BAD_REQUEST, "Invalid permission request");
     }
-    let input: MobileClaudePermissionRequest = match serde_json::from_slice(&body) {
+    let input: MobileHookPermissionRequest = match serde_json::from_slice(&body) {
         Ok(input) => input,
         Err(_) => return json_error(StatusCode::BAD_REQUEST, "Invalid permission request"),
     };
@@ -3240,7 +3230,7 @@ async fn resolve_mobile_claude_permission(
     let Some(pending) = app.try_state::<crate::hook_server::PendingMap>() else {
         return json_error(
             StatusCode::SERVICE_UNAVAILABLE,
-            "Claude permission bridge is starting",
+            "Agent permission bridge is starting",
         );
     };
     match crate::commands::resolve_hook_permission(
@@ -3581,7 +3571,10 @@ impl MobileSessionSummary {
             needs_attention: session.has_pending_permission,
             pending_actions: Vec::new(),
             can_message: include_actions
-                && matches!(session.client_type.as_str(), "claude-code" | "opencode")
+                && matches!(
+                    session.client_type.as_str(),
+                    "claude-code" | "opencode" | "qoder" | "qoderwork"
+                )
                 && session.status != crate::session_store::SessionStatus::Completed,
             can_read_conversation,
         }
@@ -4222,8 +4215,7 @@ mod tests {
             wake_key: "33".repeat(32),
             command: None,
         };
-        let relayed =
-            pair_success_value("aa", MobileDeviceScope::Control, true, Some(bundle));
+        let relayed = pair_success_value("aa", MobileDeviceScope::Control, true, Some(bundle));
         assert_eq!(relayed.as_object().unwrap().len(), 4);
         assert_eq!(relayed["personal_context"], true);
         assert_eq!(relayed["wake_relay"]["subscriber_token"], "22".repeat(32));
@@ -4723,6 +4715,18 @@ mod tests {
                 "session_id": "session-1",
                 "provider": "codex",
                 "message": "continue"
+            }),
+            serde_json::json!({
+                "action": "message",
+                "session_id": "qoder-session-1",
+                "provider": "qoder",
+                "message": "continue"
+            }),
+            serde_json::json!({
+                "action": "approval",
+                "provider": "qoderwork",
+                "id": "approval-2",
+                "decision": "deny"
             }),
         ] {
             assert!(parse_anywhere_request(MobileDeviceScope::Read, &body).is_err());
@@ -5277,6 +5281,11 @@ mod tests {
         opencode.client_type = "opencode".into();
         assert!(!MobileSessionSummary::from_hook(&opencode, false, false).can_message);
         assert!(MobileSessionSummary::from_hook(&opencode, true, false).can_message);
+
+        let mut qoder = session;
+        qoder.client_type = "qoderwork".into();
+        assert!(!MobileSessionSummary::from_hook(&qoder, false, false).can_message);
+        assert!(MobileSessionSummary::from_hook(&qoder, true, false).can_message);
     }
 
     #[test]
@@ -5574,14 +5583,14 @@ mod tests {
     }
 
     #[test]
-    fn claude_mobile_approval_hides_full_file_paths() {
+    fn hook_mobile_approval_hides_full_file_paths_and_preserves_qoder_provider() {
         let event = crate::event_bus::HookEvent {
             id: "permission-1".into(),
             hook_event_name: "PermissionRequest".into(),
             session_id: "claude-1".into(),
             transcript_path: None,
             cwd: None,
-            client_type: "claude-code".into(),
+            client_type: "qoderwork".into(),
             payload: serde_json::json!({
                 "tool_name": "Edit",
                 "tool_input": { "file_path": "/Users/me/private/project/secret.txt" }
@@ -5591,13 +5600,13 @@ mod tests {
 
         let approval = mobile_hook_approval(&event).unwrap();
 
-        assert_eq!(approval.provider, "claude");
+        assert_eq!(approval.provider, "qoderwork");
         assert!(approval.summary.contains("secret.txt"));
         assert!(!approval.summary.contains("/Users"));
     }
 
     #[tokio::test]
-    async fn mobile_claude_decision_uses_the_existing_pending_channel() {
+    async fn mobile_hook_decision_uses_the_existing_pending_channel() {
         let pending: crate::hook_server::PendingMap =
             Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
         let (sender, receiver) = tokio::sync::oneshot::channel();

@@ -31,6 +31,10 @@ pub struct AppConfig {
     #[serde(default)]
     pub mobile_relay: MobileRelayConfig,
 
+    /// Restore the phone bridge after HUMHUM restarts.
+    #[serde(default)]
+    pub mobile_access_enabled: bool,
+
     /// UI preferences
     pub ui: UiConfig,
 }
@@ -228,6 +232,7 @@ impl Default for AppConfig {
             brain: BrainConfig::default(),
             pi: PiConfig::default(),
             mobile_relay: MobileRelayConfig::default(),
+            mobile_access_enabled: false,
             ui: UiConfig::default(),
         }
     }
@@ -272,6 +277,22 @@ impl AppConfig {
                 Ok(content) => match serde_json::from_str::<AppConfig>(&content) {
                     Ok(mut config) => {
                         config.migrate_legacy_pi_config();
+                        let mobile_access_is_explicit =
+                            serde_json::from_str::<serde_json::Value>(&content)
+                                .ok()
+                                .and_then(|value| {
+                                    value
+                                        .as_object()
+                                        .map(|object| object.contains_key("mobile_access_enabled"))
+                                })
+                                .unwrap_or(false);
+                        if config.migrate_legacy_mobile_access(mobile_access_is_explicit) {
+                            if let Err(error) = config.save() {
+                                log::warn!(
+                                    "Could not persist the migrated mobile access preference: {error}"
+                                );
+                            }
+                        }
                         return config;
                     }
                     Err(e) => {
@@ -297,6 +318,15 @@ impl AppConfig {
         }
         if self.pi.token.is_none() {
             self.pi.token = self.api_keys.openai.clone();
+        }
+    }
+
+    pub fn migrate_legacy_mobile_access(&mut self, mobile_access_is_explicit: bool) -> bool {
+        if !mobile_access_is_explicit && self.mobile_relay.enabled && !self.mobile_access_enabled {
+            self.mobile_access_enabled = true;
+            true
+        } else {
+            false
         }
     }
 
@@ -339,6 +369,7 @@ mod tests {
         assert!(config.ui.analytics_enabled);
         assert!(!config.mobile_relay.enabled);
         assert_eq!(config.mobile_relay.base_url, None);
+        assert!(!config.mobile_access_enabled);
     }
 
     #[test]
@@ -385,5 +416,29 @@ mod tests {
         assert!(config.ui.analytics_enabled);
         assert!(!config.mobile_relay.enabled);
         assert_eq!(config.mobile_relay.base_url, None);
+        assert!(!config.mobile_access_enabled);
+    }
+
+    #[test]
+    fn legacy_anywhere_users_restore_mobile_access_after_restart() {
+        let mut config = AppConfig::default();
+        config.mobile_relay.enabled = true;
+
+        let migrated = config.migrate_legacy_mobile_access(false);
+
+        assert!(migrated);
+        assert!(config.mobile_access_enabled);
+    }
+
+    #[test]
+    fn explicit_mobile_access_choice_is_never_overridden_by_migration() {
+        let mut config = AppConfig::default();
+        config.mobile_relay.enabled = true;
+        config.mobile_access_enabled = false;
+
+        let migrated = config.migrate_legacy_mobile_access(true);
+
+        assert!(!migrated);
+        assert!(!config.mobile_access_enabled);
     }
 }

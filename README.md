@@ -8,11 +8,11 @@
 [中文文档](./README.zh-CN.md)
 
 <p align="center">
-  <a href="https://github.com/edible999999999-jpg/humhum/releases/download/v0.3.15-beta.1/HumHum_0.3.15_aarch64.dmg"><strong>Download for macOS</strong></a>
+  <a href="https://github.com/edible999999-jpg/humhum/releases/download/v0.3.17-beta.1/HumHum_0.3.17_aarch64.dmg"><strong>Download for macOS</strong></a>
   ·
   <a href="https://github.com/edible999999999-jpg/humhum/releases/latest/download/HumHum_0.3.12_x64-setup.exe"><strong>Download Windows Preview</strong></a>
   ·
-  <a href="https://github.com/edible999999999-jpg/humhum/releases/download/v0.3.15-beta.1/HUMHUM-Android-0.3.15-Xiaomi.zip"><strong>Download for Android / Xiaomi</strong></a>
+  <a href="https://github.com/edible999999-jpg/humhum/releases/download/v0.3.17-beta.1/HUMHUM-Android-0.3.17.apk"><strong>Download Android APK</strong></a>
   ·
   <a href="https://yuxilab.cn/intro"><strong>Visit the website</strong></a>
   ·
@@ -59,7 +59,7 @@ This foundation helps different Agents understand you more accurately: how you l
 
 Hush organizes personal, social, work, and family messages from your perspective. It bridges sources like DingTalk, WeChat, X, and Meta, reorganizing messages into relationship tiers you can actually parse: family, friends, work, interests, and daily signals.
 
-Hush **doesn't speak for you** — it helps you see who genuinely needs a response. A parent's message gets a timely nudge and summary; the warm words in a family group aren't buried under work chatter; the day's most important AI updates on X can be distilled into a light summary. When you want to reply, Hush suggests a warm phrasing — but whether and how to reply is always your call. Local message bridges are read-only by default and require your approval.
+Hush **never speaks without you** — it helps you see who genuinely needs a response. A parent's message gets a timely nudge and summary; the warm words in a family group aren't buried under work chatter; the day's most important AI updates on X can be distilled into a light summary. When you want to reply, Hush drafts locally; it sends to the matched WeChat or DingTalk direct chat only after you review the recipient and body and confirm that individual send. Local message bridges remain read-only by default and require your approval.
 
 > It's not an auto-social tool. It's a personal message helper that guards the warmth of your relationships.
 
@@ -132,9 +132,9 @@ After launch, open the **Hub** from the system tray menu or by right-clicking th
 
 ### Phone access
 
-The native Android client pairs by scanning the short-lived QR code in Hexa. On the same network it uses certificate-pinned HTTPS directly to the Mac. The invite-only **HUMHUM Anywhere** beta can automatically fall back to a self-hosted opaque relay when the phone is on 5G or another network: session summaries, bounded recent conversation, approvals and short follow-ups stay AES-256-GCM encrypted between the Mac and phone, while the relay stores only bounded ciphertext and credential digests. Read-only/control scope and per-device revocation still apply.
+The native Android client pairs by scanning the short-lived **Control Hexa from phone** QR code in Hexa; no URL, code, fingerprint, or device-name form follows a successful scan. On the same network it uses certificate-pinned HTTPS directly to the Mac. When the QR includes an invite for the invite-only **HUMHUM Anywhere** beta, 5G and other Wi-Fi use the end-to-end encrypted relay first: session summaries, bounded recent conversation, approvals and short tasks stay AES-256-GCM encrypted between the Mac and phone, while the relay stores only bounded ciphertext and credential digests. Read-only/control scope and per-device revocation still apply.
 
-Android 0.3.15 adds a native Living Signals home with distinct Humi, Hype, Hush and Hexa tabs. Optional Health Connect sources provide daily steps, resting heart rate and sleep duration; permissions are requested one source at a time, the phone keeps only a seven-day encrypted delivery queue, and durable encrypted summaries live on the user's Mac. Phones without Health Connect can use the local step counter after explicit permission, while heart rate and sleep remain unavailable instead of being inferred.
+Android 0.3.17 adds a native Living Signals home with distinct Humi, Hype, Hush and Hexa tabs. Hexa can inspect Codex, Claude, OpenCode, Qoder and QoderWork sessions, resolve supported approvals and send a follow-up task. Optional Health Connect sources provide daily steps, resting heart rate and sleep duration; permissions are requested one source at a time, the phone keeps only a seven-day encrypted delivery queue, and durable encrypted summaries live on the user's Mac.
 
 ### Hush real WeChat messages (experimental)
 
@@ -164,6 +164,14 @@ that file, then passes validated keys only to its own reader through stdin. A
 future signed HUMHUM helper and Keychain-backed encrypted vault will replace
 this compatibility path. Hush imports incoming messages only into the local
 inbox and skips messages sent by the user.
+
+Reply drafts are deterministic and local. A verified direct chat is prepared
+from the stored Hush message ID, and the recipient is derived again on the Mac.
+WeChat opens the matching local conversation and requires one native
+confirmation dialog before Return is pressed. DingTalk uses the official DWS
+CLI only after the same per-message confirmation; text is passed on stdin and
+is absent from command arguments and logs. Message bodies are never projected
+to Anywhere, the relay, the Android client, or an AI.
 
 Anywhere requires a deployed HTTPS relay and an invite code configured in Hexa. See [Android setup](./docs/android-install.md) and [relay deployment](./relay/README.md). It is currently a self-hosted beta, not a promise that a public HUMHUM endpoint is already online.
 
@@ -213,13 +221,14 @@ scripts/                # Edge TTS bridge, etc.
 
 ## Roadmap
 
-- [x] Native Android status, conversation, approval and follow-up access with QR pairing
+- [x] Native Android cross-network status, conversation, approval and task control for Codex / Claude / Qoder
 - [ ] Public hosted HUMHUM Anywhere endpoint and iOS client
 - [ ] Cross-device preference and context sync
 - [x] Read-only macOS notification bridge for new WeChat and DingTalk messages
 - [x] Experimental local wxkey compatibility path for WeChat history
 - [ ] Signed key setup for the bundled read-only WeChat history reader
 - [x] DingTalk DWS history sync
+- [x] Local WeChat / DingTalk direct-chat drafts with per-send confirmation
 - [ ] Feishu message bridge through a local or official authorized source
 - [ ] Smart permission policies (learning your approval habits)
 - [ ] More Agent integrations and an open hook-protocol standard

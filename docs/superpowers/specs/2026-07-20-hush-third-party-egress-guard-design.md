@@ -1,7 +1,7 @@
 # Hush Third-Party Egress Guard Design
 
 Date: 2026-07-20
-Status: Implemented
+Status: Implemented (policy v2)
 
 ## Goal
 
@@ -19,6 +19,8 @@ Allowed in this release:
 - HUMHUM's local Hush inbox and desktop UI.
 - The loopback-only local hook API, protected by its existing local token.
 - Local read-only WeChat and DingTalk ingestion.
+- One reply sent to the exact WeChat or DingTalk conversation only after the
+  user reviews the recipient and content and explicitly confirms that send.
 
 Blocked in this release:
 
@@ -28,6 +30,8 @@ Blocked in this release:
 - Analytics, telemetry, crash reports, logs, and updater requests.
 - Network access from the external `wxkey` compatibility helper.
 - Network access from the bundled WeChat reader.
+- Background replies, bulk replies, automatic replies, and any reply target
+  supplied by the frontend instead of derived from a stored local message.
 
 A paired phone is user-owned rather than a third party, but Hush messages will
 still be excluded from all mobile responses in this release. A future
@@ -67,13 +71,40 @@ No Hush record is passed to a remote model provider. A source-boundary test
 prevents provider and Relay modules from importing `HushStore` or reading
 `hush-inbox.json`.
 
+### Confirmed Reply Boundary
+
+Reply suggestions are generated locally from a small deterministic policy.
+Clicking **本地起草** makes no Tauri request and invokes no AI provider.
+
+For both platforms, the frontend sends only the local Hush message id and the
+edited body to the Tauri command. The backend reloads that message and derives
+the recipient from trusted local source metadata. It rejects group messages,
+notification-only previews, missing DingTalk open ids, and unresolved WeChat
+internal ids.
+
+Preparation creates a random, single-use confirmation id bound to one recipient
+and one body. It expires after 120 seconds. The frontend never receives the
+opaque DingTalk recipient id.
+
+- DingTalk sends through an exact `dws chat message send` command assembled by
+  HUMHUM. The body travels over stdin rather than process arguments and no
+  shell is involved.
+- WeChat opens the resolved direct conversation and inserts a draft through a
+  fixed macOS automation script. Final confirmation opens a system dialog over
+  WeChat with **取消** as the default. Only the explicit **确认发送** action
+  presses Return.
+
+Reply command errors never include message bodies, recipient ids, CLI output,
+or platform credentials.
+
 ### User-Visible Status
 
 Hush displays a persistent security row:
 
 > 第三方传输已阻止
 >
-> 聊天正文仅保存在这台 Mac，不会发送给 AI、Relay、手机或外部服务。
+> 聊天正文仅保存在这台 Mac，不会发送给 AI、Relay、手机或其他第三方；
+> 只有你逐条确认的回复会送往对应的微信或钉钉会话。
 
 The row is informational, not a toggle. Its status comes from a Tauri command
 backed by the compiled policy rather than frontend-only text.
@@ -84,6 +115,9 @@ backed by the compiled policy rather than frontend-only text.
   with an actionable local error.
 - If a future code change adds Hush content to a mobile or Relay projection,
   tests fail before release.
+- Expired or reused confirmation ids fail closed and require a fresh review.
+- An unresolved recipient never falls back to a displayed name or arbitrary
+  frontend target.
 - No error includes message text, contact names, database keys, salts, local
   message identifiers, or administrator credentials.
 
@@ -101,10 +135,14 @@ Implementation follows test-driven development:
 5. Production code is then changed until those tests pass.
 6. Full frontend, Rust, boundary, production build, and macOS runtime checks
    must pass.
+7. Reply tests prove local drafting makes no provider call, unsafe message
+   types are rejected, target ids are not serialized, and confirmation ids are
+   expiring and single-use.
 
 ## Non-Goals
 
 - Adding a user-controlled privacy-off switch.
-- Sending Hush messages to a phone in this release.
+- Sending Hush message bodies to a phone in this release.
+- Replying to group chats, sending attachments, or unattended reply rules.
 - Replacing the temporary upstream key helper in this change.
 - Claiming that encrypted third-party transit is equivalent to no transit.

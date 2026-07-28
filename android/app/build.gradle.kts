@@ -41,8 +41,8 @@ android {
         applicationId = "com.humhum.mobile"
         minSdk = 26
         targetSdk = 36
-        versionCode = 15
-        versionName = "0.3.15"
+        versionCode = 17
+        versionName = "0.3.17"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "FIREBASE_APPLICATION_ID", quotedBuildValue(

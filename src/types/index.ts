@@ -181,6 +181,7 @@ export interface AppConfig {
     base_url: string | null;
     invite_code: string | null;
   };
+  mobile_access_enabled: boolean;
   ui: {
     position: "bottom-right" | "bottom-left" | "top-right" | "top-left";
     language: "zh" | "en";

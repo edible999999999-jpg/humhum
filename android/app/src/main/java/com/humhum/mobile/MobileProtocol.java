@@ -21,7 +21,8 @@ public final class MobileProtocol {
     private static final int MAX_CONVERSATION_MESSAGES = 12;
     private static final int MAX_CONVERSATION_TEXT_SCALARS = 500;
     private static final int MAX_PERSONAL_CONTEXT_BYTES = 256 * 1024;
-    private static final Set<String> MESSAGE_PROVIDERS = Set.of("codex", "claude", "claude-code", "opencode");
+    private static final Set<String> MESSAGE_PROVIDERS = Set.of(
+            "codex", "claude", "claude-code", "opencode", "qoder", "qoderwork");
 
     private final BridgeConfig config;
     private final String token;

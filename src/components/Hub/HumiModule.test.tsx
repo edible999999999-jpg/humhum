@@ -51,6 +51,7 @@ const appConfig = {
     base_url: null,
     invite_code: null,
   },
+  mobile_access_enabled: false,
   ui: {
     position: "bottom-right",
     language: "zh",
