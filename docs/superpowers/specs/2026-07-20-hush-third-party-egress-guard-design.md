@@ -1,5 +1,21 @@
 # Hush Third-Party Egress Guard Design
 
+## 2026-07-30 Controlled Mobile Preview Amendment
+
+The product decision has advanced from the release described below. A paired
+phone is now allowed to receive a bounded Hush preview only when that individual
+device was explicitly paired with the separate `personal_context` capability.
+The exception is limited to at most 8 redacted message summaries and excludes
+raw message objects, attachments, local paths, reply credentials, and connector
+configuration.
+
+LAN delivery remains certificate-pinned. Anywhere delivery remains
+end-to-end encrypted between the Mac and the paired phone, so Relay stores and
+forwards ciphertext only. Model providers, Agent transports, public APIs, logs,
+and unpaired or non-authorized devices remain outside the boundary. Hush refresh
+is an explicit user action; it does not authorize automatic replies, and every
+reply still crosses the existing per-message confirmation flow.
+
 Date: 2026-07-20
 Status: Implemented (policy v2)
 

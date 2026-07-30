@@ -21,6 +21,16 @@ public class PersonalContextProtocolTest {
     }
 
     @Test
+    public void hushRefreshUsesAnAuthenticatedExplicitAction() {
+        MobileProtocol.RequestSpec request = MobileProtocol.hushRefreshRequest();
+
+        assertEquals("POST", request.method());
+        assertEquals("/api/hush/refresh", request.path());
+        assertTrue(request.requiresToken());
+        assertEquals(262_144, request.maxResponseBytes());
+    }
+
+    @Test
     public void personalContextParserKeepsOnlyTheDeclaredBoundedShape() throws Exception {
         JSONObject payload = contextPayload()
                 .put("today", new JSONArray().put(new JSONObject()
@@ -66,6 +76,36 @@ public class PersonalContextProtocolTest {
         JSONObject oversized = contextPayload().put("today", tooManyToday);
         assertThrows(JSONException.class,
                 () -> MobileProtocol.parsePersonalContext(oversized.toString()));
+    }
+
+    @Test
+    public void personalContextKeepsTheVersionOneEightMessageLimit() throws Exception {
+        JSONArray inbox = new JSONArray();
+        for (int index = 0; index < 8; index++) {
+            inbox.put(new JSONObject()
+                    .put("id", "message-" + index)
+                    .put("sender", "联系人 " + index)
+                    .put("platform", "wechat")
+                    .put("preview", "消息 " + index)
+                    .put("received_at", "2026-07-19T08:00:00Z")
+                    .put("importance", index % 6));
+        }
+
+        Models.PersonalContext context = MobileProtocol.parsePersonalContext(
+                contextPayload().put("inbox", inbox).toString());
+
+        assertEquals(8, context.inbox().size());
+        assertEquals("联系人 7", context.inbox().get(7).sender());
+
+        inbox.put(new JSONObject()
+                .put("id", "message-8")
+                .put("sender", "联系人 8")
+                .put("platform", "wechat")
+                .put("preview", "消息 8")
+                .put("received_at", "2026-07-19T08:00:00Z")
+                .put("importance", 2));
+        assertThrows(JSONException.class, () -> MobileProtocol.parsePersonalContext(
+                contextPayload().put("inbox", inbox).toString()));
     }
 
     private static JSONObject contextPayload() throws JSONException {

@@ -28,6 +28,7 @@ object HumHumComposeHost {
                     onOpenSettings = actions::openSettings,
                     onCloseSettings = actions::closeSettings,
                     onRefresh = actions::refresh,
+                    onRefreshHush = actions::refreshHush,
                     onAdjustToday = actions::adjustToday,
                     onScanPairing = actions::scanPairing,
                     onPastePairing = actions::pastePairing,

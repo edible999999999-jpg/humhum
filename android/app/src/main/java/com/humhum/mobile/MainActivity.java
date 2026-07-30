@@ -92,6 +92,7 @@ public final class MainActivity extends ComponentActivity {
     private boolean renderingUiState;
     private HumHumUiState lastRenderedUiState;
     private boolean refreshInFlight;
+    private boolean hushRefreshInFlight;
     private final Map<MobileRoleDashboard.Role, LinearLayout> roleTabs =
             new EnumMap<>(MobileRoleDashboard.Role.class);
     private final Map<MobileRoleDashboard.Role, TextView> roleTabLabels =
@@ -235,6 +236,10 @@ public final class MainActivity extends ComponentActivity {
 
             @Override public void refresh() {
                 refreshSessions(true);
+            }
+
+            @Override public void refreshHush() {
+                MainActivity.this.refreshHush();
             }
 
             @Override public void adjustToday() {
@@ -1379,6 +1384,66 @@ public final class MainActivity extends ComponentActivity {
                 failure == null ? "个人上下文暂时不可用" : safeError(failure));
     }
 
+    private void refreshHush() {
+        MobileProtocol current = protocol;
+        ConnectionStore.Connection currentConnection = connection;
+        AnywhereGateway currentAnywhere = anywhereGateway;
+        if (current == null || currentConnection == null) return;
+        if (hushRefreshInFlight) return;
+        if (!currentConnection.personalContext()) {
+            dispatchState(new HumHumAction.PersonalContextFailed("这台手机没有 Hush 授权，请重新扫码配对"));
+            return;
+        }
+        hushRefreshInFlight = true;
+        dispatchState(new HumHumAction.StatusChanged("正在同步微信消息"));
+        boolean relayFirst =
+                ConnectionRoutePolicy.useRelayFirst(currentConnection, currentAnywhere != null);
+        long generation = snapshotGenerationGate.capture();
+        companionRepository.executeNetwork(() -> {
+            try {
+                Models.PersonalContext context = fetchHushContext(
+                        current, currentConnection, currentAnywhere, relayFirst);
+                long savedAtMillis = System.currentTimeMillis();
+                boolean saved = snapshotGenerationGate.callIfCurrent(generation, () -> {
+                    if (!isCurrentConnection(current, currentConnection)) return false;
+                    writePersonalContextSafely(currentConnection, context, savedAtMillis);
+                    return true;
+                }, false);
+                if (!saved) return;
+                postRefreshIfCurrent(generation, current, currentConnection, () -> {
+                    dispatchState(new HumHumAction.PersonalContextLoaded(context, false));
+                    dispatchState(new HumHumAction.StatusChanged("微信消息刚刚同步"));
+                });
+            } catch (Exception error) {
+                if (OfflineFallbackPolicy.isAuthorizationRevoked(error)) {
+                    clearRevokedConnection(generation, current, currentConnection);
+                    return;
+                }
+                String visibleError = safeError(error);
+                postRefreshIfCurrent(generation, current, currentConnection, () -> {
+                    dispatchState(new HumHumAction.PersonalContextFailed(visibleError));
+                    dispatchState(new HumHumAction.StatusChanged("微信同步失败"));
+                });
+            } finally {
+                main.post(() -> hushRefreshInFlight = false);
+            }
+        });
+    }
+
+    private Models.PersonalContext fetchHushContext(
+            MobileProtocol activeProtocol,
+            ConnectionStore.Connection activeConnection,
+            AnywhereGateway activeAnywhere,
+            boolean relayFirst) throws Exception {
+        if (relayFirst) {
+            if (activeAnywhere == null || activeConnection.wakeRelay() == null) {
+                throw new IllegalStateException("远程微信同步通道不可用");
+            }
+            return activeAnywhere.refreshHush(activeConnection.wakeRelay());
+        }
+        return activeProtocol.refreshHush();
+    }
+
     private void clearRevokedConnection(
             long generation,
             MobileProtocol expectedProtocol,
@@ -2208,13 +2273,7 @@ public final class MainActivity extends ComponentActivity {
                             session,
                             message);
                     postIfCurrent(generation, current, currentConnection, () -> {
-                        dispatchState(new HumHumAction.FollowUpSucceeded(session.id()));
-                        messageDraftBySessionId.remove(session.id());
-                        setStatusMessage("delivered".equals(state)
-                                ? "远程连接 · 跟进已送达"
-                                : "远程连接 · 跟进已进入队列");
-                        renderSessions(currentUiState().getSessions());
-                        refreshSessions(false);
+                        finishFollowUp(session, state, true);
                     });
                     return;
                 } catch (Exception remoteError) {
@@ -2227,12 +2286,7 @@ public final class MainActivity extends ComponentActivity {
             try {
                 String state = current.sendMessage(session, message);
                 postIfCurrent(generation, current, currentConnection, () -> {
-                    dispatchState(new HumHumAction.FollowUpSucceeded(session.id()));
-                    messageDraftBySessionId.remove(session.id());
-                    setStatusMessage(
-                            "delivered".equals(state) ? "跟进已送达" : "跟进已进入队列");
-                    renderSessions(currentUiState().getSessions());
-                    refreshSessions(false);
+                    finishFollowUp(session, state, false);
                 });
             } catch (Exception error) {
                 if (OfflineFallbackPolicy.isAuthorizationRevoked(error)) {
@@ -2248,13 +2302,7 @@ public final class MainActivity extends ComponentActivity {
                                 session,
                                 message);
                         postIfCurrent(generation, current, currentConnection, () -> {
-                            dispatchState(new HumHumAction.FollowUpSucceeded(session.id()));
-                            messageDraftBySessionId.remove(session.id());
-                            setStatusMessage("delivered".equals(state)
-                                    ? "远程连接 · 跟进已送达"
-                                    : "远程连接 · 跟进已进入队列");
-                            renderSessions(currentUiState().getSessions());
-                            refreshSessions(false);
+                            finishFollowUp(session, state, true);
                         });
                         return;
                     } catch (Exception remoteError) {
@@ -2263,12 +2311,33 @@ public final class MainActivity extends ComponentActivity {
                 }
                 String visibleError = safeError(error);
                 postIfCurrent(generation, current, currentConnection, () -> {
-                    dispatchState(new HumHumAction.FollowUpFailed(session.id()));
+                    dispatchState(new HumHumAction.FollowUpFailed(session.id(), visibleError));
                     setStatusMessage(visibleError);
                     renderSessions(currentUiState().getSessions());
                 });
             }
         });
+    }
+
+    private void finishFollowUp(Models.Session session, String state, boolean viaRelay) {
+        String remotePrefix = viaRelay ? "远程连接 · " : "";
+        if ("delivered".equals(state)) {
+            dispatchState(new HumHumAction.FollowUpSucceeded(session.id()));
+            messageDraftBySessionId.remove(session.id());
+            setStatusMessage(remotePrefix + "跟进已送达");
+            renderSessions(currentUiState().getSessions());
+            refreshSessions(false);
+            return;
+        }
+        if ("queued".equals(state)) {
+            dispatchState(new HumHumAction.FollowUpQueued(session.id()));
+            setStatusMessage(remotePrefix + "电脑已收到，Agent 尚未开始");
+        } else {
+            dispatchState(new HumHumAction.FollowUpFailed(
+                    session.id(), "Agent 没有接收这条指令，请刷新后重试"));
+            setStatusMessage(remotePrefix + "发送失败");
+        }
+        renderSessions(currentUiState().getSessions());
     }
 
     private void setPairing(boolean pairing) {

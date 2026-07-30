@@ -93,7 +93,7 @@ function defaultInvoke(command: string): unknown {
       enforced: true,
       policy_version: 2,
       message:
-        "聊天正文仅保存在这台 Mac，不会发送给 AI、Relay、手机或其他第三方；只有你逐条确认的回复会送往对应的微信或钉钉会话。",
+        "聊天正文不会发送给 AI 或第三方；只有你明确授权的配对手机可接收限量脱敏预览，Relay 只能看到端到端加密密文；回复仍需逐条确认。",
       process_sandbox_available: true,
     };
   }
@@ -572,7 +572,7 @@ describe("Hush third-party egress guard", () => {
     expect(invokeMock).toHaveBeenCalledWith("get_hush_egress_guard_status");
     expect(view.host.textContent).toContain("第三方传输已阻止");
     expect(view.host.textContent).toContain(
-      "聊天正文仅保存在这台 Mac，不会发送给 AI、Relay、手机或其他第三方；只有你逐条确认的回复会送往对应的微信或钉钉会话。",
+      "聊天正文不会发送给 AI 或第三方；只有你明确授权的配对手机可接收限量脱敏预览，Relay 只能看到端到端加密密文；回复仍需逐条确认。",
     );
     expect(
       view.host.querySelector('[data-hush-egress-guard="enforced"]'),

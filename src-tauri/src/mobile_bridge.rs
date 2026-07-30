@@ -14,7 +14,7 @@ use std::io::BufReader;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex};
-use tauri::{Listener, Manager};
+use tauri::{Emitter, Listener, Manager};
 use tokio::net::TcpListener;
 use tokio::sync::{oneshot, Notify, Semaphore};
 use tokio_rustls::rustls;
@@ -31,6 +31,7 @@ const MAX_CONVERSATION_TEXT_CHARS: usize = 500;
 const MAX_CONVERSATION_RESPONSE_BYTES: usize = 40 * 1024;
 const MAX_HUSH_SIGNAL_REQUEST_BYTES: usize = 64 * 1024;
 const MAX_HUSH_SIGNAL_BATCH: usize = 31;
+const MOBILE_HUSH_SYNC_TIMEOUT_SECONDS: u64 = 45;
 
 type HttpBody = Full<Bytes>;
 
@@ -759,6 +760,7 @@ fn anywhere_snapshot_envelope(
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 enum AnywhereRequest {
     PersonalContext,
+    HushRefresh,
     Conversation {
         session_id: String,
     },
@@ -798,7 +800,7 @@ fn parse_anywhere_request_with_capability(
     let request: AnywhereRequest =
         serde_json::from_value(body.clone()).map_err(|_| "Invalid Anywhere request".to_string())?;
     match &request {
-        AnywhereRequest::PersonalContext => {
+        AnywhereRequest::PersonalContext | AnywhereRequest::HushRefresh => {
             if !personal_context {
                 return Err("Personal context is not authorized for this device".into());
             }
@@ -863,6 +865,7 @@ async fn execute_anywhere_request(
             crate::mobile_personal_context::project_mobile_personal_context(app),
         )
         .map_err(|_| "Personal context is unavailable".to_string()),
+        AnywhereRequest::HushRefresh => refresh_mobile_hush_context(app).await,
         AnywhereRequest::Refresh => Ok(with_mobile_cursor(mobile_session_page(app, scope).await)),
         AnywhereRequest::Conversation { session_id } => {
             let home_dir = dirs::home_dir().ok_or("Conversation unavailable")?;
@@ -2274,6 +2277,19 @@ async fn handle_mobile_request(
             ),
             None => json_error(StatusCode::UNAUTHORIZED, "Pair this device first"),
         },
+        (&Method::POST, "/api/hush/refresh") => match request_device_auth(&request, &bridge) {
+            Some(device) if device.personal_context => {
+                match refresh_mobile_hush_context(&app).await {
+                    Ok(context) => json_response(StatusCode::OK, &context),
+                    Err(error) => json_error(StatusCode::SERVICE_UNAVAILABLE, &error),
+                }
+            }
+            Some(_) => json_error(
+                StatusCode::FORBIDDEN,
+                "Personal context is not authorized for this device",
+            ),
+            None => json_error(StatusCode::UNAUTHORIZED, "Pair this device first"),
+        },
         (&Method::POST, "/api/session/conversation") => {
             read_mobile_session_conversation(request, &app, &bridge).await
         }
@@ -2315,6 +2331,39 @@ async fn handle_mobile_request(
         _ => json_error(StatusCode::NOT_FOUND, "Not found"),
     };
     Ok(with_security_headers(response))
+}
+
+async fn refresh_mobile_hush_context(
+    app: &tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    let bridge = app
+        .state::<Arc<crate::wechat_hush_bridge::WechatHushBridge>>()
+        .inner()
+        .clone();
+    let store = app
+        .state::<Arc<std::sync::Mutex<crate::hush_store::HushStore>>>()
+        .inner()
+        .clone();
+    let report = with_mobile_hush_sync_deadline(
+        std::time::Duration::from_secs(MOBILE_HUSH_SYNC_TIMEOUT_SECONDS),
+        bridge.sync(store),
+    )
+    .await?;
+    let _ = app.emit("humhum://hush-message", &report);
+    serde_json::to_value(crate::mobile_personal_context::project_mobile_personal_context(app))
+        .map_err(|_| "Personal context is unavailable".to_string())
+}
+
+async fn with_mobile_hush_sync_deadline<T, F>(
+    deadline: std::time::Duration,
+    future: F,
+) -> Result<T, String>
+where
+    F: std::future::Future<Output = Result<T, String>>,
+{
+    tokio::time::timeout(deadline, future)
+        .await
+        .map_err(|_| "微信同步超时，已保留现有消息，请稍后重试".to_string())?
 }
 
 async fn mobile_session_page(
@@ -3762,6 +3811,38 @@ mod tests {
             ),
             Ok(AnywhereRequest::PersonalContext)
         ));
+    }
+
+    #[test]
+    fn anywhere_hush_refresh_requires_the_personal_context_capability() {
+        assert!(parse_anywhere_request_with_capability(
+            MobileDeviceScope::Read,
+            false,
+            &json!({"action": "hush_refresh"}),
+        )
+        .is_err());
+        assert!(matches!(
+            parse_anywhere_request_with_capability(
+                MobileDeviceScope::Read,
+                true,
+                &json!({"action": "hush_refresh"}),
+            ),
+            Ok(AnywhereRequest::HushRefresh)
+        ));
+    }
+
+    #[tokio::test]
+    async fn mobile_hush_refresh_has_a_bounded_deadline() {
+        let result = with_mobile_hush_sync_deadline(
+            std::time::Duration::from_millis(1),
+            std::future::pending::<Result<(), String>>(),
+        )
+        .await;
+
+        assert_eq!(
+            result.unwrap_err(),
+            "微信同步超时，已保留现有消息，请稍后重试"
+        );
     }
 
     fn insert_hook_session(

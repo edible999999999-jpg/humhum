@@ -86,7 +86,11 @@ impl InterventionQueue {
     }
 
     pub fn entries(&self) -> Vec<QueuedIntervention> {
-        self.entries.clone()
+        self.entries
+            .iter()
+            .filter(|entry| entry.status != InterventionStatus::Delivered)
+            .cloned()
+            .collect()
     }
 
     pub fn is_next_for_thread(&self, id: &str) -> Result<bool, String> {
@@ -97,11 +101,19 @@ impl InterventionQueue {
             .ok_or_else(|| format!("Queued intervention not found: {id}"))?;
         let thread_id = &self.entries[index].thread_id;
         let provider = self.entries[index].provider;
-        Ok(!self.entries[..index].iter().any(|entry| {
-            entry.provider == provider
-                && entry.thread_id == *thread_id
-                && entry.status != InterventionStatus::Delivered
-        }))
+        let target_is_retry = self.entries[index].status == InterventionStatus::Failed;
+        Ok(!self
+            .entries
+            .iter()
+            .enumerate()
+            .any(|(other_index, entry)| {
+                other_index != index
+                    && entry.provider == provider
+                    && entry.thread_id == *thread_id
+                    && (entry.status == InterventionStatus::Sending
+                        || ((target_is_retry || other_index < index)
+                            && entry.status == InterventionStatus::Pending))
+            }))
     }
 
     pub fn enqueue(
@@ -153,6 +165,26 @@ impl InterventionQueue {
         Ok(entry)
     }
 
+    pub fn enqueue_for_delivery(
+        &mut self,
+        provider: InterventionProvider,
+        thread_id: &str,
+        message: &str,
+    ) -> Result<QueuedIntervention, String> {
+        let thread_id = thread_id.trim();
+        if self.entries.iter().any(|entry| {
+            entry.provider == provider
+                && entry.thread_id == thread_id
+                && matches!(
+                    entry.status,
+                    InterventionStatus::Pending | InterventionStatus::Sending
+                )
+        }) {
+            return Err("A previous intervention for this thread is still active".into());
+        }
+        self.enqueue_for(provider, thread_id, message)
+    }
+
     pub fn mark_sending(&mut self, id: &str) -> Result<QueuedIntervention, String> {
         let index = self
             .entries
@@ -163,7 +195,7 @@ impl InterventionQueue {
             return Err(format!("Queued intervention is already sending: {id}"));
         }
         if !self.is_next_for_thread(id)? {
-            return Err("An earlier intervention for this thread must be delivered first".into());
+            return Err("Another intervention for this thread is active".into());
         }
         let previous = self.entries[index].clone();
         let entry = self
@@ -204,11 +236,9 @@ impl InterventionQueue {
             .iter()
             .position(|entry| entry.id == id)
             .ok_or_else(|| format!("Queued intervention not found: {id}"))?;
-        let previous = self.entries[index].clone();
         self.entries[index].status = InterventionStatus::Delivered;
         self.entries[index].last_error = None;
         if let Err(error) = self.persist() {
-            self.entries[index] = previous;
             return Err(error);
         }
         self.entries.remove(index);
@@ -300,12 +330,93 @@ mod tests {
         assert!(queue
             .mark_sending(&second.id)
             .unwrap_err()
-            .contains("earlier"));
+            .contains("active"));
         queue.mark_sending(&first.id).unwrap();
         assert!(queue
             .mark_sending(&first.id)
             .unwrap_err()
             .contains("already sending"));
+    }
+
+    #[test]
+    fn a_failed_intervention_does_not_block_the_next_message() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut queue = InterventionQueue::load_or_create(temp.path()).unwrap();
+        let first = queue.enqueue("thread-1", "first").unwrap();
+        let second = queue.enqueue("thread-1", "second").unwrap();
+
+        queue.mark_sending(&first.id).unwrap();
+        queue.mark_failed(&first.id, "thread not found").unwrap();
+
+        assert!(queue.is_next_for_thread(&second.id).unwrap());
+        assert!(queue.mark_sending(&second.id).is_ok());
+    }
+
+    #[test]
+    fn enqueue_for_delivery_rejects_a_second_active_message() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut queue = InterventionQueue::load_or_create(temp.path()).unwrap();
+        queue
+            .enqueue_for_delivery(InterventionProvider::Codex, "thread-1", "first")
+            .unwrap();
+
+        let error = queue
+            .enqueue_for_delivery(InterventionProvider::Codex, "thread-1", "second")
+            .unwrap_err();
+
+        assert!(error.contains("still active"));
+        assert_eq!(queue.entries().len(), 1);
+    }
+
+    #[test]
+    fn retrying_an_old_failure_waits_for_the_current_send() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut queue = InterventionQueue::load_or_create(temp.path()).unwrap();
+        let first = queue.enqueue("thread-1", "first").unwrap();
+        let second = queue.enqueue("thread-1", "second").unwrap();
+        queue.mark_sending(&first.id).unwrap();
+        queue.mark_failed(&first.id, "thread not found").unwrap();
+        queue.mark_sending(&second.id).unwrap();
+
+        assert!(queue.mark_sending(&first.id).unwrap_err().contains("active"));
+    }
+
+    #[test]
+    fn retrying_an_old_failure_waits_for_a_new_pending_message() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut queue = InterventionQueue::load_or_create(temp.path()).unwrap();
+        let first = queue.enqueue("thread-1", "first").unwrap();
+        let second = queue.enqueue("thread-1", "second").unwrap();
+        queue.mark_sending(&first.id).unwrap();
+        queue.mark_failed(&first.id, "thread not found").unwrap();
+
+        assert_eq!(
+            queue
+                .entries()
+                .into_iter()
+                .find(|entry| entry.id == second.id)
+                .unwrap()
+                .status,
+            InterventionStatus::Pending
+        );
+        assert!(queue.mark_sending(&first.id).unwrap_err().contains("active"));
+        assert!(queue.mark_sending(&second.id).is_ok());
+    }
+
+    #[test]
+    fn accepted_delivery_stays_non_blocking_when_cleanup_persistence_fails() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut queue = InterventionQueue::load_or_create(temp.path()).unwrap();
+        let first = queue.enqueue("thread-1", "first").unwrap();
+        let second = queue.enqueue("thread-1", "second").unwrap();
+        queue.mark_sending(&first.id).unwrap();
+        let blocker = temp.path().join("not-a-directory");
+        std::fs::write(&blocker, b"block child creation").unwrap();
+        queue.path = blocker.join("intervention-queue.json");
+
+        assert!(queue.mark_delivered(&first.id).is_err());
+        assert_eq!(queue.entries[0].status, InterventionStatus::Delivered);
+        assert!(queue.is_next_for_thread(&second.id).unwrap());
     }
 
     #[test]

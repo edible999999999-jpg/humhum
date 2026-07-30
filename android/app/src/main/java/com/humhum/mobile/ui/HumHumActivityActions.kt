@@ -9,6 +9,7 @@ interface HumHumActivityActions {
     fun openSettings()
     fun closeSettings()
     fun refresh()
+    fun refreshHush()
     fun adjustToday()
     fun scanPairing()
     fun pastePairing()

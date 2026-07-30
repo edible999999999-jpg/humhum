@@ -41,6 +41,7 @@ data class HumHumCallbacks(
     val onOpenSettings: () -> Unit = {},
     val onCloseSettings: () -> Unit = {},
     val onRefresh: () -> Unit = {},
+    val onRefreshHush: () -> Unit = {},
     val onAdjustToday: () -> Unit = {},
     val onScanPairing: () -> Unit = {},
     val onPastePairing: () -> Unit = {},
@@ -103,7 +104,7 @@ private fun CompanionScaffold(
             MobileRoleDashboard.Role.HYPE ->
                 HypeRoomScreen(state, Modifier.padding(padding))
             MobileRoleDashboard.Role.HUSH ->
-                HushRoomScreen(state, Modifier.padding(padding))
+                HushRoomScreen(state, callbacks, Modifier.padding(padding))
             MobileRoleDashboard.Role.HEXA -> HexaScreen(state, callbacks, Modifier.padding(padding))
         }
     }

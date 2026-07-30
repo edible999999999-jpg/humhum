@@ -231,7 +231,7 @@ class HumHumViewModel @JvmOverloads constructor(
                 ),
             )
             is HumHumAction.FollowUpStarted -> addPendingControlAction(
-                state,
+                state.copy(followUpFeedback = state.followUpFeedback - action.sessionId),
                 PendingAction(PendingActionKind.FOLLOW_UP, action.sessionId),
                 state.sessions.any {
                     it.id() == action.sessionId && it.canMessage()
@@ -244,11 +244,24 @@ class HumHumViewModel @JvmOverloads constructor(
                 ),
                 lastSuccessfulFollowUpSessionId = action.sessionId,
                 followUpSuccessRevision = state.followUpSuccessRevision + 1,
+                followUpFeedback = state.followUpFeedback - action.sessionId,
+            )
+            is HumHumAction.FollowUpQueued -> state.copy(
+                pendingActions = state.pendingActions - PendingAction(
+                    PendingActionKind.FOLLOW_UP,
+                    action.sessionId,
+                ),
+                followUpFeedback = state.followUpFeedback + (
+                    action.sessionId to "电脑已收到，但 Agent 尚未开始。刷新后可以重试。"
+                ),
             )
             is HumHumAction.FollowUpFailed -> state.copy(
                 pendingActions = state.pendingActions - PendingAction(
                     PendingActionKind.FOLLOW_UP,
                     action.sessionId,
+                ),
+                followUpFeedback = state.followUpFeedback + (
+                    action.sessionId to action.message.take(200)
                 ),
             )
             is HumHumAction.MonitorChanged -> state.copy(

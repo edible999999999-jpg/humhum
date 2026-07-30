@@ -8,11 +8,11 @@
 [中文文档](./README.zh-CN.md)
 
 <p align="center">
-  <a href="https://github.com/edible999999999-jpg/humhum/releases/download/v0.3.17-beta.2/HumHum_0.3.17_aarch64.dmg"><strong>Download for macOS</strong></a>
+  <a href="https://github.com/edible999999999-jpg/humhum/releases/download/v0.3.18/HumHum_0.3.18_aarch64.dmg"><strong>Download for macOS</strong></a>
   ·
   <a href="https://github.com/edible999999999-jpg/humhum/releases/latest/download/HumHum_0.3.12_x64-setup.exe"><strong>Download Windows Preview</strong></a>
   ·
-  <a href="https://github.com/edible999999999-jpg/humhum/releases/download/v0.3.17-beta.2/HUMHUM-Android-0.3.17.apk"><strong>Download Android APK</strong></a>
+  <a href="https://github.com/edible999999999-jpg/humhum/releases/download/v0.3.18/HUMHUM-Android-0.3.18.apk"><strong>Download Android APK</strong></a>
   ·
   <a href="https://yuxilab.cn/intro"><strong>Visit the website</strong></a>
   ·
@@ -134,7 +134,7 @@ After launch, open the **Hub** from the system tray menu or by right-clicking th
 
 The native Android client pairs by scanning the short-lived **Control Hexa from phone** QR code in Hexa; no URL, code, fingerprint, or device-name form follows a successful scan. On the same network it uses certificate-pinned HTTPS directly to the Mac. When the QR includes an invite for the invite-only **HUMHUM Anywhere** beta, 5G and other Wi-Fi use the end-to-end encrypted relay first: session summaries, bounded recent conversation, approvals and short tasks stay AES-256-GCM encrypted between the Mac and phone, while the relay stores only bounded ciphertext and credential digests. Read-only/control scope and per-device revocation still apply.
 
-Android 0.3.17 adds a native Living Signals home with distinct Humi, Hype, Hush and Hexa tabs. Hexa can inspect Codex, Claude, OpenCode, Qoder and QoderWork sessions, resolve supported approvals and send a follow-up task. Optional Health Connect sources provide daily steps, resting heart rate and sleep duration; permissions are requested one source at a time, the phone keeps only a seven-day encrypted delivery queue, and durable encrypted summaries live on the user's Mac.
+Android 0.3.18 removes decorative room art from work surfaces. Hush can explicitly refresh up to 8 bounded message previews from the authorized local WeChat bridge, while Hexa promotes the most relevant recent Agent session and keeps follow-up drafts until delivery is confirmed. Humi, Hype, Hush and Hexa remain distinct, icon-led workspaces; optional Health Connect sources still use per-source permission and encrypted local queues.
 
 ### Hush real WeChat messages (experimental)
 
@@ -170,8 +170,10 @@ from the stored Hush message ID, and the recipient is derived again on the Mac.
 WeChat opens the matching local conversation and requires one native
 confirmation dialog before Return is pressed. DingTalk uses the official DWS
 CLI only after the same per-message confirmation; text is passed on stdin and
-is absent from command arguments and logs. Message bodies are never projected
-to Anywhere, the relay, the Android client, or an AI.
+is absent from command arguments and logs. Message bodies are never sent to an
+AI or exposed to the relay. A phone explicitly paired with personal-context
+access can receive up to 8 redacted previews through the end-to-end encrypted
+LAN or Anywhere channel.
 
 Anywhere requires a deployed HTTPS relay and an invite code configured in Hexa. See [Android setup](./docs/android-install.md) and [relay deployment](./relay/README.md). It is currently a self-hosted beta, not a promise that a public HUMHUM endpoint is already online.
 

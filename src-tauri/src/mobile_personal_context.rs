@@ -9,6 +9,7 @@ const MAX_PREFERENCES: usize = 8;
 const MAX_HABITS: usize = 8;
 const MAX_MEMORIES: usize = 6;
 const MAX_KNOWLEDGE: usize = 8;
+const MAX_INBOX: usize = 8;
 const MAX_AGENTS: usize = 8;
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -126,8 +127,6 @@ pub(crate) struct MobileSourceKnowledge {
     pub kind: String,
 }
 
-#[cfg(test)]
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub(crate) struct MobileSourceInbox {
     pub id: String,
@@ -157,8 +156,6 @@ pub(crate) struct MobileContextSources {
     pub habits: Vec<MobileHabit>,
     pub memories: Vec<MobileSourceMemory>,
     pub knowledge: Vec<MobileSourceKnowledge>,
-    #[cfg(test)]
-    #[allow(dead_code)]
     pub inbox: Vec<MobileSourceInbox>,
     pub agents: Vec<MobileSourceAgent>,
 }
@@ -272,6 +269,23 @@ pub fn project_mobile_personal_context(app: &tauri::AppHandle) -> MobilePersonal
             .collect();
     }
 
+    if let Some(store) = app.try_state::<Arc<Mutex<crate::hush_store::HushStore>>>() {
+        let store = store.lock().unwrap_or_else(|error| error.into_inner());
+        sources.inbox = store
+            .summary()
+            .messages
+            .into_iter()
+            .map(|message| MobileSourceInbox {
+                id: message.id,
+                sender: message.sender,
+                platform: message.platform,
+                preview: message.text,
+                received_at: message.received_at,
+                importance: message.importance,
+            })
+            .collect();
+    }
+
     let generated_at = chrono::Utc::now().to_rfc3339();
     project_mobile_personal_context_from_sources(sources, &generated_at)
 }
@@ -286,6 +300,9 @@ pub(crate) fn project_mobile_personal_context_from_sources(
     sources
         .agents
         .sort_by_key(|item| (!item.needs_user, item.updated_at.clone()));
+    sources
+        .inbox
+        .sort_by(|left, right| right.received_at.cmp(&left.received_at));
 
     let generated = chrono::DateTime::parse_from_rfc3339(generated_at)
         .map(|value| value.with_timezone(&chrono::Utc))
@@ -330,7 +347,12 @@ pub(crate) fn project_mobile_personal_context_from_sources(
             .filter_map(project_knowledge)
             .take(MAX_KNOWLEDGE)
             .collect(),
-        inbox: Vec::new(),
+        inbox: sources
+            .inbox
+            .into_iter()
+            .filter_map(project_inbox)
+            .take(MAX_INBOX)
+            .collect(),
         agents: sources
             .agents
             .into_iter()
@@ -391,6 +413,17 @@ fn project_knowledge(source: MobileSourceKnowledge) -> Option<MobileKnowledgeIte
         title: safe_required(&source.title, 180)?,
         summary: safe_required(&source.summary, 260)?,
         kind: safe_required(&source.kind, 24)?,
+    })
+}
+
+fn project_inbox(source: MobileSourceInbox) -> Option<MobileInboxItem> {
+    Some(MobileInboxItem {
+        id: safe_required(&source.id, 160)?,
+        sender: safe_required(&source.sender, 100)?,
+        platform: safe_required(&source.platform, 40)?,
+        preview: safe_required(&source.preview, 240)?,
+        received_at: safe_required(&source.received_at, 64)?,
+        importance: source.importance.min(5),
     })
 }
 
@@ -458,14 +491,16 @@ mod tests {
                 summary: "读取 ~/secret.md".into(),
                 kind: "skill".into(),
             }],
-            inbox: vec![MobileSourceInbox {
-                id: "message-1".into(),
-                sender: "private-sender-sentinel".into(),
-                platform: "dingtalk".into(),
-                preview: "private-body-sentinel /Volumes/team/secret.pdf".into(),
-                received_at: "2026-07-19T08:00:00Z".into(),
-                importance: 5,
-            }],
+            inbox: (0..35)
+                .map(|index| MobileSourceInbox {
+                    id: format!("message-{index}"),
+                    sender: format!("联系人 {index}"),
+                    platform: "wechat".into(),
+                    preview: format!("消息 {index} /Volumes/team/secret-{index}.pdf"),
+                    received_at: format!("2026-07-19T08:{index:02}:00Z"),
+                    importance: (index % 6) as u8,
+                })
+                .collect(),
             agents: vec![MobileSourceAgent {
                 id: "session-1".into(),
                 name: "Android UI".into(),
@@ -483,12 +518,10 @@ mod tests {
         assert_eq!(context.today.len(), 5);
         assert_eq!(context.preferences.len(), 8);
         assert_eq!(context.memories.len(), 6);
-        assert!(
-            context.inbox.is_empty(),
-            "Hush messages must never enter a mobile personal-context response"
-        );
-        assert!(!json.contains("private-sender-sentinel"));
-        assert!(!json.contains("private-body-sentinel"));
+        assert_eq!(context.inbox.len(), 8);
+        assert_eq!(context.inbox[0].sender, "联系人 34");
+        assert_eq!(context.inbox[0].platform, "wechat");
+        assert!(context.inbox[0].preview.contains("消息 34"));
         assert!(!json.contains("/Users/"));
         assert!(!json.contains("/Volumes/"));
         assert!(!json.contains("~/"));

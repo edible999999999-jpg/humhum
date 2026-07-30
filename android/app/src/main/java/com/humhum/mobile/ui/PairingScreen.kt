@@ -16,6 +16,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ContentPaste
+import androidx.compose.material.icons.outlined.Devices
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.QrCodeScanner
 import androidx.compose.material3.Button
@@ -38,7 +39,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import com.humhum.mobile.MobileRoleDashboard
 import com.humhum.mobile.app.ConnectionStatus
 import com.humhum.mobile.app.HumHumUiState
 import com.humhum.mobile.ui.theme.Humi
@@ -46,7 +46,6 @@ import com.humhum.mobile.ui.theme.HumiSoft
 import com.humhum.mobile.ui.theme.Ink
 import com.humhum.mobile.ui.theme.Line
 import com.humhum.mobile.ui.theme.Muted
-import com.humhum.mobile.ui.components.RoleMascot
 
 @Composable
 fun PairingScreen(
@@ -67,13 +66,28 @@ fun PairingScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Text("HUMHUM", style = MaterialTheme.typography.displaySmall, color = Ink)
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                RoleMascot(
-                    role = MobileRoleDashboard.Role.HUMI,
-                    contentDescription = "Humi",
-                    width = 112.dp,
-                    height = 132.dp,
-                )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                Surface(
+                    modifier = Modifier.size(64.dp),
+                    shape = RoundedCornerShape(8.dp),
+                    color = HumiSoft,
+                    border = androidx.compose.foundation.BorderStroke(
+                        1.dp,
+                        Humi.copy(alpha = 0.24f),
+                    ),
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            Icons.Outlined.Devices,
+                            contentDescription = null,
+                            modifier = Modifier.size(30.dp),
+                            tint = Humi,
+                        )
+                    }
+                }
                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {
                     Text("连接这台电脑", style = MaterialTheme.typography.headlineMedium, color = Ink)
                     Text("在 Mac 的 Hexa 右上角打开移动访问，然后扫描配对二维码。", style = MaterialTheme.typography.bodyLarge, color = Muted)

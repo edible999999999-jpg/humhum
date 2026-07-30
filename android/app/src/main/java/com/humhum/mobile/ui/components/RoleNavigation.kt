@@ -1,6 +1,5 @@
 package com.humhum.mobile.ui.components
 
-import androidx.annotation.DrawableRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -17,6 +16,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
@@ -24,9 +24,14 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.AccountTree
+import androidx.compose.material.icons.outlined.AutoStories
+import androidx.compose.material.icons.outlined.Inbox
+import androidx.compose.material.icons.outlined.PersonOutline
 import com.humhum.mobile.MobileRoleDashboard
-import com.humhum.mobile.R
 import com.humhum.mobile.ui.theme.Muted
 import com.humhum.mobile.ui.theme.paletteFor
 
@@ -79,11 +84,11 @@ private fun RoleDestination(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        RoleMascot(
-            role = role,
+        Icon(
+            imageVector = iconFor(role),
             contentDescription = null,
-            width = 28.dp,
-            height = 28.dp,
+            modifier = Modifier.size(24.dp),
+            tint = if (selected) palette.accent else Muted,
         )
         Text(
             text = role.displayName(),
@@ -95,10 +100,9 @@ private fun RoleDestination(
     }
 }
 
-@DrawableRes
-fun mascotFor(role: MobileRoleDashboard.Role): Int = when (role) {
-    MobileRoleDashboard.Role.HUMI -> R.drawable.mascot_humi
-    MobileRoleDashboard.Role.HYPE -> R.drawable.mascot_hype
-    MobileRoleDashboard.Role.HUSH -> R.drawable.mascot_hush
-    MobileRoleDashboard.Role.HEXA -> R.drawable.mascot_hexa
+private fun iconFor(role: MobileRoleDashboard.Role): ImageVector = when (role) {
+    MobileRoleDashboard.Role.HUMI -> Icons.Outlined.PersonOutline
+    MobileRoleDashboard.Role.HYPE -> Icons.Outlined.AutoStories
+    MobileRoleDashboard.Role.HUSH -> Icons.Outlined.Inbox
+    MobileRoleDashboard.Role.HEXA -> Icons.Outlined.AccountTree
 }

@@ -64,6 +64,7 @@ data class HumHumUiState(
     val pendingActions: Set<PendingAction> = emptySet(),
     val lastSuccessfulFollowUpSessionId: String? = null,
     val followUpSuccessRevision: Long = 0,
+    val followUpFeedback: Map<String, String> = emptyMap(),
     val monitor: MonitorUiState = MonitorUiState(),
     val deviceCare: DeviceCareUiState = DeviceCareUiState(),
     val health: HealthUiState? = null,

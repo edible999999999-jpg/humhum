@@ -8,11 +8,11 @@
 **让所有 Agent 围绕你工作** —— 个人生活的 Agent 中枢
 
 <p align="center">
-  <a href="https://github.com/edible999999999-jpg/humhum/releases/download/v0.3.17-beta.2/HumHum_0.3.17_aarch64.dmg"><strong>下载 macOS 版</strong></a>
+  <a href="https://github.com/edible999999999-jpg/humhum/releases/download/v0.3.18/HumHum_0.3.18_aarch64.dmg"><strong>下载 macOS 版</strong></a>
   ·
   <a href="https://github.com/edible999999999-jpg/humhum/releases/latest/download/HumHum_0.3.12_x64-setup.exe"><strong>下载 Windows 预览版</strong></a>
   ·
-  <a href="https://github.com/edible999999999-jpg/humhum/releases/download/v0.3.17-beta.2/HUMHUM-Android-0.3.17.apk"><strong>下载 Android APK</strong></a>
+  <a href="https://github.com/edible999999999-jpg/humhum/releases/download/v0.3.18/HUMHUM-Android-0.3.18.apk"><strong>下载 Android APK</strong></a>
   ·
   <a href="https://yuxilab.cn/intro"><strong>访问官网</strong></a>
   ·
@@ -132,11 +132,11 @@ npm run tauri build -- --bundles nsis
 
 ## Android 手机端
 
-Android 0.3.17 以 Humi 的 **Living Signals** 作为首页，并保留 Humi、Hype、Hush、Hexa 四个固定角色入口。手机可查看 Codex、Claude、OpenCode、Qoder 与 QoderWork 会话，处理授权并发送后续任务；Hush 中的健康来源仍按步数、静息心率和睡眠时长分别授权。健康权限默认关闭；HUMHUM 只读取确定性的日汇总，不读取路线、位置、原始心率样本或医疗记录，也不会推断“恢复分”。
+Android 0.3.18 去掉了工作页面里占空间的角色贴图。Hush 可在明确授权后手动同步最多 8 条微信消息摘要；Hexa 会把最相关的最近 Agent 会话放在首位，并且只有确认送达后才清空追问草稿。Humi、Hype、Hush、Hexa 仍保留各自配色和图标入口；健康权限依旧默认关闭、按来源单独授权。
 
 配对时，在 Mac 的 Hexa 右上角点 **用手机控制 Hexa**，刷新五分钟二维码，然后用 Android App 扫描。扫码后无需再次填写地址、配对码或指纹。同一局域网会使用证书锁定的 HTTPS 直连；二维码包含内测版 **HUMHUM Anywhere** 邀请时，手机处于 5G 或其他 Wi-Fi 也会优先通过端到端加密中继连接。中继只保存有界密文和凭据摘要，无法读取会话、审批、后续任务或健康汇总。详见 [Android 安装与配对说明](./docs/android-install.md)。
 
-小米手机优先直接下载 `HUMHUM-Android-0.3.17.apk`，等下载完成后从系统“文件管理”中的 `Download` 目录打开。若微信或浏览器的临时下载通知仍出现 `open failed: ENOENT`，改用 `HUMHUM-Android-0.3.17-Xiaomi.zip`，先解压到本机 `Download` 目录，再打开其中的 APK。
+小米手机优先直接下载 `HUMHUM-Android-0.3.18.apk`，等下载完成后从系统“文件管理”中的 `Download` 目录打开。若微信或浏览器的临时下载通知仍出现 `open failed: ENOENT`，改用 `HUMHUM-Android-0.3.18-Xiaomi.zip`，先解压到本机 `Download` 目录，再打开其中的 APK。
 
 ### Hush 微信真实消息（实验）
 
@@ -154,8 +154,9 @@ HUMHUM 不执行也不下载该第三方 CLI。
 当前兼容路径可以使用用户明确安装的 `~/.local/share/wechat-cli/wxkey` 作为本机
 提钥助手。Hush 的“准备本机读取”只会调用其 `bootstrap` 或 `setup` 动作，所有
 输出都会丢弃；HUMHUM 不调用第三方查询、远程 companion、更新、导出或 SQL
-能力。读取到的正文只进入 `~/.humhum/hush-inbox.json`，不会进入 Anywhere、
-Relay、手机或 AI。微信回复会先把草稿填入微信，再弹出原生确认框；只有你点
+能力。读取到的正文不会发送给 AI，也不会暴露给 Relay；只有明确授予
+“个人上下文”权限的配对手机，才能通过端到端加密的局域网或 Anywhere 通道
+接收最多 8 条脱敏预览。微信回复会先把草稿填入微信，再弹出原生确认框；只有你点
 “确认发送”后才按回车。钉钉回复同样需要逐条确认，并通过官方 DWS 的 stdin
 发送，正文不会出现在进程参数或日志中。
 

@@ -50,7 +50,6 @@ import com.humhum.mobile.ui.theme.HexaSoft
 import com.humhum.mobile.ui.theme.Ink
 import com.humhum.mobile.ui.theme.Line
 import com.humhum.mobile.ui.theme.Muted
-import com.humhum.mobile.ui.components.RoleMascot
 
 @Composable
 fun HexaScreen(
@@ -58,6 +57,13 @@ fun HexaScreen(
     callbacks: HumHumCallbacks,
     modifier: Modifier = Modifier,
 ) {
+    val orderedSessions = remember(state.sessions) {
+        state.sessions.sortedWith(
+            compareByDescending<Models.Session> { it.needsAttention() }
+                .thenByDescending { it.canMessage() }
+                .thenByDescending { it.lastActivityAt() },
+        )
+    }
     LazyColumn(
         modifier = modifier.fillMaxSize().testTag("hexa-room"),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 20.dp),
@@ -111,7 +117,7 @@ fun HexaScreen(
                 }
             }
         }
-        if (state.sessions.isEmpty()) {
+        if (orderedSessions.isEmpty()) {
             item {
                 Surface(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
@@ -126,13 +132,39 @@ fun HexaScreen(
                 }
             }
         } else {
-            items(state.sessions, key = { it.id() }) { session ->
-                SessionPanel(
-                    session = session,
-                    state = state,
-                    callbacks = callbacks,
+            item {
+                Text(
+                    if (orderedSessions.first().needsAttention()) "现在需要你" else "最近可继续",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = Hexa,
                     modifier = Modifier.padding(horizontal = 16.dp),
                 )
+            }
+            item(key = orderedSessions.first().id()) {
+                SessionPanel(
+                    session = orderedSessions.first(),
+                    state = state,
+                    callbacks = callbacks,
+                    primary = true,
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                )
+            }
+            if (orderedSessions.size > 1) {
+                item {
+                    RoomSectionHeader(
+                        title = "其他最近会话",
+                        trailing = "${orderedSessions.size - 1} 条",
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                    )
+                }
+                items(orderedSessions.drop(1), key = { it.id() }) { session ->
+                    SessionPanel(
+                        session = session,
+                        state = state,
+                        callbacks = callbacks,
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                    )
+                }
             }
         }
     }
@@ -143,6 +175,7 @@ private fun SessionPanel(
     session: Models.Session,
     state: HumHumUiState,
     callbacks: HumHumCallbacks,
+    primary: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     var draft by remember(session.id()) { mutableStateOf("") }
@@ -161,8 +194,11 @@ private fun SessionPanel(
     Surface(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(8.dp),
-        color = Color.White,
-        border = androidx.compose.foundation.BorderStroke(1.dp, if (session.needsAttention()) Hexa.copy(alpha = 0.45f) else Line),
+        color = if (primary) HexaSoft.copy(alpha = 0.48f) else Color.White,
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp,
+            if (primary || session.needsAttention()) Hexa.copy(alpha = 0.45f) else Line,
+        ),
     ) {
         Column(modifier = Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -175,6 +211,17 @@ private fun SessionPanel(
                         Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = "查看对话", tint = Hexa)
                     }
                 }
+            }
+            if (primary) {
+                Text(
+                    if (session.needsAttention()) {
+                        "这条会话正在等你处理"
+                    } else {
+                        "这是最近仍可继续下达任务的会话"
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Hexa,
+                )
             }
             if (state.canControl) {
                 session.actions().forEach { action ->
@@ -207,6 +254,17 @@ private fun SessionPanel(
                     ) {
                         Icon(Icons.AutoMirrored.Outlined.Send, contentDescription = "发送", tint = Hexa)
                     }
+                }
+                state.followUpFeedback[session.id()]?.let { feedback ->
+                    Text(
+                        text = feedback,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (feedback.startsWith("电脑已收到")) {
+                            Muted
+                        } else {
+                            MaterialTheme.colorScheme.error
+                        },
+                    )
                 }
             }
             if (state.conversation.sessionId == session.id()) {

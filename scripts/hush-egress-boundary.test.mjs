@@ -9,9 +9,7 @@ const repoRoot = path.resolve(
   "..",
 );
 
-const REMOTE_BOUNDARY_FILES = [
-  "src-tauri/src/mobile_personal_context.rs",
-  "src-tauri/src/mobile_bridge.rs",
+const THIRD_PARTY_BOUNDARY_FILES = [
   "src-tauri/src/mobile_relay.rs",
   "src-tauri/src/pi_sidecar.rs",
   "src-tauri/src/remote_bridge.rs",
@@ -22,8 +20,8 @@ const REMOTE_BOUNDARY_FILES = [
   "src-tauri/src/opencode_followup.rs",
 ];
 
-test("remote projections and provider transports cannot read Hush records", () => {
-  for (const relativePath of REMOTE_BOUNDARY_FILES) {
+test("relay and provider transports cannot read Hush records", () => {
+  for (const relativePath of THIRD_PARTY_BOUNDARY_FILES) {
     const source = fs.readFileSync(path.join(repoRoot, relativePath), "utf8");
     assert.doesNotMatch(
       source,
@@ -33,27 +31,35 @@ test("remote projections and provider transports cannot read Hush records", () =
   }
 });
 
-test("LAN and Anywhere reuse the same always-empty personal-context projection", () => {
+test("authorized mobile Hush projection stays explicit bounded and redacted", () => {
   const mobileBridge = fs.readFileSync(
     path.join(repoRoot, "src-tauri/src/mobile_bridge.rs"),
     "utf8",
   );
-  const projectionCalls =
-    mobileBridge.match(
-      /mobile_personal_context::project_mobile_personal_context\(/g,
-    ) ?? [];
-  assert.equal(
-    projectionCalls.length,
-    2,
-    "LAN and Anywhere must each use the guarded projection",
+  assert.match(
+    mobileBridge,
+    /AnywhereRequest::PersonalContext \| AnywhereRequest::HushRefresh[\s\S]*!personal_context/,
+  );
+  assert.match(
+    mobileBridge,
+    /POST,\s*"\/api\/hush\/refresh"[\s\S]*Some\(device\) if device\.personal_context/,
+  );
+  assert.doesNotMatch(
+    fs.readFileSync(path.join(repoRoot, "src-tauri/src/mobile_relay.rs"), "utf8"),
+    /(?:hush_store::HushStore|HushStore|hush-inbox\.json)/,
   );
 
   const projection = fs.readFileSync(
     path.join(repoRoot, "src-tauri/src/mobile_personal_context.rs"),
     "utf8",
   );
-  assert.match(projection, /inbox:\s*Vec::new\(\)/);
-  assert.doesNotMatch(projection, /try_state::<[^>]*HushStore/);
+  assert.match(projection, /const MAX_INBOX:\s*usize\s*=\s*8/);
+  assert.match(projection, /try_state::<[^>]*HushStore/);
+  assert.match(projection, /\.filter_map\(project_inbox\)\s*\.take\(MAX_INBOX\)/);
+  assert.match(projection, /user_safe_text::project_user_safe_text/);
+  const inboxShape = projection.match(/pub struct MobileInboxItem\s*\{[^}]*\}/)?.[0] ?? "";
+  assert.ok(inboxShape, "mobile inbox shape must remain explicit");
+  assert.doesNotMatch(inboxShape, /\braw\b/);
 });
 
 test("Hush UI and local ingestion errors have no remote or sensitive log sink", () => {

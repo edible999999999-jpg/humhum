@@ -135,6 +135,10 @@ public final class MobileProtocol {
         return parsePersonalContext(execute(personalContextRequest()));
     }
 
+    public Models.PersonalContext refreshHush() throws IOException, JSONException {
+        return parsePersonalContext(execute(hushRefreshRequest()));
+    }
+
     public Models.EventSignal waitForChange(String cursor) throws IOException, JSONException {
         return parseEventSignal(execute(eventRequest(cursor)));
     }
@@ -144,8 +148,15 @@ public final class MobileProtocol {
     }
 
     public String sendMessage(Models.Session session, String message) throws IOException, JSONException {
-        JSONObject response = new JSONObject(execute(messageRequest(session, message, scope)));
-        return bounded(response.optString("status", "queued"), 32);
+        return parseDeliveryStatus(new JSONObject(execute(messageRequest(session, message, scope))));
+    }
+
+    static String parseDeliveryStatus(JSONObject response) throws IOException {
+        String status = response.optString("status", "");
+        if (!Set.of("delivered", "queued").contains(status)) {
+            throw new IOException("HUMHUM returned an invalid delivery status");
+        }
+        return status;
     }
 
     public List<Models.ConversationMessage> conversation(Models.Session session)
@@ -190,6 +201,16 @@ public final class MobileProtocol {
                 "",
                 true,
                 8_000,
+                MAX_PERSONAL_CONTEXT_BYTES);
+    }
+
+    static RequestSpec hushRefreshRequest() {
+        return new RequestSpec(
+                "POST",
+                "/api/hush/refresh",
+                "",
+                true,
+                60_000,
                 MAX_PERSONAL_CONTEXT_BYTES);
     }
 

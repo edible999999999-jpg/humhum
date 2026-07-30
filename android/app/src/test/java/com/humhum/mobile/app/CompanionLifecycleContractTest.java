@@ -132,6 +132,19 @@ public final class CompanionLifecycleContractTest {
         assertTrue(resume.contains("refreshHealthState();"));
     }
 
+    @Test
+    public void hushRefreshUsesExactlyOneSelectedTransport() throws Exception {
+        String refresh = methodSource(
+                activitySource(),
+                "private Models.PersonalContext fetchHushContext(",
+                "private void clearRevokedConnection(");
+
+        assertTrue(refresh.contains("if (relayFirst) {"));
+        assertTrue(refresh.contains("return activeAnywhere.refreshHush("));
+        assertTrue(refresh.contains("return activeProtocol.refreshHush();"));
+        assertFalse(refresh.contains("catch (Exception"));
+    }
+
     private static String methodSource(String source, String start, String end) {
         int startIndex = source.indexOf(start);
         int endIndex = source.indexOf(end, startIndex);

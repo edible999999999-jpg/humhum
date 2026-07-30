@@ -157,11 +157,34 @@ class HumHumViewModelTest {
         )
         viewModel.dispatch(HumHumAction.FollowUpStarted("session-1"))
 
-        viewModel.dispatch(HumHumAction.FollowUpFailed("session-1"))
+        viewModel.dispatch(HumHumAction.FollowUpFailed("session-1", "Agent 没有接收，请重试"))
 
         assertTrue(viewModel.state.value.pendingActions.isEmpty())
         assertNull(viewModel.state.value.lastSuccessfulFollowUpSessionId)
         assertEquals(0L, viewModel.state.value.followUpSuccessRevision)
+        assertEquals(
+            "Agent 没有接收，请重试",
+            viewModel.state.value.followUpFeedback["session-1"],
+        )
+    }
+
+    @Test
+    fun queuedFollowUpKeepsDraftAndExplainsThatAgentHasNotStarted() {
+        viewModel.dispatch(HumHumAction.Connected(Models.Scope.CONTROL))
+        viewModel.dispatch(
+            HumHumAction.SessionsLoaded(listOf(session("session-1")), viaRelay = false),
+        )
+        viewModel.dispatch(HumHumAction.FollowUpStarted("session-1"))
+
+        viewModel.dispatch(HumHumAction.FollowUpQueued("session-1"))
+
+        assertTrue(viewModel.state.value.pendingActions.isEmpty())
+        assertNull(viewModel.state.value.lastSuccessfulFollowUpSessionId)
+        assertEquals(0L, viewModel.state.value.followUpSuccessRevision)
+        assertEquals(
+            "电脑已收到，但 Agent 尚未开始。刷新后可以重试。",
+            viewModel.state.value.followUpFeedback["session-1"],
+        )
     }
 
     @Test

@@ -888,18 +888,7 @@ pub(crate) async fn enqueue_and_deliver_cli_message(
     let entry = queue
         .lock()
         .map_err(|error| format!("Queue lock error: {error}"))?
-        .enqueue_for(provider, session_id, message)?;
-    let is_next = queue
-        .lock()
-        .map_err(|error| format!("Queue lock error: {error}"))?
-        .is_next_for_thread(&entry.id)?;
-    if !is_next {
-        return Ok(CodexSendReceipt {
-            status: "queued".into(),
-            turn_id: None,
-            intervention_id: entry.id,
-        });
-    }
+        .enqueue_for_delivery(provider, session_id, message)?;
     let delivered = match provider {
         InterventionProvider::Claude => {
             deliver_queued_claude_message(queue, &entry.id, &workspace).await
@@ -920,15 +909,11 @@ pub(crate) async fn enqueue_and_deliver_cli_message(
     };
     match delivered {
         Ok(()) => Ok(CodexSendReceipt {
-            status: "delivered".into(),
+            status: delivery_receipt_status(true)?.into(),
             turn_id: None,
             intervention_id: entry.id,
         }),
-        Err(_) => Ok(CodexSendReceipt {
-            status: "queued".into(),
-            turn_id: None,
-            intervention_id: entry.id,
-        }),
+        Err(_) => Err(delivery_receipt_status(false).unwrap_err()),
     }
 }
 
@@ -941,29 +926,22 @@ pub(crate) async fn enqueue_and_deliver_codex_message(
     let entry = queue
         .lock()
         .map_err(|error| format!("Queue lock error: {error}"))?
-        .enqueue(thread_id, message)?;
-    let is_next = queue
-        .lock()
-        .map_err(|error| format!("Queue lock error: {error}"))?
-        .is_next_for_thread(&entry.id)?;
-    if !is_next {
-        return Ok(CodexSendReceipt {
-            status: "queued".into(),
-            turn_id: None,
-            intervention_id: entry.id,
-        });
-    }
+        .enqueue_for_delivery(InterventionProvider::Codex, thread_id, message)?;
     match deliver_queued_codex_message(state, queue, &entry.id).await {
         Ok(turn_id) => Ok(CodexSendReceipt {
-            status: "delivered".into(),
+            status: delivery_receipt_status(true)?.into(),
             turn_id: Some(turn_id),
             intervention_id: entry.id,
         }),
-        Err(_) => Ok(CodexSendReceipt {
-            status: "queued".into(),
-            turn_id: None,
-            intervention_id: entry.id,
-        }),
+        Err(_) => Err(delivery_receipt_status(false).unwrap_err()),
+    }
+}
+
+fn delivery_receipt_status(delivered: bool) -> Result<&'static str, String> {
+    if delivered {
+        Ok("delivered")
+    } else {
+        Err("Agent 没有接收这条指令，请刷新会话后重试".into())
     }
 }
 
@@ -1096,13 +1074,7 @@ async fn deliver_queued_codex_message(
 
     match state.send_message(&entry.thread_id, &entry.message).await {
         Ok(turn_id) => {
-            queue
-                .lock()
-                .map_err(|error| format!("Queue lock error after delivery: {error}"))?
-                .mark_delivered(intervention_id)
-                .map_err(|error| {
-                    format!("Codex accepted the message, but queue cleanup failed: {error}")
-                })?;
+            record_accepted_delivery(queue, intervention_id);
             Ok(turn_id)
         }
         Err(error) => {
@@ -1114,6 +1086,15 @@ async fn deliver_queued_codex_message(
                 .map_err(|queue_error| format!("{message}; queue update failed: {queue_error}"))?;
             Err(message)
         }
+    }
+}
+
+fn record_accepted_delivery(
+    queue: &std::sync::Mutex<InterventionQueue>,
+    intervention_id: &str,
+) {
+    if let Ok(mut queue) = queue.lock() {
+        let _ = queue.mark_delivered(intervention_id);
     }
 }
 
@@ -1191,10 +1172,10 @@ async fn deliver_queued_claude_message(
         return Err(message.into());
     }
     match crate::claude_followup::send_followup(&entry.thread_id, workspace, &entry.message).await {
-        Ok(()) => queue
-            .lock()
-            .map_err(|error| format!("Queue lock error after delivery: {error}"))?
-            .mark_delivered(intervention_id),
+        Ok(()) => {
+            record_accepted_delivery(queue, intervention_id);
+            Ok(())
+        }
         Err(error) => {
             queue
                 .lock()
@@ -1225,10 +1206,10 @@ async fn deliver_queued_opencode_message(
     }
     match crate::opencode_followup::send_followup(&entry.thread_id, workspace, &entry.message).await
     {
-        Ok(()) => queue
-            .lock()
-            .map_err(|error| format!("Queue lock error after delivery: {error}"))?
-            .mark_delivered(intervention_id),
+        Ok(()) => {
+            record_accepted_delivery(queue, intervention_id);
+            Ok(())
+        }
         Err(error) => {
             queue
                 .lock()
@@ -1259,10 +1240,10 @@ async fn deliver_queued_qoder_message(
         return Err(message.into());
     }
     match crate::qoder_followup::send_followup(surface, workspace, &entry.message).await {
-        Ok(()) => queue
-            .lock()
-            .map_err(|error| format!("Queue lock error after delivery: {error}"))?
-            .mark_delivered(intervention_id),
+        Ok(()) => {
+            record_accepted_delivery(queue, intervention_id);
+            Ok(())
+        }
         Err(error) => {
             queue
                 .lock()
@@ -6473,6 +6454,12 @@ fn emit_local_kernel_event(
 #[cfg(test)]
 mod humi_agent_kernel_tests {
     use super::*;
+
+    #[test]
+    fn delivery_failure_is_never_reported_as_queued() {
+        assert_eq!(delivery_receipt_status(true).unwrap(), "delivered");
+        assert!(delivery_receipt_status(false).is_err());
+    }
 
     fn asset(
         asset_type: &str,

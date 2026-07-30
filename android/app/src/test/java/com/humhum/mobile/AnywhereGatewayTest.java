@@ -15,6 +15,11 @@ import org.junit.Test;
 
 public class AnywhereGatewayTest {
     @Test
+    public void hushRefreshFitsInsideTheSingleMobileOperationDeadline() {
+        assertEquals(10, AnywhereGateway.hushRefreshResponsePolls());
+    }
+
+    @Test
     public void healthSignalsUseTheExactEncryptedRelayActionWithoutRetention() throws Exception {
         Models.WakeRelayConfig relay = relay();
         MemoryStore memory = new MemoryStore();

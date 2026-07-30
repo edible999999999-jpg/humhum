@@ -48,6 +48,19 @@ public final class AnywhereGateway {
         return MobileProtocol.parsePersonalContext(data.toString());
     }
 
+    public Models.PersonalContext refreshHush(Models.WakeRelayConfig relay)
+            throws IOException, JSONException, GeneralSecurityException {
+        JSONObject data = request(
+                relay,
+                new JSONObject().put("action", "hush_refresh"),
+                hushRefreshResponsePolls());
+        return MobileProtocol.parsePersonalContext(data.toString());
+    }
+
+    static int hushRefreshResponsePolls() {
+        return 10;
+    }
+
     public List<Models.ConversationMessage> conversation(
             Models.WakeRelayConfig relay, Models.Session session)
             throws IOException, JSONException, GeneralSecurityException {
@@ -83,8 +96,7 @@ public final class AnywhereGateway {
                 .put("session_id", directBody.getString("session_id"))
                 .put("provider", directBody.getString("provider"))
                 .put("message", directBody.getString("message")));
-        String status = data.optString("status", "queued");
-        return status.length() > 32 ? status.substring(0, 32) : status;
+        return MobileProtocol.parseDeliveryStatus(data);
     }
 
     public Models.SignalUploadResult uploadSignals(
@@ -99,8 +111,19 @@ public final class AnywhereGateway {
 
     private JSONObject request(Models.WakeRelayConfig relay, JSONObject body)
             throws IOException, JSONException, GeneralSecurityException {
+        return request(relay, body, RESPONSE_POLLS);
+    }
+
+    private JSONObject request(
+            Models.WakeRelayConfig relay,
+            JSONObject body,
+            int responsePolls)
+            throws IOException, JSONException, GeneralSecurityException {
         if (relay == null || relay.version() != 2) {
             throw new IOException("Anywhere remote access is unavailable");
+        }
+        if (responsePolls < 1 || responsePolls > 12) {
+            throw new IllegalArgumentException("Anywhere response poll count is invalid");
         }
         String digest = sha256(body.toString());
         boolean retainCompleted = "approval".equals(body.optString("action"))
@@ -140,7 +163,7 @@ public final class AnywhereGateway {
         }
         client.publish(relay, pending.envelope());
         String requestId = pending.requestId();
-        for (int attempt = 0; attempt < RESPONSE_POLLS; attempt++) {
+        for (int attempt = 0; attempt < responsePolls; attempt++) {
             JSONObject cached = state.finalizePendingResponse(
                     relay, requestId, clock.getAsLong());
             if (cached != null) {

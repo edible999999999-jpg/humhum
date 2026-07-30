@@ -19,7 +19,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.humhum.mobile.MobileRoleDashboard
-import com.humhum.mobile.ui.components.RoleMascot
 import com.humhum.mobile.ui.theme.Ink
 import com.humhum.mobile.ui.theme.Line
 import com.humhum.mobile.ui.theme.Muted
@@ -37,19 +36,18 @@ fun RoomIntro(
         modifier = modifier
             .fillMaxWidth()
             .background(palette.soft.copy(alpha = 0.62f))
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+            .padding(horizontal = 16.dp, vertical = 16.dp),
+        verticalAlignment = Alignment.Top,
+        horizontalArrangement = Arrangement.spacedBy(11.dp),
     ) {
-        RoleMascot(
-            role = role,
-            contentDescription = role.displayName(),
-            width = 58.dp,
-            height = 66.dp,
-        )
+        Surface(
+            modifier = Modifier.size(width = 4.dp, height = 54.dp),
+            color = palette.accent,
+            shape = RoundedCornerShape(2.dp),
+        ) {}
         Column(
             modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(3.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Text(
                 text = "${role.displayName()} · ${role.purpose()}",
@@ -60,13 +58,13 @@ fun RoomIntro(
                 text = title,
                 style = MaterialTheme.typography.titleLarge,
                 color = Ink,
-                maxLines = 2,
+                maxLines = 3,
             )
             Text(
                 text = summary,
                 style = MaterialTheme.typography.bodyMedium,
                 color = Muted,
-                maxLines = 2,
+                maxLines = 3,
             )
         }
     }

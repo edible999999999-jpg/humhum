@@ -152,6 +152,18 @@ public class MobileProtocolTest {
     }
 
     @Test
+    public void followUpReceiptOnlyAcceptsTruthfulDeliveryStates() throws Exception {
+        assertEquals("delivered", MobileProtocol.parseDeliveryStatus(
+                new JSONObject().put("status", "delivered")));
+        assertEquals("queued", MobileProtocol.parseDeliveryStatus(
+                new JSONObject().put("status", "queued")));
+        assertThrows(IOException.class, () -> MobileProtocol.parseDeliveryStatus(
+                new JSONObject().put("status", "failed")));
+        assertThrows(IOException.class, () -> MobileProtocol.parseDeliveryStatus(
+                new JSONObject().put("status", "maybe")));
+    }
+
+    @Test
     public void recentConversationUsesExactAuthenticatedSessionOnlyRequest() throws Exception {
         Models.Session session = MobileProtocol.parseSessions(new JSONObject()
                 .put("scope", "read")
