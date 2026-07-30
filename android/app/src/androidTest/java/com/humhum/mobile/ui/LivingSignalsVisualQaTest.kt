@@ -1,10 +1,11 @@
 package com.humhum.mobile.ui
 
+import android.content.ContentValues
+import android.os.Build
+import android.provider.MediaStore
 import androidx.activity.ComponentActivity
-import androidx.compose.ui.graphics.asAndroidBitmap
-import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.compose.ui.test.onRoot
+import androidx.core.view.drawToBitmap
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.humhum.mobile.MobileRoleDashboard
@@ -113,9 +114,39 @@ class LivingSignalsVisualQaTest {
         compose.waitForIdle()
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val directory = File(context.filesDir, "qa").apply { mkdirs() }
-        FileOutputStream(File(directory, "$fileName.png")).use { output ->
-            compose.onRoot().captureToImage().asAndroidBitmap()
-                .compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output)
+        val screenshot = File(directory, "$fileName.png")
+        var bitmap: android.graphics.Bitmap? = null
+        compose.runOnIdle {
+            bitmap = compose.activity.window.decorView.drawToBitmap()
+        }
+        FileOutputStream(screenshot).use { output ->
+            checkNotNull(bitmap).compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val resolver = context.contentResolver
+            val collection = MediaStore.Images.Media.getContentUri(
+                MediaStore.VOLUME_EXTERNAL_PRIMARY,
+            )
+            val relativePath = "Pictures/HUMHUM-QA"
+            resolver.delete(
+                collection,
+                "${MediaStore.Images.Media.DISPLAY_NAME} = ?",
+                arrayOf("$fileName.png"),
+            )
+            val values = ContentValues().apply {
+                put(MediaStore.Images.Media.DISPLAY_NAME, "$fileName.png")
+                put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+                put(MediaStore.Images.Media.RELATIVE_PATH, relativePath)
+                put(MediaStore.Images.Media.IS_PENDING, 1)
+            }
+            val uri = checkNotNull(resolver.insert(collection, values))
+            resolver.openOutputStream(uri).use { output ->
+                checkNotNull(output)
+                checkNotNull(bitmap).compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output)
+            }
+            values.clear()
+            values.put(MediaStore.Images.Media.IS_PENDING, 0)
+            resolver.update(uri, values, null, null)
         }
     }
 
@@ -142,6 +173,19 @@ class LivingSignalsVisualQaTest {
             freshness = HealthFreshness.FRESH,
             notices = emptyList(),
             enqueuedSignals = 0,
+        ),
+        sessions = listOf(
+            Models.Session(
+                "session-1",
+                "Codex",
+                "HUMHUM Android UI",
+                "working",
+                "刚刚",
+                true,
+                true,
+                true,
+                emptyList(),
+            ),
         ),
     )
 
@@ -179,6 +223,30 @@ class LivingSignalsVisualQaTest {
                 "UI 已经重新推送",
                 "2026-07-19T08:00:00Z",
                 5,
+            ),
+            Models.InboxItem(
+                "message-2",
+                "妈妈",
+                "WeChat",
+                "晚上回来吃饭吗？我准备早点做饭。",
+                "2026-07-19T07:37:00Z",
+                5,
+            ),
+            Models.InboxItem(
+                "message-3",
+                "悦湖府吃货团购群",
+                "WeChat",
+                "今天下午的水果团购截止到三点，需要的接龙。",
+                "2026-07-19T07:22:00Z",
+                3,
+            ),
+            Models.InboxItem(
+                "message-4",
+                "HUMHUM 项目群",
+                "WeChat",
+                "Release 里的 Mac 和 Android 资产已经并列显示。",
+                "2026-07-18T12:10:00Z",
+                4,
             ),
         ),
         listOf(

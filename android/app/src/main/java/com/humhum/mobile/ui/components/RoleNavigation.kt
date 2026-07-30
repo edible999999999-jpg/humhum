@@ -44,10 +44,10 @@ fun RoleNavigation(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .height(64.dp)
+            .height(72.dp)
             .background(Color.White)
-            .border(width = 1.dp, color = Color(0xFFE8EAF1))
-            .padding(horizontal = 8.dp, vertical = 4.dp)
+            .border(width = 1.dp, color = Color(0xFFE1E5EC))
+            .padding(horizontal = 8.dp, vertical = 6.dp)
             .testTag("role-navigation"),
         horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.CenterVertically,
@@ -85,7 +85,7 @@ private fun RoleDestination(
         verticalArrangement = Arrangement.Center,
     ) {
         Icon(
-            imageVector = iconFor(role),
+            imageVector = roleIconFor(role),
             contentDescription = null,
             modifier = Modifier.size(24.dp),
             tint = if (selected) palette.accent else Muted,
@@ -100,7 +100,7 @@ private fun RoleDestination(
     }
 }
 
-private fun iconFor(role: MobileRoleDashboard.Role): ImageVector = when (role) {
+fun roleIconFor(role: MobileRoleDashboard.Role): ImageVector = when (role) {
     MobileRoleDashboard.Role.HUMI -> Icons.Outlined.PersonOutline
     MobileRoleDashboard.Role.HYPE -> Icons.Outlined.AutoStories
     MobileRoleDashboard.Role.HUSH -> Icons.Outlined.Inbox

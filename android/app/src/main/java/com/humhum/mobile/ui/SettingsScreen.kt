@@ -17,6 +17,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.BatteryChargingFull
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.DesktopMac
 import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.HealthAndSafety
@@ -39,6 +40,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import com.humhum.mobile.app.ConnectionStatus
 import com.humhum.mobile.app.HumHumUiState
 import com.humhum.mobile.ui.theme.Humi
 import com.humhum.mobile.ui.theme.Ink
@@ -54,7 +56,7 @@ fun SettingsScreen(
     var diagnosticsOpen by remember { mutableStateOf(false) }
     LazyColumn(
         modifier = modifier.fillMaxSize().testTag("settings-screen"),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 20.dp, end = 20.dp, bottom = 30.dp),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 16.dp, end = 16.dp, bottom = 30.dp),
         verticalArrangement = Arrangement.spacedBy(5.dp),
     ) {
         item {
@@ -62,27 +64,34 @@ fun SettingsScreen(
                 IconButton(onClick = callbacks.onCloseSettings, modifier = Modifier.size(48.dp)) {
                     Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回")
                 }
-                Text("设置", style = MaterialTheme.typography.headlineMedium, color = Ink)
+                Column {
+                    Text("设置", style = MaterialTheme.typography.titleLarge, color = Ink)
+                    Text("连接、权限与隐私", style = MaterialTheme.typography.labelMedium, color = Muted)
+                }
             }
         }
-        item { SettingsSection("Mac") }
+        item { SettingsSection("连接") }
         item {
             SettingsRow(
-                icon = Icons.Outlined.Link,
-                title = "电脑连接",
-                detail = state.statusMessage,
+                icon = Icons.Outlined.DesktopMac,
+                title = "家庭 Mac",
+                detail = if (state.connection == ConnectionStatus.CONNECTED) {
+                    "HUMHUM Anywhere · 已加密"
+                } else {
+                    state.statusMessage
+                },
                 onClick = callbacks.onDisconnect,
-                trailing = if (state.scope == null) "未连接" else "断开",
+                trailing = if (state.scope == null) "未连接" else "已连接",
             )
         }
-        item { SettingsSection("健康权限") }
+        item { SettingsSection("健康与隐私") }
         item {
             SettingsRow(
                 icon = Icons.Outlined.HealthAndSafety,
-                title = "步数、静息心率与睡眠",
-                detail = "已允许 ${state.healthPermissions.granted.size}/3 项",
+                title = "健康数据来源",
+                detail = "步数、静息心率、睡眠",
                 onClick = callbacks.onManageHealthPermissions,
-                trailing = "管理",
+                trailing = "${state.healthPermissions.granted.size}/3",
             )
         }
         item {
@@ -94,7 +103,7 @@ fun SettingsScreen(
                 onChecked = callbacks.onBackgroundHealthChanged,
             )
         }
-        item { SettingsSection("后台可靠性") }
+        item { SettingsSection("后台") }
         item {
             SettingsToggle(
                 icon = Icons.Outlined.NotificationsActive,
@@ -113,7 +122,6 @@ fun SettingsScreen(
                 trailing = "检查",
             )
         }
-        item { SettingsSection("隐私") }
         item {
             SettingsRow(
                 icon = Icons.Outlined.Lock,
@@ -136,7 +144,7 @@ fun SettingsScreen(
             SettingsRow(
                 icon = Icons.Outlined.Info,
                 title = "HUMHUM for Android",
-                detail = "版本 ${com.humhum.mobile.BuildConfig.VERSION_NAME}",
+                detail = "版本 ${com.humhum.mobile.BuildConfig.VERSION_NAME} · 内测版",
                 onClick = {},
             )
         }

@@ -14,8 +14,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.DirectionsWalk
 import androidx.compose.material.icons.outlined.FavoriteBorder
+import androidx.compose.material.icons.outlined.CheckCircleOutline
+import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -33,13 +36,17 @@ import com.humhum.mobile.health.HealthMetric
 import com.humhum.mobile.health.HealthFreshness
 import com.humhum.mobile.health.HealthSourceState
 import com.humhum.mobile.ui.theme.Humi
+import com.humhum.mobile.ui.theme.HumiSoft
 import com.humhum.mobile.ui.theme.Hush
+import com.humhum.mobile.ui.theme.HushSoft
 import com.humhum.mobile.ui.theme.Ink
 import com.humhum.mobile.ui.theme.Line
 import com.humhum.mobile.ui.theme.Muted
 import kotlin.math.roundToInt
 import java.time.ZoneId
+import java.time.LocalDate
 import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 @Composable
 fun HumiRoomScreen(
@@ -48,70 +55,79 @@ fun HumiRoomScreen(
     modifier: Modifier = Modifier,
 ) {
     val context = state.personalContext
-    val intro = context?.today()?.firstOrNull()?.let {
-        "我先替你看住“${it.title()}”，其他事情可以慢一点来。"
-    } ?: "我会把今天、身体信号和真正值得记住的事放在一起。"
+    val primary = context?.today()?.firstOrNull()
     LazyColumn(
         modifier = modifier.testTag("humi-room"),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 20.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(
+            start = 16.dp,
+            end = 16.dp,
+            top = 14.dp,
+            bottom = 20.dp,
+        ),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         item {
-            RoomIntro(
-                role = MobileRoleDashboard.Role.HUMI,
-                title = "今天先照顾好你的节奏",
-                summary = intro,
-            )
-        }
-        item {
-            Column(
-                modifier = Modifier.padding(horizontal = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                RoomSectionHeader(
-                    title = "今天",
-                    trailing = context?.today()?.size?.let { "$it 件" },
+            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Text(todayLabel(), style = MaterialTheme.typography.labelLarge, color = Muted)
+                Text("先把最重要的事推进", style = MaterialTheme.typography.headlineMedium, color = Ink)
+                Text(
+                    "我把 Agent 进展和身体信号放在一起，只提醒真正值得你注意的部分。",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Muted,
                 )
-                if (context?.today().isNullOrEmpty()) {
-                    ContextUnavailable(
-                        state.personalContextAuthorized,
-                        state.personalContextMessage,
-                    )
-                } else {
-                    context!!.today().forEach { item ->
-                        RoomItem(
-                            title = item.title(),
-                            detail = item.detail() ?: sourceLabel(item.source()),
-                            accent = Humi,
-                            meta = statusLabel(item.status()),
-                        )
-                    }
-                }
             }
         }
-        if (!context?.suggestions().isNullOrEmpty()) {
-            item {
-                Column(
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    RoomSectionHeader("Humi 的建议", "建议，不是事实")
-                    context!!.suggestions().forEach { suggestion ->
-                        RoomItem(
-                            title = suggestion.title(),
-                            detail = suggestion.rationale(),
-                            accent = Color(0xFF4F8BC9),
-                            meta = "可选择",
-                        )
-                    }
+        item {
+            if (primary == null) {
+                ContextUnavailable(
+                    state.personalContextAuthorized,
+                    state.personalContextMessage,
+                )
+            } else {
+                FocusCard(
+                    title = primary.title(),
+                    detail = primary.detail() ?: sourceLabel(primary.source()),
+                    status = statusLabel(primary.status()),
+                )
+            }
+        }
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                RoomSectionHeader("今天", context?.today()?.size?.let { "$it 件值得注意" })
+                context?.today().orEmpty().drop(1).take(1).forEach { item ->
+                    HumiSignalRow(
+                        icon = Icons.Outlined.CheckCircleOutline,
+                        title = item.title(),
+                        detail = item.detail() ?: sourceLabel(item.source()),
+                        accent = Humi,
+                    )
+                }
+                context?.suggestions().orEmpty().take(1).forEach { suggestion ->
+                    HumiSignalRow(
+                        icon = Icons.Outlined.ChatBubbleOutline,
+                        title = suggestion.title(),
+                        detail = suggestion.rationale(),
+                        accent = Hush,
+                    )
+                }
+                if (context?.today().isNullOrEmpty() && context?.suggestions().isNullOrEmpty()) {
+                    Text(
+                        "现在没有需要打断你的事情。",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Muted,
+                        modifier = Modifier.padding(vertical = 12.dp),
+                    )
                 }
             }
         }
         item {
-            Column(
-                modifier = Modifier.padding(horizontal = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                RoomSectionHeader("身体信号", healthSectionTrailing(state))
+                HealthSummaryStrip(state)
+            }
+        }
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 RoomSectionHeader(
                     "我记得的你",
                     if (state.personalContextFromCache) "加密缓存" else null,
@@ -137,12 +153,8 @@ fun HumiRoomScreen(
             }
         }
         item {
-            Column(
-                modifier = Modifier.padding(horizontal = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                RoomSectionHeader("身体信号", healthSectionTrailing(state))
-                HealthSummaryStrip(state)
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                RoomSectionHeader("健康数据来源", "按需授权")
                 Text("数据来源", style = MaterialTheme.typography.labelLarge, color = Muted)
                 HealthSourceRow(
                     icon = Icons.AutoMirrored.Outlined.DirectionsWalk,
@@ -191,6 +203,63 @@ fun HumiRoomScreen(
                     },
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun FocusCard(
+    title: String,
+    detail: String,
+    status: String,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        color = HumiSoft.copy(alpha = 0.72f),
+        border = BorderStroke(1.dp, Humi.copy(alpha = 0.22f)),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text("正在进行 · $status", style = MaterialTheme.typography.labelMedium, color = Humi)
+            Text(title, style = MaterialTheme.typography.titleLarge, color = Ink)
+            Text(detail, style = MaterialTheme.typography.bodyMedium, color = Muted)
+            LinearProgressIndicator(
+                progress = { 0.68f },
+                modifier = Modifier.fillMaxWidth(),
+                color = Humi,
+                trackColor = Humi.copy(alpha = 0.12f),
+            )
+        }
+    }
+}
+
+@Composable
+private fun HumiSignalRow(
+    icon: ImageVector,
+    title: String,
+    detail: String,
+    accent: Color,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Surface(
+            modifier = Modifier.size(36.dp),
+            color = if (accent == Humi) HumiSoft else HushSoft,
+            shape = RoundedCornerShape(8.dp),
+        ) {
+            androidx.compose.foundation.layout.Box(contentAlignment = Alignment.Center) {
+                Icon(icon, contentDescription = null, modifier = Modifier.size(21.dp), tint = accent)
+            }
+        }
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium, color = Ink, maxLines = 1)
+            Text(detail, style = MaterialTheme.typography.bodyMedium, color = Muted, maxLines = 1)
         }
     }
 }
@@ -318,3 +387,7 @@ private fun statusLabel(status: String): String = when (status) {
     "completed" -> "完成"
     else -> "进行中"
 }
+
+private fun todayLabel(): String = LocalDate.now().format(
+    DateTimeFormatter.ofPattern("M 月 d 日 · EEEE", Locale.SIMPLIFIED_CHINESE),
+)

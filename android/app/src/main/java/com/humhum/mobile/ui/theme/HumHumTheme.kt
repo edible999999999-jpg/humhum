@@ -11,21 +11,21 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import com.humhum.mobile.MobileRoleDashboard
 
-val Ink = Color(0xFF243247)
+val Ink = Color(0xFF1F2633)
 val Muted = Color(0xFF667085)
-val Canvas = Color(0xFFFAFCFF)
-val Line = Color(0xFFE3E8F0)
-val Humi = Color(0xFF6657B8)
+val Canvas = Color(0xFFF7F8FC)
+val Line = Color(0xFFE1E5EC)
+val Humi = Color(0xFF6D5CCC)
 val HumiSoft = Color(0xFFF1EEFF)
-val HumiIce = Color(0xFFEAF6FF)
-val Hype = Color(0xFFB44A34)
-val HypeSoft = Color(0xFFFFF0E9)
-val Hush = Color(0xFF287765)
-val HushSoft = Color(0xFFEAF8F4)
-val Hexa = Color(0xFF80620F)
-val HexaSoft = Color(0xFFFFF7DE)
-val Sky = Color(0xFFEAF6FF)
-val Attention = Color(0xFFB75D12)
+val HumiIce = Color(0xFFEDF5FF)
+val Hype = Color(0xFFB0462F)
+val HypeSoft = Color(0xFFFFEEE8)
+val Hush = Color(0xFF287864)
+val HushSoft = Color(0xFFE9F7F3)
+val Hexa = Color(0xFF8F6508)
+val HexaSoft = Color(0xFFFFF5D9)
+val Sky = Color(0xFFEDF5FF)
+val Attention = Color(0xFFB65022)
 
 data class RolePalette(val accent: Color, val soft: Color, val companion: Color)
 
@@ -39,19 +39,19 @@ fun paletteFor(role: MobileRoleDashboard.Role): RolePalette = when (role) {
 private val HumHumTypography = Typography(
     displaySmall = TextStyle(
         fontFamily = FontFamily.SansSerif,
-        fontWeight = FontWeight.SemiBold,
-        fontSize = 30.sp,
-        lineHeight = 38.sp,
+        fontWeight = FontWeight.Bold,
+        fontSize = 28.sp,
+        lineHeight = 36.sp,
     ),
     headlineMedium = TextStyle(
         fontFamily = FontFamily.SansSerif,
-        fontWeight = FontWeight.SemiBold,
-        fontSize = 24.sp,
-        lineHeight = 32.sp,
+        fontWeight = FontWeight.Bold,
+        fontSize = 23.sp,
+        lineHeight = 31.sp,
     ),
     titleLarge = TextStyle(
         fontFamily = FontFamily.SansSerif,
-        fontWeight = FontWeight.SemiBold,
+        fontWeight = FontWeight.Bold,
         fontSize = 20.sp,
         lineHeight = 28.sp,
     ),

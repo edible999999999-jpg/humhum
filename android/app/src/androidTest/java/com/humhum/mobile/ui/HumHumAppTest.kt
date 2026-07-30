@@ -7,6 +7,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -15,6 +16,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -81,6 +83,8 @@ class HumHumAppTest {
         )
 
         assertEquals(0, requests.get())
+        compose.onNodeWithTag("humi-room")
+            .performScrollToNode(hasTestTag("health-source-steps"))
         compose.onNodeWithTag("health-source-steps").performClick()
         compose.waitForIdle()
         assertEquals(1, requests.get())
@@ -98,6 +102,8 @@ class HumHumAppTest {
             ),
         )
 
+        compose.onNodeWithTag("humi-room")
+            .performScrollToNode(hasTestTag("health-source-steps"))
         compose.onNodeWithTag("health-source-steps").performClick()
 
         assertEquals(0, requests.get())
@@ -122,6 +128,16 @@ class HumHumAppTest {
         compose.onNodeWithTag("manual-pairing-fields").assertDoesNotExist()
         compose.onNodeWithText("连接遇到问题").performClick()
         compose.onNodeWithTag("manual-pairing-fields").assertIsDisplayed()
+    }
+
+    @Test
+    fun pairingFirstViewportLeadsWithScanAndKeepsRecoverySecondary() {
+        setContent(state = HumHumUiState())
+
+        compose.onNodeWithText("连接你的 Mac").assertIsDisplayed()
+        compose.onNodeWithText("扫描配对二维码").assertIsDisplayed()
+        compose.onNodeWithText("粘贴配对资料").assertIsDisplayed()
+        compose.onNodeWithTag("manual-pairing-fields").assertDoesNotExist()
     }
 
     @Test
@@ -167,6 +183,46 @@ class HumHumAppTest {
         compose.onNodeWithText("允许").assertDoesNotExist()
         compose.onNodeWithText("发送").assertDoesNotExist()
         compose.onNodeWithText("只读观察", substring = true).assertIsDisplayed()
+    }
+
+    @Test
+    fun hushFirstViewportReadsLikeAnInbox() {
+        setContent(
+            state = connectedState().copy(selectedRole = MobileRoleDashboard.Role.HUSH),
+        )
+
+        compose.onNodeWithText("最近消息").assertIsDisplayed()
+        compose.onNodeWithText("需要回复").assertIsDisplayed()
+        compose.onNodeWithText("Peidong").assertIsDisplayed()
+        compose.onNodeWithText("UI 已经重新推送").assertIsDisplayed()
+    }
+
+    @Test
+    fun hypeCategoryTabsFilterTheKnowledgeRoom() {
+        setContent(
+            state = connectedState().copy(selectedRole = MobileRoleDashboard.Role.HYPE),
+        )
+
+        compose.onNodeWithText("偏好").performClick()
+        compose.onNodeWithText("先想清楚数据从哪里来").assertIsDisplayed()
+        compose.onNodeWithText("数据整理").assertDoesNotExist()
+
+        compose.onNodeWithText("长期记忆").performClick()
+        compose.onNodeWithText("Humi 在手机上保留伴侣功能").assertIsDisplayed()
+        compose.onNodeWithText("先想清楚数据从哪里来").assertDoesNotExist()
+    }
+
+    @Test
+    fun hexaFirstViewportPromotesTheCurrentTaskAndComposer() {
+        setContent(
+            state = connectedState().copy(
+                selectedRole = MobileRoleDashboard.Role.HEXA,
+                sessions = listOf(controllableSession()),
+            ),
+        )
+
+        compose.onNodeWithText("现在最重要").assertIsDisplayed()
+        compose.onNodeWithTag("follow-up-draft").assertIsDisplayed()
     }
 
     @Test

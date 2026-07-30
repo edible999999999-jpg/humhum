@@ -1,0 +1,1256 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HUMHUM Android 0.4</title>
+  <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+  <style>
+    :root {
+      --canvas: #f7f8fc;
+      --surface: #ffffff;
+      --surface-subtle: #f0f2f7;
+      --ink: #171d2b;
+      --ink-secondary: #626b7f;
+      --ink-tertiary: #98a0b3;
+      --line: #e3e6ee;
+      --humi: #7567d8;
+      --humi-soft: #f3f1ff;
+      --humi-strong: #e7e2ff;
+      --hype: #e97857;
+      --hype-soft: #fff2ed;
+      --hush: #3e9e87;
+      --hush-soft: #ecfaf6;
+      --hexa: #b98212;
+      --hexa-soft: #fff8e5;
+      --danger: #d94c5c;
+      --success: #2b9b68;
+      --shadow-soft: 0 4px 18px rgba(23, 29, 43, 0.08);
+      --shadow-phone: 0 24px 70px rgba(38, 43, 62, 0.15);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: #e9ebf2;
+      color: var(--ink);
+      font-family: "Noto Sans SC", "PingFang SC", system-ui, sans-serif;
+      letter-spacing: 0;
+    }
+
+    button, input { font: inherit; letter-spacing: 0; }
+
+    .design-board {
+      width: 1320px;
+      margin: 0 auto;
+      padding: 64px 48px 88px;
+    }
+
+    .board-header {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      margin-bottom: 36px;
+    }
+
+    .board-kicker {
+      margin: 0 0 8px;
+      color: var(--humi);
+      font-size: 13px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    .board-header h1 {
+      margin: 0;
+      font-size: 34px;
+      line-height: 1.15;
+    }
+
+    .board-note {
+      width: 420px;
+      margin: 0;
+      color: var(--ink-secondary);
+      font-size: 14px;
+      line-height: 1.6;
+      text-align: right;
+    }
+
+    .screen-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 390px);
+      gap: 52px 28px;
+    }
+
+    .screen-block { width: 390px; }
+
+    .screen-label {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+      padding: 0 4px;
+      color: var(--ink-secondary);
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .screen-label strong {
+      color: var(--ink);
+      font-size: 14px;
+    }
+
+    .phone {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      width: 390px;
+      height: 844px;
+      overflow: hidden;
+      border: 1px solid rgba(98, 107, 127, 0.18);
+      border-radius: 28px;
+      background: var(--canvas);
+      box-shadow: var(--shadow-phone);
+    }
+
+    .status-bar {
+      display: flex;
+      flex: 0 0 28px;
+      align-items: center;
+      justify-content: space-between;
+      padding: 7px 18px 0;
+      color: var(--ink);
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .status-icons {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .status-icons i { width: 13px; height: 13px; stroke-width: 2.4; }
+
+    .app-bar {
+      display: flex;
+      flex: 0 0 64px;
+      align-items: center;
+      gap: 11px;
+      padding: 8px 16px 10px 18px;
+      background: rgba(247, 248, 252, 0.96);
+      border-bottom: 1px solid rgba(227, 230, 238, 0.72);
+    }
+
+    .role-mark {
+      display: grid;
+      width: 36px;
+      height: 36px;
+      flex: 0 0 36px;
+      place-items: center;
+      border-radius: 10px;
+    }
+
+    .role-mark i { width: 20px; height: 20px; }
+
+    .role-mark.humi { background: var(--humi-soft); color: var(--humi); }
+    .role-mark.hype { background: var(--hype-soft); color: var(--hype); }
+    .role-mark.hush { background: var(--hush-soft); color: var(--hush); }
+    .role-mark.hexa { background: var(--hexa-soft); color: var(--hexa); }
+
+    .app-title {
+      min-width: 0;
+      flex: 1;
+    }
+
+    .app-title strong {
+      display: block;
+      font-size: 18px;
+      line-height: 1.25;
+    }
+
+    .app-title span {
+      display: block;
+      overflow: hidden;
+      color: var(--ink-secondary);
+      font-size: 11px;
+      line-height: 1.35;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .icon-button {
+      display: grid;
+      width: 44px;
+      height: 44px;
+      flex: 0 0 44px;
+      place-items: center;
+      border: 0;
+      border-radius: 12px;
+      background: transparent;
+      color: var(--ink);
+    }
+
+    .icon-button i { width: 21px; height: 21px; }
+
+    .content {
+      min-height: 0;
+      flex: 1;
+      overflow: hidden;
+      padding: 18px 18px 14px;
+    }
+
+    .content.scroll {
+      overflow-y: auto;
+      scrollbar-width: none;
+    }
+
+    .content.scroll::-webkit-scrollbar { display: none; }
+
+    .eyebrow {
+      margin: 0 0 7px;
+      color: var(--ink-secondary);
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .page-title {
+      margin: 0;
+      font-size: 25px;
+      line-height: 1.3;
+    }
+
+    .page-copy {
+      margin: 7px 0 0;
+      color: var(--ink-secondary);
+      font-size: 14px;
+      line-height: 1.55;
+    }
+
+    .section-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      margin: 22px 0 10px;
+    }
+
+    .section-head strong { font-size: 16px; }
+
+    .section-head span {
+      color: var(--ink-tertiary);
+      font-size: 11px;
+    }
+
+    .focus-band {
+      position: relative;
+      margin-top: 18px;
+      overflow: hidden;
+      padding: 18px;
+      border: 1px solid var(--humi-strong);
+      border-radius: 8px;
+      background: var(--humi-soft);
+    }
+
+    .focus-band::after {
+      position: absolute;
+      top: 0;
+      right: 0;
+      width: 5px;
+      height: 100%;
+      background: var(--humi);
+      content: "";
+    }
+
+    .focus-band .meta {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--humi);
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .focus-band h3 {
+      margin: 8px 0 4px;
+      font-size: 18px;
+      line-height: 1.35;
+    }
+
+    .focus-band p {
+      margin: 0;
+      color: var(--ink-secondary);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .progress {
+      height: 5px;
+      margin-top: 14px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: var(--humi-strong);
+    }
+
+    .progress span {
+      display: block;
+      width: 68%;
+      height: 100%;
+      border-radius: inherit;
+      background: var(--humi);
+    }
+
+    .metric-strip {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      margin-top: 10px;
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .metric {
+      padding: 13px 4px;
+      text-align: center;
+    }
+
+    .metric + .metric { border-left: 1px solid var(--line); }
+
+    .metric strong {
+      display: block;
+      font-size: 16px;
+    }
+
+    .metric span {
+      display: block;
+      margin-top: 2px;
+      color: var(--ink-tertiary);
+      font-size: 10px;
+    }
+
+    .list {
+      overflow: hidden;
+      border-top: 1px solid var(--line);
+    }
+
+    .list-row {
+      display: flex;
+      min-height: 66px;
+      align-items: center;
+      gap: 12px;
+      padding: 11px 2px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .list-icon {
+      display: grid;
+      width: 38px;
+      height: 38px;
+      flex: 0 0 38px;
+      place-items: center;
+      border-radius: 10px;
+    }
+
+    .list-icon i { width: 19px; height: 19px; }
+
+    .list-main {
+      min-width: 0;
+      flex: 1;
+    }
+
+    .list-main strong {
+      display: block;
+      overflow: hidden;
+      font-size: 14px;
+      line-height: 1.4;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .list-main span {
+      display: block;
+      overflow: hidden;
+      margin-top: 2px;
+      color: var(--ink-secondary);
+      font-size: 12px;
+      line-height: 1.45;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .row-meta {
+      color: var(--ink-tertiary);
+      font-size: 11px;
+      white-space: nowrap;
+    }
+
+    .search {
+      display: flex;
+      height: 46px;
+      align-items: center;
+      gap: 10px;
+      margin: 2px 0 16px;
+      padding: 0 14px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--surface);
+      color: var(--ink-tertiary);
+    }
+
+    .search i { width: 18px; height: 18px; }
+    .search span { font-size: 13px; }
+
+    .topic-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 15px;
+      overflow: hidden;
+    }
+
+    .topic {
+      flex: 0 0 auto;
+      padding: 7px 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--surface);
+      color: var(--ink-secondary);
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .topic.active {
+      border-color: var(--hype);
+      background: var(--hype-soft);
+      color: var(--hype);
+    }
+
+    .knowledge-card {
+      margin-bottom: 10px;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+    }
+
+    .knowledge-top {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .knowledge-top .tag {
+      padding: 4px 7px;
+      border-radius: 999px;
+      background: var(--hype-soft);
+      color: var(--hype);
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    .knowledge-top .used {
+      margin-left: auto;
+      color: var(--ink-tertiary);
+      font-size: 10px;
+    }
+
+    .knowledge-card h3 {
+      margin: 9px 0 4px;
+      font-size: 15px;
+    }
+
+    .knowledge-card p {
+      margin: 0;
+      color: var(--ink-secondary);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .segmented {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 3px;
+      padding: 3px;
+      border-radius: 10px;
+      background: var(--surface-subtle);
+    }
+
+    .segment {
+      padding: 8px 4px;
+      border-radius: 8px;
+      color: var(--ink-secondary);
+      font-size: 11px;
+      font-weight: 600;
+      text-align: center;
+    }
+
+    .segment.active {
+      background: var(--surface);
+      box-shadow: 0 2px 8px rgba(23, 29, 43, 0.08);
+      color: var(--hush);
+    }
+
+    .message-list { margin-top: 8px; }
+
+    .message-row {
+      display: flex;
+      min-height: 78px;
+      align-items: flex-start;
+      gap: 11px;
+      padding: 13px 0;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .avatar {
+      display: grid;
+      width: 42px;
+      height: 42px;
+      flex: 0 0 42px;
+      place-items: center;
+      border-radius: 13px;
+      background: var(--hush-soft);
+      color: var(--hush);
+      font-size: 14px;
+      font-weight: 800;
+    }
+
+    .message {
+      min-width: 0;
+      flex: 1;
+    }
+
+    .message-head {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+    }
+
+    .message-head strong {
+      min-width: 0;
+      flex: 1;
+      overflow: hidden;
+      font-size: 14px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .message-head span {
+      color: var(--ink-tertiary);
+      font-size: 10px;
+      white-space: nowrap;
+    }
+
+    .message p {
+      display: -webkit-box;
+      overflow: hidden;
+      margin: 5px 0 0;
+      color: var(--ink-secondary);
+      font-size: 12px;
+      line-height: 1.5;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+    }
+
+    .unread-dot {
+      width: 7px;
+      height: 7px;
+      flex: 0 0 7px;
+      margin-top: 7px;
+      border-radius: 50%;
+      background: var(--hush);
+    }
+
+    .privacy-strip {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 12px;
+      color: var(--ink-tertiary);
+      font-size: 10px;
+    }
+
+    .privacy-strip i { width: 14px; height: 14px; }
+
+    .session-card {
+      margin-top: 13px;
+      padding: 15px;
+      border: 1px solid #ead59e;
+      border-radius: 8px;
+      background: var(--surface);
+      box-shadow: var(--shadow-soft);
+    }
+
+    .session-card.secondary {
+      margin-top: 9px;
+      border-color: var(--line);
+      box-shadow: none;
+    }
+
+    .session-top {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+    }
+
+    .agent-icon {
+      display: grid;
+      width: 36px;
+      height: 36px;
+      flex: 0 0 36px;
+      place-items: center;
+      border-radius: 10px;
+      background: var(--hexa-soft);
+      color: var(--hexa);
+    }
+
+    .agent-icon i { width: 19px; height: 19px; }
+
+    .session-name {
+      min-width: 0;
+      flex: 1;
+    }
+
+    .session-name strong {
+      display: block;
+      overflow: hidden;
+      font-size: 14px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .session-name span {
+      display: block;
+      margin-top: 2px;
+      color: var(--ink-secondary);
+      font-size: 11px;
+    }
+
+    .status-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 5px 8px;
+      border-radius: 999px;
+      background: var(--hexa-soft);
+      color: var(--hexa);
+      font-size: 10px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .status-chip::before {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+      content: "";
+    }
+
+    .session-card h3 {
+      margin: 13px 0 5px;
+      font-size: 16px;
+      line-height: 1.4;
+    }
+
+    .session-card p {
+      margin: 0;
+      color: var(--ink-secondary);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .step-line {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      margin-top: 12px;
+      padding-top: 11px;
+      border-top: 1px solid var(--line);
+      color: var(--ink-secondary);
+      font-size: 11px;
+      line-height: 1.5;
+    }
+
+    .step-line i {
+      width: 15px;
+      height: 15px;
+      flex: 0 0 15px;
+      margin-top: 1px;
+      color: var(--hexa);
+    }
+
+    .composer-wrap {
+      flex: 0 0 auto;
+      padding: 10px 14px;
+      border-top: 1px solid var(--line);
+      background: var(--surface);
+    }
+
+    .composer {
+      display: flex;
+      min-height: 48px;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 5px 5px 13px;
+      border: 1px solid #d8c389;
+      border-radius: 14px;
+      background: #fffcf4;
+    }
+
+    .composer span {
+      min-width: 0;
+      flex: 1;
+      color: var(--ink-tertiary);
+      font-size: 12px;
+    }
+
+    .send {
+      display: grid;
+      width: 38px;
+      height: 38px;
+      place-items: center;
+      border: 0;
+      border-radius: 11px;
+      background: var(--hexa);
+      color: #fff;
+    }
+
+    .send i { width: 18px; height: 18px; }
+
+    .bottom-nav {
+      display: grid;
+      flex: 0 0 74px;
+      grid-template-columns: repeat(4, 1fr);
+      padding: 5px 8px 8px;
+      border-top: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.98);
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      flex-direction: column;
+      justify-content: center;
+      gap: 3px;
+      border-radius: 10px;
+      color: var(--ink-tertiary);
+      font-size: 10px;
+      font-weight: 600;
+    }
+
+    .nav-item i { width: 20px; height: 20px; }
+    .nav-item.active.humi { background: var(--humi-soft); color: var(--humi); }
+    .nav-item.active.hype { background: var(--hype-soft); color: var(--hype); }
+    .nav-item.active.hush { background: var(--hush-soft); color: var(--hush); }
+    .nav-item.active.hexa { background: var(--hexa-soft); color: var(--hexa); }
+
+    .pairing {
+      padding: 22px 22px 26px;
+    }
+
+    .brand-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .wordmark {
+      font-size: 19px;
+      font-weight: 850;
+      letter-spacing: 0.08em;
+    }
+
+    .secure-label {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      color: var(--success);
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .secure-label i { width: 14px; height: 14px; }
+
+    .pair-visual {
+      display: grid;
+      width: 88px;
+      height: 88px;
+      margin: 52px auto 26px;
+      place-items: center;
+      border: 1px solid var(--humi-strong);
+      border-radius: 24px;
+      background: var(--humi-soft);
+      color: var(--humi);
+      box-shadow: var(--shadow-soft);
+    }
+
+    .pair-visual i { width: 42px; height: 42px; }
+
+    .pairing h1 {
+      margin: 0;
+      font-size: 27px;
+      line-height: 1.25;
+      text-align: center;
+    }
+
+    .pairing .lead {
+      margin: 10px 14px 0;
+      color: var(--ink-secondary);
+      font-size: 14px;
+      line-height: 1.6;
+      text-align: center;
+    }
+
+    .primary-button,
+    .secondary-button {
+      display: flex;
+      width: 100%;
+      height: 52px;
+      align-items: center;
+      justify-content: center;
+      gap: 9px;
+      border-radius: 12px;
+      font-weight: 700;
+    }
+
+    .primary-button {
+      margin-top: 34px;
+      border: 0;
+      background: var(--humi);
+      box-shadow: 0 8px 20px rgba(117, 103, 216, 0.24);
+      color: #fff;
+    }
+
+    .secondary-button {
+      margin-top: 11px;
+      border: 1px solid var(--line);
+      background: var(--surface);
+      color: var(--ink);
+    }
+
+    .primary-button i, .secondary-button i { width: 19px; height: 19px; }
+
+    .pair-help {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      margin-top: 24px;
+      color: var(--ink-secondary);
+      font-size: 12px;
+    }
+
+    .pair-help i { width: 15px; height: 15px; }
+
+    .pair-privacy {
+      position: absolute;
+      right: 22px;
+      bottom: 26px;
+      left: 22px;
+      padding-top: 16px;
+      border-top: 1px solid var(--line);
+      color: var(--ink-tertiary);
+      font-size: 10px;
+      line-height: 1.55;
+      text-align: center;
+    }
+
+    .settings-list { margin-top: 2px; }
+
+    .settings-section {
+      margin: 20px 0 7px;
+      color: var(--humi);
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+
+    .settings-row {
+      display: flex;
+      min-height: 62px;
+      align-items: center;
+      gap: 12px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .settings-row > i {
+      width: 20px;
+      height: 20px;
+      color: var(--humi);
+    }
+
+    .settings-copy {
+      min-width: 0;
+      flex: 1;
+    }
+
+    .settings-copy strong {
+      display: block;
+      font-size: 13px;
+    }
+
+    .settings-copy span {
+      display: block;
+      overflow: hidden;
+      margin-top: 2px;
+      color: var(--ink-secondary);
+      font-size: 11px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .settings-value {
+      color: var(--humi);
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .toggle {
+      position: relative;
+      width: 42px;
+      height: 24px;
+      border-radius: 999px;
+      background: var(--humi);
+    }
+
+    .toggle::after {
+      position: absolute;
+      top: 3px;
+      right: 3px;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #fff;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+      content: "";
+    }
+  </style>
+</head>
+<body>
+  <main class="design-board">
+    <header class="board-header">
+      <div>
+        <p class="board-kicker">HUMHUM Android · 0.4 Concept</p>
+        <h1>Mobile Companion, rebuilt around real work</h1>
+      </div>
+      <p class="board-note">信息优先，不使用装饰性吉祥物贴图。四个角色共享一套结构，通过主题色、图标、语气和任务状态表达各自性格。</p>
+    </header>
+
+    <section class="screen-grid">
+      <article class="screen-block">
+        <div class="screen-label"><strong>01 · 安全配对</strong><span>First run</span></div>
+        <div class="phone">
+          <div class="status-bar">
+            <span>09:41</span>
+            <div class="status-icons"><i data-lucide="signal"></i><i data-lucide="wifi"></i><i data-lucide="battery-full"></i></div>
+          </div>
+          <div class="pairing">
+            <div class="brand-row">
+              <span class="wordmark">HUMHUM</span>
+              <span class="secure-label"><i data-lucide="shield-check"></i>本地优先</span>
+            </div>
+            <div class="pair-visual"><i data-lucide="scan-line"></i></div>
+            <h1>连接你的 Mac</h1>
+            <p class="lead">在电脑端 Hexa 打开移动访问，扫描二维码即可完成安全配对。</p>
+            <button class="primary-button"><i data-lucide="qr-code"></i>扫描配对二维码</button>
+            <button class="secondary-button"><i data-lucide="clipboard"></i>粘贴配对资料</button>
+            <div class="pair-help"><i data-lucide="circle-help"></i>二维码无法使用？查看连接帮助</div>
+            <div class="pair-privacy">连接凭证保存在 Android 私有存储中。个人上下文与控制权限需要在 Mac 端分别授权。</div>
+          </div>
+        </div>
+      </article>
+
+      <article class="screen-block">
+        <div class="screen-label"><strong>02 · Humi</strong><span>Personal rhythm</span></div>
+        <div class="phone">
+          <div class="status-bar">
+            <span>09:41</span>
+            <div class="status-icons"><i data-lucide="signal"></i><i data-lucide="wifi"></i><i data-lucide="battery-full"></i></div>
+          </div>
+          <header class="app-bar">
+            <div class="role-mark humi"><i data-lucide="sparkles"></i></div>
+            <div class="app-title"><strong>Humi</strong><span>远程连接 · 刚刚同步</span></div>
+            <button class="icon-button" aria-label="设置"><i data-lucide="settings-2"></i></button>
+          </header>
+          <div class="content scroll">
+            <p class="eyebrow">7 月 30 日 · 星期四</p>
+            <h1 class="page-title">先把最重要的事推进</h1>
+            <p class="page-copy">我把 Agent 进度和身体信号放在一起，只提醒真正值得你注意的部分。</p>
+            <section class="focus-band">
+              <div class="meta"><i data-lucide="activity" style="width:14px;height:14px"></i>正在进行</div>
+              <h3>HUMHUM 移动端重构</h3>
+              <p>Codex 正在整理高保真页面，下一步会同步 Compose 组件。</p>
+              <div class="progress"><span></span></div>
+            </section>
+            <div class="section-head"><strong>今天</strong><span>2 件值得注意</span></div>
+            <div class="list">
+              <div class="list-row">
+                <div class="list-icon" style="background:var(--humi-soft);color:var(--humi)"><i data-lucide="check-circle-2"></i></div>
+                <div class="list-main"><strong>确认 Android 新版视觉稿</strong><span>来自 Hexa 目标 · 今天</span></div>
+                <span class="row-meta">进行中</span>
+              </div>
+              <div class="list-row">
+                <div class="list-icon" style="background:var(--hush-soft);color:var(--hush)"><i data-lucide="message-circle"></i></div>
+                <div class="list-main"><strong>有 2 条消息需要回复</strong><span>Hush 已整理出联系人与摘要</span></div>
+                <span class="row-meta">查看</span>
+              </div>
+            </div>
+            <div class="section-head"><strong>身体信号</strong><span>日汇总</span></div>
+            <div class="metric-strip">
+              <div class="metric"><strong>6,428</strong><span>步数</span></div>
+              <div class="metric"><strong>63</strong><span>静息心率</span></div>
+              <div class="metric"><strong>7时12分</strong><span>睡眠</span></div>
+            </div>
+          </div>
+          <nav class="bottom-nav">
+            <div class="nav-item active humi"><i data-lucide="sparkles"></i><span>Humi</span></div>
+            <div class="nav-item"><i data-lucide="library-big"></i><span>Hype</span></div>
+            <div class="nav-item"><i data-lucide="inbox"></i><span>Hush</span></div>
+            <div class="nav-item"><i data-lucide="workflow"></i><span>Hexa</span></div>
+          </nav>
+        </div>
+      </article>
+
+      <article class="screen-block">
+        <div class="screen-label"><strong>03 · Hype</strong><span>Knowledge</span></div>
+        <div class="phone">
+          <div class="status-bar">
+            <span>09:41</span>
+            <div class="status-icons"><i data-lucide="signal"></i><i data-lucide="wifi"></i><i data-lucide="battery-full"></i></div>
+          </div>
+          <header class="app-bar">
+            <div class="role-mark hype"><i data-lucide="library-big"></i></div>
+            <div class="app-title"><strong>Hype</strong><span>42 项可复用知识</span></div>
+            <button class="icon-button" aria-label="设置"><i data-lucide="settings-2"></i></button>
+          </header>
+          <div class="content scroll">
+            <div class="search"><i data-lucide="search"></i><span>搜索技能、偏好与记忆</span></div>
+            <div class="topic-row">
+              <span class="topic active">最近使用</span>
+              <span class="topic">Skills</span>
+              <span class="topic">偏好</span>
+              <span class="topic">长期记忆</span>
+            </div>
+            <p class="eyebrow">最近最常用</p>
+            <h1 class="page-title">让下一次直接更懂你</h1>
+            <p class="page-copy">这里展示已经整理和确认过的能力，不把文件数量当成价值。</p>
+            <div class="section-head"><strong>可复用能力</strong><span>本周 8 次</span></div>
+            <article class="knowledge-card">
+              <div class="knowledge-top"><span class="tag">Skill</span><span class="used">今天使用</span></div>
+              <h3>product-design</h3>
+              <p>产品流程、移动端信息架构与视觉质量检查。</p>
+            </article>
+            <article class="knowledge-card">
+              <div class="knowledge-top"><span class="tag">Skill</span><span class="used">昨天使用</span></div>
+              <h3>humhum-hexa</h3>
+              <p>把 Agent 会话加入重点监控并持续同步进度。</p>
+            </article>
+            <div class="section-head"><strong>明确偏好</strong><span>已确认</span></div>
+            <div class="list">
+              <div class="list-row">
+                <div class="list-icon" style="background:var(--hype-soft);color:var(--hype)"><i data-lucide="palette"></i></div>
+                <div class="list-main"><strong>移动端不要使用大幅角色贴图</strong><span>偏好 · 产品设计</span></div>
+              </div>
+              <div class="list-row">
+                <div class="list-icon" style="background:var(--hype-soft);color:var(--hype)"><i data-lucide="shield-check"></i></div>
+                <div class="list-main"><strong>私密数据保持本机优先</strong><span>偏好 · 隐私</span></div>
+              </div>
+            </div>
+          </div>
+          <nav class="bottom-nav">
+            <div class="nav-item"><i data-lucide="sparkles"></i><span>Humi</span></div>
+            <div class="nav-item active hype"><i data-lucide="library-big"></i><span>Hype</span></div>
+            <div class="nav-item"><i data-lucide="inbox"></i><span>Hush</span></div>
+            <div class="nav-item"><i data-lucide="workflow"></i><span>Hexa</span></div>
+          </nav>
+        </div>
+      </article>
+
+      <article class="screen-block">
+        <div class="screen-label"><strong>04 · Hush</strong><span>Private inbox</span></div>
+        <div class="phone">
+          <div class="status-bar">
+            <span>09:41</span>
+            <div class="status-icons"><i data-lucide="signal"></i><i data-lucide="wifi"></i><i data-lucide="battery-full"></i></div>
+          </div>
+          <header class="app-bar">
+            <div class="role-mark hush"><i data-lucide="inbox"></i></div>
+            <div class="app-title"><strong>Hush</strong><span>本机微信 · 9:39 更新</span></div>
+            <button class="icon-button" aria-label="刷新"><i data-lucide="refresh-cw"></i></button>
+            <button class="icon-button" aria-label="设置"><i data-lucide="settings-2"></i></button>
+          </header>
+          <div class="content scroll">
+            <div class="segmented">
+              <div class="segment active">全部</div>
+              <div class="segment">需要回复</div>
+              <div class="segment">特别关注</div>
+            </div>
+            <div class="section-head"><strong>最近消息</strong><span>8 条脱敏摘要</span></div>
+            <div class="message-list">
+              <div class="message-row">
+                <div class="avatar">妈</div>
+                <div class="message">
+                  <div class="message-head"><strong>妈妈</strong><span>09:37</span></div>
+                  <p>晚上回来吃饭吗？我准备早点做饭。</p>
+                </div>
+                <span class="unread-dot"></span>
+              </div>
+              <div class="message-row">
+                <div class="avatar">团</div>
+                <div class="message">
+                  <div class="message-head"><strong>悦潮府吃货团购群</strong><span>09:22</span></div>
+                  <p>今天下午的水果团购截止到三点，需要的接龙。</p>
+                </div>
+              </div>
+              <div class="message-row">
+                <div class="avatar">陈</div>
+                <div class="message">
+                  <div class="message-head"><strong>陈子昂</strong><span>昨天</span></div>
+                  <p>移动端新包我今晚可以帮你在小米上再测一次。</p>
+                </div>
+                <span class="unread-dot"></span>
+              </div>
+              <div class="message-row">
+                <div class="avatar">项</div>
+                <div class="message">
+                  <div class="message-head"><strong>HUMHUM 项目群</strong><span>昨天</span></div>
+                  <p>Release 里的 Mac 和 Android 资产已经并列显示。</p>
+                </div>
+              </div>
+              <div class="message-row">
+                <div class="avatar">李</div>
+                <div class="message">
+                  <div class="message-head"><strong>李航</strong><span>周二</span></div>
+                  <p>[语音] 00:18</p>
+                </div>
+              </div>
+            </div>
+            <div class="privacy-strip"><i data-lucide="shield-check"></i>消息正文只在你的设备与已授权电脑之间加密传输</div>
+          </div>
+          <nav class="bottom-nav">
+            <div class="nav-item"><i data-lucide="sparkles"></i><span>Humi</span></div>
+            <div class="nav-item"><i data-lucide="library-big"></i><span>Hype</span></div>
+            <div class="nav-item active hush"><i data-lucide="inbox"></i><span>Hush</span></div>
+            <div class="nav-item"><i data-lucide="workflow"></i><span>Hexa</span></div>
+          </nav>
+        </div>
+      </article>
+
+      <article class="screen-block">
+        <div class="screen-label"><strong>05 · Hexa</strong><span>Agent control</span></div>
+        <div class="phone">
+          <div class="status-bar">
+            <span>09:41</span>
+            <div class="status-icons"><i data-lucide="signal"></i><i data-lucide="wifi"></i><i data-lucide="battery-full"></i></div>
+          </div>
+          <header class="app-bar">
+            <div class="role-mark hexa"><i data-lucide="workflow"></i></div>
+            <div class="app-title"><strong>Hexa</strong><span>3 个 Agent 正在运行</span></div>
+            <button class="icon-button" aria-label="刷新"><i data-lucide="refresh-cw"></i></button>
+            <button class="icon-button" aria-label="设置"><i data-lucide="settings-2"></i></button>
+          </header>
+          <div class="content scroll">
+            <p class="eyebrow">现在最重要</p>
+            <h1 class="page-title">HUMHUM Android UI 重构</h1>
+            <p class="page-copy">Codex 正在按新设计重建移动端，当前没有等待确认的权限。</p>
+            <article class="session-card">
+              <div class="session-top">
+                <div class="agent-icon"><i data-lucide="terminal-square"></i></div>
+                <div class="session-name"><strong>Codex · humhum</strong><span>刚刚更新 · 远程可控制</span></div>
+                <span class="status-chip">工作中</span>
+              </div>
+              <h3>生成高保真移动端页面</h3>
+              <p>已完成设计变量与核心信息架构，正在校验 Hush 和 Hexa 的首屏。</p>
+              <div class="progress" style="background:#f5e7bc"><span style="width:72%;background:var(--hexa)"></span></div>
+              <div class="step-line"><i data-lucide="list-checks"></i><span>下一步：把选定稿同步为 Compose 组件并运行真机视觉测试。</span></div>
+            </article>
+            <div class="section-head"><strong>其他最近会话</strong><span>2 条</span></div>
+            <article class="session-card secondary">
+              <div class="session-top">
+                <div class="agent-icon"><i data-lucide="bot"></i></div>
+                <div class="session-name"><strong>Qoder · 微信读取</strong><span>18 分钟前</span></div>
+                <span class="status-chip" style="background:var(--surface-subtle);color:var(--ink-secondary)">等待</span>
+              </div>
+            </article>
+            <article class="session-card secondary">
+              <div class="session-top">
+                <div class="agent-icon"><i data-lucide="terminal"></i></div>
+                <div class="session-name"><strong>Claude · 竞品研究</strong><span>2 小时前</span></div>
+                <span class="status-chip" style="background:var(--hush-soft);color:var(--hush)">完成</span>
+              </div>
+            </article>
+          </div>
+          <div class="composer-wrap">
+            <div class="composer"><span>继续告诉 Codex 要做什么…</span><button class="send"><i data-lucide="send"></i></button></div>
+          </div>
+          <nav class="bottom-nav">
+            <div class="nav-item"><i data-lucide="sparkles"></i><span>Humi</span></div>
+            <div class="nav-item"><i data-lucide="library-big"></i><span>Hype</span></div>
+            <div class="nav-item"><i data-lucide="inbox"></i><span>Hush</span></div>
+            <div class="nav-item active hexa"><i data-lucide="workflow"></i><span>Hexa</span></div>
+          </nav>
+        </div>
+      </article>
+
+      <article class="screen-block">
+        <div class="screen-label"><strong>06 · 设置</strong><span>Quiet controls</span></div>
+        <div class="phone">
+          <div class="status-bar">
+            <span>09:41</span>
+            <div class="status-icons"><i data-lucide="signal"></i><i data-lucide="wifi"></i><i data-lucide="battery-full"></i></div>
+          </div>
+          <header class="app-bar">
+            <button class="icon-button" aria-label="返回"><i data-lucide="arrow-left"></i></button>
+            <div class="app-title"><strong>设置</strong><span>连接、权限与隐私</span></div>
+          </header>
+          <div class="content scroll">
+            <div class="settings-list">
+              <div class="settings-section">连接</div>
+              <div class="settings-row">
+                <i data-lucide="monitor-smartphone"></i>
+                <div class="settings-copy"><strong>家庭 Mac</strong><span>HUMHUM Anywhere · 已加密</span></div>
+                <span class="settings-value">已连接</span>
+              </div>
+              <div class="settings-row">
+                <i data-lucide="shield-check"></i>
+                <div class="settings-copy"><strong>设备权限</strong><span>控制 Agent、同步个人上下文</span></div>
+                <i data-lucide="chevron-right" style="color:var(--ink-tertiary)"></i>
+              </div>
+              <div class="settings-section">后台</div>
+              <div class="settings-row">
+                <i data-lucide="radio-tower"></i>
+                <div class="settings-copy"><strong>Hexa 后台监控</strong><span>Agent 需要确认时提醒我</span></div>
+                <span class="toggle"></span>
+              </div>
+              <div class="settings-row">
+                <i data-lucide="battery-charging"></i>
+                <div class="settings-copy"><strong>电池与自启动</strong><span>后台运行限制已放宽</span></div>
+                <span class="settings-value">正常</span>
+              </div>
+              <div class="settings-section">健康与隐私</div>
+              <div class="settings-row">
+                <i data-lucide="heart-pulse"></i>
+                <div class="settings-copy"><strong>健康数据来源</strong><span>步数、静息心率、睡眠</span></div>
+                <span class="settings-value">2/3</span>
+              </div>
+              <div class="settings-row">
+                <i data-lucide="lock-keyhole"></i>
+                <div class="settings-copy"><strong>本机加密</strong><span>凭证、离线快照与待传队列</span></div>
+                <i data-lucide="chevron-right" style="color:var(--ink-tertiary)"></i>
+              </div>
+              <div class="settings-row">
+                <i data-lucide="trash-2" style="color:var(--danger)"></i>
+                <div class="settings-copy"><strong style="color:var(--danger)">删除手机上的数据</strong><span>不会删除 Mac 上的 HUMHUM 数据</span></div>
+              </div>
+              <div class="settings-section">关于</div>
+              <div class="settings-row">
+                <i data-lucide="info"></i>
+                <div class="settings-copy"><strong>HUMHUM for Android</strong><span>版本 0.4.0 · 内测版</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </article>
+    </section>
+  </main>
+  <script>lucide.createIcons();</script>
+</body>
+</html>
