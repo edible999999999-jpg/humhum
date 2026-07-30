@@ -92,4 +92,4 @@
 - [x] **Step 1: Run focused Rust, JVM, and connected Compose tests.**
 - [x] **Step 2: Run complete Rust, frontend, relay, Android JVM, lint, connected, and release build checks.**
 - [x] **Step 3: Install the release APK on the API 36 emulator, cold launch it, and capture pairing/Hush/Hexa evidence.**
-- [ ] **Step 4: Build and replace the local Mac app, verify Hush projection and Agent follow-up routes, then publish matching Mac and Android assets with direct README links.**
+- [x] **Step 4: Build and replace the local Mac app, verify Hush projection and Agent follow-up routes, then publish matching Mac and Android assets with direct README links.**
