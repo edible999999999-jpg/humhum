@@ -23,6 +23,15 @@
       --hush-soft: #ecfaf6;
       --hexa: #b98212;
       --hexa-soft: #fff8e5;
+      --hush-canvas: #fffbf7;
+      --hush-peach: #ffe7d8;
+      --hush-rose: #f8dde0;
+      --hush-mint: #e8f5ee;
+      --hexa-panel: #181a1f;
+      --hexa-panel-raised: #23262d;
+      --hexa-panel-text: #f7f4e8;
+      --hexa-panel-muted: #adb2bc;
+      --hexa-signal: #ffc928;
       --danger: #d94c5c;
       --success: #2b9b68;
       --shadow-soft: 0 4px 18px rgba(23, 29, 43, 0.08);
@@ -473,6 +482,10 @@
       background: var(--surface-subtle);
     }
 
+    .hush-phone { background: var(--hush-canvas); }
+    .hush-phone .app-bar { background: rgba(255, 251, 247, 0.97); }
+    .hush-phone .segmented { background: var(--hush-peach); }
+
     .segment {
       padding: 8px 4px;
       border-radius: 8px;
@@ -483,7 +496,7 @@
     }
 
     .segment.active {
-      background: var(--surface);
+      background: var(--hush-canvas);
       box-shadow: 0 2px 8px rgba(23, 29, 43, 0.08);
       color: var(--hush);
     }
@@ -496,7 +509,17 @@
       align-items: flex-start;
       gap: 11px;
       padding: 13px 0;
-      border-bottom: 1px solid var(--line);
+      position: relative;
+    }
+
+    .message-row:not(:last-child)::after {
+      position: absolute;
+      right: 0;
+      bottom: 0;
+      left: 53px;
+      height: 1px;
+      background: #ece3dd;
+      content: "";
     }
 
     .avatar {
@@ -511,6 +534,10 @@
       font-size: 14px;
       font-weight: 800;
     }
+
+    .avatar.attention { background: var(--hush-rose); }
+    .avatar.peach { background: var(--hush-peach); }
+    .avatar.mint { background: var(--hush-mint); }
 
     .message {
       min-width: 0;
@@ -555,7 +582,7 @@
       flex: 0 0 7px;
       margin-top: 7px;
       border-radius: 50%;
-      background: var(--hush);
+      background: #d96c73;
     }
 
     .privacy-strip {
@@ -563,7 +590,11 @@
       align-items: center;
       gap: 8px;
       margin-top: 12px;
-      color: var(--ink-tertiary);
+      padding: 10px 12px;
+      border: 1px solid rgba(40, 120, 100, 0.12);
+      border-radius: 8px;
+      background: var(--hush-mint);
+      color: var(--ink-secondary);
       font-size: 10px;
     }
 
@@ -582,6 +613,37 @@
       margin-top: 9px;
       border-color: var(--line);
       box-shadow: none;
+    }
+
+    .hexa-phone .session-card:not(.secondary) {
+      border-color: rgba(255, 201, 40, 0.72);
+      background: var(--hexa-panel);
+      box-shadow: none;
+      color: var(--hexa-panel-text);
+    }
+
+    .hexa-phone .session-card:not(.secondary) .agent-icon,
+    .hexa-phone .session-card:not(.secondary) .status-chip {
+      background: var(--hexa-panel-raised);
+      color: var(--hexa-signal);
+    }
+
+    .hexa-phone .session-card:not(.secondary) .session-name span {
+      color: var(--hexa-panel-muted);
+      font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+    }
+
+    .hexa-phone .session-card:not(.secondary) p {
+      color: var(--hexa-panel-text);
+    }
+
+    .hexa-phone .session-card:not(.secondary) .step-line {
+      border-top-color: var(--hexa-panel-raised);
+      color: var(--hexa-panel-muted);
+    }
+
+    .hexa-phone .session-card:not(.secondary) .step-line i {
+      color: var(--hexa-signal);
     }
 
     .session-top {
@@ -714,6 +776,21 @@
     }
 
     .send i { width: 18px; height: 18px; }
+
+    .session-composer {
+      margin-top: 13px;
+      border-color: rgba(173, 178, 188, 0.58);
+      border-radius: 8px;
+      background: var(--hexa-panel-raised);
+    }
+
+    .session-composer span { color: var(--hexa-panel-muted); }
+
+    .session-composer .send {
+      border-radius: 8px;
+      background: var(--hexa-signal);
+      color: var(--hexa-panel);
+    }
 
     .bottom-nav {
       display: grid;
@@ -1066,7 +1143,7 @@
 
       <article class="screen-block">
         <div class="screen-label"><strong>04 · Hush</strong><span>Private inbox</span></div>
-        <div class="phone">
+        <div class="phone hush-phone">
           <div class="status-bar">
             <span>09:41</span>
             <div class="status-icons"><i data-lucide="signal"></i><i data-lucide="wifi"></i><i data-lucide="battery-full"></i></div>
@@ -1086,7 +1163,7 @@
             <div class="section-head"><strong>最近消息</strong><span>8 条脱敏摘要</span></div>
             <div class="message-list">
               <div class="message-row">
-                <div class="avatar">妈</div>
+                <div class="avatar attention">妈</div>
                 <div class="message">
                   <div class="message-head"><strong>妈妈</strong><span>09:37</span></div>
                   <p>晚上回来吃饭吗？我准备早点做饭。</p>
@@ -1094,14 +1171,14 @@
                 <span class="unread-dot"></span>
               </div>
               <div class="message-row">
-                <div class="avatar">团</div>
+                <div class="avatar peach">团</div>
                 <div class="message">
                   <div class="message-head"><strong>悦潮府吃货团购群</strong><span>09:22</span></div>
                   <p>今天下午的水果团购截止到三点，需要的接龙。</p>
                 </div>
               </div>
               <div class="message-row">
-                <div class="avatar">陈</div>
+                <div class="avatar attention">陈</div>
                 <div class="message">
                   <div class="message-head"><strong>陈子昂</strong><span>昨天</span></div>
                   <p>移动端新包我今晚可以帮你在小米上再测一次。</p>
@@ -1109,14 +1186,14 @@
                 <span class="unread-dot"></span>
               </div>
               <div class="message-row">
-                <div class="avatar">项</div>
+                <div class="avatar mint">项</div>
                 <div class="message">
                   <div class="message-head"><strong>HUMHUM 项目群</strong><span>昨天</span></div>
                   <p>Release 里的 Mac 和 Android 资产已经并列显示。</p>
                 </div>
               </div>
               <div class="message-row">
-                <div class="avatar">李</div>
+                <div class="avatar peach">李</div>
                 <div class="message">
                   <div class="message-head"><strong>李航</strong><span>周二</span></div>
                   <p>[语音] 00:18</p>
@@ -1136,7 +1213,7 @@
 
       <article class="screen-block">
         <div class="screen-label"><strong>05 · Hexa</strong><span>Agent control</span></div>
-        <div class="phone">
+        <div class="phone hexa-phone">
           <div class="status-bar">
             <span>09:41</span>
             <div class="status-icons"><i data-lucide="signal"></i><i data-lucide="wifi"></i><i data-lucide="battery-full"></i></div>
@@ -1159,8 +1236,9 @@
               </div>
               <h3>生成高保真移动端页面</h3>
               <p>已完成设计变量与核心信息架构，正在校验 Hush 和 Hexa 的首屏。</p>
-              <div class="progress" style="background:#f5e7bc"><span style="width:72%;background:var(--hexa)"></span></div>
+              <div class="progress" style="background:var(--hexa-panel-raised)"><span style="width:72%;background:var(--hexa-signal)"></span></div>
               <div class="step-line"><i data-lucide="list-checks"></i><span>下一步：把选定稿同步为 Compose 组件并运行真机视觉测试。</span></div>
+              <div class="composer session-composer"><span>继续告诉 Codex 要做什么…</span><button class="send"><i data-lucide="send"></i></button></div>
             </article>
             <div class="section-head"><strong>其他最近会话</strong><span>2 条</span></div>
             <article class="session-card secondary">
@@ -1177,9 +1255,6 @@
                 <span class="status-chip" style="background:var(--hush-soft);color:var(--hush)">完成</span>
               </div>
             </article>
-          </div>
-          <div class="composer-wrap">
-            <div class="composer"><span>继续告诉 Codex 要做什么…</span><button class="send"><i data-lucide="send"></i></button></div>
           </div>
           <nav class="bottom-nav">
             <div class="nav-item"><i data-lucide="sparkles"></i><span>Humi</span></div>
