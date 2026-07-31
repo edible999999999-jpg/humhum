@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -22,6 +23,9 @@ import com.humhum.mobile.MobileRoleDashboard
 import com.humhum.mobile.ui.theme.Ink
 import com.humhum.mobile.ui.theme.Line
 import com.humhum.mobile.ui.theme.Muted
+import com.humhum.mobile.ui.theme.EditorialSection
+import com.humhum.mobile.ui.theme.HexaPanelMuted
+import com.humhum.mobile.ui.theme.HexaPanelText
 import com.humhum.mobile.ui.theme.paletteFor
 
 @Composable
@@ -73,17 +77,27 @@ fun RoomIntro(
 @Composable
 fun RoomSectionHeader(
     title: String,
-    trailing: String? = null,
     modifier: Modifier = Modifier,
+    trailing: String? = null,
+    dark: Boolean = false,
+    accent: Color? = null,
 ) {
     Row(
         modifier = modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(title, style = MaterialTheme.typography.titleMedium, color = Ink)
+        Text(
+            title,
+            style = EditorialSection,
+            color = accent ?: if (dark) HexaPanelText else Ink,
+        )
         Spacer(Modifier.weight(1f))
         trailing?.let {
-            Text(it, style = MaterialTheme.typography.labelMedium, color = Muted)
+            Text(
+                it,
+                style = MaterialTheme.typography.labelMedium,
+                color = if (dark) HexaPanelMuted else Muted,
+            )
         }
     }
 }
@@ -93,17 +107,15 @@ fun RoomItem(
     title: String,
     detail: String,
     accent: Color,
-    meta: String? = null,
     modifier: Modifier = Modifier,
+    meta: String? = null,
+    dark: Boolean = false,
 ) {
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        color = Color.White,
-        shape = RoundedCornerShape(8.dp),
-        border = BorderStroke(1.dp, Line),
-    ) {
+    val titleColor = if (dark) HexaPanelText else Ink
+    val detailColor = if (dark) HexaPanelMuted else Muted
+    Column(modifier = modifier.fillMaxWidth()) {
         Row(
-            modifier = Modifier.padding(horizontal = 13.dp, vertical = 11.dp),
+            modifier = Modifier.padding(vertical = 9.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
@@ -116,13 +128,17 @@ fun RoomItem(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-                Text(title, style = MaterialTheme.typography.titleMedium, color = Ink, maxLines = 2)
-                Text(detail, style = MaterialTheme.typography.bodyMedium, color = Muted, maxLines = 2)
+                Text(title, style = MaterialTheme.typography.titleMedium, color = titleColor, maxLines = 2)
+                Text(detail, style = MaterialTheme.typography.bodyMedium, color = detailColor, maxLines = 2)
             }
             meta?.let {
                 Text(it, style = MaterialTheme.typography.labelMedium, color = accent, maxLines = 1)
             }
         }
+        HorizontalDivider(
+            modifier = Modifier.padding(start = 14.dp),
+            color = if (dark) HexaPanelMuted.copy(alpha = 0.28f) else Line,
+        )
     }
 }
 

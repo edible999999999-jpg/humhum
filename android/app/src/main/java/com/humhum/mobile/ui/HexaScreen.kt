@@ -25,6 +25,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -45,6 +46,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.font.FontWeight
+import com.humhum.mobile.MobileRoleDashboard
 import com.humhum.mobile.Models
 import com.humhum.mobile.app.HumHumUiState
 import com.humhum.mobile.app.PendingAction
@@ -55,10 +59,11 @@ import com.humhum.mobile.ui.theme.HexaPanelMuted
 import com.humhum.mobile.ui.theme.HexaPanelRaised
 import com.humhum.mobile.ui.theme.HexaPanelText
 import com.humhum.mobile.ui.theme.HexaSignal
-import com.humhum.mobile.ui.theme.HexaSoft
 import com.humhum.mobile.ui.theme.Ink
 import com.humhum.mobile.ui.theme.Line
 import com.humhum.mobile.ui.theme.Muted
+import com.humhum.mobile.ui.theme.EditorialHero
+import com.humhum.mobile.ui.theme.editorialSpecFor
 
 @Composable
 fun HexaScreen(
@@ -74,7 +79,7 @@ fun HexaScreen(
         )
     }
     LazyColumn(
-        modifier = modifier.fillMaxSize().testTag("hexa-room"),
+        modifier = modifier.fillMaxSize().background(HexaPanel).testTag("hexa-room"),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(
             start = 16.dp,
             end = 16.dp,
@@ -85,12 +90,20 @@ fun HexaScreen(
     ) {
         item {
             Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                Text("现在最重要", style = MaterialTheme.typography.labelLarge, color = Muted)
+                Text(
+                    "${editorialSpecFor(MobileRoleDashboard.Role.HEXA).indexLabel} · NOW RUNNING",
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 9.sp,
+                    ),
+                    color = HexaSignal,
+                )
                 Text(
                     orderedSessions.firstOrNull()?.project()?.ifBlank { "Agent 会话" }
                         ?: "Agent 会话",
-                    style = MaterialTheme.typography.headlineMedium,
-                    color = Ink,
+                    style = EditorialHero,
+                    color = HexaPanelText,
                 )
                 Text(
                     if (state.canControl) {
@@ -99,21 +112,26 @@ fun HexaScreen(
                         "只读观察 · 当前电脑没有授予确认和追问权限。"
                     },
                     style = MaterialTheme.typography.bodyMedium,
-                    color = Muted,
+                    color = HexaPanelMuted,
                 )
+                MissionStrip(sessionCount = orderedSessions.size)
             }
         }
         if (orderedSessions.isEmpty()) {
             item {
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(8.dp),
-                    color = HexaSoft,
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Hexa.copy(alpha = 0.25f)),
+                    shape = RoundedCornerShape(2.dp),
+                    color = HexaPanelRaised,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, HexaPanelMuted.copy(alpha = 0.34f)),
                 ) {
                     Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("现在很安静", style = MaterialTheme.typography.titleMedium, color = Ink)
-                        Text("最近没有需要你处理的 Agent 会话。", style = MaterialTheme.typography.bodyMedium, color = Muted)
+                        Text("现在很安静", style = MaterialTheme.typography.titleMedium, color = HexaPanelText)
+                        Text(
+                            "最近没有需要你处理的 Agent 会话。",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = HexaPanelMuted,
+                        )
                     }
                 }
             }
@@ -131,6 +149,8 @@ fun HexaScreen(
                     RoomSectionHeader(
                         title = "其他最近会话",
                         trailing = "${orderedSessions.size - 1} 条",
+                        dark = true,
+                        accent = HexaSignal,
                     )
                 }
                 items(orderedSessions.drop(1), key = { it.id() }) { session ->
@@ -147,7 +167,9 @@ fun HexaScreen(
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     RoomSectionHeader(
                         "正在关注",
-                        "${state.personalContext!!.agents().size} 个 Agent",
+                        trailing = "${state.personalContext!!.agents().size} 个 Agent",
+                        dark = true,
+                        accent = HexaSignal,
                     )
                     state.personalContext!!.agents().take(3).forEach { agent ->
                         RoomItem(
@@ -155,11 +177,49 @@ fun HexaScreen(
                             detail = agent.currentStep() ?: agent.status(),
                             accent = Hexa,
                             meta = if (agent.needsUser()) "需要你" else agent.status(),
+                            dark = true,
                         )
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun MissionStrip(sessionCount: Int) {
+    Column(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+        HorizontalDivider(color = HexaPanelMuted.copy(alpha = 0.3f))
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(
+                "LOCAL RELAY",
+                style = MaterialTheme.typography.labelMedium.copy(
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 8.sp,
+                ),
+                color = HexaSignal,
+            )
+            Text(
+                "ENCRYPTED",
+                style = MaterialTheme.typography.labelMedium.copy(
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 8.sp,
+                ),
+                color = HexaPanelMuted,
+            )
+            Text(
+                "$sessionCount AGENTS",
+                style = MaterialTheme.typography.labelMedium.copy(
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 8.sp,
+                ),
+                color = HexaPanelMuted,
+            )
+        }
+        HorizontalDivider(color = HexaPanelMuted.copy(alpha = 0.3f))
     }
 }
 
@@ -184,23 +244,22 @@ private fun SessionPanel(
         }
         handledSuccessRevision = state.followUpSuccessRevision
     }
-    val panelColor = if (primary) HexaPanel else Color.White
-    val raisedColor = if (primary) HexaPanelRaised else HexaSoft
-    val titleColor = if (primary) HexaPanelText else Ink
-    val metadataColor = if (primary) HexaPanelMuted else Muted
-    val accentColor = if (primary) HexaSignal else Hexa
+    val panelColor = if (primary) HexaPanelRaised else HexaPanel
+    val raisedColor = if (primary) Color(0xFF292C31) else HexaPanelRaised
+    val titleColor = HexaPanelText
+    val metadataColor = HexaPanelMuted
+    val accentColor = HexaSignal
     val canSend = draft.isNotBlank() && !followUpPending
     Surface(
         modifier = modifier
             .fillMaxWidth()
             .then(if (primary) Modifier.testTag("hexa-primary-session") else Modifier),
-        shape = RoundedCornerShape(8.dp),
+        shape = RoundedCornerShape(if (primary) 2.dp else 0.dp),
         color = panelColor,
         border = androidx.compose.foundation.BorderStroke(
             1.dp,
-            if (primary) HexaSignal.copy(alpha = 0.72f)
-            else if (session.needsAttention()) Hexa.copy(alpha = 0.45f)
-            else Line,
+            if (primary) HexaSignal.copy(alpha = 0.78f)
+            else HexaPanelMuted.copy(alpha = 0.28f),
         ),
     ) {
         Column(modifier = Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -232,25 +291,11 @@ private fun SessionPanel(
                         color = metadataColor,
                     )
                 }
-                Surface(
-                    color = when {
-                        primary -> raisedColor
-                        session.needsAttention() -> Color(0xFFFFE9E0)
-                        else -> HexaSoft
-                    },
-                    shape = RoundedCornerShape(12.dp),
-                ) {
-                    Text(
-                        if (session.needsAttention()) "需要你" else "工作中",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = when {
-                            primary -> accentColor
-                            session.needsAttention() -> MaterialTheme.colorScheme.error
-                            else -> Hexa
-                        },
-                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
-                    )
-                }
+                Text(
+                    if (session.needsAttention()) "需要你" else "工作中",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (session.needsAttention()) Color(0xFFFFA7A7) else accentColor,
+                )
                 if (session.canReadConversation()) {
                     IconButton(onClick = { callbacks.onOpenConversation(session) }, modifier = Modifier.size(48.dp)) {
                         Icon(
@@ -284,7 +329,7 @@ private fun SessionPanel(
                         action = action,
                         enabled = PendingAction(PendingActionKind.APPROVAL, session.id(), action.id()) !in state.pendingActions,
                         onResolve = { approved -> callbacks.onResolve(session, action, approved) },
-                        dark = primary,
+                        dark = true,
                     )
                 }
             }
@@ -297,21 +342,17 @@ private fun SessionPanel(
                         modifier = Modifier.weight(1f).testTag("follow-up-draft"),
                         shape = RoundedCornerShape(8.dp),
                         maxLines = 3,
-                        colors = if (primary) {
-                            OutlinedTextFieldDefaults.colors(
-                                focusedTextColor = HexaPanelText,
-                                unfocusedTextColor = HexaPanelText,
-                                focusedContainerColor = HexaPanelRaised,
-                                unfocusedContainerColor = HexaPanelRaised,
-                                focusedBorderColor = HexaSignal,
-                                unfocusedBorderColor = HexaPanelMuted.copy(alpha = 0.58f),
-                                cursorColor = HexaSignal,
-                                focusedLabelColor = HexaSignal,
-                                unfocusedLabelColor = HexaPanelMuted,
-                            )
-                        } else {
-                            OutlinedTextFieldDefaults.colors()
-                        },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = HexaPanelText,
+                            unfocusedTextColor = HexaPanelText,
+                            focusedContainerColor = raisedColor,
+                            unfocusedContainerColor = raisedColor,
+                            focusedBorderColor = HexaSignal,
+                            unfocusedBorderColor = HexaPanelMuted.copy(alpha = 0.58f),
+                            cursorColor = HexaSignal,
+                            focusedLabelColor = HexaSignal,
+                            unfocusedLabelColor = HexaPanelMuted,
+                        ),
                     )
                     IconButton(
                         onClick = {
@@ -322,8 +363,8 @@ private fun SessionPanel(
                         },
                         enabled = canSend,
                         colors = IconButtonDefaults.iconButtonColors(
-                            contentColor = if (primary) HexaPanel else Hexa,
-                            disabledContentColor = if (primary) HexaPanelMuted else Hexa.copy(alpha = 0.4f),
+                            contentColor = HexaPanel,
+                            disabledContentColor = HexaPanelMuted,
                         ),
                         modifier = Modifier
                             .size(48.dp)
@@ -333,7 +374,7 @@ private fun SessionPanel(
                                 } else {
                                     raisedColor
                                 },
-                                shape = RoundedCornerShape(8.dp),
+                                shape = RoundedCornerShape(2.dp),
                             ),
                     ) {
                         Icon(
@@ -349,7 +390,7 @@ private fun SessionPanel(
                         color = if (feedback.startsWith("电脑已收到")) {
                             metadataColor
                         } else {
-                            if (primary) Color(0xFFFFA7A7) else MaterialTheme.colorScheme.error
+                            Color(0xFFFFA7A7)
                         },
                     )
                 }
@@ -358,7 +399,7 @@ private fun SessionPanel(
                 ConversationDisclosure(
                     state = state,
                     onClose = callbacks.onCloseConversation,
-                    dark = primary,
+                    dark = true,
                 )
             }
         }

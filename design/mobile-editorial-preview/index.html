@@ -1,0 +1,1220 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>HUMHUM Editorial Mobile Preview</title>
+  <script src="https://unpkg.com/@phosphor-icons/web@2.1.1"></script>
+  <style>
+    :root {
+      --board: #e8e9e7;
+      --paper: #f8f8f5;
+      --surface: #ffffff;
+      --ink: #191b1e;
+      --muted: #686b70;
+      --faint: #96999f;
+      --rule: #dfe1de;
+      --focus: #1c1e1d;
+      --focus-raised: #282b29;
+      --on-focus: #f8f6ef;
+      --humi: #6d5ccc;
+      --humi-soft: #f1eeff;
+      --hype: #b0462f;
+      --hype-soft: #fff0ea;
+      --hush: #287864;
+      --hush-soft: #e8f5ee;
+      --hush-rose: #f8dde0;
+      --hush-peach: #ffe7d8;
+      --hexa: #c08a0a;
+      --hexa-soft: #fff3cf;
+      --hexa-signal: #ffc928;
+      --hexa-night: #141619;
+      --hexa-night-raised: #202328;
+      --hexa-rule: #3b3f45;
+      --serif: "Songti SC", "STSong", "Noto Serif CJK SC", "Noto Serif SC", serif;
+      --sans: "PingFang SC", "Noto Sans CJK SC", "Noto Sans SC", system-ui, sans-serif;
+      --mono: "SFMono-Regular", "Cascadia Mono", Menlo, monospace;
+    }
+
+    * { box-sizing: border-box; }
+
+    html { background: var(--board); }
+
+    body {
+      min-width: 900px;
+      margin: 0;
+      color: var(--ink);
+      background: var(--board);
+      font-family: var(--sans);
+      letter-spacing: 0;
+    }
+
+    button,
+    input {
+      color: inherit;
+      font: inherit;
+      letter-spacing: 0;
+    }
+
+    button { cursor: pointer; }
+
+    .stage {
+      width: 984px;
+      margin: 0 auto;
+      padding: 52px 48px 80px;
+    }
+
+    .stage-header {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 32px;
+      margin-bottom: 32px;
+    }
+
+    .stage-kicker {
+      margin: 0 0 8px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .stage-title {
+      margin: 0;
+      font-family: var(--serif);
+      font-size: 34px;
+      font-weight: 600;
+      line-height: 1.18;
+    }
+
+    .stage-note {
+      width: 350px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.65;
+      text-align: right;
+    }
+
+    .preview-switcher {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid rgba(25, 27, 30, 0.14);
+    }
+
+    .preview-filter {
+      min-height: 40px;
+      padding: 0 14px;
+      border: 1px solid rgba(25, 27, 30, 0.16);
+      border-radius: 999px;
+      background: transparent;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .preview-filter.active {
+      border-color: var(--focus);
+      color: var(--on-focus);
+      background: var(--focus);
+    }
+
+    .screen-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 390px);
+      gap: 52px 56px;
+      justify-content: center;
+    }
+
+    .screen-block[hidden] { display: none; }
+
+    .screen-label {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .screen-label strong {
+      color: var(--ink);
+      font-family: var(--serif);
+      font-size: 17px;
+      font-weight: 600;
+    }
+
+    .phone {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      width: 390px;
+      height: 844px;
+      overflow: hidden;
+      border: 1px solid rgba(25, 27, 30, 0.13);
+      border-radius: 28px;
+      background: var(--paper);
+      box-shadow: 0 22px 48px rgba(35, 38, 40, 0.12);
+    }
+
+    .status-bar {
+      display: flex;
+      flex: 0 0 28px;
+      align-items: center;
+      justify-content: space-between;
+      padding: 7px 17px 0;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .status-icons {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 14px;
+    }
+
+    .app-bar {
+      display: flex;
+      flex: 0 0 61px;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 14px 9px 16px;
+      border-bottom: 1px solid rgba(223, 225, 222, 0.86);
+    }
+
+    .role-mark {
+      display: grid;
+      width: 36px;
+      height: 36px;
+      flex: 0 0 36px;
+      place-items: center;
+      border-radius: 8px;
+      font-size: 20px;
+    }
+
+    .role-mark.humi { color: var(--humi); background: var(--humi-soft); }
+    .role-mark.hype { color: var(--hype); background: var(--hype-soft); }
+    .role-mark.hush { color: var(--hush); background: var(--hush-soft); }
+    .role-mark.hexa { color: #8c6200; background: var(--hexa-soft); }
+
+    .app-name {
+      min-width: 0;
+      flex: 1;
+    }
+
+    .app-name strong {
+      display: block;
+      font-size: 18px;
+      line-height: 1.2;
+    }
+
+    .app-name span {
+      display: block;
+      overflow: hidden;
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 10px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .icon-button {
+      display: grid;
+      width: 48px;
+      height: 48px;
+      flex: 0 0 48px;
+      place-items: center;
+      border: 0;
+      background: transparent;
+      font-size: 21px;
+    }
+
+    .content {
+      min-height: 0;
+      flex: 1;
+      overflow: hidden;
+      padding: 17px 16px 12px;
+    }
+
+    .context-label {
+      margin: 0 0 6px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .editorial-title {
+      margin: 0;
+      font-family: var(--serif);
+      font-size: 29px;
+      font-weight: 600;
+      line-height: 1.23;
+    }
+
+    .editorial-copy {
+      margin: 7px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .focus-surface {
+      margin-top: 17px;
+      padding: 15px;
+      border-radius: 8px;
+      color: var(--on-focus);
+      background: var(--focus);
+    }
+
+    .focus-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 14px;
+      color: #c8cbc7;
+      font-size: 10px;
+      font-weight: 600;
+    }
+
+    .focus-top i { color: currentColor; font-size: 17px; }
+
+    .focus-surface h3 {
+      margin: 0;
+      font-family: var(--serif);
+      font-size: 21px;
+      font-weight: 600;
+      line-height: 1.32;
+    }
+
+    .focus-surface p {
+      margin: 7px 0 0;
+      color: #c8cbc7;
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .focus-action {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 12px;
+      color: var(--on-focus);
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .section-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 22px;
+      padding-bottom: 7px;
+    }
+
+    .section-head strong {
+      font-family: var(--serif);
+      font-size: 20px;
+      font-weight: 600;
+    }
+
+    .section-head span {
+      color: var(--faint);
+      font-size: 10px;
+    }
+
+    .editorial-row {
+      position: relative;
+      display: flex;
+      min-height: 63px;
+      align-items: center;
+      gap: 11px;
+      padding: 9px 0;
+    }
+
+    .editorial-row:not(:last-child)::after {
+      position: absolute;
+      right: 0;
+      bottom: 0;
+      left: 47px;
+      height: 1px;
+      background: var(--rule);
+      content: "";
+    }
+
+    .row-mark {
+      display: grid;
+      width: 36px;
+      height: 36px;
+      flex: 0 0 36px;
+      place-items: center;
+      border-radius: 8px;
+      font-size: 17px;
+    }
+
+    .row-main {
+      min-width: 0;
+      flex: 1;
+    }
+
+    .row-main strong {
+      display: block;
+      overflow: hidden;
+      font-size: 13px;
+      font-weight: 600;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .row-main span {
+      display: block;
+      overflow: hidden;
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.4;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .row-meta {
+      color: var(--faint);
+      font-size: 10px;
+      white-space: nowrap;
+    }
+
+    .metric-line {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      margin-top: 2px;
+      border-top: 1px solid var(--rule);
+      border-bottom: 1px solid var(--rule);
+    }
+
+    .metric {
+      padding: 11px 5px;
+      text-align: center;
+    }
+
+    .metric:not(:last-child) { border-right: 1px solid var(--rule); }
+
+    .metric strong {
+      display: block;
+      font-family: var(--serif);
+      font-size: 23px;
+      font-weight: 600;
+      line-height: 1.1;
+    }
+
+    .metric span {
+      display: block;
+      margin-top: 4px;
+      color: var(--faint);
+      font-size: 9px;
+    }
+
+    .bottom-nav {
+      display: grid;
+      flex: 0 0 70px;
+      grid-template-columns: repeat(4, 1fr);
+      border-top: 1px solid var(--rule);
+      background: rgba(255, 255, 255, 0.92);
+    }
+
+    .nav-item {
+      position: relative;
+      display: flex;
+      min-width: 0;
+      align-items: center;
+      flex-direction: column;
+      justify-content: center;
+      gap: 3px;
+      border: 0;
+      background: transparent;
+      color: #7c8088;
+      font-size: 9px;
+    }
+
+    .nav-item i { font-size: 20px; }
+
+    .nav-item.active::before {
+      position: absolute;
+      top: 0;
+      width: 24px;
+      height: 2px;
+      background: currentColor;
+      content: "";
+    }
+
+    .nav-item.humi.active { color: var(--humi); }
+    .nav-item.hype.active { color: var(--hype); }
+    .nav-item.hush.active { color: var(--hush); }
+    .nav-item.hexa.active { color: #976900; }
+
+    .index-tabs {
+      display: flex;
+      gap: 18px;
+      margin-top: 15px;
+      padding-bottom: 9px;
+      border-bottom: 1px solid var(--rule);
+    }
+
+    .index-tab {
+      position: relative;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .index-tab.active {
+      color: var(--ink);
+      font-weight: 700;
+    }
+
+    .index-tab.active::after {
+      position: absolute;
+      right: 0;
+      bottom: -10px;
+      left: 0;
+      height: 2px;
+      background: var(--hype);
+      content: "";
+    }
+
+    .hype-focus { background: #251c19; }
+    .hype-focus .focus-top { color: #e8b8aa; }
+
+    .inbox-filter {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 4px;
+      margin-bottom: 18px;
+      padding: 3px;
+      border: 1px solid #eadfd9;
+      border-radius: 8px;
+      background: #fff6ef;
+    }
+
+    .inbox-filter button {
+      min-height: 36px;
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 600;
+    }
+
+    .inbox-filter button.active {
+      color: var(--on-focus);
+      background: var(--focus);
+    }
+
+    .message-row {
+      min-height: 72px;
+      align-items: flex-start;
+      padding: 11px 0;
+    }
+
+    .message-avatar {
+      display: grid;
+      width: 38px;
+      height: 38px;
+      flex: 0 0 38px;
+      place-items: center;
+      border-radius: 8px;
+      color: var(--hush);
+      background: var(--hush-soft);
+      font-family: var(--serif);
+      font-size: 15px;
+      font-weight: 600;
+    }
+
+    .message-avatar.rose { background: var(--hush-rose); }
+    .message-avatar.peach { background: var(--hush-peach); }
+
+    .message-copy {
+      display: -webkit-box;
+      overflow: hidden;
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.45;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+    }
+
+    .message-source {
+      margin-top: 4px;
+      color: var(--hush);
+      font-size: 9px;
+    }
+
+    .attention-dot {
+      width: 6px;
+      height: 6px;
+      flex: 0 0 6px;
+      margin-top: 6px;
+      border-radius: 50%;
+      background: #d96c73;
+    }
+
+    .privacy-strip {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 14px;
+      padding: 10px 11px;
+      border: 1px solid rgba(40, 120, 100, 0.15);
+      border-radius: 8px;
+      color: var(--muted);
+      background: var(--hush-soft);
+      font-size: 9px;
+      line-height: 1.45;
+    }
+
+    .privacy-strip i {
+      flex: 0 0 auto;
+      color: var(--hush);
+      font-size: 18px;
+    }
+
+    .hexa-focus {
+      border: 1px solid rgba(255, 201, 40, 0.72);
+      background: #181a1f;
+    }
+
+    .agent-line {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+    }
+
+    .agent-icon {
+      display: grid;
+      width: 34px;
+      height: 34px;
+      flex: 0 0 34px;
+      place-items: center;
+      border-radius: 7px;
+      color: var(--hexa-signal);
+      background: var(--focus-raised);
+      font-size: 18px;
+    }
+
+    .agent-name {
+      min-width: 0;
+      flex: 1;
+    }
+
+    .agent-name strong {
+      display: block;
+      color: var(--on-focus);
+      font-size: 12px;
+    }
+
+    .agent-name span {
+      display: block;
+      margin-top: 2px;
+      color: #aeb2b9;
+      font-family: var(--mono);
+      font-size: 9px;
+    }
+
+    .agent-state {
+      color: var(--hexa-signal);
+      font-size: 9px;
+      font-weight: 700;
+    }
+
+    .progress {
+      height: 3px;
+      margin-top: 13px;
+      overflow: hidden;
+      background: var(--focus-raised);
+    }
+
+    .progress span {
+      display: block;
+      width: 72%;
+      height: 100%;
+      background: var(--hexa-signal);
+    }
+
+    .composer {
+      display: flex;
+      min-height: 46px;
+      align-items: center;
+      gap: 7px;
+      margin-top: 13px;
+      padding: 4px 4px 4px 11px;
+      border: 1px solid #686d75;
+      border-radius: 8px;
+      background: var(--focus-raised);
+    }
+
+    .composer span {
+      min-width: 0;
+      flex: 1;
+      color: #b9bdc4;
+      font-size: 10px;
+    }
+
+    .composer button {
+      display: grid;
+      width: 38px;
+      height: 38px;
+      place-items: center;
+      border: 0;
+      border-radius: 7px;
+      color: #181a1f;
+      background: var(--hexa-signal);
+      font-size: 18px;
+    }
+
+    .secondary-session .row-mark {
+      color: #896100;
+      background: var(--hexa-soft);
+    }
+
+    .source-note {
+      margin: 36px 0 0;
+      padding-top: 16px;
+      border-top: 1px solid rgba(25, 27, 30, 0.14);
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.6;
+    }
+
+    .humi-phone {
+      background: #faf9f7;
+    }
+
+    .humi-hero {
+      position: relative;
+      min-height: 100px;
+      padding-right: 72px;
+    }
+
+    .humi-issue {
+      position: absolute;
+      top: 15px;
+      right: 0;
+      color: #dcd5ff;
+      font-family: var(--serif);
+      font-size: 52px;
+      font-weight: 600;
+      line-height: 0.82;
+    }
+
+    .humi-issue span {
+      display: block;
+      margin-top: 9px;
+      color: var(--humi);
+      font-family: var(--mono);
+      font-size: 8px;
+      font-weight: 700;
+      text-align: right;
+    }
+
+    .humi-focus {
+      position: relative;
+      padding-left: 20px;
+    }
+
+    .humi-focus::before {
+      position: absolute;
+      top: 15px;
+      bottom: 15px;
+      left: 0;
+      width: 3px;
+      background: var(--humi);
+      content: "";
+    }
+
+    .hype-phone {
+      background: #fbf7f3;
+    }
+
+    .hype-phone .app-bar {
+      border-bottom-color: #eaded7;
+    }
+
+    .hype-hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 72px;
+      gap: 12px;
+      align-items: end;
+    }
+
+    .hype-count {
+      padding-bottom: 2px;
+      border-bottom: 2px solid var(--hype);
+      color: var(--hype);
+      text-align: right;
+    }
+
+    .hype-count strong {
+      display: block;
+      font-family: var(--serif);
+      font-size: 48px;
+      font-weight: 600;
+      line-height: 0.9;
+    }
+
+    .hype-count span {
+      display: block;
+      margin-top: 8px;
+      font-family: var(--mono);
+      font-size: 8px;
+      font-weight: 700;
+    }
+
+    .hush-phone {
+      background: #fff9f4;
+    }
+
+    .hush-phone .app-bar,
+    .hush-phone .bottom-nav {
+      background: #fffdf9;
+    }
+
+    .hush-intro {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 64px;
+      gap: 18px;
+      align-items: end;
+    }
+
+    .hush-count {
+      color: #c57970;
+      text-align: right;
+    }
+
+    .hush-count strong {
+      display: block;
+      font-family: var(--serif);
+      font-size: 46px;
+      font-weight: 600;
+      line-height: 0.9;
+    }
+
+    .hush-count span {
+      display: block;
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 8px;
+      font-weight: 600;
+    }
+
+    .hush-phone .section-head {
+      border-bottom: 1px solid #eadfd9;
+    }
+
+    .hush-phone .message-row:first-child {
+      margin: 0 -8px;
+      padding-right: 8px;
+      padding-left: 8px;
+      background: #fff0ec;
+    }
+
+    .hexa-phone {
+      border-color: #34383e;
+      color: #f6f3e8;
+      background: var(--hexa-night);
+      box-shadow: 0 22px 52px rgba(15, 17, 20, 0.25);
+    }
+
+    .hexa-phone .status-bar,
+    .hexa-phone .app-bar,
+    .hexa-phone .bottom-nav {
+      background: var(--hexa-night);
+    }
+
+    .hexa-phone .app-bar {
+      border-bottom-color: var(--hexa-rule);
+    }
+
+    .hexa-phone .app-name span,
+    .hexa-phone .editorial-copy,
+    .hexa-phone .row-main span,
+    .hexa-phone .row-meta,
+    .hexa-phone .section-head span {
+      color: #959ba4;
+    }
+
+    .hexa-phone .role-mark.hexa {
+      color: var(--hexa-night);
+      background: var(--hexa-signal);
+    }
+
+    .hexa-phone .context-label,
+    .hexa-phone .section-head strong {
+      color: var(--hexa-signal);
+    }
+
+    .hexa-phone .context-label {
+      font-family: var(--mono);
+      font-size: 9px;
+    }
+
+    .hexa-phone .content {
+      padding-top: 15px;
+      background: var(--hexa-night);
+    }
+
+    .hexa-phone .editorial-title {
+      color: #fffaf0;
+      font-size: 27px;
+    }
+
+    .hexa-phone .editorial-row:not(:last-child)::after {
+      background: var(--hexa-rule);
+    }
+
+    .hexa-phone .secondary-session .row-main strong {
+      color: #f6f3e8;
+    }
+
+    .hexa-phone .secondary-session .row-mark {
+      color: var(--hexa-signal);
+      background: var(--hexa-night-raised);
+    }
+
+    .hexa-phone .bottom-nav {
+      border-top-color: var(--hexa-rule);
+    }
+
+    .hexa-phone .nav-item {
+      color: #747a83;
+    }
+
+    .hexa-phone .nav-item.hexa.active {
+      color: var(--hexa-signal);
+    }
+
+    .mission-strip {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin: 14px 0 0;
+      padding: 8px 0;
+      border-top: 1px solid var(--hexa-rule);
+      border-bottom: 1px solid var(--hexa-rule);
+      color: #a3a8b0;
+      font-family: var(--mono);
+      font-size: 8px;
+    }
+
+    .mission-strip span:first-child {
+      color: var(--hexa-signal);
+    }
+
+    .hexa-phone .hexa-focus {
+      margin-top: 13px;
+      border-color: rgba(255, 201, 40, 0.78);
+      border-radius: 2px;
+      background: #1a1c20;
+    }
+
+    .hexa-phone .composer {
+      border-radius: 2px;
+    }
+
+    .hexa-phone .composer button {
+      border-radius: 2px;
+    }
+  </style>
+</head>
+<body>
+  <main class="stage">
+    <header class="stage-header">
+      <div>
+        <p class="stage-kicker">HUMHUM Android · Editorial preview</p>
+        <h1 class="stage-title">让内容像一本正在生长的个人杂志</h1>
+      </div>
+      <p class="stage-note">
+        只迁移字体、排版、色彩和交互气质。Humi、Hype、Hush、Hexa
+        的功能与数据边界保持不变。
+      </p>
+    </header>
+
+    <div class="preview-switcher" aria-label="预览筛选">
+      <button class="preview-filter active" data-role="all">全部</button>
+      <button class="preview-filter" data-role="humi">Humi</button>
+      <button class="preview-filter" data-role="hype">Hype</button>
+      <button class="preview-filter" data-role="hush">Hush</button>
+      <button class="preview-filter" data-role="hexa">Hexa</button>
+    </div>
+
+    <section class="screen-grid">
+      <article class="screen-block" data-screen="humi">
+        <div class="screen-label"><strong>Humi</strong><span>Personal morning page</span></div>
+        <div class="phone humi-phone" data-phone-screen data-testid="humi-phone">
+          <div class="status-bar">
+            <span>09:41</span>
+            <div class="status-icons"><i class="ph ph-cell-signal-full"></i><i class="ph ph-wifi-high"></i><i class="ph ph-battery-high"></i></div>
+          </div>
+          <header class="app-bar">
+            <div class="role-mark humi"><i class="ph ph-sparkle"></i></div>
+            <div class="app-name"><strong>Humi</strong><span>已连接 · 刚刚同步</span></div>
+            <button class="icon-button" aria-label="设置"><i class="ph ph-sliders-horizontal"></i></button>
+          </header>
+          <div class="content">
+            <div class="humi-hero">
+              <p class="context-label">7 月 31 日 · 星期五</p>
+              <h2 class="editorial-title">早上好，<br>敏敏</h2>
+              <p class="editorial-copy">今天先把最重要的事推进，其他信息我替你安静地整理。</p>
+              <div class="humi-issue" aria-hidden="true">07<span>DAILY / 2026</span></div>
+            </div>
+
+            <section class="focus-surface humi-focus">
+              <div class="focus-top"><span>Humi 注意到</span><i class="ph ph-quotes"></i></div>
+              <h3>移动端的体验，正在真正成形</h3>
+              <p>四个角色已经各自清晰，下一步只需要让字体和节奏更像你。</p>
+              <span class="focus-action">继续今天的重点 <i class="ph ph-arrow-right"></i></span>
+            </section>
+
+            <div class="section-head"><strong>今天</strong><span>2 件值得注意</span></div>
+            <div>
+              <div class="editorial-row">
+                <div class="row-mark" style="color:var(--humi);background:var(--humi-soft)"><i class="ph ph-check-circle"></i></div>
+                <div class="row-main"><strong>验证 Android 新版设计</strong><span>来自 Hexa 目标 · 今天</span></div>
+                <span class="row-meta">进行中</span>
+              </div>
+              <div class="editorial-row">
+                <div class="row-mark" style="color:var(--hush);background:var(--hush-soft)"><i class="ph ph-chat-circle-dots"></i></div>
+                <div class="row-main"><strong>有 2 条消息需要回复</strong><span>Hush 已整理出联系人与摘要</span></div>
+                <span class="row-meta">查看</span>
+              </div>
+            </div>
+
+            <div class="section-head"><strong>身体信号</strong><span>日汇总</span></div>
+            <div class="metric-line">
+              <div class="metric"><strong>6,342</strong><span>步数</span></div>
+              <div class="metric"><strong>58</strong><span>静息心率</span></div>
+              <div class="metric"><strong>7h12</strong><span>睡眠</span></div>
+            </div>
+          </div>
+          <nav class="bottom-nav">
+            <button class="nav-item humi active"><i class="ph ph-sparkle"></i><span>Humi</span></button>
+            <button class="nav-item"><i class="ph ph-books"></i><span>Hype</span></button>
+            <button class="nav-item"><i class="ph ph-envelope-simple"></i><span>Hush</span></button>
+            <button class="nav-item"><i class="ph ph-circuitry"></i><span>Hexa</span></button>
+          </nav>
+        </div>
+      </article>
+
+      <article class="screen-block" data-screen="hype">
+        <div class="screen-label"><strong>Hype</strong><span>Personal index</span></div>
+        <div class="phone hype-phone" data-phone-screen data-testid="hype-phone">
+          <div class="status-bar">
+            <span>09:41</span>
+            <div class="status-icons"><i class="ph ph-cell-signal-full"></i><i class="ph ph-wifi-high"></i><i class="ph ph-battery-high"></i></div>
+          </div>
+          <header class="app-bar">
+            <div class="role-mark hype"><i class="ph ph-books"></i></div>
+            <div class="app-name"><strong>Hype</strong><span>42 项可复用知识</span></div>
+            <button class="icon-button" aria-label="搜索"><i class="ph ph-magnifying-glass"></i></button>
+            <button class="icon-button" aria-label="设置"><i class="ph ph-sliders-horizontal"></i></button>
+          </header>
+          <div class="content">
+            <div class="hype-hero">
+              <div>
+                <p class="context-label">最近最常用</p>
+                <h2 class="editorial-title">让下一次，<br>直接更懂你</h2>
+              </div>
+              <div class="hype-count"><strong>42</strong><span>INDEXED</span></div>
+            </div>
+            <p class="editorial-copy">这里留下已经验证的能力、偏好与记忆，不把文件数量当成价值。</p>
+
+            <div class="index-tabs">
+              <button class="index-tab active">最近使用</button>
+              <button class="index-tab">Skills</button>
+              <button class="index-tab">偏好</button>
+              <button class="index-tab">长期记忆</button>
+            </div>
+
+            <section class="focus-surface hype-focus">
+              <div class="focus-top"><span>明确偏好</span><i class="ph ph-bookmark-simple"></i></div>
+              <h3>移动端不要使用大幅角色贴图</h3>
+              <p>用字体、任务结构和角色签名表达个性，让信息本身成为视觉主角。</p>
+            </section>
+
+            <div class="section-head"><strong>可复用能力</strong><span>本周 8 次</span></div>
+            <div>
+              <div class="editorial-row">
+                <div class="row-mark" style="color:var(--hype);background:var(--hype-soft)"><i class="ph ph-selection-background"></i></div>
+                <div class="row-main"><strong>product-design</strong><span>产品流程、移动端信息架构与视觉检查</span></div>
+                <span class="row-meta">今天</span>
+              </div>
+              <div class="editorial-row">
+                <div class="row-mark" style="color:var(--hype);background:var(--hype-soft)"><i class="ph ph-circuitry"></i></div>
+                <div class="row-main"><strong>humhum-hexa</strong><span>让 Agent 会话持续同步进度与确认点</span></div>
+                <span class="row-meta">昨天</span>
+              </div>
+              <div class="editorial-row">
+                <div class="row-mark" style="color:var(--hype);background:var(--hype-soft)"><i class="ph ph-database"></i></div>
+                <div class="row-main"><strong>本机消息结构化</strong><span>仅保留用户批准的数据来源与范围</span></div>
+                <span class="row-meta">常用</span>
+              </div>
+            </div>
+          </div>
+          <nav class="bottom-nav">
+            <button class="nav-item"><i class="ph ph-sparkle"></i><span>Humi</span></button>
+            <button class="nav-item hype active"><i class="ph ph-books"></i><span>Hype</span></button>
+            <button class="nav-item"><i class="ph ph-envelope-simple"></i><span>Hush</span></button>
+            <button class="nav-item"><i class="ph ph-circuitry"></i><span>Hexa</span></button>
+          </nav>
+        </div>
+      </article>
+
+      <article class="screen-block" data-screen="hush">
+        <div class="screen-label"><strong>Hush</strong><span>Private correspondence</span></div>
+        <div class="phone hush-phone" data-phone-screen data-testid="hush-phone">
+          <div class="status-bar">
+            <span>09:41</span>
+            <div class="status-icons"><i class="ph ph-cell-signal-full"></i><i class="ph ph-wifi-high"></i><i class="ph ph-battery-high"></i></div>
+          </div>
+          <header class="app-bar">
+            <div class="role-mark hush"><i class="ph ph-envelope-simple"></i></div>
+            <div class="app-name"><strong>Hush</strong><span>本机消息 · 9:39 更新</span></div>
+            <button class="icon-button" aria-label="刷新"><i class="ph ph-arrows-clockwise"></i></button>
+            <button class="icon-button" aria-label="设置"><i class="ph ph-sliders-horizontal"></i></button>
+          </header>
+          <div class="content">
+            <div class="inbox-filter">
+              <button class="active">全部</button>
+              <button>需要回复</button>
+              <button>特别关注</button>
+            </div>
+
+            <div class="hush-intro">
+              <div>
+                <p class="context-label">私人通信</p>
+                <h2 class="editorial-title">最近消息</h2>
+              </div>
+              <div class="hush-count"><strong>04</strong><span>待你留意</span></div>
+            </div>
+            <p class="editorial-copy">只展示来自已授权来源的联系人、时间与可用摘要。</p>
+
+            <div class="section-head"><strong>今天</strong><span>4 条脱敏摘要</span></div>
+            <div>
+              <div class="editorial-row message-row">
+                <div class="message-avatar rose">P</div>
+                <div class="row-main"><strong>Peidong</strong><p class="message-copy">UI 已经重新推送，今晚可以再帮你测试一次。</p><div class="message-source">DingTalk</div></div>
+                <span class="row-meta">08:00</span><span class="attention-dot"></span>
+              </div>
+              <div class="editorial-row message-row">
+                <div class="message-avatar rose">妈</div>
+                <div class="row-main"><strong>妈妈</strong><p class="message-copy">晚上回来吃饭吗？我准备早点做饭。</p><div class="message-source">WeChat</div></div>
+                <span class="row-meta">07:37</span><span class="attention-dot"></span>
+              </div>
+              <div class="editorial-row message-row">
+                <div class="message-avatar peach">群</div>
+                <div class="row-main"><strong>悦湖府吃货团购群</strong><p class="message-copy">下午的水果团购截止到三点，需要的接龙。</p><div class="message-source">WeChat</div></div>
+                <span class="row-meta">07:22</span>
+              </div>
+              <div class="editorial-row message-row">
+                <div class="message-avatar">H</div>
+                <div class="row-main"><strong>HUMHUM 项目群</strong><p class="message-copy">Release 里的 Mac 和 Android 资产已经并列显示。</p><div class="message-source">WeChat</div></div>
+                <span class="row-meta">昨天</span>
+              </div>
+            </div>
+
+            <div class="privacy-strip"><i class="ph ph-shield-check"></i><span>消息正文仅在你的设备与已授权电脑之间加密传输</span></div>
+          </div>
+          <nav class="bottom-nav">
+            <button class="nav-item"><i class="ph ph-sparkle"></i><span>Humi</span></button>
+            <button class="nav-item"><i class="ph ph-books"></i><span>Hype</span></button>
+            <button class="nav-item hush active"><i class="ph ph-envelope-simple"></i><span>Hush</span></button>
+            <button class="nav-item"><i class="ph ph-circuitry"></i><span>Hexa</span></button>
+          </nav>
+        </div>
+      </article>
+
+      <article class="screen-block" data-screen="hexa">
+        <div class="screen-label"><strong>Hexa</strong><span>Editorial control room</span></div>
+        <div class="phone hexa-phone" data-phone-screen data-testid="hexa-phone">
+          <div class="status-bar">
+            <span>09:41</span>
+            <div class="status-icons"><i class="ph ph-cell-signal-full"></i><i class="ph ph-wifi-high"></i><i class="ph ph-battery-high"></i></div>
+          </div>
+          <header class="app-bar">
+            <div class="role-mark hexa"><i class="ph ph-circuitry"></i></div>
+            <div class="app-name"><strong>Hexa</strong><span>3 个 Agent 正在运行</span></div>
+            <button class="icon-button" aria-label="刷新"><i class="ph ph-arrows-clockwise"></i></button>
+            <button class="icon-button" aria-label="设置"><i class="ph ph-sliders-horizontal"></i></button>
+          </header>
+          <div class="content">
+            <p class="context-label">MISSION / 01 · NOW RUNNING</p>
+            <h2 class="editorial-title">HUMHUM Android UI</h2>
+            <p class="editorial-copy">Codex 正在重建移动端的字体与节奏，目前没有等待确认的权限。</p>
+            <div class="mission-strip"><span>LOCAL RELAY</span><span>ENCRYPTED</span><span>3 AGENTS</span></div>
+
+            <section class="focus-surface hexa-focus">
+              <div class="agent-line">
+                <div class="agent-icon"><i class="ph ph-terminal-window"></i></div>
+                <div class="agent-name"><strong>Codex · humhum</strong><span>working · 刚刚</span></div>
+                <span class="agent-state">工作中</span>
+              </div>
+              <h3 style="margin-top:14px">生成编辑感移动端页面</h3>
+              <p>设计规则已经确认，正在把字体、信息层级和四角色节奏同步到前端。</p>
+              <div class="progress"><span></span></div>
+              <div class="composer"><span>继续告诉 Codex 要做什么…</span><button aria-label="发送"><i class="ph ph-paper-plane-tilt"></i></button></div>
+            </section>
+
+            <div class="section-head"><strong>其他最近会话</strong><span>2 条</span></div>
+            <div>
+              <div class="editorial-row secondary-session">
+                <div class="row-mark"><i class="ph ph-robot"></i></div>
+                <div class="row-main"><strong>Qoder · 微信读取</strong><span>18 分钟前 · 等待下一步</span></div>
+                <span class="row-meta">等待</span>
+              </div>
+              <div class="editorial-row secondary-session">
+                <div class="row-mark"><i class="ph ph-terminal"></i></div>
+                <div class="row-main"><strong>Claude · 竞品研究</strong><span>2 小时前 · 已完成</span></div>
+                <span class="row-meta">完成</span>
+              </div>
+            </div>
+          </div>
+          <nav class="bottom-nav">
+            <button class="nav-item"><i class="ph ph-sparkle"></i><span>Humi</span></button>
+            <button class="nav-item"><i class="ph ph-books"></i><span>Hype</span></button>
+            <button class="nav-item"><i class="ph ph-envelope-simple"></i><span>Hush</span></button>
+            <button class="nav-item hexa active"><i class="ph ph-circuitry"></i><span>Hexa</span></button>
+          </nav>
+        </div>
+      </article>
+    </section>
+
+    <p class="source-note">
+      这是生产实现前的 HTML 视觉预估。页面内容沿用 HUMHUM 现有结构；
+      字体、纸张底、深色焦点、短分隔线与导航状态来自新 DESIGN.md。
+    </p>
+  </main>
+
+  <script>
+    const filters = document.querySelectorAll(".preview-filter");
+    const screens = document.querySelectorAll(".screen-block");
+
+    filters.forEach((filter) => {
+      filter.addEventListener("click", () => {
+        const role = filter.dataset.role;
+        filters.forEach((item) => item.classList.toggle("active", item === filter));
+        screens.forEach((screen) => {
+          screen.hidden = role !== "all" && screen.dataset.screen !== role;
+        });
+        document.querySelector(".screen-grid").style.gridTemplateColumns =
+          role === "all" ? "repeat(2, 390px)" : "390px";
+      });
+    });
+  </script>
+</body>
+</html>

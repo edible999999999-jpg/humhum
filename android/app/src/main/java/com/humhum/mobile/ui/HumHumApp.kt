@@ -1,6 +1,7 @@
 package com.humhum.mobile.ui
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -37,9 +38,12 @@ import com.humhum.mobile.app.HumHumUiState
 import com.humhum.mobile.ui.components.RoleNavigation
 import com.humhum.mobile.ui.components.roleIconFor
 import com.humhum.mobile.ui.theme.Canvas
+import com.humhum.mobile.ui.theme.HexaPanelMuted
+import com.humhum.mobile.ui.theme.HexaPanelText
 import com.humhum.mobile.ui.theme.HumHumTheme
 import com.humhum.mobile.ui.theme.Ink
 import com.humhum.mobile.ui.theme.Muted
+import com.humhum.mobile.ui.theme.editorialSpecFor
 import com.humhum.mobile.ui.theme.paletteFor
 
 data class HumHumCallbacks(
@@ -93,9 +97,10 @@ private fun CompanionScaffold(
     callbacks: HumHumCallbacks,
     modifier: Modifier,
 ) {
+    val spec = editorialSpecFor(state.selectedRole)
     Scaffold(
         modifier = modifier.fillMaxSize(),
-        containerColor = Canvas,
+        containerColor = spec.canvas,
         topBar = { CompanionHeader(state, callbacks) },
         bottomBar = {
             RoleNavigation(
@@ -120,12 +125,16 @@ private fun CompanionScaffold(
 private fun CompanionHeader(state: HumHumUiState, callbacks: HumHumCallbacks) {
     val role = state.selectedRole
     val palette = paletteFor(role)
+    val spec = editorialSpecFor(role)
+    val titleColor = if (spec.dark) HexaPanelText else Ink
+    val metadataColor = if (spec.dark) HexaPanelMuted else Muted
     val canRefresh = role == MobileRoleDashboard.Role.HUSH ||
         role == MobileRoleDashboard.Role.HEXA
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .height(72.dp)
+            .background(spec.canvas)
             .padding(start = 16.dp, end = 8.dp)
             .testTag("companion-header"),
         verticalAlignment = Alignment.CenterVertically,
@@ -149,7 +158,7 @@ private fun CompanionHeader(state: HumHumUiState, callbacks: HumHumCallbacks) {
             Text(
                 role.displayName(),
                 style = MaterialTheme.typography.titleLarge,
-                color = Ink,
+                color = titleColor,
             )
             Text(
                 state.statusMessage,
@@ -157,7 +166,7 @@ private fun CompanionHeader(state: HumHumUiState, callbacks: HumHumCallbacks) {
                 color = if (state.connection == ConnectionStatus.OFFLINE) {
                     MaterialTheme.colorScheme.error
                 } else {
-                    Muted
+                    metadataColor
                 },
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -175,12 +184,16 @@ private fun CompanionHeader(state: HumHumUiState, callbacks: HumHumCallbacks) {
                 Icon(
                     Icons.Outlined.Refresh,
                     contentDescription = if (role == MobileRoleDashboard.Role.HUSH) "同步消息" else "刷新",
-                    tint = if (state.refreshInFlight) palette.accent.copy(alpha = 0.45f) else Ink,
+                    tint = if (state.refreshInFlight) {
+                        palette.accent.copy(alpha = 0.45f)
+                    } else {
+                        titleColor
+                    },
                 )
             }
         }
         IconButton(onClick = callbacks.onOpenSettings, modifier = Modifier.size(48.dp)) {
-            Icon(Icons.Outlined.Tune, contentDescription = "设置", tint = Color(0xFF222936))
+            Icon(Icons.Outlined.Tune, contentDescription = "设置", tint = titleColor)
         }
     }
 }

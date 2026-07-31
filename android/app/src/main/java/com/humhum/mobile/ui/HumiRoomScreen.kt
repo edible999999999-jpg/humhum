@@ -1,14 +1,19 @@
 package com.humhum.mobile.ui
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -18,6 +23,7 @@ import androidx.compose.material.icons.outlined.CheckCircleOutline
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material3.Icon
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -28,6 +34,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.dp
 import com.humhum.mobile.MobileRoleDashboard
 import com.humhum.mobile.app.HealthPermission
@@ -42,6 +51,10 @@ import com.humhum.mobile.ui.theme.HushSoft
 import com.humhum.mobile.ui.theme.Ink
 import com.humhum.mobile.ui.theme.Line
 import com.humhum.mobile.ui.theme.Muted
+import com.humhum.mobile.ui.theme.EditorialFocus
+import com.humhum.mobile.ui.theme.EditorialHero
+import com.humhum.mobile.ui.theme.EditorialOnFocus
+import com.humhum.mobile.ui.theme.editorialSpecFor
 import kotlin.math.roundToInt
 import java.time.ZoneId
 import java.time.LocalDate
@@ -67,14 +80,43 @@ fun HumiRoomScreen(
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         item {
-            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                Text(todayLabel(), style = MaterialTheme.typography.labelLarge, color = Muted)
-                Text("先把最重要的事推进", style = MaterialTheme.typography.headlineMedium, color = Ink)
-                Text(
-                    "我把 Agent 进展和身体信号放在一起，只提醒真正值得你注意的部分。",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Muted,
-                )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.Top,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(5.dp),
+                ) {
+                    Text(todayLabel(), style = MaterialTheme.typography.labelLarge, color = Muted)
+                    Text("先把最重要的事推进", style = EditorialHero, color = Ink)
+                    Text(
+                        "我把 Agent 进展和身体信号放在一起，只提醒真正值得你注意的部分。",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Muted,
+                    )
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(
+                        issueNumber(),
+                        style = MaterialTheme.typography.displaySmall.copy(
+                            fontFamily = FontFamily.Serif,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 46.sp,
+                            lineHeight = 46.sp,
+                        ),
+                        color = Humi.copy(alpha = 0.24f),
+                    )
+                    Text(
+                        editorialSpecFor(MobileRoleDashboard.Role.HUMI).indexLabel,
+                        style = MaterialTheme.typography.labelMedium.copy(
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 8.sp,
+                        ),
+                        color = Humi,
+                    )
+                }
             }
         }
         item {
@@ -93,7 +135,10 @@ fun HumiRoomScreen(
         }
         item {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                RoomSectionHeader("今天", context?.today()?.size?.let { "$it 件值得注意" })
+                RoomSectionHeader(
+                    "今天",
+                    trailing = context?.today()?.size?.let { "$it 件值得注意" },
+                )
                 context?.today().orEmpty().drop(1).take(1).forEach { item ->
                     HumiSignalRow(
                         icon = Icons.Outlined.CheckCircleOutline,
@@ -122,7 +167,7 @@ fun HumiRoomScreen(
         }
         item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                RoomSectionHeader("身体信号", healthSectionTrailing(state))
+                RoomSectionHeader("身体信号", trailing = healthSectionTrailing(state))
                 HealthSummaryStrip(state)
             }
         }
@@ -130,7 +175,7 @@ fun HumiRoomScreen(
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 RoomSectionHeader(
                     "我记得的你",
-                    if (state.personalContextFromCache) "加密缓存" else null,
+                    trailing = if (state.personalContextFromCache) "加密缓存" else null,
                 )
                 val memory = context?.memories()?.firstOrNull()
                 val habit = context?.habits()?.firstOrNull()
@@ -154,7 +199,7 @@ fun HumiRoomScreen(
         }
         item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                RoomSectionHeader("健康数据来源", "按需授权")
+                RoomSectionHeader("健康数据来源", trailing = "按需授权")
                 Text("数据来源", style = MaterialTheme.typography.labelLarge, color = Muted)
                 HealthSourceRow(
                     icon = Icons.AutoMirrored.Outlined.DirectionsWalk,
@@ -216,22 +261,31 @@ private fun FocusCard(
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(8.dp),
-        color = HumiSoft.copy(alpha = 0.72f),
-        border = BorderStroke(1.dp, Humi.copy(alpha = 0.22f)),
+        color = EditorialFocus,
+        border = BorderStroke(1.dp, Humi.copy(alpha = 0.45f)),
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text("正在进行 · $status", style = MaterialTheme.typography.labelMedium, color = Humi)
-            Text(title, style = MaterialTheme.typography.titleLarge, color = Ink)
-            Text(detail, style = MaterialTheme.typography.bodyMedium, color = Muted)
-            LinearProgressIndicator(
-                progress = { 0.68f },
-                modifier = Modifier.fillMaxWidth(),
-                color = Humi,
-                trackColor = Humi.copy(alpha = 0.12f),
+        Row(modifier = Modifier.height(IntrinsicSize.Min)) {
+            Spacer(
+                Modifier
+                    .width(3.dp)
+                    .fillMaxHeight()
+                    .background(Humi),
             )
+            Column(
+                modifier = Modifier.weight(1f)
+                    .padding(start = 17.dp, top = 16.dp, end = 16.dp, bottom = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text("Humi 注意到 · $status", style = MaterialTheme.typography.labelMedium, color = HumiSoft)
+                Text(title, style = MaterialTheme.typography.titleLarge, color = EditorialOnFocus)
+                Text(detail, style = MaterialTheme.typography.bodyMedium, color = Color(0xFFC8CBC7))
+                LinearProgressIndicator(
+                    progress = { 0.68f },
+                    modifier = Modifier.fillMaxWidth(),
+                    color = Humi,
+                    trackColor = Color(0xFF343735),
+                )
+            }
         }
     }
 }
@@ -267,12 +321,8 @@ private fun HumiSignalRow(
 @Composable
 private fun HealthSummaryStrip(state: HumHumUiState) {
     val summary = state.health?.summary
-    Surface(
-        modifier = Modifier.fillMaxWidth().testTag("personal-signals-card"),
-        shape = RoundedCornerShape(8.dp),
-        color = Color.White,
-        border = BorderStroke(1.dp, Line),
-    ) {
+    Column(modifier = Modifier.fillMaxWidth().testTag("personal-signals-card")) {
+        HorizontalDivider(color = Line)
         Row(modifier = Modifier.padding(vertical = 11.dp)) {
             HealthMetricValue(
                 "步数",
@@ -295,6 +345,7 @@ private fun HealthSummaryStrip(state: HumHumUiState) {
                 Modifier.weight(1f),
             )
         }
+        HorizontalDivider(color = Line)
     }
 }
 
@@ -351,6 +402,8 @@ private fun healthSummary(state: HumHumUiState): String {
     ).count { it != null }
     return if (count == 0) "等待数据" else "$count 项日汇总"
 }
+
+private fun issueNumber(): String = LocalDate.now().format(DateTimeFormatter.ofPattern("MM"))
 
 private fun healthSectionTrailing(state: HumHumUiState): String {
     val captured = state.health?.summary?.capturedAt

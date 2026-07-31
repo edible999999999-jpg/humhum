@@ -64,6 +64,7 @@ class HumHumAppTest {
         compose.onNodeWithText("今天").assertIsDisplayed()
         compose.onNodeWithText("完成 Android 房间").assertIsDisplayed()
         compose.onNodeWithText("身体信号").assertIsDisplayed()
+        compose.onNodeWithText("DAILY / 2026").assertIsDisplayed()
         compose.onAllNodesWithTag("role-destination", useUnmergedTree = true).assertCountEquals(4)
         compose.onNodeWithTag("settings-screen").assertDoesNotExist()
 
@@ -192,6 +193,8 @@ class HumHumAppTest {
         )
 
         compose.onNodeWithText("最近消息").assertIsDisplayed()
+        compose.onNodeWithText("私人通信").assertIsDisplayed()
+        compose.onNodeWithText("待你留意").assertIsDisplayed()
         compose.onNodeWithText("需要回复").assertIsDisplayed()
         compose.onNodeWithText("Peidong").assertIsDisplayed()
         compose.onNodeWithText("UI 已经重新推送").assertIsDisplayed()
@@ -210,6 +213,7 @@ class HumHumAppTest {
             state = connectedState().copy(selectedRole = MobileRoleDashboard.Role.HYPE),
         )
 
+        compose.onNodeWithText("INDEXED").assertIsDisplayed()
         compose.onNodeWithText("偏好").performClick()
         compose.onNodeWithText("先想清楚数据从哪里来").assertIsDisplayed()
         compose.onNodeWithText("数据整理").assertDoesNotExist()
@@ -228,7 +232,9 @@ class HumHumAppTest {
             ),
         )
 
-        compose.onNodeWithText("现在最重要").assertIsDisplayed()
+        compose.onNodeWithText("MISSION / 01", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("LOCAL RELAY").assertIsDisplayed()
+        compose.onNodeWithText("ENCRYPTED").assertIsDisplayed()
         compose.onNodeWithTag("hexa-primary-session").assertIsDisplayed()
         compose.onNodeWithTag("follow-up-draft").assertIsDisplayed()
         compose.onNodeWithContentDescription("发送").assertIsDisplayed()

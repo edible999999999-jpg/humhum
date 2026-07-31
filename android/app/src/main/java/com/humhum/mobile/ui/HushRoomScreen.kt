@@ -13,7 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Shield
@@ -31,7 +31,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.humhum.mobile.MobileRoleDashboard
 import com.humhum.mobile.Models
 import com.humhum.mobile.app.HumHumUiState
 import com.humhum.mobile.ui.theme.Hush
@@ -41,6 +45,10 @@ import com.humhum.mobile.ui.theme.HushPeach
 import com.humhum.mobile.ui.theme.HushRose
 import com.humhum.mobile.ui.theme.Ink
 import com.humhum.mobile.ui.theme.Muted
+import com.humhum.mobile.ui.theme.EditorialFocus
+import com.humhum.mobile.ui.theme.EditorialHero
+import com.humhum.mobile.ui.theme.EditorialOnFocus
+import com.humhum.mobile.ui.theme.editorialSpecFor
 
 private enum class InboxFilter(val label: String) {
     ALL("全部"),
@@ -81,11 +89,17 @@ fun HushRoomScreen(
             Spacer(Modifier.size(20.dp))
         }
         item {
+            HushHero(visible.size)
+            Text(
+                "只展示来自已授权来源的联系人、时间与可用摘要。",
+                style = MaterialTheme.typography.bodyMedium,
+                color = Muted,
+                modifier = Modifier.padding(top = 7.dp, bottom = 12.dp),
+            )
             RoomSectionHeader(
-                title = "最近消息",
+                title = "今天",
                 trailing = if (inbox.isEmpty()) null else "${inbox.size} 条脱敏摘要",
             )
-            Spacer(Modifier.size(7.dp))
         }
         state.personalContextMessage?.let { message ->
             item {
@@ -105,8 +119,8 @@ fun HushRoomScreen(
                 )
             }
         } else {
-            items(visible, key = { it.id() }) { message ->
-                InboxMessageRow(message)
+            itemsIndexed(visible, key = { _, item -> item.id() }) { index, message ->
+                InboxMessageRow(message, highlighted = index == 0)
                 HorizontalDivider(
                     modifier = Modifier.padding(start = 51.dp),
                     color = Color(0xFFECE3DD),
@@ -129,7 +143,7 @@ private fun InboxFilterBar(
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        color = HushPeach,
+        color = Color(0xFFFFF1E8),
         shape = RoundedCornerShape(8.dp),
     ) {
         Row(modifier = Modifier.padding(3.dp)) {
@@ -139,7 +153,7 @@ private fun InboxFilterBar(
                         .weight(1f)
                         .testTag("hush-filter-${item.name.lowercase()}")
                         .clickable { onSelect(item) },
-                    color = if (item == selected) HushCanvas else Color.Transparent,
+                    color = if (item == selected) EditorialFocus else Color.Transparent,
                     shape = RoundedCornerShape(6.dp),
                 ) {
                     Box(
@@ -149,7 +163,7 @@ private fun InboxFilterBar(
                         Text(
                             item.label,
                             style = MaterialTheme.typography.labelMedium,
-                            color = if (item == selected) Hush else Muted,
+                            color = if (item == selected) EditorialOnFocus else Muted,
                         )
                     }
                 }
@@ -159,9 +173,46 @@ private fun InboxFilterBar(
 }
 
 @Composable
-private fun InboxMessageRow(message: Models.InboxItem) {
+private fun HushHero(messageCount: Int) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 13.dp),
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.Bottom,
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(5.dp),
+        ) {
+            Text("私人通信", style = MaterialTheme.typography.labelLarge, color = Muted)
+            Text("最近消息", style = EditorialHero, color = Ink)
+        }
+        Column(horizontalAlignment = Alignment.End) {
+            Text(
+                messageCount.toString().padStart(2, '0'),
+                style = MaterialTheme.typography.displaySmall.copy(
+                    fontFamily = FontFamily.Serif,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 44.sp,
+                    lineHeight = 44.sp,
+                ),
+                color = Color(0xFFC57970),
+            )
+            Text(
+                editorialSpecFor(MobileRoleDashboard.Role.HUSH).indexLabel,
+                style = MaterialTheme.typography.labelMedium.copy(fontSize = 8.sp),
+                color = Muted,
+            )
+        }
+    }
+}
+
+@Composable
+private fun InboxMessageRow(message: Models.InboxItem, highlighted: Boolean) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(if (highlighted) HushRose.copy(alpha = 0.42f) else Color.Transparent)
+            .padding(horizontal = if (highlighted) 8.dp else 0.dp, vertical = 13.dp),
         verticalAlignment = Alignment.Top,
         horizontalArrangement = Arrangement.spacedBy(11.dp),
     ) {

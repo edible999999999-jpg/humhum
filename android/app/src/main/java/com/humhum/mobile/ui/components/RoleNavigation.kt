@@ -6,15 +6,15 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
@@ -33,7 +33,9 @@ import androidx.compose.material.icons.outlined.Inbox
 import androidx.compose.material.icons.outlined.PersonOutline
 import com.humhum.mobile.MobileRoleDashboard
 import com.humhum.mobile.ui.theme.Muted
+import com.humhum.mobile.ui.theme.HexaPanelMuted
 import com.humhum.mobile.ui.theme.paletteFor
+import com.humhum.mobile.ui.theme.editorialSpecFor
 
 @Composable
 fun RoleNavigation(
@@ -41,12 +43,14 @@ fun RoleNavigation(
     onSelect: (MobileRoleDashboard.Role) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val spec = editorialSpecFor(selected)
+    val divider = if (spec.dark) HexaPanelMuted.copy(alpha = 0.34f) else Color(0xFFE1E5EC)
     Row(
         modifier = modifier
             .fillMaxWidth()
             .height(72.dp)
-            .background(Color.White)
-            .border(width = 1.dp, color = Color(0xFFE1E5EC))
+            .background(spec.canvas)
+            .border(width = 1.dp, color = divider)
             .padding(horizontal = 8.dp, vertical = 6.dp)
             .testTag("role-navigation"),
         horizontalArrangement = Arrangement.SpaceEvenly,
@@ -56,6 +60,7 @@ fun RoleNavigation(
             RoleDestination(
                 role = role,
                 selected = role == selected,
+                dark = spec.dark,
                 onClick = { onSelect(role) },
                 modifier = Modifier.weight(1f),
             )
@@ -67,34 +72,40 @@ fun RoleNavigation(
 private fun RoleDestination(
     role: MobileRoleDashboard.Role,
     selected: Boolean,
+    dark: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val palette = paletteFor(role)
-    val shape = RoundedCornerShape(8.dp)
+    val idleColor = if (dark) HexaPanelMuted.copy(alpha = 0.62f) else Muted
     Column(
         modifier = modifier
             .padding(horizontal = 3.dp)
-            .clip(shape)
-            .then(if (selected) Modifier.background(palette.soft) else Modifier)
             .clickable(role = Role.Tab, onClick = onClick)
             .semantics { this.selected = selected }
             .testTag("role-destination")
-            .padding(vertical = 3.dp),
+            .padding(vertical = 2.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
+        Spacer(
+            Modifier
+                .width(24.dp)
+                .height(2.dp)
+                .background(if (selected) palette.accent else Color.Transparent),
+        )
+        Spacer(Modifier.height(3.dp))
         Icon(
             imageVector = roleIconFor(role),
             contentDescription = null,
             modifier = Modifier.size(24.dp),
-            tint = if (selected) palette.accent else Muted,
+            tint = if (selected) palette.accent else idleColor,
         )
         Text(
             text = role.displayName(),
             style = MaterialTheme.typography.labelMedium,
             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-            color = if (selected) palette.accent else Muted,
+            color = if (selected) palette.accent else idleColor,
             maxLines = 1,
         )
     }

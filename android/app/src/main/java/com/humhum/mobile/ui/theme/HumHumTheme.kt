@@ -35,6 +35,64 @@ val HexaPanelMuted = Color(0xFFADB2BC)
 val HexaSignal = Color(0xFFFFC928)
 val Sky = Color(0xFFEDF5FF)
 val Attention = Color(0xFFB65022)
+val EditorialFocus = Color(0xFF1C1E1D)
+val EditorialFocusRaised = Color(0xFF282B29)
+val EditorialOnFocus = Color(0xFFF8F6EF)
+
+enum class EditorialLayout {
+    MORNING_ISSUE,
+    KNOWLEDGE_INDEX,
+    CORRESPONDENCE,
+    CONTROL_ROOM,
+}
+
+data class EditorialRoleSpec(
+    val layout: EditorialLayout,
+    val canvas: Color,
+    val indexLabel: String,
+    val dark: Boolean,
+)
+
+fun editorialSpecFor(role: MobileRoleDashboard.Role): EditorialRoleSpec = when (role) {
+    MobileRoleDashboard.Role.HUMI -> EditorialRoleSpec(
+        EditorialLayout.MORNING_ISSUE,
+        Color(0xFFFAF9F7),
+        "DAILY / 2026",
+        false,
+    )
+    MobileRoleDashboard.Role.HYPE -> EditorialRoleSpec(
+        EditorialLayout.KNOWLEDGE_INDEX,
+        Color(0xFFFBF7F3),
+        "INDEXED",
+        false,
+    )
+    MobileRoleDashboard.Role.HUSH -> EditorialRoleSpec(
+        EditorialLayout.CORRESPONDENCE,
+        Color(0xFFFFF9F4),
+        "待你留意",
+        false,
+    )
+    MobileRoleDashboard.Role.HEXA -> EditorialRoleSpec(
+        EditorialLayout.CONTROL_ROOM,
+        HexaPanel,
+        "MISSION / 01",
+        true,
+    )
+}
+
+val EditorialHero = TextStyle(
+    fontFamily = FontFamily.Serif,
+    fontWeight = FontWeight.SemiBold,
+    fontSize = 29.sp,
+    lineHeight = 36.sp,
+)
+
+val EditorialSection = TextStyle(
+    fontFamily = FontFamily.Serif,
+    fontWeight = FontWeight.SemiBold,
+    fontSize = 20.sp,
+    lineHeight = 27.sp,
+)
 
 data class RolePalette(val accent: Color, val soft: Color, val companion: Color)
 

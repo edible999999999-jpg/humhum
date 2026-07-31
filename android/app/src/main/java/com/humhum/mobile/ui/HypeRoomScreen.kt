@@ -1,37 +1,55 @@
 package com.humhum.mobile.ui
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.humhum.mobile.MobileRoleDashboard
+import com.humhum.mobile.Models
 import com.humhum.mobile.app.HumHumUiState
+import com.humhum.mobile.ui.theme.EditorialFocus
+import com.humhum.mobile.ui.theme.EditorialHero
+import com.humhum.mobile.ui.theme.EditorialOnFocus
 import com.humhum.mobile.ui.theme.Hype
 import com.humhum.mobile.ui.theme.HypeSoft
 import com.humhum.mobile.ui.theme.Ink
+import com.humhum.mobile.ui.theme.Line
 import com.humhum.mobile.ui.theme.Muted
+import com.humhum.mobile.ui.theme.editorialSpecFor
+
+private val hypeCategories = listOf("最近使用", "Skills", "偏好", "长期记忆")
 
 @Composable
 fun HypeRoomScreen(
@@ -41,7 +59,8 @@ fun HypeRoomScreen(
     val context = state.personalContext
     var query by remember { mutableStateOf("") }
     var category by remember { mutableStateOf("最近使用") }
-    val knowledge = context?.knowledge().orEmpty()
+    val allKnowledge = context?.knowledge().orEmpty()
+    val knowledge = allKnowledge
         .filter {
             query.isBlank() ||
                 it.title().contains(query, ignoreCase = true) ||
@@ -51,6 +70,10 @@ fun HypeRoomScreen(
     val showKnowledge = category == "最近使用" || category == "Skills"
     val showPreferences = category == "最近使用" || category == "偏好"
     val showMemories = category == "最近使用" || category == "长期记忆"
+    val indexedCount = allKnowledge.size +
+        context?.preferences().orEmpty().size +
+        context?.memories().orEmpty().size
+
     LazyColumn(
         modifier = modifier.testTag("hype-room"),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(
@@ -62,6 +85,15 @@ fun HypeRoomScreen(
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         item {
+            HypeHero(indexedCount)
+        }
+        item {
+            EditorialCategoryTabs(
+                selected = category,
+                onSelect = { category = it },
+            )
+        }
+        item {
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it.take(80) },
@@ -72,36 +104,11 @@ fun HypeRoomScreen(
                 modifier = Modifier.fillMaxWidth(),
             )
         }
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                listOf("最近使用", "Skills", "偏好", "长期记忆").forEach { label ->
-                    FilterChip(
-                        selected = category == label,
-                        onClick = { category = label },
-                        label = { Text(label) },
-                        shape = RoundedCornerShape(8.dp),
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = HypeSoft,
-                            selectedLabelColor = Hype,
-                            containerColor = Color.White,
-                            labelColor = Muted,
-                        ),
-                    )
+        if (category == "最近使用") {
+            context?.preferences()?.firstOrNull()?.let { preference ->
+                item {
+                    HypeFocusPreference(preference)
                 }
-            }
-        }
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                Text("最近最常用", style = MaterialTheme.typography.labelLarge, color = Muted)
-                Text("让下一次直接更懂你", style = MaterialTheme.typography.headlineMedium, color = Ink)
-                Text(
-                    "这里展示整理和确认过的能力，不把文件数量当成价值。",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Muted,
-                )
             }
         }
         if (showKnowledge) {
@@ -134,7 +141,7 @@ fun HypeRoomScreen(
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     RoomSectionHeader(
                         "明确偏好",
-                        context?.preferences()?.size?.let { "$it 条" },
+                        trailing = context?.preferences()?.size?.let { "$it 条" },
                     )
                     val preferences = context?.preferences().orEmpty()
                     if (preferences.isEmpty()) {
@@ -144,13 +151,15 @@ fun HypeRoomScreen(
                             color = Muted,
                         )
                     } else {
-                        preferences.forEach { preference ->
-                            RoomItem(
-                                preference.content(),
-                                preference.category(),
-                                Hype,
-                            )
-                        }
+                        preferences
+                            .drop(if (category == "最近使用") 1 else 0)
+                            .forEach { preference ->
+                                RoomItem(
+                                    preference.content(),
+                                    preference.category(),
+                                    Hype,
+                                )
+                            }
                     }
                 }
             }
@@ -158,7 +167,10 @@ fun HypeRoomScreen(
         if (showMemories) {
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    RoomSectionHeader("长期记忆", context?.memories()?.size?.let { "$it 条" })
+                    RoomSectionHeader(
+                        "长期记忆",
+                        trailing = context?.memories()?.size?.let { "$it 条" },
+                    )
                     context?.memories().orEmpty().forEach { memory ->
                         RoomItem(
                             memory.content(),
@@ -175,6 +187,103 @@ fun HypeRoomScreen(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun HypeHero(indexedCount: Int) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.Bottom,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(5.dp),
+        ) {
+            Text("最近最常用", style = MaterialTheme.typography.labelLarge, color = Muted)
+            Text("让下一次，\n直接更懂你", style = EditorialHero, color = Ink)
+            Text(
+                "这里展示整理和确认过的能力，不把文件数量当成价值。",
+                style = MaterialTheme.typography.bodyMedium,
+                color = Muted,
+            )
+        }
+        Column(horizontalAlignment = Alignment.End) {
+            Text(
+                indexedCount.toString().padStart(2, '0'),
+                style = MaterialTheme.typography.displaySmall.copy(
+                    fontFamily = FontFamily.Serif,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 46.sp,
+                    lineHeight = 46.sp,
+                ),
+                color = Hype,
+            )
+            HorizontalDivider(modifier = Modifier.width(58.dp), thickness = 2.dp, color = Hype)
+            Text(
+                editorialSpecFor(MobileRoleDashboard.Role.HYPE).indexLabel,
+                style = MaterialTheme.typography.labelMedium.copy(
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 8.sp,
+                ),
+                color = Hype,
+                modifier = Modifier.padding(top = 5.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun EditorialCategoryTabs(
+    selected: String,
+    onSelect: (String) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(18.dp),
+    ) {
+        hypeCategories.forEach { label ->
+            Column(
+                modifier = Modifier.clickable { onSelect(label) }.padding(top = 3.dp),
+                horizontalAlignment = Alignment.Start,
+            ) {
+                Text(
+                    label,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (selected == label) Ink else Muted,
+                    fontWeight = if (selected == label) FontWeight.Bold else FontWeight.Normal,
+                    modifier = Modifier.padding(bottom = 8.dp),
+                )
+                HorizontalDivider(
+                    thickness = 2.dp,
+                    color = if (selected == label) Hype else Color.Transparent,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun HypeFocusPreference(preference: Models.Preference) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = EditorialFocus,
+        shape = RoundedCornerShape(8.dp),
+        border = BorderStroke(1.dp, Hype.copy(alpha = 0.34f)),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(7.dp),
+        ) {
+            Text("明确偏好", style = MaterialTheme.typography.labelMedium, color = HypeSoft)
+            Text(preference.content(), style = MaterialTheme.typography.titleLarge, color = EditorialOnFocus)
+            Text(
+                preference.category(),
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color(0xFFC8CBC7),
+            )
         }
     }
 }
