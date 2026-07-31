@@ -24,6 +24,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -188,6 +189,7 @@ private fun SessionPanel(
     val titleColor = if (primary) HexaPanelText else Ink
     val metadataColor = if (primary) HexaPanelMuted else Muted
     val accentColor = if (primary) HexaSignal else Hexa
+    val canSend = draft.isNotBlank() && !followUpPending
     Surface(
         modifier = modifier
             .fillMaxWidth()
@@ -318,11 +320,15 @@ private fun SessionPanel(
                                 callbacks.onSendFollowUp(session, text)
                             }
                         },
-                        enabled = draft.isNotBlank() && !followUpPending,
+                        enabled = canSend,
+                        colors = IconButtonDefaults.iconButtonColors(
+                            contentColor = if (primary) HexaPanel else Hexa,
+                            disabledContentColor = if (primary) HexaPanelMuted else Hexa.copy(alpha = 0.4f),
+                        ),
                         modifier = Modifier
                             .size(48.dp)
                             .background(
-                                color = if (draft.isNotBlank() && !followUpPending) {
+                                color = if (canSend) {
                                     accentColor
                                 } else {
                                     raisedColor
@@ -333,7 +339,6 @@ private fun SessionPanel(
                         Icon(
                             Icons.AutoMirrored.Outlined.Send,
                             contentDescription = "发送",
-                            tint = if (primary) HexaPanel else Hexa,
                         )
                     }
                 }
