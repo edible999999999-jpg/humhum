@@ -18,12 +18,19 @@ class HumHumThemeTest {
             "Hype/soft" to (Hype to HypeSoft),
             "Hush/soft" to (Hush to HushSoft),
             "Hexa/soft" to (Hexa to HexaSoft),
+            "Hexa panel text/panel" to (HexaPanelText to HexaPanel),
+            "Hexa panel muted/panel" to (HexaPanelMuted to HexaPanel),
+            "Hush/canvas" to (Hush to HushCanvas),
+            "Ink/peach" to (Ink to HushPeach),
         )
 
         pairs.forEach { (name, colors) ->
             val ratio = contrastRatio(colors.first, colors.second)
             assertTrue("$name contrast was $ratio", ratio >= 4.5)
         }
+
+        val signalRatio = contrastRatio(HexaSignal, HexaPanel)
+        assertTrue("Hexa signal/panel contrast was $signalRatio", signalRatio >= 3.0)
     }
 
     private fun contrastRatio(foreground: Color, background: Color): Double {
