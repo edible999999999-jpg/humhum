@@ -222,7 +222,10 @@ class HumHumAppTest {
         )
 
         compose.onNodeWithText("现在最重要").assertIsDisplayed()
+        compose.onNodeWithTag("hexa-primary-session").assertIsDisplayed()
         compose.onNodeWithTag("follow-up-draft").assertIsDisplayed()
+        compose.onNodeWithContentDescription("发送").assertIsDisplayed()
+        compose.onNodeWithContentDescription("查看对话").assertIsDisplayed()
     }
 
     @Test

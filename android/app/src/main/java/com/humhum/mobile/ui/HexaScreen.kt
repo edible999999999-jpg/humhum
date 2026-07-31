@@ -1,5 +1,6 @@
 package com.humhum.mobile.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -27,6 +28,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -40,12 +42,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.humhum.mobile.Models
 import com.humhum.mobile.app.HumHumUiState
 import com.humhum.mobile.app.PendingAction
 import com.humhum.mobile.app.PendingActionKind
 import com.humhum.mobile.ui.theme.Hexa
+import com.humhum.mobile.ui.theme.HexaPanel
+import com.humhum.mobile.ui.theme.HexaPanelMuted
+import com.humhum.mobile.ui.theme.HexaPanelRaised
+import com.humhum.mobile.ui.theme.HexaPanelText
+import com.humhum.mobile.ui.theme.HexaSignal
 import com.humhum.mobile.ui.theme.HexaSoft
 import com.humhum.mobile.ui.theme.Ink
 import com.humhum.mobile.ui.theme.Line
@@ -175,20 +183,29 @@ private fun SessionPanel(
         }
         handledSuccessRevision = state.followUpSuccessRevision
     }
+    val panelColor = if (primary) HexaPanel else Color.White
+    val raisedColor = if (primary) HexaPanelRaised else HexaSoft
+    val titleColor = if (primary) HexaPanelText else Ink
+    val metadataColor = if (primary) HexaPanelMuted else Muted
+    val accentColor = if (primary) HexaSignal else Hexa
     Surface(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier
+            .fillMaxWidth()
+            .then(if (primary) Modifier.testTag("hexa-primary-session") else Modifier),
         shape = RoundedCornerShape(8.dp),
-        color = if (primary) HexaSoft.copy(alpha = 0.48f) else Color.White,
+        color = panelColor,
         border = androidx.compose.foundation.BorderStroke(
             1.dp,
-            if (primary || session.needsAttention()) Hexa.copy(alpha = 0.45f) else Line,
+            if (primary) HexaSignal.copy(alpha = 0.72f)
+            else if (session.needsAttention()) Hexa.copy(alpha = 0.45f)
+            else Line,
         ),
     ) {
         Column(modifier = Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Surface(
                     modifier = Modifier.size(36.dp),
-                    color = HexaSoft,
+                    color = raisedColor,
                     shape = RoundedCornerShape(8.dp),
                 ) {
                     androidx.compose.foundation.layout.Box(contentAlignment = Alignment.Center) {
@@ -196,29 +213,49 @@ private fun SessionPanel(
                             Icons.Outlined.Terminal,
                             contentDescription = null,
                             modifier = Modifier.size(21.dp),
-                            tint = Hexa,
+                            tint = accentColor,
                         )
                     }
                 }
                 Spacer(Modifier.size(10.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(session.project().ifBlank { session.agent() }, style = MaterialTheme.typography.titleMedium, color = Ink)
-                    Text("${session.agent()} · ${session.status()} · ${session.lastActivityAt()}", style = MaterialTheme.typography.bodyMedium, color = Muted)
+                    Text(
+                        session.project().ifBlank { session.agent() },
+                        style = MaterialTheme.typography.titleMedium,
+                        color = titleColor,
+                    )
+                    Text(
+                        "${session.agent()} · ${session.status()} · ${session.lastActivityAt()}",
+                        style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                        color = metadataColor,
+                    )
                 }
                 Surface(
-                    color = if (session.needsAttention()) Color(0xFFFFE9E0) else HexaSoft,
+                    color = when {
+                        primary -> raisedColor
+                        session.needsAttention() -> Color(0xFFFFE9E0)
+                        else -> HexaSoft
+                    },
                     shape = RoundedCornerShape(12.dp),
                 ) {
                     Text(
                         if (session.needsAttention()) "需要你" else "工作中",
                         style = MaterialTheme.typography.labelMedium,
-                        color = if (session.needsAttention()) MaterialTheme.colorScheme.error else Hexa,
+                        color = when {
+                            primary -> accentColor
+                            session.needsAttention() -> MaterialTheme.colorScheme.error
+                            else -> Hexa
+                        },
                         modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
                     )
                 }
                 if (session.canReadConversation()) {
                     IconButton(onClick = { callbacks.onOpenConversation(session) }, modifier = Modifier.size(48.dp)) {
-                        Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = "查看对话", tint = Hexa)
+                        Icon(
+                            Icons.Outlined.ChatBubbleOutline,
+                            contentDescription = "查看对话",
+                            tint = accentColor,
+                        )
                     }
                 }
             }
@@ -230,13 +267,13 @@ private fun SessionPanel(
                         "这是最近仍可继续下达任务的会话"
                     },
                     style = MaterialTheme.typography.bodyMedium,
-                    color = Hexa,
+                    color = HexaPanelText,
                 )
                 LinearProgressIndicator(
                     progress = { if (session.needsAttention()) 0.52f else 0.72f },
                     modifier = Modifier.fillMaxWidth(),
-                    color = Hexa,
-                    trackColor = Hexa.copy(alpha = 0.14f),
+                    color = HexaSignal,
+                    trackColor = HexaPanelRaised,
                 )
             }
             if (state.canControl) {
@@ -245,6 +282,7 @@ private fun SessionPanel(
                         action = action,
                         enabled = PendingAction(PendingActionKind.APPROVAL, session.id(), action.id()) !in state.pendingActions,
                         onResolve = { approved -> callbacks.onResolve(session, action, approved) },
+                        dark = primary,
                     )
                 }
             }
@@ -257,6 +295,21 @@ private fun SessionPanel(
                         modifier = Modifier.weight(1f).testTag("follow-up-draft"),
                         shape = RoundedCornerShape(8.dp),
                         maxLines = 3,
+                        colors = if (primary) {
+                            OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = HexaPanelText,
+                                unfocusedTextColor = HexaPanelText,
+                                focusedContainerColor = HexaPanelRaised,
+                                unfocusedContainerColor = HexaPanelRaised,
+                                focusedBorderColor = HexaSignal,
+                                unfocusedBorderColor = HexaPanelMuted.copy(alpha = 0.58f),
+                                cursorColor = HexaSignal,
+                                focusedLabelColor = HexaSignal,
+                                unfocusedLabelColor = HexaPanelMuted,
+                            )
+                        } else {
+                            OutlinedTextFieldDefaults.colors()
+                        },
                     )
                     IconButton(
                         onClick = {
@@ -266,9 +319,22 @@ private fun SessionPanel(
                             }
                         },
                         enabled = draft.isNotBlank() && !followUpPending,
-                        modifier = Modifier.size(48.dp),
+                        modifier = Modifier
+                            .size(48.dp)
+                            .background(
+                                color = if (draft.isNotBlank() && !followUpPending) {
+                                    accentColor
+                                } else {
+                                    raisedColor
+                                },
+                                shape = RoundedCornerShape(8.dp),
+                            ),
                     ) {
-                        Icon(Icons.AutoMirrored.Outlined.Send, contentDescription = "发送", tint = Hexa)
+                        Icon(
+                            Icons.AutoMirrored.Outlined.Send,
+                            contentDescription = "发送",
+                            tint = if (primary) HexaPanel else Hexa,
+                        )
                     }
                 }
                 state.followUpFeedback[session.id()]?.let { feedback ->
@@ -276,15 +342,19 @@ private fun SessionPanel(
                         text = feedback,
                         style = MaterialTheme.typography.bodyMedium,
                         color = if (feedback.startsWith("电脑已收到")) {
-                            Muted
+                            metadataColor
                         } else {
-                            MaterialTheme.colorScheme.error
+                            if (primary) Color(0xFFFFA7A7) else MaterialTheme.colorScheme.error
                         },
                     )
                 }
             }
             if (state.conversation.sessionId == session.id()) {
-                ConversationDisclosure(state = state, onClose = callbacks.onCloseConversation)
+                ConversationDisclosure(
+                    state = state,
+                    onClose = callbacks.onCloseConversation,
+                    dark = primary,
+                )
             }
         }
     }
@@ -295,21 +365,39 @@ private fun ActionRow(
     action: Models.Action,
     enabled: Boolean,
     onResolve: (Boolean) -> Unit,
+    dark: Boolean,
 ) {
+    val textColor = if (dark) HexaPanelText else Ink
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(action.summary().ifBlank { action.operation() }, style = MaterialTheme.typography.bodyMedium, color = Ink)
+        Text(
+            action.summary().ifBlank { action.operation() },
+            style = MaterialTheme.typography.bodyMedium,
+            color = textColor,
+        )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(
                 onClick = { onResolve(true) },
                 enabled = enabled,
                 shape = RoundedCornerShape(8.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Hexa),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (dark) HexaSignal else Hexa,
+                    contentColor = if (dark) HexaPanel else Color.White,
+                ),
                 modifier = Modifier.height(48.dp),
             ) { Text("允许") }
             OutlinedButton(
                 onClick = { onResolve(false) },
                 enabled = enabled,
                 shape = RoundedCornerShape(8.dp),
+                colors = if (dark) {
+                    ButtonDefaults.outlinedButtonColors(contentColor = HexaPanelText)
+                } else {
+                    ButtonDefaults.outlinedButtonColors()
+                },
+                border = androidx.compose.foundation.BorderStroke(
+                    1.dp,
+                    if (dark) HexaPanelMuted else Line,
+                ),
                 modifier = Modifier.height(48.dp),
             ) { Text("拒绝") }
         }
@@ -317,24 +405,34 @@ private fun ActionRow(
 }
 
 @Composable
-private fun ConversationDisclosure(state: HumHumUiState, onClose: () -> Unit) {
+private fun ConversationDisclosure(
+    state: HumHumUiState,
+    onClose: () -> Unit,
+    dark: Boolean,
+) {
+    val titleColor = if (dark) HexaPanelText else Ink
+    val secondaryColor = if (dark) HexaPanelMuted else Muted
     Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth().clickable(onClick = onClose).padding(vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("对话内容", style = MaterialTheme.typography.titleMedium, color = Ink)
+            Text("对话内容", style = MaterialTheme.typography.titleMedium, color = titleColor)
             Spacer(Modifier.weight(1f))
-            Icon(Icons.Outlined.ChevronRight, contentDescription = "收起", tint = Muted)
+            Icon(Icons.Outlined.ChevronRight, contentDescription = "收起", tint = secondaryColor)
         }
         when {
-            state.conversation.loading -> CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
+            state.conversation.loading -> CircularProgressIndicator(
+                modifier = Modifier.size(22.dp),
+                color = if (dark) HexaSignal else Hexa,
+                strokeWidth = 2.dp,
+            )
             state.conversation.error != null -> Text(state.conversation.error, color = MaterialTheme.colorScheme.error)
             else -> state.conversation.messages.forEach { message ->
                 Text(
                     text = "${if (message.role() == Models.ConversationRole.USER) "你" else "Agent"}：${message.text()}",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = Ink,
+                    color = titleColor,
                 )
             }
         }
