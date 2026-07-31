@@ -195,6 +195,13 @@ class HumHumAppTest {
         compose.onNodeWithText("需要回复").assertIsDisplayed()
         compose.onNodeWithText("Peidong").assertIsDisplayed()
         compose.onNodeWithText("UI 已经重新推送").assertIsDisplayed()
+
+        compose.onNodeWithTag("hush-filter-reply").performClick()
+        compose.onNodeWithText("Peidong").assertIsDisplayed()
+        compose.onNodeWithText("Project bot").assertDoesNotExist()
+
+        compose.onNodeWithTag("hush-filter-all").performClick()
+        compose.onNodeWithText("Project bot").assertIsDisplayed()
     }
 
     @Test
@@ -431,6 +438,14 @@ class HumHumAppTest {
                 "UI 已经重新推送",
                 "2026-07-19T08:00:00Z",
                 5,
+            ),
+            Models.InboxItem(
+                "message-2",
+                "Project bot",
+                "Feishu",
+                "构建记录已经归档",
+                "2026-07-19T07:35:00Z",
+                2,
             ),
         ),
         listOf(

@@ -1,6 +1,7 @@
 package com.humhum.mobile.ui
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -8,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -33,9 +35,11 @@ import androidx.compose.ui.unit.dp
 import com.humhum.mobile.Models
 import com.humhum.mobile.app.HumHumUiState
 import com.humhum.mobile.ui.theme.Hush
-import com.humhum.mobile.ui.theme.HushSoft
+import com.humhum.mobile.ui.theme.HushCanvas
+import com.humhum.mobile.ui.theme.HushMintWarm
+import com.humhum.mobile.ui.theme.HushPeach
+import com.humhum.mobile.ui.theme.HushRose
 import com.humhum.mobile.ui.theme.Ink
-import com.humhum.mobile.ui.theme.Line
 import com.humhum.mobile.ui.theme.Muted
 
 private enum class InboxFilter(val label: String) {
@@ -58,7 +62,10 @@ fun HushRoomScreen(
         InboxFilter.FOCUSED -> inbox.filter { it.importance() >= 5 }
     }
     LazyColumn(
-        modifier = modifier.testTag("hush-room"),
+        modifier = modifier
+            .fillMaxSize()
+            .background(HushCanvas)
+            .testTag("hush-room"),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(
             start = 16.dp,
             end = 16.dp,
@@ -100,7 +107,10 @@ fun HushRoomScreen(
         } else {
             items(visible, key = { it.id() }) { message ->
                 InboxMessageRow(message)
-                HorizontalDivider(color = Line)
+                HorizontalDivider(
+                    modifier = Modifier.padding(start = 51.dp),
+                    color = Color(0xFFECE3DD),
+                )
             }
         }
         item {
@@ -119,7 +129,7 @@ private fun InboxFilterBar(
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        color = Color(0xFFF0F2F7),
+        color = HushPeach,
         shape = RoundedCornerShape(8.dp),
     ) {
         Row(modifier = Modifier.padding(3.dp)) {
@@ -127,8 +137,9 @@ private fun InboxFilterBar(
                 Surface(
                     modifier = Modifier
                         .weight(1f)
+                        .testTag("hush-filter-${item.name.lowercase()}")
                         .clickable { onSelect(item) },
-                    color = if (item == selected) Color.White else Color.Transparent,
+                    color = if (item == selected) HushCanvas else Color.Transparent,
                     shape = RoundedCornerShape(6.dp),
                 ) {
                     Box(
@@ -157,7 +168,7 @@ private fun InboxMessageRow(message: Models.InboxItem) {
         Surface(
             modifier = Modifier.size(40.dp),
             shape = RoundedCornerShape(8.dp),
-            color = HushSoft,
+            color = messageTone(message.sender(), message.importance()),
         ) {
             Box(contentAlignment = Alignment.Center) {
                 Text(
@@ -189,7 +200,7 @@ private fun InboxMessageRow(message: Models.InboxItem) {
                     Surface(
                         modifier = Modifier.size(7.dp),
                         shape = RoundedCornerShape(4.dp),
-                        color = Hush,
+                        color = Color(0xFFD96C73),
                     ) {}
                 }
             }
@@ -211,19 +222,33 @@ private fun InboxMessageRow(message: Models.InboxItem) {
 
 @Composable
 private fun PrivacyStrip(text: String, modifier: Modifier = Modifier) {
-    Row(
+    Surface(
         modifier = modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        color = HushMintWarm,
+        shape = RoundedCornerShape(8.dp),
+        border = BorderStroke(1.dp, Hush.copy(alpha = 0.12f)),
     ) {
-        Icon(
-            Icons.Outlined.Shield,
-            contentDescription = null,
-            modifier = Modifier.size(21.dp),
-            tint = Color(0xFF8FA0B6),
-        )
-        Text(text, style = MaterialTheme.typography.labelMedium, color = Muted)
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 11.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Icon(
+                Icons.Outlined.Shield,
+                contentDescription = null,
+                modifier = Modifier.size(21.dp),
+                tint = Hush,
+            )
+            Text(text, style = MaterialTheme.typography.labelMedium, color = Muted)
+        }
     }
+}
+
+private fun messageTone(sender: String, importance: Int): Color = when {
+    importance >= 5 -> HushRose
+    importance >= 4 -> HushPeach
+    sender.hashCode().and(1) == 0 -> HushMintWarm
+    else -> HushPeach.copy(alpha = 0.58f)
 }
 
 private fun messageInitial(sender: String): String {
