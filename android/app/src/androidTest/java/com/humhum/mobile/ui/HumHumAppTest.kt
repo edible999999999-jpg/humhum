@@ -172,6 +172,17 @@ class HumHumAppTest {
     }
 
     @Test
+    fun hypeSearchMatchesThePreviewAndOnlyExpandsOnRequest() {
+        setContent(
+            state = connectedState().copy(selectedRole = MobileRoleDashboard.Role.HYPE),
+        )
+
+        compose.onNodeWithTag("hype-search-field").assertDoesNotExist()
+        compose.onNodeWithContentDescription("搜索知识").assertIsDisplayed().performClick()
+        compose.onNodeWithTag("hype-search-field").assertIsDisplayed()
+    }
+
+    @Test
     fun hexaReadScopeNeverShowsApprovalOrFollowUpControls() {
         setContent(
             state = connectedState().copy(

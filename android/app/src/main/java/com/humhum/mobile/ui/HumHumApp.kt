@@ -2,6 +2,7 @@ package com.humhum.mobile.ui
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.background
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -24,9 +26,14 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -38,6 +45,7 @@ import com.humhum.mobile.app.HumHumUiState
 import com.humhum.mobile.ui.components.RoleNavigation
 import com.humhum.mobile.ui.components.roleIconFor
 import com.humhum.mobile.ui.theme.Canvas
+import com.humhum.mobile.ui.theme.EditorialMetrics
 import com.humhum.mobile.ui.theme.HexaPanelMuted
 import com.humhum.mobile.ui.theme.HexaPanelText
 import com.humhum.mobile.ui.theme.HumHumTheme
@@ -98,10 +106,17 @@ private fun CompanionScaffold(
     modifier: Modifier,
 ) {
     val spec = editorialSpecFor(state.selectedRole)
+    var hypeSearchVisible by rememberSaveable { mutableStateOf(false) }
     Scaffold(
         modifier = modifier.fillMaxSize(),
         containerColor = spec.canvas,
-        topBar = { CompanionHeader(state, callbacks) },
+        topBar = {
+            CompanionHeader(
+                state = state,
+                callbacks = callbacks,
+                onToggleHypeSearch = { hypeSearchVisible = !hypeSearchVisible },
+            )
+        },
         bottomBar = {
             RoleNavigation(
                 selected = state.selectedRole,
@@ -113,7 +128,11 @@ private fun CompanionScaffold(
             MobileRoleDashboard.Role.HUMI ->
                 HumiRoomScreen(state, callbacks, Modifier.padding(padding))
             MobileRoleDashboard.Role.HYPE ->
-                HypeRoomScreen(state, Modifier.padding(padding))
+                HypeRoomScreen(
+                    state = state,
+                    searchVisible = hypeSearchVisible,
+                    modifier = Modifier.padding(padding),
+                )
             MobileRoleDashboard.Role.HUSH ->
                 HushRoomScreen(state, callbacks, Modifier.padding(padding))
             MobileRoleDashboard.Role.HEXA -> HexaScreen(state, callbacks, Modifier.padding(padding))
@@ -122,7 +141,11 @@ private fun CompanionScaffold(
 }
 
 @Composable
-private fun CompanionHeader(state: HumHumUiState, callbacks: HumHumCallbacks) {
+private fun CompanionHeader(
+    state: HumHumUiState,
+    callbacks: HumHumCallbacks,
+    onToggleHypeSearch: () -> Unit,
+) {
     val role = state.selectedRole
     val palette = paletteFor(role)
     val spec = editorialSpecFor(role)
@@ -130,11 +153,24 @@ private fun CompanionHeader(state: HumHumUiState, callbacks: HumHumCallbacks) {
     val metadataColor = if (spec.dark) HexaPanelMuted else Muted
     val canRefresh = role == MobileRoleDashboard.Role.HUSH ||
         role == MobileRoleDashboard.Role.HEXA
+    val headerDivider = when (role) {
+        MobileRoleDashboard.Role.HYPE -> Color(0xFFEADED7)
+        MobileRoleDashboard.Role.HEXA -> Color(0xFF3B3F45)
+        else -> Color(0xFFDFE1DE)
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(72.dp)
+            .height(EditorialMetrics.AppBarHeight)
             .background(spec.canvas)
+            .drawBehind {
+                drawLine(
+                    color = headerDivider,
+                    start = Offset(0f, size.height),
+                    end = Offset(size.width, size.height),
+                    strokeWidth = 1.dp.toPx(),
+                )
+            }
             .padding(start = 16.dp, end = 8.dp)
             .testTag("companion-header"),
         verticalAlignment = Alignment.CenterVertically,
@@ -148,7 +184,7 @@ private fun CompanionHeader(state: HumHumUiState, callbacks: HumHumCallbacks) {
                 Icon(
                     roleIconFor(role),
                     contentDescription = null,
-                    modifier = Modifier.size(22.dp),
+                    modifier = Modifier.size(20.dp),
                     tint = palette.accent,
                 )
             }
@@ -171,6 +207,18 @@ private fun CompanionHeader(state: HumHumUiState, callbacks: HumHumCallbacks) {
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+        }
+        if (role == MobileRoleDashboard.Role.HYPE) {
+            IconButton(
+                onClick = onToggleHypeSearch,
+                modifier = Modifier.size(48.dp),
+            ) {
+                Icon(
+                    Icons.Outlined.Search,
+                    contentDescription = "搜索知识",
+                    tint = titleColor,
+                )
+            }
         }
         if (canRefresh) {
             IconButton(

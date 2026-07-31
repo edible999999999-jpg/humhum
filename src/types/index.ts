@@ -225,6 +225,7 @@ export interface AgentStats {
   total_output_tokens: number;
   total_cache_creation_tokens: number;
   total_cache_read_tokens: number;
+  total_reasoning_tokens: number;
   total_tool_calls: number;
   total_cost_usd: number;
   avg_tokens_per_session: number;

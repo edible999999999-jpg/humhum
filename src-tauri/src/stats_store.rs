@@ -3,8 +3,11 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io::BufRead;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
+use tokscale_core::sessions::{claudecode::parse_claude_file, codex::parse_codex_file};
 
 use crate::local_api_auth::{protect_owner_only, write_private_file_atomically};
+
+const STATS_PARSER_REVISION: u32 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SessionStats {
@@ -17,6 +20,8 @@ pub struct SessionStats {
     pub output_tokens: u64,
     pub cache_creation_tokens: u64,
     pub cache_read_tokens: u64,
+    #[serde(default)]
+    pub reasoning_tokens: u64,
     pub tool_calls: u64,
     pub tool_names: Vec<String>,
     pub timestamp: String,
@@ -32,17 +37,32 @@ pub struct DailyBucket {
     pub cache_creation_tokens: u64,
     #[serde(default)]
     pub cache_read_tokens: u64,
+    #[serde(default)]
+    pub reasoning_tokens: u64,
     pub tool_calls: u64,
     pub session_count: u64,
     pub estimated_cost_usd: f64,
     pub clients: HashMap<String, u64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StatsData {
+    #[serde(default)]
+    pub parser_revision: u32,
     pub sessions: Vec<SessionStats>,
     pub daily_buckets: Vec<DailyBucket>,
     pub processed_transcripts: HashSet<String>,
+}
+
+impl Default for StatsData {
+    fn default() -> Self {
+        Self {
+            parser_revision: STATS_PARSER_REVISION,
+            sessions: Vec::new(),
+            daily_buckets: Vec::new(),
+            processed_transcripts: HashSet::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -52,6 +72,7 @@ pub struct AggregatedStats {
     pub total_output_tokens: u64,
     pub total_cache_creation_tokens: u64,
     pub total_cache_read_tokens: u64,
+    pub total_reasoning_tokens: u64,
     pub active_agents: u64,
     pub total_tool_calls: u64,
     pub unique_tool_names: Vec<String>,
@@ -72,6 +93,7 @@ pub struct AgentStats {
     pub total_output_tokens: u64,
     pub total_cache_creation_tokens: u64,
     pub total_cache_read_tokens: u64,
+    pub total_reasoning_tokens: u64,
     pub total_tool_calls: u64,
     pub total_cost_usd: f64,
     pub avg_tokens_per_session: f64,
@@ -128,7 +150,8 @@ fn calculate_cost(stats: &SessionStats) -> f64 {
     (stats.input_tokens as f64 * p.input_per_million
         + stats.output_tokens as f64 * p.output_per_million
         + stats.cache_creation_tokens as f64 * p.cache_write_per_million
-        + stats.cache_read_tokens as f64 * p.cache_read_per_million)
+        + stats.cache_read_tokens as f64 * p.cache_read_per_million
+        + stats.reasoning_tokens as f64 * p.output_per_million)
         / 1_000_000.0
 }
 
@@ -144,7 +167,15 @@ impl StatsStore {
     }
 
     pub fn new_with_backfill(file_path: PathBuf, backfill_enabled: bool) -> Self {
-        let data = Self::load_from_disk(&file_path);
+        let mut data = Self::load_from_disk(&file_path);
+        if data.parser_revision != STATS_PARSER_REVISION {
+            log::info!(
+                "[Stats] Rebuilding usage after parser revision {} -> {}",
+                data.parser_revision,
+                STATS_PARSER_REVISION
+            );
+            data = StatsData::default();
+        }
         let mut store = Self { data, file_path };
         if backfill_enabled {
             if let Err(e) = store.backfill_recent_transcripts() {
@@ -199,7 +230,9 @@ impl StatsStore {
 
         let roots = [
             (home.join(".codex").join("sessions"), "codex"),
+            (home.join(".codex").join("archived_sessions"), "codex"),
             (home.join(".claude").join("projects"), "claude-code"),
+            (home.join(".claude").join("transcripts"), "claude-code"),
         ];
         let cutoff = SystemTime::now()
             .checked_sub(Duration::from_secs(30 * 24 * 60 * 60))
@@ -291,7 +324,8 @@ impl StatsStore {
         let all_tokens = stats.input_tokens
             + stats.output_tokens
             + stats.cache_creation_tokens
-            + stats.cache_read_tokens;
+            + stats.cache_read_tokens
+            + stats.reasoning_tokens;
 
         if let Some(bucket) = self
             .data
@@ -304,6 +338,7 @@ impl StatsStore {
             bucket.output_tokens += stats.output_tokens;
             bucket.cache_creation_tokens += stats.cache_creation_tokens;
             bucket.cache_read_tokens += stats.cache_read_tokens;
+            bucket.reasoning_tokens += stats.reasoning_tokens;
             bucket.tool_calls += stats.tool_calls;
             bucket.session_count += 1;
             bucket.estimated_cost_usd += cost;
@@ -318,6 +353,7 @@ impl StatsStore {
                 output_tokens: stats.output_tokens,
                 cache_creation_tokens: stats.cache_creation_tokens,
                 cache_read_tokens: stats.cache_read_tokens,
+                reasoning_tokens: stats.reasoning_tokens,
                 tool_calls: stats.tool_calls,
                 session_count: 1,
                 estimated_cost_usd: cost,
@@ -363,6 +399,7 @@ impl StatsStore {
         let mut total_out = 0u64;
         let mut total_cache_create = 0u64;
         let mut total_cache_read = 0u64;
+        let mut total_reasoning = 0u64;
         let mut total_tools = 0u64;
         let mut total_sessions = 0u64;
         let mut tool_set: HashSet<String> = HashSet::new();
@@ -379,6 +416,7 @@ impl StatsStore {
             total_out += s.output_tokens;
             total_cache_create += s.cache_creation_tokens;
             total_cache_read += s.cache_read_tokens;
+            total_reasoning += s.reasoning_tokens;
             total_tools += s.tool_calls;
             total_sessions += 1;
             for t in &s.tool_names {
@@ -406,11 +444,16 @@ impl StatsStore {
         tool_names.sort();
 
         AggregatedStats {
-            total_tokens: total_in + total_out + total_cache_create + total_cache_read,
+            total_tokens: total_in
+                + total_out
+                + total_cache_create
+                + total_cache_read
+                + total_reasoning,
             total_input_tokens: total_in,
             total_output_tokens: total_out,
             total_cache_creation_tokens: total_cache_create,
             total_cache_read_tokens: total_cache_read,
+            total_reasoning_tokens: total_reasoning,
             active_agents: active_clients.len() as u64,
             total_tool_calls: total_tools,
             unique_tool_names: tool_names,
@@ -437,6 +480,7 @@ impl StatsStore {
                 let mut total_out = 0u64;
                 let mut total_cc = 0u64;
                 let mut total_cr = 0u64;
+                let mut total_reasoning = 0u64;
                 let mut total_tools = 0u64;
                 let mut total_cost = 0.0f64;
                 let mut tool_counts: HashMap<String, u64> = HashMap::new();
@@ -447,6 +491,7 @@ impl StatsStore {
                     total_out += s.output_tokens;
                     total_cc += s.cache_creation_tokens;
                     total_cr += s.cache_read_tokens;
+                    total_reasoning += s.reasoning_tokens;
                     total_tools += s.tool_calls;
                     total_cost += calculate_cost(s);
                     for t in &s.tool_names {
@@ -457,7 +502,7 @@ impl StatsStore {
                     }
                 }
 
-                let total_tokens = total_in + total_out + total_cc + total_cr;
+                let total_tokens = total_in + total_out + total_cc + total_cr + total_reasoning;
                 let n = total_sessions.max(1) as f64;
 
                 let mut top_tools: Vec<(String, u64)> = tool_counts.into_iter().collect();
@@ -495,6 +540,7 @@ impl StatsStore {
                     total_output_tokens: total_out,
                     total_cache_creation_tokens: total_cc,
                     total_cache_read_tokens: total_cr,
+                    total_reasoning_tokens: total_reasoning,
                     total_tool_calls: total_tools,
                     total_cost_usd: total_cost,
                     avg_tokens_per_session: total_tokens as f64 / n,
@@ -543,6 +589,18 @@ fn parse_transcript(
         return None;
     }
 
+    let usage_messages = match client_type {
+        "codex" => parse_codex_file(path),
+        "claude" | "claude-code" => parse_claude_file(path),
+        unsupported => {
+            log::warn!("[Stats] Unsupported transcript client: {}", unsupported);
+            return None;
+        }
+    };
+    if usage_messages.is_empty() {
+        return None;
+    }
+
     let file = match std::fs::File::open(path) {
         Ok(f) => f,
         Err(e) => {
@@ -555,23 +613,9 @@ fn parse_transcript(
     let mut tool_set: HashSet<String> = HashSet::new();
     let mut tool_use_ids: HashSet<String> = HashSet::new();
     let mut codex_tool_calls = 0u64;
-    let mut model = String::new();
-    let mut effective_session_id = session_id.to_string();
-    let mut codex_input_tokens: Option<u64> = None;
-    let mut codex_output_tokens: Option<u64> = None;
-    let mut codex_cache_read_tokens: Option<u64> = None;
+    let mut fallback_model = String::new();
+    let mut fallback_session_id = String::new();
     let mut first_message_timestamp: Option<String> = None;
-
-    // Claude Code transcripts log each assistant message multiple times
-    // (streaming intermediate states). Deduplicate by message.id,
-    // keeping only the last (most complete) usage for each message.
-    struct MsgUsage {
-        input: u64,
-        output: u64,
-        cache_create: u64,
-        cache_read: u64,
-    }
-    let mut msg_usages: HashMap<String, MsgUsage> = HashMap::new();
     let mut anonymous_msg_counter = 0u64;
 
     for line in reader.lines() {
@@ -601,8 +645,8 @@ fn parse_transcript(
 
         if entry_type == "session_meta" {
             if let Some(payload) = val.get("payload") {
-                if effective_session_id.is_empty() {
-                    effective_session_id = payload
+                if fallback_session_id.is_empty() {
+                    fallback_session_id = payload
                         .get("session_id")
                         .or_else(|| payload.get("id"))
                         .and_then(|v| v.as_str())
@@ -610,18 +654,18 @@ fn parse_transcript(
                         .to_string();
                 }
                 if let Some(m) = payload.get("model").and_then(|v| v.as_str()) {
-                    model = m.to_string();
+                    fallback_model = m.to_string();
                 } else if let Some(provider) =
                     payload.get("model_provider").and_then(|v| v.as_str())
                 {
-                    model = provider.to_string();
+                    fallback_model = provider.to_string();
                 }
             }
         }
 
         if entry_type == "assistant" {
-            if effective_session_id.is_empty() {
-                effective_session_id = val
+            if fallback_session_id.is_empty() {
+                fallback_session_id = val
                     .get("sessionId")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
@@ -639,32 +683,8 @@ fn parse_transcript(
                         format!("__anon_{}", anonymous_msg_counter)
                     });
 
-                if let Some(usage) = msg.get("usage") {
-                    let u = MsgUsage {
-                        input: usage
-                            .get("input_tokens")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(0),
-                        output: usage
-                            .get("output_tokens")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(0),
-                        cache_create: usage
-                            .get("cache_creation_input_tokens")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(0),
-                        cache_read: usage
-                            .get("cache_read_input_tokens")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(0),
-                    };
-                    // Overwrite: later entries for the same message have the final usage
-                    msg_usages.insert(msg_id.clone(), u);
-                }
-
-                // Extract model
                 if let Some(m) = msg.get("model").and_then(|v| v.as_str()) {
-                    model = m.to_string();
+                    fallback_model = m.to_string();
                 }
 
                 if let Some(content) = msg.get("content").and_then(|v| v.as_array()) {
@@ -692,17 +712,6 @@ fn parse_transcript(
 
         if entry_type == "event_msg" || entry_type == "response_item" {
             if let Some(payload) = val.get("payload") {
-                if payload.get("type").and_then(|v| v.as_str()) == Some("token_count") {
-                    if let Some(usage) =
-                        payload.get("info").and_then(|v| v.get("total_token_usage"))
-                    {
-                        codex_input_tokens = usage.get("input_tokens").and_then(|v| v.as_u64());
-                        codex_output_tokens = usage.get("output_tokens").and_then(|v| v.as_u64());
-                        codex_cache_read_tokens =
-                            usage.get("cached_input_tokens").and_then(|v| v.as_u64());
-                    }
-                }
-
                 if payload.get("type").and_then(|v| v.as_str()) == Some("function_call") {
                     codex_tool_calls += 1;
                     if let Some(name) = payload.get("name").and_then(|v| v.as_str()) {
@@ -713,52 +722,70 @@ fn parse_transcript(
         }
     }
 
-    // Sum deduplicated message usages
-    let (mut input_tokens, mut output_tokens, cache_creation, mut cache_read) = msg_usages
-        .values()
-        .fold((0u64, 0u64, 0u64, 0u64), |acc, u| {
-            (
-                acc.0 + u.input,
-                acc.1 + u.output,
-                acc.2 + u.cache_create,
-                acc.3 + u.cache_read,
-            )
-        });
+    let mut input_tokens = 0u64;
+    let mut output_tokens = 0u64;
+    let mut cache_creation = 0u64;
+    let mut cache_read = 0u64;
+    let mut reasoning_tokens = 0u64;
+    for message in &usage_messages {
+        input_tokens = input_tokens.saturating_add(message.tokens.input.max(0) as u64);
+        output_tokens = output_tokens.saturating_add(message.tokens.output.max(0) as u64);
+        cache_creation = cache_creation.saturating_add(message.tokens.cache_write.max(0) as u64);
+        cache_read = cache_read.saturating_add(message.tokens.cache_read.max(0) as u64);
+        reasoning_tokens = reasoning_tokens.saturating_add(message.tokens.reasoning.max(0) as u64);
+    }
     let mut tool_calls = tool_use_ids.len() as u64;
-
-    // Codex uses cumulative token_count events instead of per-message usage
-    if let Some(v) = codex_input_tokens {
-        input_tokens = v;
-    }
-    if let Some(v) = codex_output_tokens {
-        output_tokens = v;
-    }
-    if let Some(v) = codex_cache_read_tokens {
-        cache_read = v;
-    }
     if codex_tool_calls > 0 {
         tool_calls = codex_tool_calls;
     }
 
-    if input_tokens == 0 && output_tokens == 0 {
+    if input_tokens == 0
+        && output_tokens == 0
+        && cache_creation == 0
+        && cache_read == 0
+        && reasoning_tokens == 0
+    {
         return None;
     }
 
     let mut tool_names: Vec<String> = tool_set.into_iter().collect();
     tool_names.sort();
 
-    // Prefer timestamp from inside the transcript (first message),
-    // fall back to file modification time, then current time
-    let timestamp = first_message_timestamp.unwrap_or_else(|| {
-        path.metadata()
-            .and_then(|m| m.modified())
-            .ok()
-            .map(|t| {
-                let dt: chrono::DateTime<chrono::Local> = t.into();
-                dt.to_rfc3339()
-            })
-            .unwrap_or_else(|| chrono::Local::now().to_rfc3339())
-    });
+    let model = usage_messages
+        .iter()
+        .rev()
+        .map(|message| message.model_id.trim())
+        .find(|model| !model.is_empty() && *model != "unknown")
+        .map(str::to_string)
+        .filter(|model| !model.is_empty())
+        .unwrap_or(fallback_model);
+    let effective_session_id = if session_id.trim().is_empty() {
+        usage_messages
+            .first()
+            .map(|message| message.session_id.clone())
+            .filter(|id| !id.trim().is_empty() && id != "unknown")
+            .unwrap_or(fallback_session_id)
+    } else {
+        session_id.to_string()
+    };
+    let timestamp = usage_messages
+        .iter()
+        .map(|message| message.timestamp)
+        .filter(|timestamp| *timestamp > 0)
+        .min()
+        .and_then(chrono::DateTime::<chrono::Utc>::from_timestamp_millis)
+        .map(|timestamp| timestamp.with_timezone(&chrono::Local).to_rfc3339())
+        .or(first_message_timestamp)
+        .unwrap_or_else(|| {
+            path.metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .map(|t| {
+                    let dt: chrono::DateTime<chrono::Local> = t.into();
+                    dt.to_rfc3339()
+                })
+                .unwrap_or_else(|| chrono::Local::now().to_rfc3339())
+        });
 
     Some(SessionStats {
         session_id: effective_session_id,
@@ -769,6 +796,7 @@ fn parse_transcript(
         output_tokens,
         cache_creation_tokens: cache_creation,
         cache_read_tokens: cache_read,
+        reasoning_tokens,
         tool_calls,
         tool_names,
         timestamp,
@@ -803,6 +831,7 @@ mod tests {
         assert_eq!(stats.output_tokens, 3);
         assert_eq!(stats.cache_creation_tokens, 5);
         assert_eq!(stats.cache_read_tokens, 7);
+        assert_eq!(stats.reasoning_tokens, 0);
         assert_eq!(stats.tool_calls, 1);
         assert_eq!(stats.tool_names, vec!["Bash"]);
     }
@@ -838,15 +867,17 @@ mod tests {
         let path = write_temp_jsonl(
             "codex",
             r#"{"type":"session_meta","payload":{"session_id":"s2","model_provider":"openai"}}
-{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":20,"output_tokens":5,"reasoning_output_tokens":1,"total_tokens":105},"last_token_usage":{"input_tokens":100,"cached_input_tokens":20,"output_tokens":5,"total_tokens":105}}}}
-{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":180,"cached_input_tokens":40,"output_tokens":9,"reasoning_output_tokens":2,"total_tokens":189},"last_token_usage":{"input_tokens":80,"cached_input_tokens":20,"output_tokens":4,"total_tokens":84}}}}
+{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":20,"output_tokens":5,"reasoning_output_tokens":1,"total_tokens":105},"last_token_usage":{"input_tokens":100,"cached_input_tokens":20,"output_tokens":5,"reasoning_output_tokens":1,"total_tokens":105}}}}
+{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":180,"cached_input_tokens":40,"output_tokens":9,"reasoning_output_tokens":2,"total_tokens":189},"last_token_usage":{"input_tokens":80,"cached_input_tokens":20,"output_tokens":4,"reasoning_output_tokens":1,"total_tokens":84}}}}
 {"type":"response_item","payload":{"type":"function_call","name":"exec_command"}}"#,
         );
 
         let stats = parse_transcript(&path, "s2", "codex").unwrap();
-        assert_eq!(stats.input_tokens, 180);
+        // Tokscale splits cached input out of the inclusive Codex input total.
+        assert_eq!(stats.input_tokens, 140);
         assert_eq!(stats.output_tokens, 9);
         assert_eq!(stats.cache_read_tokens, 40);
+        assert_eq!(stats.reasoning_tokens, 2);
         assert_eq!(stats.tool_calls, 1);
         assert_eq!(stats.tool_names, vec!["exec_command"]);
         assert_eq!(stats.model, "openai");
@@ -874,8 +905,10 @@ mod tests {
 
         let aggregated = store.get_aggregated_stats();
         assert_eq!(aggregated.total_sessions, 1);
-        assert_eq!(aggregated.total_input_tokens, 10);
+        assert_eq!(aggregated.total_input_tokens, 7);
         assert_eq!(aggregated.total_output_tokens, 2);
+        assert_eq!(aggregated.total_cache_read_tokens, 3);
+        assert_eq!(aggregated.total_tokens, 12);
         assert_eq!(aggregated.daily_buckets.len(), 1);
         assert_eq!(aggregated.daily_buckets[0].session_count, 1);
     }
@@ -895,6 +928,39 @@ mod tests {
 
         assert!(!stats_path.exists());
         assert_eq!(store.get_aggregated_stats().total_sessions, 0);
+        assert!(store.data.processed_transcripts.is_empty());
+    }
+
+    #[test]
+    fn invalidates_usage_written_by_the_legacy_parser() {
+        let temp = tempfile::tempdir().unwrap();
+        let stats_path = temp.path().join("stats.json");
+        std::fs::write(
+            &stats_path,
+            r#"{
+                "sessions":[{
+                    "session_id":"legacy",
+                    "client_type":"codex",
+                    "transcript_path":"legacy.jsonl",
+                    "model":"openai",
+                    "input_tokens":180,
+                    "output_tokens":9,
+                    "cache_creation_tokens":0,
+                    "cache_read_tokens":40,
+                    "tool_calls":0,
+                    "tool_names":[],
+                    "timestamp":"2026-07-31T00:00:00+08:00"
+                }],
+                "daily_buckets":[],
+                "processed_transcripts":["legacy.jsonl"]
+            }"#,
+        )
+        .unwrap();
+
+        let store = StatsStore::new_with_backfill(stats_path, false);
+
+        assert_eq!(store.data.parser_revision, STATS_PARSER_REVISION);
+        assert!(store.data.sessions.is_empty());
         assert!(store.data.processed_transcripts.is_empty());
     }
 }

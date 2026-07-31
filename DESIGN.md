@@ -35,28 +35,28 @@ Typography is the primary visual asset.
 
 ### Families
 
-- Editorial display: the platform serif family with full Chinese glyph
-  coverage. On Android use `FontFamily.Serif`.
-- Product text: the platform sans-serif family. On Android use
-  `FontFamily.SansSerif`.
-- Technical metadata: the platform monospace family. Use it only for Agent
-  names, status, timestamps, identifiers, and command metadata.
+- Editorial display: bundled `Noto Serif SC`.
+- Product text: bundled `Noto Sans SC`.
+- Technical metadata: bundled `Roboto Mono`. Use it only for Agent names,
+  status, timestamps, identifiers, and command metadata.
 
-The first Android implementation uses platform families so Chinese text remains
-complete on Xiaomi and other devices without adding a large downloadable font
-or a network dependency.
+Android and the approved HTML preview load the same checked-in variable font
+files. Do not fall back to a device or browser default for production screens:
+Xiaomi system fonts and macOS preview fonts have different Chinese metrics,
+which changes wrapping, rhythm, and hierarchy. The font files remain local and
+do not create a network dependency.
 
 ### Type Scale
 
 | Role | Size / line height | Family | Weight |
 | --- | --- | --- | --- |
-| Editorial display | 31 / 38 sp | Serif | SemiBold |
-| Page headline | 27 / 34 sp | Serif | SemiBold |
-| Section title | 21 / 28 sp | Serif | SemiBold |
-| Item title | 16 / 23 sp | Sans | SemiBold |
-| Body | 15 / 23 sp | Sans | Regular |
-| Label | 12 / 17 sp | Sans | Medium |
-| Technical metadata | 12 / 18 sp | Mono | Regular |
+| Editorial display | 29 / 36 sp | Noto Serif SC | SemiBold |
+| Page headline | 27 / 34 sp | Noto Serif SC | SemiBold |
+| Section title | 20 / 27 sp | Noto Serif SC | SemiBold |
+| Item title | 13 / 19 sp | Noto Sans SC | SemiBold |
+| Body | 12 / 19 sp | Noto Sans SC | Regular |
+| Label | 10 / 14 sp | Noto Sans SC | Medium |
+| Technical metadata | 8 / 12 sp | Roboto Mono | Regular |
 
 Letter spacing is always `0`. Serif type is reserved for page-level meaning,
 dates, major section titles, and prominent numbers. Dense lists and controls
@@ -94,6 +94,9 @@ signals.
 
 - Use the 4 dp base grid: `4, 8, 12, 16, 24, 32`.
 - Mobile horizontal page padding is 16 dp.
+- Mobile app bar is 61 dp and bottom navigation is 70 dp, matching the
+  390 x 844 approved preview.
+- First content begins 17 dp below the app bar.
 - Major sections are separated by 24-32 dp, not by wrapping each section in a
   card.
 - List rows use a minimum 64 dp stable height and a divider aligned to the text

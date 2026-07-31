@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -24,7 +25,6 @@ import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material3.Icon
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -34,7 +34,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.dp
@@ -48,12 +47,16 @@ import com.humhum.mobile.ui.theme.Humi
 import com.humhum.mobile.ui.theme.HumiSoft
 import com.humhum.mobile.ui.theme.Hush
 import com.humhum.mobile.ui.theme.HushSoft
+import com.humhum.mobile.ui.theme.HumHumMono
+import com.humhum.mobile.ui.theme.HumHumSerif
 import com.humhum.mobile.ui.theme.Ink
 import com.humhum.mobile.ui.theme.Line
 import com.humhum.mobile.ui.theme.Muted
 import com.humhum.mobile.ui.theme.EditorialFocus
 import com.humhum.mobile.ui.theme.EditorialHero
+import com.humhum.mobile.ui.theme.EditorialMetrics
 import com.humhum.mobile.ui.theme.EditorialOnFocus
+import com.humhum.mobile.ui.theme.EditorialSection
 import com.humhum.mobile.ui.theme.editorialSpecFor
 import kotlin.math.roundToInt
 import java.time.ZoneId
@@ -72,12 +75,12 @@ fun HumiRoomScreen(
     LazyColumn(
         modifier = modifier.testTag("humi-room"),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(
-            start = 16.dp,
-            end = 16.dp,
-            top = 14.dp,
-            bottom = 20.dp,
+            start = EditorialMetrics.HorizontalPadding,
+            end = EditorialMetrics.HorizontalPadding,
+            top = EditorialMetrics.ContentTopPadding,
+            bottom = EditorialMetrics.ContentBottomPadding,
         ),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+        verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
         item {
             Row(
@@ -90,7 +93,7 @@ fun HumiRoomScreen(
                     verticalArrangement = Arrangement.spacedBy(5.dp),
                 ) {
                     Text(todayLabel(), style = MaterialTheme.typography.labelLarge, color = Muted)
-                    Text("先把最重要的事推进", style = EditorialHero, color = Ink)
+                    Text("先把最重要的事\n推进", style = EditorialHero, color = Ink)
                     Text(
                         "我把 Agent 进展和身体信号放在一起，只提醒真正值得你注意的部分。",
                         style = MaterialTheme.typography.bodyMedium,
@@ -101,17 +104,17 @@ fun HumiRoomScreen(
                     Text(
                         issueNumber(),
                         style = MaterialTheme.typography.displaySmall.copy(
-                            fontFamily = FontFamily.Serif,
+                            fontFamily = HumHumSerif,
                             fontWeight = FontWeight.SemiBold,
-                            fontSize = 46.sp,
-                            lineHeight = 46.sp,
+                            fontSize = 52.sp,
+                            lineHeight = 43.sp,
                         ),
                         color = Humi.copy(alpha = 0.24f),
                     )
                     Text(
                         editorialSpecFor(MobileRoleDashboard.Role.HUMI).indexLabel,
                         style = MaterialTheme.typography.labelMedium.copy(
-                            fontFamily = FontFamily.Monospace,
+                            fontFamily = HumHumMono,
                             fontSize = 8.sp,
                         ),
                         color = Humi,
@@ -273,17 +276,16 @@ private fun FocusCard(
             )
             Column(
                 modifier = Modifier.weight(1f)
-                    .padding(start = 17.dp, top = 16.dp, end = 16.dp, bottom = 16.dp),
+                    .padding(start = 17.dp, top = 15.dp, end = 15.dp, bottom = 15.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Text("Humi 注意到 · $status", style = MaterialTheme.typography.labelMedium, color = HumiSoft)
-                Text(title, style = MaterialTheme.typography.titleLarge, color = EditorialOnFocus)
+                Text(title, style = EditorialSection, color = EditorialOnFocus)
                 Text(detail, style = MaterialTheme.typography.bodyMedium, color = Color(0xFFC8CBC7))
-                LinearProgressIndicator(
-                    progress = { 0.68f },
-                    modifier = Modifier.fillMaxWidth(),
-                    color = Humi,
-                    trackColor = Color(0xFF343735),
+                Text(
+                    "继续今天的重点  →",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = EditorialOnFocus,
                 )
             }
         }
@@ -298,9 +300,12 @@ private fun HumiSignalRow(
     accent: Color,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 63.dp)
+            .padding(vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalArrangement = Arrangement.spacedBy(11.dp),
     ) {
         Surface(
             modifier = Modifier.size(36.dp),

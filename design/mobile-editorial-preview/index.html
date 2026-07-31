@@ -6,6 +6,30 @@
   <title>HUMHUM Editorial Mobile Preview</title>
   <script src="https://unpkg.com/@phosphor-icons/web@2.1.1"></script>
   <style>
+    @font-face {
+      font-family: "HUMHUM Sans";
+      src: url("../../android/app/src/main/res/font/noto_sans_sc.ttf") format("truetype");
+      font-style: normal;
+      font-weight: 100 900;
+      font-display: block;
+    }
+
+    @font-face {
+      font-family: "HUMHUM Serif";
+      src: url("../../android/app/src/main/res/font/noto_serif_sc.ttf") format("truetype");
+      font-style: normal;
+      font-weight: 100 900;
+      font-display: block;
+    }
+
+    @font-face {
+      font-family: "HUMHUM Mono";
+      src: url("../../android/app/src/main/res/font/roboto_mono.ttf") format("truetype");
+      font-style: normal;
+      font-weight: 100 900;
+      font-display: block;
+    }
+
     :root {
       --board: #e8e9e7;
       --paper: #f8f8f5;
@@ -31,12 +55,15 @@
       --hexa-night: #141619;
       --hexa-night-raised: #202328;
       --hexa-rule: #3b3f45;
-      --serif: "Songti SC", "STSong", "Noto Serif CJK SC", "Noto Serif SC", serif;
-      --sans: "PingFang SC", "Noto Sans CJK SC", "Noto Sans SC", system-ui, sans-serif;
-      --mono: "SFMono-Regular", "Cascadia Mono", Menlo, monospace;
+      --serif: "HUMHUM Serif", serif;
+      --sans: "HUMHUM Sans", sans-serif;
+      --mono: "HUMHUM Mono", monospace;
     }
 
-    * { box-sizing: border-box; }
+    * {
+      box-sizing: border-box;
+      font-synthesis: none;
+    }
 
     html { background: var(--board); }
 

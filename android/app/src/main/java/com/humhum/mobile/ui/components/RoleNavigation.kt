@@ -1,8 +1,8 @@
 package com.humhum.mobile.ui.components
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -16,6 +16,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
@@ -23,6 +24,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -33,6 +35,7 @@ import androidx.compose.material.icons.outlined.Inbox
 import androidx.compose.material.icons.outlined.PersonOutline
 import com.humhum.mobile.MobileRoleDashboard
 import com.humhum.mobile.ui.theme.Muted
+import com.humhum.mobile.ui.theme.EditorialMetrics
 import com.humhum.mobile.ui.theme.HexaPanelMuted
 import com.humhum.mobile.ui.theme.paletteFor
 import com.humhum.mobile.ui.theme.editorialSpecFor
@@ -48,9 +51,16 @@ fun RoleNavigation(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .height(72.dp)
+            .height(EditorialMetrics.BottomNavigationHeight)
             .background(spec.canvas)
-            .border(width = 1.dp, color = divider)
+            .drawBehind {
+                drawLine(
+                    color = divider,
+                    start = Offset.Zero,
+                    end = Offset(size.width, 0f),
+                    strokeWidth = 1.dp.toPx(),
+                )
+            }
             .padding(horizontal = 8.dp, vertical = 6.dp)
             .testTag("role-navigation"),
         horizontalArrangement = Arrangement.SpaceEvenly,
@@ -98,12 +108,16 @@ private fun RoleDestination(
         Icon(
             imageVector = roleIconFor(role),
             contentDescription = null,
-            modifier = Modifier.size(24.dp),
+            modifier = Modifier.size(20.dp),
             tint = if (selected) palette.accent else idleColor,
         )
         Text(
             text = role.displayName(),
-            style = MaterialTheme.typography.labelMedium,
+            style = MaterialTheme.typography.labelMedium.copy(
+                fontSize = 9.sp,
+                lineHeight = 13.sp,
+                letterSpacing = 0.sp,
+            ),
             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
             color = if (selected) palette.accent else idleColor,
             maxLines = 1,

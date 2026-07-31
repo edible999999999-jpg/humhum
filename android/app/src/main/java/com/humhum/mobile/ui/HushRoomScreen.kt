@@ -31,7 +31,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -43,10 +42,12 @@ import com.humhum.mobile.ui.theme.HushCanvas
 import com.humhum.mobile.ui.theme.HushMintWarm
 import com.humhum.mobile.ui.theme.HushPeach
 import com.humhum.mobile.ui.theme.HushRose
+import com.humhum.mobile.ui.theme.HumHumSerif
 import com.humhum.mobile.ui.theme.Ink
 import com.humhum.mobile.ui.theme.Muted
 import com.humhum.mobile.ui.theme.EditorialFocus
 import com.humhum.mobile.ui.theme.EditorialHero
+import com.humhum.mobile.ui.theme.EditorialMetrics
 import com.humhum.mobile.ui.theme.EditorialOnFocus
 import com.humhum.mobile.ui.theme.editorialSpecFor
 
@@ -75,10 +76,10 @@ fun HushRoomScreen(
             .background(HushCanvas)
             .testTag("hush-room"),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(
-            start = 16.dp,
-            end = 16.dp,
-            top = 14.dp,
-            bottom = 20.dp,
+            start = EditorialMetrics.HorizontalPadding,
+            end = EditorialMetrics.HorizontalPadding,
+            top = EditorialMetrics.ContentTopPadding,
+            bottom = EditorialMetrics.ContentBottomPadding,
         ),
     ) {
         item {
@@ -190,7 +191,7 @@ private fun HushHero(messageCount: Int) {
             Text(
                 messageCount.toString().padStart(2, '0'),
                 style = MaterialTheme.typography.displaySmall.copy(
-                    fontFamily = FontFamily.Serif,
+                    fontFamily = HumHumSerif,
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 44.sp,
                     lineHeight = 44.sp,

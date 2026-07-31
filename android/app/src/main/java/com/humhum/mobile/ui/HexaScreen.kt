@@ -44,7 +44,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.text.font.FontWeight
@@ -59,10 +58,13 @@ import com.humhum.mobile.ui.theme.HexaPanelMuted
 import com.humhum.mobile.ui.theme.HexaPanelRaised
 import com.humhum.mobile.ui.theme.HexaPanelText
 import com.humhum.mobile.ui.theme.HexaSignal
+import com.humhum.mobile.ui.theme.HumHumMono
 import com.humhum.mobile.ui.theme.Ink
 import com.humhum.mobile.ui.theme.Line
 import com.humhum.mobile.ui.theme.Muted
 import com.humhum.mobile.ui.theme.EditorialHero
+import com.humhum.mobile.ui.theme.EditorialMetrics
+import com.humhum.mobile.ui.theme.EditorialSection
 import com.humhum.mobile.ui.theme.editorialSpecFor
 
 @Composable
@@ -81,10 +83,10 @@ fun HexaScreen(
     LazyColumn(
         modifier = modifier.fillMaxSize().background(HexaPanel).testTag("hexa-room"),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(
-            start = 16.dp,
-            end = 16.dp,
-            top = 14.dp,
-            bottom = 20.dp,
+            start = EditorialMetrics.HorizontalPadding,
+            end = EditorialMetrics.HorizontalPadding,
+            top = 15.dp,
+            bottom = EditorialMetrics.ContentBottomPadding,
         ),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
@@ -93,7 +95,7 @@ fun HexaScreen(
                 Text(
                     "${editorialSpecFor(MobileRoleDashboard.Role.HEXA).indexLabel} · NOW RUNNING",
                     style = MaterialTheme.typography.labelMedium.copy(
-                        fontFamily = FontFamily.Monospace,
+                        fontFamily = HumHumMono,
                         fontWeight = FontWeight.Bold,
                         fontSize = 9.sp,
                     ),
@@ -197,7 +199,7 @@ private fun MissionStrip(sessionCount: Int) {
             Text(
                 "LOCAL RELAY",
                 style = MaterialTheme.typography.labelMedium.copy(
-                    fontFamily = FontFamily.Monospace,
+                    fontFamily = HumHumMono,
                     fontSize = 8.sp,
                 ),
                 color = HexaSignal,
@@ -205,7 +207,7 @@ private fun MissionStrip(sessionCount: Int) {
             Text(
                 "ENCRYPTED",
                 style = MaterialTheme.typography.labelMedium.copy(
-                    fontFamily = FontFamily.Monospace,
+                    fontFamily = HumHumMono,
                     fontSize = 8.sp,
                 ),
                 color = HexaPanelMuted,
@@ -213,7 +215,7 @@ private fun MissionStrip(sessionCount: Int) {
             Text(
                 "$sessionCount AGENTS",
                 style = MaterialTheme.typography.labelMedium.copy(
-                    fontFamily = FontFamily.Monospace,
+                    fontFamily = HumHumMono,
                     fontSize = 8.sp,
                 ),
                 color = HexaPanelMuted,
@@ -287,7 +289,7 @@ private fun SessionPanel(
                     )
                     Text(
                         "${session.agent()} · ${session.status()} · ${session.lastActivityAt()}",
-                        style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                        style = MaterialTheme.typography.bodyMedium.copy(fontFamily = HumHumMono),
                         color = metadataColor,
                     )
                 }
@@ -313,8 +315,17 @@ private fun SessionPanel(
                     } else {
                         "这是最近仍可继续下达任务的会话"
                     },
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = EditorialSection,
                     color = HexaPanelText,
+                )
+                Text(
+                    if (session.needsAttention()) {
+                        "确认请求已经到达，处理后 Agent 会继续推进当前任务。"
+                    } else {
+                        "你可以直接补充下一步，任务会沿着这条真实会话继续。"
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = metadataColor,
                 )
                 LinearProgressIndicator(
                     progress = { if (session.needsAttention()) 0.52f else 0.72f },

@@ -196,8 +196,15 @@ class LivingSignalsVisualQaTest {
         listOf(
             Models.TodayItem(
                 "goal-1",
-                "完成 Android 房间",
-                "通过构建与视觉检查",
+                "移动端的体验，正在真正成形",
+                "四个角色已经各自清晰，下一步只需要让字体和节奏更像你。",
+                "hexa_goal",
+                "active",
+            ),
+            Models.TodayItem(
+                "goal-2",
+                "验证 Android 新版设计",
+                "来自 Hexa 目标 · 今天",
                 "hexa_goal",
                 "active",
             ),

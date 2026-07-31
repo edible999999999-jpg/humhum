@@ -19,6 +19,7 @@ interface AggregatedStats {
   total_output_tokens: number;
   total_cache_creation_tokens: number;
   total_cache_read_tokens: number;
+  total_reasoning_tokens: number;
   active_agents: number;
   total_tool_calls: number;
   unique_tool_names: string[];
@@ -220,6 +221,11 @@ export function StatsPanel() {
         {stats.total_cache_creation_tokens + stats.total_cache_read_tokens > 0 && (
           <div className="mt-2 text-[10px] text-white/20">
             {t("stats.cacheWrite")} {formatTokens(stats.total_cache_creation_tokens)} · {t("stats.cacheRead")} {formatTokens(stats.total_cache_read_tokens)}
+          </div>
+        )}
+        {stats.total_reasoning_tokens > 0 && (
+          <div className="mt-1 text-[10px] text-white/20">
+            Reasoning {formatTokens(stats.total_reasoning_tokens)}
           </div>
         )}
       </section>

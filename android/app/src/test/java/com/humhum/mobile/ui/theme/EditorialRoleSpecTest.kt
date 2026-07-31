@@ -1,6 +1,8 @@
 package com.humhum.mobile.ui.theme
 
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.humhum.mobile.MobileRoleDashboard
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -39,5 +41,21 @@ class EditorialRoleSpecTest {
         assertFalse(hype.dark)
         assertFalse(hush.dark)
         assertTrue(hexa.dark)
+    }
+
+    @Test
+    fun typographyAndChromeUseTheApprovedPreviewMetrics() {
+        assertEquals(HumHumSerif, EditorialHero.fontFamily)
+        assertEquals(HumHumSerif, EditorialSection.fontFamily)
+        assertEquals(29.sp, EditorialHero.fontSize)
+        assertEquals(36.sp, EditorialHero.lineHeight)
+        assertEquals(0.sp, EditorialHero.letterSpacing)
+        assertEquals(20.sp, EditorialSection.fontSize)
+        assertEquals(27.sp, EditorialSection.lineHeight)
+        assertEquals(0.sp, EditorialSection.letterSpacing)
+        assertEquals(61.dp, EditorialMetrics.AppBarHeight)
+        assertEquals(70.dp, EditorialMetrics.BottomNavigationHeight)
+        assertEquals(16.dp, EditorialMetrics.HorizontalPadding)
+        assertEquals(17.dp, EditorialMetrics.ContentTopPadding)
     }
 }

@@ -32,7 +32,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -41,9 +40,13 @@ import com.humhum.mobile.Models
 import com.humhum.mobile.app.HumHumUiState
 import com.humhum.mobile.ui.theme.EditorialFocus
 import com.humhum.mobile.ui.theme.EditorialHero
+import com.humhum.mobile.ui.theme.EditorialMetrics
 import com.humhum.mobile.ui.theme.EditorialOnFocus
+import com.humhum.mobile.ui.theme.EditorialSection
 import com.humhum.mobile.ui.theme.Hype
 import com.humhum.mobile.ui.theme.HypeSoft
+import com.humhum.mobile.ui.theme.HumHumMono
+import com.humhum.mobile.ui.theme.HumHumSerif
 import com.humhum.mobile.ui.theme.Ink
 import com.humhum.mobile.ui.theme.Line
 import com.humhum.mobile.ui.theme.Muted
@@ -54,6 +57,7 @@ private val hypeCategories = listOf("最近使用", "Skills", "偏好", "长期�
 @Composable
 fun HypeRoomScreen(
     state: HumHumUiState,
+    searchVisible: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val context = state.personalContext
@@ -77,10 +81,10 @@ fun HypeRoomScreen(
     LazyColumn(
         modifier = modifier.testTag("hype-room"),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(
-            start = 16.dp,
-            end = 16.dp,
-            top = 14.dp,
-            bottom = 20.dp,
+            start = EditorialMetrics.HorizontalPadding,
+            end = EditorialMetrics.HorizontalPadding,
+            top = EditorialMetrics.ContentTopPadding,
+            bottom = EditorialMetrics.ContentBottomPadding,
         ),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
@@ -93,16 +97,18 @@ fun HypeRoomScreen(
                 onSelect = { category = it },
             )
         }
-        item {
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it.take(80) },
-                leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
-                placeholder = { Text("搜索技能、偏好与记忆") },
-                singleLine = true,
-                shape = RoundedCornerShape(8.dp),
-                modifier = Modifier.fillMaxWidth(),
-            )
+        if (searchVisible) {
+            item {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it.take(80) },
+                    leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
+                    placeholder = { Text("搜索技能、偏好与记忆") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.fillMaxWidth().testTag("hype-search-field"),
+                )
+            }
         }
         if (category == "最近使用") {
             context?.preferences()?.firstOrNull()?.let { preference ->
@@ -214,10 +220,10 @@ private fun HypeHero(indexedCount: Int) {
             Text(
                 indexedCount.toString().padStart(2, '0'),
                 style = MaterialTheme.typography.displaySmall.copy(
-                    fontFamily = FontFamily.Serif,
+                    fontFamily = HumHumSerif,
                     fontWeight = FontWeight.SemiBold,
-                    fontSize = 46.sp,
-                    lineHeight = 46.sp,
+                    fontSize = 48.sp,
+                    lineHeight = 43.sp,
                 ),
                 color = Hype,
             )
@@ -225,7 +231,7 @@ private fun HypeHero(indexedCount: Int) {
             Text(
                 editorialSpecFor(MobileRoleDashboard.Role.HYPE).indexLabel,
                 style = MaterialTheme.typography.labelMedium.copy(
-                    fontFamily = FontFamily.Monospace,
+                    fontFamily = HumHumMono,
                     fontSize = 8.sp,
                 ),
                 color = Hype,
@@ -274,11 +280,11 @@ private fun HypeFocusPreference(preference: Models.Preference) {
         border = BorderStroke(1.dp, Hype.copy(alpha = 0.34f)),
     ) {
         Column(
-            modifier = Modifier.padding(16.dp),
+            modifier = Modifier.padding(15.dp),
             verticalArrangement = Arrangement.spacedBy(7.dp),
         ) {
             Text("明确偏好", style = MaterialTheme.typography.labelMedium, color = HypeSoft)
-            Text(preference.content(), style = MaterialTheme.typography.titleLarge, color = EditorialOnFocus)
+            Text(preference.content(), style = EditorialSection, color = EditorialOnFocus)
             Text(
                 preference.category(),
                 style = MaterialTheme.typography.bodyMedium,

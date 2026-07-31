@@ -50,14 +50,11 @@ readable at one-to-one density.
 
 ### Fonts And Typography
 
-The serif/sans hierarchy matches the source's editorial rhythm. Chinese display
-text uses the macOS Songti family in this HTML preview and will map to the
-Android platform serif family in Compose. Letter spacing is zero. Dense rows,
-controls, and metadata remain sans-serif or monospace.
-
-Residual P3 risk: the exact platform serif glyphs may vary on Xiaomi. The
-production implementation needs a Xiaomi screenshot before the font choice is
-locked.
+The HTML preview and Android app load the same checked-in variable font files:
+Noto Serif SC for editorial display, Noto Sans SC for product text, and Roboto
+Mono for technical metadata. Letter spacing is zero in both implementations.
+There is no Xiaomi or browser system-font fallback in the approved surfaces, so
+line wrapping and glyph metrics stay stable across the preview and APK.
 
 ### Spacing And Layout Rhythm
 
@@ -92,7 +89,7 @@ engagement feature from the reference was introduced.
 - 52 Phosphor interface icons loaded.
 - No empty role/list icon marks remain.
 - Chrome console errors: none.
-- Android API 36 instrumented tests: 36 passed, 0 failed.
+- Android API 36 instrumented tests: 37 passed, 0 failed.
 - Compose screenshots are 390 x 844 with no visible overlap or clipped primary
   action in the four approved role states.
 
@@ -130,10 +127,16 @@ engagement feature from the reference was introduced.
 - Post-fix evidence: four API 36 Compose screenshots at 390 x 844, all 36
   instrumented tests passing, unit tests passing, and a successful debug build.
 
-## Follow-Up Polish
+### Pass 5
 
-- P3: verify the platform serif family on the user's Xiaomi phone.
-- P3: tune serif optical weight after a Xiaomi-device screenshot; the API 36
-  emulator confirms layout but not Xiaomi's exact platform-serif rendering.
+- P1: the preview and production app still used different platform font
+  resolution, so Chinese glyph widths, wrapping, and vertical rhythm could
+  diverge on Xiaomi.
+- Fix: bundled Noto Serif SC, Noto Sans SC, and Roboto Mono; loaded those exact
+  files in both HTML and Compose; fixed display typography to 29/36, section
+  typography to 20/27, and all letter spacing to zero.
+- Post-fix evidence: four regenerated 390 x 844 Compose screenshots, 37/37 API
+  36 instrumented tests, Android lint, Android debug APK build, and typography
+  metric unit tests all passing.
 
 final result: passed

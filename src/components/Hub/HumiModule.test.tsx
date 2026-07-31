@@ -122,6 +122,7 @@ function invokeResult(command: string): unknown {
       total_output_tokens: 80_000,
       total_cache_creation_tokens: 0,
       total_cache_read_tokens: 0,
+      total_reasoning_tokens: 0,
       active_agents: 2,
       total_tool_calls: 97,
       unique_tool_names: ["exec_command"],
