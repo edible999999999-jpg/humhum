@@ -70,9 +70,10 @@ reference states. Automated contrast checks remain required in Compose.
 
 ### Image Quality And Asset Fidelity
 
-No reference imagery was copied. The prototype uses the Phosphor icon font for
-standard interface icons and text-based sender initials already supported by
-HUMHUM. It does not substitute CSS drawings, emoji, placeholder images, or
+No reference imagery was copied. The HTML prototype uses the Phosphor icon font,
+and Android uses the matching official Phosphor vector paths for the four shared
+role destinations. Text-based sender initials remain supported by HUMHUM. The
+implementation does not substitute CSS drawings, emoji, placeholder images, or
 generated decorative art for source assets.
 
 ### Copy And Content
@@ -138,5 +139,17 @@ engagement feature from the reference was introduced.
 - Post-fix evidence: four regenerated 390 x 844 Compose screenshots, 37/37 API
   36 instrumented tests, Android lint, Android debug APK build, and typography
   metric unit tests all passing.
+
+### Pass 6
+
+- P1: Android's role navigation still used approximate Material icons, placed
+  the active indicator inside the centered content, and used a heavier active
+  label than the approved HTML.
+- Fix: adopted the exact Phosphor 2.1.1 `sparkle`, `books`,
+  `envelope-simple`, and `circuitry` paths; moved the 24 x 2 dp indicator to the
+  navigation's top edge; restored equal-width destinations, 20 dp icons, 9/11
+  sp regular labels, and the exact light/dark navigation colors.
+- Post-fix evidence: four regenerated 390 x 844 Compose screenshots and all
+  nine visual QA states passing on API 36.
 
 final result: passed

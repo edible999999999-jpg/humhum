@@ -4,6 +4,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.humhum.mobile.MobileRoleDashboard
+import com.humhum.mobile.R
+import com.humhum.mobile.ui.components.RoleNavigationMetrics
+import com.humhum.mobile.ui.components.roleIconResourceFor
+import com.humhum.mobile.ui.components.roleNavigationActiveColor
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -57,5 +61,26 @@ class EditorialRoleSpecTest {
         assertEquals(70.dp, EditorialMetrics.BottomNavigationHeight)
         assertEquals(16.dp, EditorialMetrics.HorizontalPadding)
         assertEquals(17.dp, EditorialMetrics.ContentTopPadding)
+    }
+
+    @Test
+    fun roleNavigationUsesTheApprovedPhosphorIconsAndMetrics() {
+        assertEquals(R.drawable.ph_sparkle, roleIconResourceFor(MobileRoleDashboard.Role.HUMI))
+        assertEquals(R.drawable.ph_books, roleIconResourceFor(MobileRoleDashboard.Role.HYPE))
+        assertEquals(
+            R.drawable.ph_envelope_simple,
+            roleIconResourceFor(MobileRoleDashboard.Role.HUSH),
+        )
+        assertEquals(R.drawable.ph_circuitry, roleIconResourceFor(MobileRoleDashboard.Role.HEXA))
+        assertEquals(20.dp, RoleNavigationMetrics.IconSize)
+        assertEquals(24.dp, RoleNavigationMetrics.IndicatorWidth)
+        assertEquals(2.dp, RoleNavigationMetrics.IndicatorHeight)
+        assertEquals(3.dp, RoleNavigationMetrics.ItemGap)
+        assertEquals(9.sp, RoleNavigationMetrics.LabelSize)
+        assertEquals(11.sp, RoleNavigationMetrics.LabelLineHeight)
+        assertEquals(
+            Color(0xFFFFC928),
+            roleNavigationActiveColor(MobileRoleDashboard.Role.HEXA),
+        )
     }
 }
