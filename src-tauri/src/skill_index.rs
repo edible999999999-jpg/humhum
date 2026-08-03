@@ -508,7 +508,7 @@ fn extract_absolute_skill_paths(input: &str) -> Vec<PathBuf> {
 }
 
 fn is_absolute_path_text(candidate: &str) -> bool {
-    if Path::new(candidate).is_absolute() {
+    if candidate.starts_with('/') || Path::new(candidate).is_absolute() {
         return true;
     }
 
@@ -736,6 +736,38 @@ mod tests {
         ))
     }
 
+    fn session_meta(id: &str, cwd: Option<&str>) -> String {
+        let mut payload = serde_json::json!({ "id": id });
+        if let Some(cwd) = cwd {
+            payload["cwd"] = serde_json::Value::String(cwd.to_string());
+        }
+        serde_json::json!({
+            "type": "session_meta",
+            "payload": payload,
+        })
+        .to_string()
+    }
+
+    fn skill_tool_call(path: &Path, timestamp: Option<&str>, quoted: bool) -> String {
+        let command = if quoted {
+            format!("cat \"{}\"", path.display())
+        } else {
+            format!("cat {}", path.display())
+        };
+        let mut entry = serde_json::json!({
+            "type": "response_item",
+            "payload": {
+                "type": "custom_tool_call",
+                "name": "exec",
+                "input": command,
+            },
+        });
+        if let Some(timestamp) = timestamp {
+            entry["timestamp"] = serde_json::Value::String(timestamp.to_string());
+        }
+        entry.to_string()
+    }
+
     #[test]
     fn parses_only_enabled_codex_plugins() {
         let config = r#"
@@ -880,12 +912,11 @@ enabled = false
     fn extracts_windows_skill_paths_from_tool_calls() {
         let unquoted = r"C:\Users\me\.codex\skills\personal\SKILL.md";
         let quoted = r"C:\Users\me\My Skills\release helper\SKILL.md";
-        let session = format!(
-            "{{\"type\":\"response_item\",\"payload\":{{\"type\":\"custom_tool_call\",\"name\":\"exec\",\"input\":\"cat {}\"}}}}\n\
-             {{\"type\":\"response_item\",\"payload\":{{\"type\":\"custom_tool_call\",\"name\":\"exec\",\"input\":\"cat \\\"{}\\\"\"}}}}",
-            unquoted.replace('\\', r"\\"),
-            quoted.replace('\\', r"\\"),
-        );
+        let session = [
+            skill_tool_call(Path::new(unquoted), None, false),
+            skill_tool_call(Path::new(quoted), None, true),
+        ]
+        .join("\n");
 
         assert_eq!(
             extract_used_skill_paths_from_session(&session),
@@ -903,10 +934,7 @@ enabled = false
         let session_path = root.join("spaced-session.jsonl");
         std::fs::write(
             &session_path,
-            format!(
-                "{{\"type\":\"response_item\",\"payload\":{{\"type\":\"custom_tool_call\",\"name\":\"exec\",\"input\":\"cat \\\"{}\\\"\"}}}}\n",
-                skill.display(),
-            ),
+            format!("{}\n", skill_tool_call(&skill, None, true)),
         )
         .unwrap();
 
@@ -925,15 +953,12 @@ enabled = false
         std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
         std::fs::write(&skill, "---\nname: personal\ndescription: test\n---\n").unwrap();
         let session_path = root.join("personal-session.jsonl");
-        std::fs::write(
-            &session_path,
-            format!(
-                "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"personal-session\"}}}}\n\
-                 {{\"timestamp\":\"2026-07-20T12:00:00Z\",\"type\":\"response_item\",\"payload\":{{\"type\":\"custom_tool_call\",\"name\":\"exec\",\"input\":\"cat {}\"}}}}\n",
-                skill.display(),
-            ),
-        )
-        .unwrap();
+        let transcript = [
+            session_meta("personal-session", None),
+            skill_tool_call(&skill, Some("2026-07-20T12:00:00Z"), false),
+        ]
+        .join("\n");
+        std::fs::write(&session_path, format!("{transcript}\n")).unwrap();
 
         let sources = discover_session_skill_sources_from_files(&home, &[session_path]);
 
@@ -959,10 +984,7 @@ enabled = false
         let session_path = root.join("unrecognized-session.jsonl");
         std::fs::write(
             &session_path,
-            format!(
-                "{{\"type\":\"response_item\",\"payload\":{{\"type\":\"custom_tool_call\",\"name\":\"exec\",\"input\":\"cat {}\"}}}}\n",
-                skill.display(),
-            ),
+            format!("{}\n", skill_tool_call(&skill, None, false)),
         )
         .unwrap();
 
@@ -987,16 +1009,12 @@ enabled = false
             std::fs::write(path, "---\nname: test\ndescription: test\n---\n").unwrap();
         }
         let session_path = root.join("session.jsonl");
-        std::fs::write(
-            &session_path,
-            format!(
-                "{{\"timestamp\":\"2026-07-18T08:00:00Z\",\"type\":\"response_item\",\"payload\":{{\"type\":\"custom_tool_call\",\"name\":\"exec\",\"input\":\"cat {}\"}}}}\n\
-                 {{\"timestamp\":\"2026-07-19T09:30:00Z\",\"type\":\"response_item\",\"payload\":{{\"type\":\"custom_tool_call\",\"name\":\"exec\",\"input\":\"cat {}\"}}}}\n",
-                used_skill.display(),
-                used_skill.display()
-            ),
-        )
-        .unwrap();
+        let transcript = [
+            skill_tool_call(&used_skill, Some("2026-07-18T08:00:00Z"), false),
+            skill_tool_call(&used_skill, Some("2026-07-19T09:30:00Z"), false),
+        ]
+        .join("\n");
+        std::fs::write(&session_path, format!("{transcript}\n")).unwrap();
 
         let sources = discover_session_skill_sources_from_files(&home, &[session_path]);
 
@@ -1024,17 +1042,13 @@ enabled = false
         std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
         std::fs::write(&skill, "---\nname: test\ndescription: test\n---\n").unwrap();
         let session_path = root.join("session-fallback.jsonl");
-        std::fs::write(
-            &session_path,
-            format!(
-                "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"session-new\",\"cwd\":\"/Users/me/project\"}}}}\n\\
-                 {{\"timestamp\":\"2026-07-20T09:00:00Z\",\"type\":\"response_item\",\"payload\":{{\"type\":\"custom_tool_call\",\"name\":\"exec\",\"input\":\"cat {}\"}}}}\n\\
-                 {{\"timestamp\":\"2026-07-20T09:30:00Z\",\"type\":\"response_item\",\"payload\":{{\"type\":\"custom_tool_call\",\"name\":\"exec\",\"input\":\"cat {}\"}}}}\n",
-                skill.display(),
-                skill.display(),
-            ),
-        )
-        .unwrap();
+        let transcript = [
+            session_meta("session-new", Some("/Users/me/project")),
+            skill_tool_call(&skill, Some("2026-07-20T09:00:00Z"), false),
+            skill_tool_call(&skill, Some("2026-07-20T09:30:00Z"), false),
+        ]
+        .join("\n");
+        std::fs::write(&session_path, format!("{transcript}\n")).unwrap();
 
         let sources = discover_session_skill_sources_from_files(&home, &[session_path]);
 
@@ -1066,15 +1080,12 @@ enabled = false
             (&older_session, "session-older", "2026-07-20T08:30:00Z"),
             (&newer_session, "session-newer", "2026-07-20T10:30:00Z"),
         ] {
-            std::fs::write(
-                path,
-                format!(
-                    "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{session_id}\"}}}}\n\\
-                     {{\"timestamp\":\"{timestamp}\",\"type\":\"response_item\",\"payload\":{{\"type\":\"custom_tool_call\",\"name\":\"exec\",\"input\":\"cat {}\"}}}}\n",
-                    skill.display(),
-                ),
-            )
-            .unwrap();
+            let transcript = [
+                session_meta(session_id, None),
+                skill_tool_call(&skill, Some(timestamp), false),
+            ]
+            .join("\n");
+            std::fs::write(path, format!("{transcript}\n")).unwrap();
         }
 
         let sources =
@@ -1099,7 +1110,8 @@ enabled = false
         let mut session = std::fs::File::create(&session_path).unwrap();
         writeln!(
             session,
-            "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"session-header\",\"cwd\":\"/Users/me/header-project\"}}}}"
+            "{}",
+            session_meta("session-header", Some("/Users/me/header-project"))
         )
         .unwrap();
         session
@@ -1107,8 +1119,8 @@ enabled = false
             .unwrap();
         writeln!(
             session,
-            "\n{{\"timestamp\":\"2026-07-20T11:30:00Z\",\"type\":\"response_item\",\"payload\":{{\"type\":\"custom_tool_call\",\"name\":\"exec\",\"input\":\"cat {}\"}}}}",
-            skill.display(),
+            "\n{}",
+            skill_tool_call(&skill, Some("2026-07-20T11:30:00Z"), false),
         )
         .unwrap();
 
@@ -1137,15 +1149,12 @@ enabled = false
             (&older_session, "2026-07-20T08:30:00Z"),
             (&newer_session, "2026-07-20T10:30:00Z"),
         ] {
-            std::fs::write(
-                path,
-                format!(
-                    "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"session-shared\"}}}}\n\\
-                     {{\"timestamp\":\"{timestamp}\",\"type\":\"response_item\",\"payload\":{{\"type\":\"custom_tool_call\",\"name\":\"exec\",\"input\":\"cat {}\"}}}}\n",
-                    skill.display(),
-                ),
-            )
-            .unwrap();
+            let transcript = [
+                session_meta("session-shared", None),
+                skill_tool_call(&skill, Some(timestamp), false),
+            ]
+            .join("\n");
+            std::fs::write(path, format!("{transcript}\n")).unwrap();
         }
 
         let sources =
@@ -1173,8 +1182,8 @@ enabled = false
         std::fs::write(
             &session_path,
             format!(
-                "{{\"timestamp\":\"2026-07-20T11:30:00Z\",\"type\":\"response_item\",\"payload\":{{\"type\":\"custom_tool_call\",\"name\":\"exec\",\"input\":\"cat {}\"}}}}\n",
-                skill.display(),
+                "{}\n",
+                skill_tool_call(&skill, Some("2026-07-20T11:30:00Z"), false)
             ),
         )
         .unwrap();

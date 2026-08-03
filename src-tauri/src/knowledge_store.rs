@@ -1915,6 +1915,33 @@ mod tests {
         KnowledgeStore::with_paths(root.join("knowledge.json"), root.join("vault"))
     }
 
+    fn session_meta(id: &str, cwd: Option<&Path>) -> String {
+        let mut payload = serde_json::json!({ "id": id });
+        if let Some(cwd) = cwd {
+            payload["cwd"] = serde_json::Value::String(cwd.to_string_lossy().to_string());
+        }
+        serde_json::json!({
+            "type": "session_meta",
+            "payload": payload,
+        })
+        .to_string()
+    }
+
+    fn skill_tool_call(path: &Path, timestamp: Option<&str>) -> String {
+        let mut entry = serde_json::json!({
+            "type": "response_item",
+            "payload": {
+                "type": "custom_tool_call",
+                "name": "exec",
+                "input": format!("cat {}", path.display()),
+            },
+        });
+        if let Some(timestamp) = timestamp {
+            entry["timestamp"] = serde_json::Value::String(timestamp.to_string());
+        }
+        entry.to_string()
+    }
+
     #[test]
     fn serialize_note_round_trips_through_frontmatter_parser() {
         let mut frontmatter = Map::new();
@@ -2002,14 +2029,14 @@ mod tests {
         .unwrap();
         let session_dir = home.join(".codex/sessions");
         std::fs::create_dir_all(&session_dir).unwrap();
+        let transcript = [
+            session_meta("project-session", Some(&project)),
+            skill_tool_call(&skill, Some("2026-07-20T13:00:00Z")),
+        ]
+        .join("\n");
         std::fs::write(
             session_dir.join("project-session.jsonl"),
-            format!(
-                "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"project-session\",\"cwd\":\"{}\"}}}}\n\
-                 {{\"timestamp\":\"2026-07-20T13:00:00Z\",\"type\":\"response_item\",\"payload\":{{\"type\":\"custom_tool_call\",\"name\":\"exec\",\"input\":\"cat {}\"}}}}\n",
-                project.display(),
-                skill.display(),
-            ),
+            format!("{transcript}\n"),
         )
         .unwrap();
         let mut store = store_at(&root);
@@ -2045,10 +2072,7 @@ mod tests {
         std::fs::create_dir_all(&session_dir).unwrap();
         std::fs::write(
             session_dir.join("parent-session.jsonl"),
-            format!(
-                "{{\"type\":\"response_item\",\"payload\":{{\"type\":\"custom_tool_call\",\"name\":\"exec\",\"input\":\"cat {}\"}}}}\n",
-                parent_skill.display(),
-            ),
+            format!("{}\n", skill_tool_call(&parent_skill, None)),
         )
         .unwrap();
         let mut store = store_at(&root);
@@ -2392,10 +2416,7 @@ mod tests {
         std::fs::create_dir_all(session.parent().unwrap()).unwrap();
         std::fs::write(
             &session,
-            format!(
-                "{{\"timestamp\":\"2026-07-19T09:30:00Z\",\"type\":\"response_item\",\"payload\":{{\"type\":\"custom_tool_call\",\"name\":\"exec\",\"input\":\"cat {}\"}}}}\n",
-                used.display()
-            ),
+            format!("{}\n", skill_tool_call(&used, Some("2026-07-19T09:30:00Z"))),
         )
         .unwrap();
 
