@@ -1,5 +1,6 @@
 use serde::Serialize;
 use std::path::Path;
+#[cfg(target_os = "macos")]
 use std::process::Stdio;
 use std::sync::OnceLock;
 use tokio::process::Command;

@@ -465,15 +465,23 @@ fn safe_reader_failure_message(code: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(target_os = "macos")]
     use sha2::{Digest, Sha256};
     use std::collections::BTreeMap;
+    #[cfg(target_os = "macos")]
     use std::net::TcpListener;
+    #[cfg(target_os = "macos")]
     use std::os::unix::fs::PermissionsExt;
+    #[cfg(target_os = "macos")]
     use std::path::Path;
+    #[cfg(target_os = "macos")]
     use std::thread;
+    #[cfg(target_os = "macos")]
     use std::time::{Duration, Instant};
+    #[cfg(target_os = "macos")]
     use tempfile::TempDir;
 
+    #[cfg(target_os = "macos")]
     const TEST_PROCESS_TIMEOUT: Duration = Duration::from_secs(10);
 
     #[test]
@@ -491,6 +499,7 @@ mod tests {
         assert_eq!(request.argument_count(), 0);
     }
 
+    #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn native_runner_sends_request_only_on_stdin_and_clears_environment() {
         let harness = NativeHarness::new(
@@ -517,6 +526,7 @@ mod tests {
         assert!(!capture.contains("HUMHUM_PARENT_SECRET"));
     }
 
+    #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn native_runner_never_surfaces_upstream_error_details() {
         let harness = NativeHarness::new(
@@ -537,6 +547,7 @@ mod tests {
         assert!(!display.contains("private-contact-sentinel"));
     }
 
+    #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn empty_nonzero_reader_exit_is_reported_as_sandbox_unavailable() {
         let harness = NativeHarness::with_nonzero_without_output();
@@ -599,6 +610,7 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn native_runner_rejects_tampered_identity_and_oversized_output() {
         let tampered = NativeHarness::new(r#"{"ok":true,"version":1,"action":"status","data":{}}"#);
@@ -625,10 +637,12 @@ mod tests {
         assert_eq!(error.code(), "malformed_reader_output");
     }
 
+    #[cfg(target_os = "macos")]
     struct NativeHarness {
         directory: TempDir,
     }
 
+    #[cfg(target_os = "macos")]
     impl NativeHarness {
         fn new(stdout: &str) -> Self {
             let directory = tempfile::tempdir().unwrap();
@@ -741,10 +755,12 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "macos")]
     fn shell_single_quote(value: &str) -> String {
         value.replace('\'', "'\"'\"'")
     }
 
+    #[cfg(target_os = "macos")]
     fn file_sha256(path: &Path) -> String {
         let bytes = std::fs::read(path).unwrap();
         hex::encode(Sha256::digest(bytes))

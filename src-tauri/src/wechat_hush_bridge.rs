@@ -1000,12 +1000,16 @@ mod tests {
     use serde_json::json;
     use std::collections::VecDeque;
     use std::future::Future;
+    #[cfg(target_os = "macos")]
     use std::net::TcpListener;
     use std::pin::Pin;
     use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
     use std::sync::{Arc, Mutex};
+    #[cfg(target_os = "macos")]
     use std::thread;
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
+    #[cfg(target_os = "macos")]
+    use std::time::Instant;
     use uuid::Uuid;
 
     struct FakeRunner {
