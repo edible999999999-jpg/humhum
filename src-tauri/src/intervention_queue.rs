@@ -102,18 +102,16 @@ impl InterventionQueue {
         let thread_id = &self.entries[index].thread_id;
         let provider = self.entries[index].provider;
         let target_is_retry = self.entries[index].status == InterventionStatus::Failed;
-        Ok(!self
-            .entries
-            .iter()
-            .enumerate()
-            .any(|(other_index, entry)| {
+        Ok(
+            !self.entries.iter().enumerate().any(|(other_index, entry)| {
                 other_index != index
                     && entry.provider == provider
                     && entry.thread_id == *thread_id
                     && (entry.status == InterventionStatus::Sending
                         || ((target_is_retry || other_index < index)
                             && entry.status == InterventionStatus::Pending))
-            }))
+            }),
+        )
     }
 
     pub fn enqueue(
@@ -378,7 +376,10 @@ mod tests {
         queue.mark_failed(&first.id, "thread not found").unwrap();
         queue.mark_sending(&second.id).unwrap();
 
-        assert!(queue.mark_sending(&first.id).unwrap_err().contains("active"));
+        assert!(queue
+            .mark_sending(&first.id)
+            .unwrap_err()
+            .contains("active"));
     }
 
     #[test]
@@ -399,7 +400,10 @@ mod tests {
                 .status,
             InterventionStatus::Pending
         );
-        assert!(queue.mark_sending(&first.id).unwrap_err().contains("active"));
+        assert!(queue
+            .mark_sending(&first.id)
+            .unwrap_err()
+            .contains("active"));
         assert!(queue.mark_sending(&second.id).is_ok());
     }
 

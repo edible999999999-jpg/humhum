@@ -2333,9 +2333,7 @@ async fn handle_mobile_request(
     Ok(with_security_headers(response))
 }
 
-async fn refresh_mobile_hush_context(
-    app: &tauri::AppHandle,
-) -> Result<serde_json::Value, String> {
+async fn refresh_mobile_hush_context(app: &tauri::AppHandle) -> Result<serde_json::Value, String> {
     let bridge = app
         .state::<Arc<crate::wechat_hush_bridge::WechatHushBridge>>()
         .inner()

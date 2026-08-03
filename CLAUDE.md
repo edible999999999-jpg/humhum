@@ -24,7 +24,7 @@ curl -X POST http://localhost:31275/event \
   -d '{"hook_event_name":"TaskCompleted","session_id":"test-123","payload":{}}'
 ```
 
-无 lint / test 配置。TypeScript 类型检查通过 `tsc`（`npm run build` 包含）。
+前端测试：`npm test`（vitest + node --test via `scripts/run-tests.mjs`）。完整测试套件：`npm run test:all`（含 relay 测试）。Rust 测试：`cd src-tauri && cargo test --lib`。类型检查：`npx tsc --noEmit` 或 `npm run build`。无 ESLint/Prettier 配置；类型安全依赖 tsc。
 
 ## 架构
 

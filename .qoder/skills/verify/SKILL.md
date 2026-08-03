@@ -9,12 +9,12 @@ Run these from the repo root, in order. Do not stop at the first failure unless 
 
 1. Frontend typecheck (the only frontend quality gate — there is no ESLint/Prettier):
    ```bash
-   pnpm exec tsc --noEmit
+   npx tsc --noEmit
    ```
 
 2. Frontend unit tests (vitest):
    ```bash
-   pnpm test
+   npm test
    ```
 
 3. Rust checks (must run inside `src-tauri/`):
@@ -25,6 +25,6 @@ Run these from the repo root, in order. Do not stop at the first failure unless 
 Then summarize: report each gate as pass/fail, and for any failure show the specific error(s) and the file/line. If everything passes, say so concisely.
 
 Notes:
-- Use `pnpm` (canonical package manager). If `pnpm` is unavailable, fall back to `npm` equivalents (`npx tsc --noEmit`, `npm test`).
+- Use `npm` (canonical package manager, per `package.json` `packageManager` field).
 - `cargo fmt --check` only reports formatting drift; run `cargo fmt` (without `--check`) to auto-fix, then re-run the check.
 - Do not use `--no-verify` or otherwise bypass gates. Fix the root cause of any failure.

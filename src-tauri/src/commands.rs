@@ -1089,10 +1089,7 @@ async fn deliver_queued_codex_message(
     }
 }
 
-fn record_accepted_delivery(
-    queue: &std::sync::Mutex<InterventionQueue>,
-    intervention_id: &str,
-) {
+fn record_accepted_delivery(queue: &std::sync::Mutex<InterventionQueue>, intervention_id: &str) {
     if let Ok(mut queue) = queue.lock() {
         let _ = queue.mark_delivered(intervention_id);
     }

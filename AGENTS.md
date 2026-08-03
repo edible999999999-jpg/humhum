@@ -155,3 +155,5 @@ Rust backend commands live in `src-tauri/`. Frontend code lives in `src/`.
 - Hub UI modules live in `src/components/Hub/`.
 
 When adding a feature, ask: "Does this help the user feel understood and in control?" If the answer is only "it exposes more data", redesign it.
+
+Before marking work done or opening a PR, invoke the `verify` skill to run all quality gates (frontend typecheck + vitest, Rust fmt/clippy/test). This mirrors CI and prevents drift from reaching main.

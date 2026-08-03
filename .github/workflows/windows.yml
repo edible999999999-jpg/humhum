@@ -103,8 +103,12 @@ jobs:
       - name: Build frontend
         run: npm run build
 
-      - name: Check Rust backend
-        run: cargo check --manifest-path src-tauri/Cargo.toml --locked
+      - name: Check Rust formatting
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
+
+      - name: Lint Rust backend
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --locked
+        # TODO: add `-- -D warnings` once existing warnings on main are cleaned
 
       - name: Test Rust backend
         run: cargo test --manifest-path src-tauri/Cargo.toml --locked --lib

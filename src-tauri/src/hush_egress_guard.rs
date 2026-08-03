@@ -116,9 +116,7 @@ mod tests {
         let status = status();
         assert!(status.enforced);
         assert_eq!(status.policy_version, 2);
-        assert!(status
-            .message
-            .contains("不会发送给 AI 或第三方"));
+        assert!(status.message.contains("不会发送给 AI 或第三方"));
         assert!(status.message.contains("逐条确认"));
     }
 

@@ -1,0 +1,87 @@
+name: macOS CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Test and check (macOS)
+    runs-on: macos-14
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: npm
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.89.0
+          components: rustfmt, clippy
+
+      - name: Cache Rust build data
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Run frontend and relay tests
+        run: npm run test:all
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Restore the pinned WeChat native runtime
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          runtime_dir="$RUNNER_TEMP/wechat-native-runtime"
+          mkdir -p "$runtime_dir"
+          gh release download native-wechat-runtime-1 \
+            --pattern humhum-wechat-reader-aarch64-apple-darwin \
+            --pattern libWCDB.dylib \
+            --dir "$runtime_dir"
+
+          reader="$runtime_dir/humhum-wechat-reader-aarch64-apple-darwin"
+          wcdb="$runtime_dir/libWCDB.dylib"
+          manifest="src-tauri/resources/wechat/native-manifest.json"
+          test -f "$reader"
+          test -f "$wcdb"
+          test -f "$manifest"
+
+          expected_reader="$(jq -er '.reader.sha256' "$manifest")"
+          expected_wcdb="$(jq -er '.wcdb.sha256' "$manifest")"
+          actual_reader="$(shasum -a 256 "$reader" | awk '{print $1}')"
+          actual_wcdb="$(shasum -a 256 "$wcdb" | awk '{print $1}')"
+          test "$actual_reader" = "$expected_reader"
+          test "$actual_wcdb" = "$expected_wcdb"
+
+          install -m 0755 "$reader" \
+            src-tauri/binaries/humhum-wechat-reader-aarch64-apple-darwin
+          install -m 0644 "$wcdb" src-tauri/resources/wechat/libWCDB.dylib
+
+      - name: Check and test Rust backend
+        run: cd src-tauri && cargo fmt --check && cargo clippy -- -D warnings && cargo test --lib
