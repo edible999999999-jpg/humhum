@@ -83,6 +83,7 @@ fn first_existing(candidates: Vec<PathBuf>) -> Option<PathBuf> {
         .find(|path| std::fs::metadata(path).is_ok_and(|metadata| metadata.is_file()))
 }
 
+#[cfg(target_os = "macos")]
 fn qoder_ide_candidates() -> Vec<PathBuf> {
     let mut candidates = vec![PathBuf::from(
         "/Applications/Qoder.app/Contents/Resources/app/bin/code",
@@ -93,6 +94,12 @@ fn qoder_ide_candidates() -> Vec<PathBuf> {
     candidates
 }
 
+#[cfg(not(target_os = "macos"))]
+fn qoder_ide_candidates() -> Vec<PathBuf> {
+    Vec::new()
+}
+
+#[cfg(target_os = "macos")]
 fn qoder_work_candidates() -> Vec<PathBuf> {
     let mut candidates = vec![PathBuf::from(
         "/Applications/QoderWork.app/Contents/Resources/bin/qodercli",
@@ -103,11 +110,17 @@ fn qoder_work_candidates() -> Vec<PathBuf> {
     candidates
 }
 
+#[cfg(not(target_os = "macos"))]
+fn qoder_work_candidates() -> Vec<PathBuf> {
+    Vec::new()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
+    #[cfg(target_os = "macos")]
     fn qoder_candidates_are_fixed_application_paths() {
         let ide = qoder_ide_candidates();
         let work = qoder_work_candidates();
@@ -116,6 +129,13 @@ mod tests {
         assert!(work.iter().all(|path| path.is_absolute()));
         assert!(ide.iter().all(|path| path.ends_with("app/bin/code")));
         assert!(work.iter().all(|path| path.ends_with("bin/qodercli")));
+    }
+
+    #[test]
+    #[cfg(not(target_os = "macos"))]
+    fn qoder_candidates_are_empty_on_unsupported_platforms() {
+        assert!(qoder_ide_candidates().is_empty());
+        assert!(qoder_work_candidates().is_empty());
     }
 
     #[test]

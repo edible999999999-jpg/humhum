@@ -487,7 +487,7 @@ fn extract_absolute_skill_paths(input: &str) -> Vec<PathBuf> {
             .rev()
             .find(|(index, character)| {
                 matches!(character, '\'' | '"')
-                    && input[index + character.len_utf8()..filename].starts_with('/')
+                    && is_absolute_path_text(&input[index + character.len_utf8()..filename])
             })
             .map(|(index, character)| index + character.len_utf8())
             .or_else(|| {
@@ -499,12 +499,25 @@ fn extract_absolute_skill_paths(input: &str) -> Vec<PathBuf> {
             })
             .unwrap_or(0);
         let candidate = &input[start..end];
-        if candidate.starts_with('/') {
+        if is_absolute_path_text(candidate) {
             paths.push(PathBuf::from(candidate));
         }
         cursor = end;
     }
     paths
+}
+
+fn is_absolute_path_text(candidate: &str) -> bool {
+    if Path::new(candidate).is_absolute() {
+        return true;
+    }
+
+    let bytes = candidate.as_bytes();
+    let has_windows_drive = bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'\\' | b'/');
+    has_windows_drive || candidate.starts_with(r"\\")
 }
 
 fn is_path_boundary(character: char) -> bool {
@@ -860,6 +873,23 @@ enabled = false
         assert_eq!(
             extract_used_skill_paths_from_session(&session),
             vec![PathBuf::from(skill)]
+        );
+    }
+
+    #[test]
+    fn extracts_windows_skill_paths_from_tool_calls() {
+        let unquoted = r"C:\Users\me\.codex\skills\personal\SKILL.md";
+        let quoted = r"C:\Users\me\My Skills\release helper\SKILL.md";
+        let session = format!(
+            "{{\"type\":\"response_item\",\"payload\":{{\"type\":\"custom_tool_call\",\"name\":\"exec\",\"input\":\"cat {}\"}}}}\n\
+             {{\"type\":\"response_item\",\"payload\":{{\"type\":\"custom_tool_call\",\"name\":\"exec\",\"input\":\"cat \\\"{}\\\"\"}}}}",
+            unquoted.replace('\\', r"\\"),
+            quoted.replace('\\', r"\\"),
+        );
+
+        assert_eq!(
+            extract_used_skill_paths_from_session(&session),
+            vec![PathBuf::from(unquoted), PathBuf::from(quoted)]
         );
     }
 

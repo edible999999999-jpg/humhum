@@ -427,12 +427,20 @@ fn clean_optional(value: Option<String>) -> Option<String> {
     value.and_then(clean_text)
 }
 
+#[cfg(unix)]
 fn sync_parent_directory(parent: &Path) -> Result<(), String> {
     let directory = fs::File::open(parent)
         .map_err(|error| format!("Could not open Hexa goal store directory: {error}"))?;
     directory
         .sync_all()
         .map_err(|error| format!("Could not sync Hexa goal store directory: {error}"))
+}
+
+#[cfg(not(unix))]
+fn sync_parent_directory(_parent: &Path) -> Result<(), String> {
+    // std::fs cannot open directories for syncing on Windows. The goal file itself
+    // is synced before the atomic rename, so keep the extra durability step on Unix.
+    Ok(())
 }
 
 #[cfg(test)]
