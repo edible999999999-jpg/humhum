@@ -2449,10 +2449,12 @@ mod tests {
                 && asset.last_used_at.as_deref() == Some("2026-07-19T09:30:00+00:00")
                 && asset.tags.iter().any(|tag| tag == "plugin:superpowers")
         }));
-        assert!(assets
-            .iter()
-            .any(|asset| asset.file_path == agent_file.to_string_lossy()
-                && asset.asset_type == "agent"));
+        let canonical_agent_file = agent_file.canonicalize().unwrap();
+        assert!(assets.iter().any(|asset| {
+            asset.asset_type == "agent"
+                && Path::new(&asset.file_path).canonicalize().ok().as_ref()
+                    == Some(&canonical_agent_file)
+        }));
         assert!(!skills.iter().any(|asset| {
             asset.file_path.contains("/.system/") || asset.file_path.contains("/marketplaces/")
         }));
