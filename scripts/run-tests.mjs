@@ -12,6 +12,7 @@ const LOCAL_VITEST_ENTRY = fileURLToPath(
 );
 export const NODE_TEST_FILES = [
   "scripts/run-tests.test.mjs",
+  "scripts/ci-workflow-contract.test.mjs",
   "scripts/hush-egress-boundary.test.mjs",
   "scripts/finalize-wechat-app-runtime.test.mjs",
   ...HEXA_TEST_FILES,
