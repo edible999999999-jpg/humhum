@@ -86,3 +86,15 @@ jobs:
       - name: Check and test Rust backend
         # TODO: add `-- -D warnings` once existing warnings on main are cleaned.
         run: cd src-tauri && cargo fmt --check && cargo clippy && cargo test --lib
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Run Android unit tests
+        run: cd android && ./gradlew testDebugUnitTest
