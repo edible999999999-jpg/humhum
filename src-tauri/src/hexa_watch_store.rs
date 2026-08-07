@@ -326,19 +326,10 @@ struct HexaWatchStoreSnapshot {
     agents: HashMap<String, HexaWatchedAgent>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct HexaWatchStore {
     agents: HashMap<String, HexaWatchedAgent>,
     storage_path: Option<PathBuf>,
-}
-
-impl Default for HexaWatchStore {
-    fn default() -> Self {
-        Self {
-            agents: HashMap::new(),
-            storage_path: None,
-        }
-    }
 }
 
 impl HexaWatchStore {

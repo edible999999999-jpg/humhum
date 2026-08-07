@@ -114,6 +114,7 @@ impl InterventionQueue {
         )
     }
 
+    #[cfg(test)]
     pub fn enqueue(
         &mut self,
         thread_id: &str,
@@ -236,9 +237,7 @@ impl InterventionQueue {
             .ok_or_else(|| format!("Queued intervention not found: {id}"))?;
         self.entries[index].status = InterventionStatus::Delivered;
         self.entries[index].last_error = None;
-        if let Err(error) = self.persist() {
-            return Err(error);
-        }
+        self.persist()?;
         self.entries.remove(index);
         // The durable delivered marker is the duplicate-send boundary. If compacting
         // the file fails, startup cleanup will remove that marker safely later.

@@ -46,7 +46,7 @@ npm test
 ### Rust checks (selected when Rust source/config changed; run inside `src-tauri/`)
 
 ```bash
-cd src-tauri && cargo fmt --check && cargo clippy --locked && cargo test --lib
+cd src-tauri && cargo fmt --check && cargo clippy --locked -- -D warnings && cargo test --lib
 ```
 
 ## 3. Summarize
@@ -56,5 +56,5 @@ Report each selected gate as pass/fail, and for any failure show the specific er
 Notes:
 - Use `npm` (canonical package manager, per `package.json` `packageManager` field).
 - `cargo fmt --check` only reports formatting drift; run `cargo fmt` (without `--check`) to auto-fix, then re-run the check.
-- `cargo clippy --locked` reports warnings without failing the build. `-- -D warnings` is the goal once existing warnings on main are cleaned.
+- `cargo clippy --locked -- -D warnings` treats any lint as a failure (default targets: lib + bins, matching CI). Fix the lint; do not downgrade the gate.
 - Do not use `--no-verify` or otherwise bypass gates. Fix the root cause of any failure.

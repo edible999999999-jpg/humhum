@@ -659,9 +659,8 @@ impl MobileBridgeState {
             .publisher
             .clone();
         let publisher_error = publisher.and_then(|publisher| {
-            publisher.clear().err().map(|error| {
+            publisher.clear().err().inspect(|_error| {
                 publisher.stop();
-                error
             })
         });
         self.relay_changes.notify_one();
@@ -694,9 +693,8 @@ impl MobileBridgeState {
             .publisher
             .clone();
         let publisher_error = publisher.and_then(|publisher| {
-            publisher.revoke(device_id).err().map(|error| {
+            publisher.revoke(device_id).err().inspect(|_error| {
                 publisher.stop();
-                error
             })
         });
         self.relay_changes.notify_one();
@@ -785,6 +783,7 @@ fn valid_anywhere_identifier(value: &str) -> bool {
     !value.trim().is_empty() && value.chars().count() <= 256
 }
 
+#[cfg(test)]
 fn parse_anywhere_request(
     scope: MobileDeviceScope,
     body: &serde_json::Value,
@@ -2531,9 +2530,8 @@ fn revoke_mobile_device(
                 .publisher
                 .clone();
             let publisher_error = publisher.and_then(|publisher| {
-                publisher.revoke(&device_id).err().map(|error| {
+                publisher.revoke(&device_id).err().inspect(|_error| {
                     publisher.stop();
-                    error
                 })
             });
             bridge.relay_changes.notify_one();
@@ -3456,6 +3454,7 @@ impl MobileDeviceStore {
         Ok(Self { path, devices })
     }
 
+    #[cfg(test)]
     fn add_device(
         &mut self,
         name: &str,

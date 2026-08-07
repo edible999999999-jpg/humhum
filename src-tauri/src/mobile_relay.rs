@@ -1004,6 +1004,7 @@ fn parse_registration(response: &[u8]) -> Result<RelayRegistrationResponse, Stri
     Ok(registration)
 }
 
+#[cfg(test)]
 fn split_registration(
     device_id: &str,
     base_url: &RelayBaseUrl,
@@ -1373,6 +1374,7 @@ impl MobileRelaySecretStore {
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn remove(&mut self, device_id: &str) -> Result<(), String> {
         let _ = self.take(device_id)?;
         Ok(())

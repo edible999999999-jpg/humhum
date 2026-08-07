@@ -108,8 +108,7 @@ jobs:
         run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
 
       - name: Lint Rust backend
-        run: cargo clippy --manifest-path src-tauri/Cargo.toml --locked
-        # TODO: add `-- -D warnings` once existing warnings on main are cleaned
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --locked -- -D warnings
 
       - name: Test Rust backend
         run: cargo test --manifest-path src-tauri/Cargo.toml --locked --lib

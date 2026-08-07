@@ -111,19 +111,10 @@ struct HexaGoalStoreSnapshot {
     goals: HashMap<String, HexaDevelopmentGoal>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct HexaGoalStore {
     goals: HashMap<String, HexaDevelopmentGoal>,
     storage_path: Option<PathBuf>,
-}
-
-impl Default for HexaGoalStore {
-    fn default() -> Self {
-        Self {
-            goals: HashMap::new(),
-            storage_path: None,
-        }
-    }
 }
 
 impl HexaGoalStore {

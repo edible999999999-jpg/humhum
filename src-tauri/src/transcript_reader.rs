@@ -141,7 +141,7 @@ fn parse_latest_codex_plan_from_lines(recent_lines: &[String]) -> Option<CodexPl
     let mut latest: Option<CodexPlanSnapshot> = None;
 
     for line in recent_lines {
-        let Ok(value) = serde_json::from_str::<Value>(&line) else {
+        let Ok(value) = serde_json::from_str::<Value>(line) else {
             continue;
         };
         let payload = value.get("payload").unwrap_or(&Value::Null);
@@ -227,7 +227,7 @@ fn latest_codex_turn_lifecycle_from_lines(
     let mut active_started_at = None;
 
     for line in recent_lines {
-        let Ok(value) = serde_json::from_str::<Value>(&line) else {
+        let Ok(value) = serde_json::from_str::<Value>(line) else {
             continue;
         };
         let payload = value.get("payload").unwrap_or(&Value::Null);

@@ -194,7 +194,7 @@ impl KnowledgeStore {
         store
     }
 
-    fn load_from_file(path: &PathBuf) -> KnowledgeData {
+    fn load_from_file(path: &Path) -> KnowledgeData {
         match read_private_text(path) {
             Some(contents) => serde_json::from_str(&contents).unwrap_or_default(),
             None => KnowledgeData::default(),

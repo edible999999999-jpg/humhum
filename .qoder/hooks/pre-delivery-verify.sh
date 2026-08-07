@@ -87,8 +87,7 @@ if [ "$run_rust" = true ]; then
   (
     cd src-tauri
     cargo fmt --check || exit 1
-    cargo clippy --locked || exit 1
-    # TODO: add `-- -D warnings` once existing warnings on main are cleaned
+    cargo clippy --locked -- -D warnings || exit 1
     cargo test --lib || exit 1
   ) || fail=1
 fi

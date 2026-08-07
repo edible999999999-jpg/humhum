@@ -297,7 +297,7 @@ impl WechatHushBridge {
                 } else {
                     "微信本地读取需要完成一次准备".to_string()
                 };
-                self.status_from_readiness(&config, &executable, readiness, Some(state), message)
+                self.status_from_readiness(config, executable, readiness, Some(state), message)
             }
             Err(error) => WechatHushStatus {
                 state: WechatHushState::Error,

@@ -2296,7 +2296,10 @@ fn find_application_path(search_names: &[&str]) -> Option<String> {
 }
 
 async fn open_native_application(name: &str, app_path: Option<&str>) -> Result<(), String> {
+    // The early `return` is needed on non-macOS targets where cfg blocks below
+    // still compile; clippy only sees it as redundant on macOS.
     #[cfg(target_os = "macos")]
+    #[allow(clippy::needless_return)]
     {
         let mut command = Command::new("open");
         if let Some(path) = app_path {
@@ -2348,7 +2351,10 @@ async fn open_native_application(name: &str, app_path: Option<&str>) -> Result<(
 }
 
 fn dingtalk_local_source_candidates(home: &Path) -> Vec<PathBuf> {
+    // The early `return` is needed on non-macOS targets; clippy only flags it on
+    // macOS where the trailing cfg blocks compile out.
     #[cfg(target_os = "macos")]
+    #[allow(clippy::needless_return)]
     {
         return vec![
             home.join("Library/Application Support/DingTalk"),
@@ -3419,11 +3425,7 @@ fn parse_codex_session_file(path: &Path) -> Option<Session> {
         .map(|date| date.to_rfc3339());
     let started_at = started_at.or_else(|| modified_at.clone())?;
     let last_event_at = modified_at
-        .filter(|value| {
-            last_event_at
-                .as_ref()
-                .map_or(true, |current| value > current)
-        })
+        .filter(|value| last_event_at.as_ref().is_none_or(|current| value > current))
         .or(last_event_at)
         .unwrap_or_else(|| started_at.clone());
     let status = modified

@@ -84,8 +84,7 @@ jobs:
           install -m 0644 "$wcdb" src-tauri/resources/wechat/libWCDB.dylib
 
       - name: Check and test Rust backend
-        # TODO: add `-- -D warnings` once existing warnings on main are cleaned.
-        run: cd src-tauri && cargo fmt --check && cargo clippy && cargo test --lib
+        run: cd src-tauri && cargo fmt --check && cargo clippy --locked -- -D warnings && cargo test --lib
 
       - name: Set up JDK
         uses: actions/setup-java@v4

@@ -259,13 +259,8 @@ mod tests {
         let nonce = "019f2dc3-34d4-7051-81fe-d1d5ab043849";
 
         let url = focus_request_url(&workspace, &route, nonce).unwrap();
-        let encoded_workspace = percent_encode(
-            &workspace
-                .canonicalize()
-                .unwrap()
-                .to_string_lossy()
-                .to_string(),
-        );
+        let encoded_workspace =
+            percent_encode(&workspace.canonicalize().unwrap().to_string_lossy());
 
         assert!(url.starts_with("cursor://humhum.session-focus/focus?"));
         assert!(url.contains(&format!("cwd={encoded_workspace}")));
