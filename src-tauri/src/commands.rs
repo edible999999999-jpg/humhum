@@ -3642,10 +3642,21 @@ pub(crate) async fn resolve_hook_permission(
                     Ok(())
                 }
                 Err(_) => {
-                    log::error!(
-                        "[Permission] Receiver dropped — HTTP connection already timed out"
+                    // The receiver was dropped because the hook's ~120s window
+                    // already elapsed: the agent received a timeout and moved on,
+                    // so this decision has nowhere to land. State that plainly
+                    // instead of blaming the user's reaction time — approval is a
+                    // synchronous, time-boxed gate, not a mailbox that can be
+                    // answered later. (True offline/late approval would need an
+                    // async hook protocol; tracked for a later release.)
+                    log::warn!(
+                        "[Permission] {} decided after its approval window closed; the agent already timed out",
+                        event_id
                     );
-                    Err("Connection timed out — hook already expired. Try responding faster next time.".to_string())
+                    Err(
+                        "审批窗口已过期：该请求已超时，agent 已按默认处理，这次批准不再生效。"
+                            .to_string(),
+                    )
                 }
             }
         } else {

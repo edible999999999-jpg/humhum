@@ -41,6 +41,13 @@ pub struct PendingRequest {
 /// Maps event_id -> pending request (sender + event info)
 pub type PendingMap = Arc<Mutex<HashMap<String, PendingRequest>>>;
 
+/// How long the server blocks waiting for a permission decision. Kept just
+/// under the hook script's `curl --max-time 125` so the whole window is spent
+/// waiting for the user (incl. a phone that just reconnected) rather than
+/// timing out early and wasting the remaining seconds. Do not exceed the
+/// script budget — the script would abandon the request first.
+const PERMISSION_WAIT_SECS: u64 = 123;
+
 /// Start the local HTTP server that receives hook events from Claude Code
 pub async fn start_server(app_handle: tauri::AppHandle) {
     let config = {
@@ -555,8 +562,14 @@ async fn handle_event(
             );
         }
 
-        // Wait for the frontend to respond with a decision (timeout: 120s)
-        let decision = tokio::time::timeout(std::time::Duration::from_secs(120), rx).await;
+        // Wait for the user's decision. This is a synchronous, time-boxed gate:
+        // the agent's hook script waits on this same request (`curl --max-time
+        // 125`), so we wait just under that budget to give a briefly-offline
+        // phone the maximum in-window chance to answer before the script itself
+        // gives up. Approval cannot be granted after this elapses — the agent
+        // will already have received a timeout and proceeded.
+        let decision =
+            tokio::time::timeout(std::time::Duration::from_secs(PERMISSION_WAIT_SECS), rx).await;
 
         // Clean up PendingMap entry regardless of outcome
         {
