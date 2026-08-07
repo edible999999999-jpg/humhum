@@ -10,8 +10,14 @@ pub fn followup_args(session_id: &str) -> Result<Vec<String>, String> {
         "--print",
         "--resume",
         session_id,
+        // `default`, not `dontAsk`: a remotely dispatched turn must still go
+        // through the same PermissionRequest hook a local turn does, so a
+        // high-risk tool (Bash, file writes) surfaces an approval the user can
+        // grant from their phone rather than running unattended. This matches
+        // the QoderWork follow-up, which already uses `default`. Low-risk tool
+        // calls are still auto-allowed by Claude under `default`.
         "--permission-mode",
-        "dontAsk",
+        "default",
         "--output-format",
         "json",
         "--",
@@ -105,11 +111,29 @@ mod tests {
                 "--resume",
                 "019f2dc3-34d4-7051-81fe-d1d5ab043849",
                 "--permission-mode",
-                "dontAsk",
+                "default",
                 "--output-format",
                 "json",
                 "--",
             ]
+        );
+    }
+
+    #[test]
+    fn remote_followup_never_bypasses_the_permission_gate() {
+        // Regression guard for the remote-approval contract: a phone-dispatched
+        // turn must not silently auto-approve tools. `dontAsk` and the
+        // skip-permissions escape hatches must never appear in the resume args.
+        let args = followup_args("019f2dc3-34d4-7051-81fe-d1d5ab043849").unwrap();
+        assert!(!args.iter().any(|arg| arg == "dontAsk"));
+        assert!(!args
+            .iter()
+            .any(|arg| arg.contains("dangerously") || arg.contains("skip-permissions")));
+        // The gate is explicitly `default`, which routes through the hook.
+        let mode = args.iter().position(|arg| arg == "--permission-mode");
+        assert_eq!(
+            mode.and_then(|i| args.get(i + 1)).map(String::as_str),
+            Some("default")
         );
     }
 
