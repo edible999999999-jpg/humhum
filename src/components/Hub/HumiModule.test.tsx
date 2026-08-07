@@ -240,6 +240,7 @@ async function openOperations(host: HTMLElement): Promise<void> {
 describe("Humi operational controls", () => {
   beforeEach(() => {
     sessionStorage.clear();
+    localStorage.clear();
     invokeMock.mockReset();
     invokeMock.mockImplementation((command: string) =>
       Promise.resolve(invokeResult(command)),
@@ -642,6 +643,7 @@ describe("Humi operational controls", () => {
               provider: "codex",
               display_name: "Codex",
               ready: true,
+              supported: true,
               status: "ready",
               detail: "使用现有登录",
             },
@@ -649,6 +651,7 @@ describe("Humi operational controls", () => {
               provider: "claude",
               display_name: "Claude Code",
               ready: false,
+              supported: false,
               status: "transport_unavailable",
               detail: "尚未安装",
             },
@@ -666,6 +669,8 @@ describe("Humi operational controls", () => {
     expect(view.host.textContent).toContain("选择 Humi 的大脑");
     expect(view.host.textContent).toContain("使用 Agent 已有的登录");
     expect(view.host.textContent).not.toContain("输入 Token");
+    // Unsupported brains (no transport wired) are hidden, not shown disabled.
+    expect(view.host.textContent).not.toContain("Claude Code");
 
     await act(async () => {
       view.host.querySelector<HTMLButtonElement>(".humi-brain-provider.is-ready")?.click();

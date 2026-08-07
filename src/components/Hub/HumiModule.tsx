@@ -72,6 +72,8 @@ interface HumiBrainProviderStatus {
   provider: HumiBrainProvider;
   display_name: string;
   ready: boolean;
+  /** Whether the provider has a real transport. Unsupported ones are hidden. */
+  supported?: boolean;
   status: string;
   detail: string;
 }
@@ -196,6 +198,28 @@ const DEFAULT_KERNEL_ROOTS = [
 
 const HUMI_CHAT_STORAGE_KEY = "humhum:humi:chatMessages";
 const HUMI_ASK_TIMEOUT_MS = 100_000;
+
+// Persist the visible transcript across restarts. Prefer localStorage; fall
+// back to sessionStorage, then an in-memory shim, so a missing or throwing
+// Storage implementation (private mode, restricted webview) never breaks the
+// component at import time.
+const HUMI_CHAT_STORAGE: Pick<Storage, "getItem" | "setItem"> = (() => {
+  try {
+    if (typeof localStorage !== "undefined") return localStorage;
+  } catch {
+    // fall through
+  }
+  try {
+    if (typeof sessionStorage !== "undefined") return sessionStorage;
+  } catch {
+    // fall through
+  }
+  const memory = new Map<string, string>();
+  return {
+    getItem: (key: string) => memory.get(key) ?? null,
+    setItem: (key: string, value: string) => void memory.set(key, value),
+  };
+})();
 const DEFAULT_HUMI_CHAT_MESSAGES: HumiChatMessage[] = [
   {
     id: "humi-welcome",
@@ -206,7 +230,7 @@ const DEFAULT_HUMI_CHAT_MESSAGES: HumiChatMessage[] = [
 
 function loadHumiChatMessages(): HumiChatMessage[] {
   try {
-    const raw = sessionStorage.getItem(HUMI_CHAT_STORAGE_KEY);
+    const raw = HUMI_CHAT_STORAGE.getItem(HUMI_CHAT_STORAGE_KEY);
     if (!raw) return DEFAULT_HUMI_CHAT_MESSAGES;
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return DEFAULT_HUMI_CHAT_MESSAGES;
@@ -474,7 +498,14 @@ export function HumiModule({ onActivityChange, onOpenHexa }: HumiModuleProps) {
   }, [appConfig?.pi.url, appConfig?.pi.token, appConfig?.pi.model_name]);
 
   useEffect(() => {
-    sessionStorage.setItem(HUMI_CHAT_STORAGE_KEY, JSON.stringify(chatMessages));
+    // Persist across restarts (localStorage, not sessionStorage) so the
+    // conversation the user sees survives a relaunch and stays aligned with the
+    // Codex thread the backend keeps under ~/.humhum/brain/sessions.json.
+    try {
+      HUMI_CHAT_STORAGE.setItem(HUMI_CHAT_STORAGE_KEY, JSON.stringify(chatMessages));
+    } catch {
+      // Quota or private-mode failure — a lost transcript is not worth crashing.
+    }
   }, [chatMessages]);
 
   useEffect(() => {
@@ -732,7 +763,9 @@ export function HumiModule({ onActivityChange, onOpenHexa }: HumiModuleProps) {
                   <span>使用 Agent 已有的登录，不需要再填模型 Token。</span>
                 </div>
                 <div className="humi-brain-provider-list">
-                  {brainStatus.providers.map((provider) => (
+                  {brainStatus.providers
+                    .filter((provider) => provider.supported !== false)
+                    .map((provider) => (
                     <button
                       key={provider.provider}
                       type="button"

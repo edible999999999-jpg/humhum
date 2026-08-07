@@ -9,6 +9,12 @@ pub struct BrainProviderStatus {
     pub provider: BrainProvider,
     pub display_name: String,
     pub ready: bool,
+    /// Whether this provider has a real transport wired up at all. Codex is the
+    /// only brain shipped in 1.0; Qoder and Claude are structurally unavailable
+    /// (their transport is not implemented yet) rather than merely disconnected,
+    /// so the UI hides them instead of showing a permanently-disabled option.
+    /// Flip to `true` here once the transport lands.
+    pub supported: bool,
     pub status: String,
     pub detail: String,
 }
@@ -32,6 +38,7 @@ pub fn provider_statuses(
             provider: BrainProvider::Codex,
             display_name: "Codex".into(),
             ready: codex_ready,
+            supported: true,
             status: if codex_ready {
                 "ready".into()
             } else {
@@ -50,6 +57,7 @@ pub fn provider_statuses(
             provider: BrainProvider::Qoder,
             display_name: "Qoder CLI".into(),
             ready: qoder_transport_ready,
+            supported: qoder_transport_ready,
             status: if qoder_transport_ready {
                 "ready".into()
             } else {
@@ -65,6 +73,7 @@ pub fn provider_statuses(
             provider: BrainProvider::Claude,
             display_name: "Claude Code".into(),
             ready: claude_transport_ready,
+            supported: claude_transport_ready,
             status: if claude_transport_ready {
                 "ready".into()
             } else {
@@ -195,19 +204,55 @@ mod tests {
                 .unwrap()
                 .ready
         );
+        let qoder = providers
+            .iter()
+            .find(|provider| provider.provider == BrainProvider::Qoder)
+            .unwrap();
+        assert!(!qoder.ready);
+        // Qoder has no transport wired, so it is unsupported and the UI hides it.
+        assert!(!qoder.supported);
+
+        let claude = providers
+            .iter()
+            .find(|provider| provider.provider == BrainProvider::Claude)
+            .unwrap();
+        assert!(!claude.ready);
+        assert!(!claude.supported);
+
+        // Codex is the only shipped brain and must be both supported and ready.
+        let codex = providers
+            .iter()
+            .find(|provider| provider.provider == BrainProvider::Codex)
+            .unwrap();
+        assert!(codex.supported);
+    }
+
+    #[test]
+    fn marks_agents_supported_once_their_transport_is_ready() {
+        let providers = provider_statuses(
+            &CodexBridgeHealth {
+                status: CodexBridgeStatus::Connected,
+                version: None,
+                last_connected_at: None,
+                message: "connected".into(),
+            },
+            true,
+            true,
+        );
+
         assert!(
-            !providers
+            providers
                 .iter()
                 .find(|provider| provider.provider == BrainProvider::Qoder)
                 .unwrap()
-                .ready
+                .supported
         );
         assert!(
-            !providers
+            providers
                 .iter()
                 .find(|provider| provider.provider == BrainProvider::Claude)
                 .unwrap()
-                .ready
+                .supported
         );
     }
 }
