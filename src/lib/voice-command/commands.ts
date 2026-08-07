@@ -23,16 +23,24 @@ export const VOICE_COMMANDS: VoiceCommandDefinition[] = [
   },
   {
     command: "reject",
+    // Rejection triggers are matched BEFORE confirmation so that a negated
+    // phrase ("不允许" / "don't allow") can never be read as approval by the
+    // confirm rules below. See matchCommand in handler.ts.
     triggers: [
       "拒绝",
       "不行",
       "不允许",
+      "不可以",
+      "不要",
+      "别",
       "取消",
       "deny",
       "reject",
-      "no",
       "cancel",
       "decline",
+      "don't allow",
+      "do not allow",
+      "no",
     ],
     description: "Deny the pending permission request",
   },

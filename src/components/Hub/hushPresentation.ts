@@ -9,7 +9,6 @@ export interface HushInboxMessage {
   tier: string;
   importance: number;
   conversation_kind?: HushChatScope | string;
-  suggested_reply?: string | null;
   received_at: string;
   source_id?: string | null;
   preview_limited?: boolean;

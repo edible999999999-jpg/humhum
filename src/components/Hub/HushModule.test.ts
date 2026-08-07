@@ -1016,7 +1016,7 @@ describe("HushModule conversation presentation", () => {
     expect(directContact).toBeDefined();
     expect(
       Array.from(view.host.querySelectorAll("button")).filter(
-        (button) => button.textContent?.trim() === "本地起草",
+        (button) => button.textContent?.trim() === "快捷短语",
       ),
     ).toHaveLength(0);
 
@@ -1029,7 +1029,7 @@ describe("HushModule conversation presentation", () => {
     ).toHaveLength(0);
     expect(
       Array.from(view.host.querySelectorAll("button")).filter(
-        (button) => button.textContent?.trim() === "本地起草",
+        (button) => button.textContent?.trim() === "快捷短语",
       ),
     ).toHaveLength(1);
     expect(view.host.querySelector(".hush-reply-composer textarea")).not.toBeNull();
@@ -1047,7 +1047,7 @@ describe("HushModule conversation presentation", () => {
     });
     expect(runHushReplySkillMock).not.toHaveBeenCalled();
 
-    const trigger = buttonByText(view.host, "本地起草");
+    const trigger = buttonByText(view.host, "快捷短语");
     await act(async () => {
       trigger.click();
       await Promise.resolve();

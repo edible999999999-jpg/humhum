@@ -76,7 +76,7 @@ describe("HushReplyComposer", () => {
 
     const localDraftButton = Array.from(
       container.querySelectorAll("button"),
-    ).find((button) => button.textContent?.includes("本地起草"));
+    ).find((button) => button.textContent?.includes("快捷短语"));
     expect(localDraftButton).toBeTruthy();
     await act(async () => localDraftButton?.click());
 

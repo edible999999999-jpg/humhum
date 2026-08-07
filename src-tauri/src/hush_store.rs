@@ -18,7 +18,6 @@ pub struct HushInboxMessage {
     pub importance: u8,
     #[serde(default = "default_conversation_kind")]
     pub conversation_kind: String,
-    pub suggested_reply: Option<String>,
     pub received_at: String,
     #[serde(default)]
     pub source_id: Option<String>,
@@ -51,7 +50,6 @@ pub struct HushInboundPayload {
     pub tier: Option<String>,
     pub importance: Option<u8>,
     pub conversation_kind: Option<String>,
-    pub suggested_reply: Option<String>,
     pub received_at: Option<String>,
     pub source_id: Option<String>,
     #[serde(default)]
@@ -247,7 +245,6 @@ impl HushStore {
                 tier: None,
                 importance: None,
                 conversation_kind: None,
-                suggested_reply: None,
                 received_at: None,
                 source_id: None,
                 preview_limited: false,
@@ -322,7 +319,6 @@ impl HushStore {
             tier,
             importance,
             conversation_kind,
-            suggested_reply: None,
             received_at: parsed
                 .received_at
                 .unwrap_or_else(|| chrono::Utc::now().to_rfc3339()),
@@ -590,7 +586,6 @@ mod tests {
             "text": "hello",
             "tier": "friends",
             "importance": 2,
-            "suggested_reply": null,
             "received_at": "2026-07-11T00:00:00Z",
             "raw": {}
         }))
@@ -602,7 +597,7 @@ mod tests {
     }
 
     #[test]
-    fn group_messages_never_receive_suggested_replies() {
+    fn group_messages_are_classified_as_group_conversations() {
         let path = temp_file("group-no-reply");
         let mut store = HushStore::with_file_path(path.clone());
         let message = store
@@ -612,19 +607,17 @@ mod tests {
                 "chat": "项目群",
                 "text": "大家下午三点一起评审",
                 "single_chat": false,
-                "suggested_reply": "看到了，我晚点回你",
                 "source_id": "dws:group-message",
                 "source": "dws"
             }))
             .unwrap();
 
         assert_eq!(message.conversation_kind, "group");
-        assert!(message.suggested_reply.is_none());
         let _ = std::fs::remove_file(path);
     }
 
     #[test]
-    fn direct_messages_do_not_persist_suggestions_before_user_requests_one() {
+    fn direct_messages_are_classified_as_direct_conversations() {
         let path = temp_file("direct-reply");
         let mut store = HushStore::with_file_path(path.clone());
         let message = store
@@ -640,7 +633,6 @@ mod tests {
             .unwrap();
 
         assert_eq!(message.conversation_kind, "direct");
-        assert!(message.suggested_reply.is_none());
         let _ = std::fs::remove_file(path);
     }
 
@@ -665,7 +657,6 @@ mod tests {
             tier: "family".to_string(),
             importance: 4,
             conversation_kind: "group".to_string(),
-            suggested_reply: None,
             received_at: "2026-07-18T01:00:00Z".to_string(),
             source_id: Some("dws:legacy-message".to_string()),
             preview_limited: false,
@@ -681,7 +672,7 @@ mod tests {
     }
 
     #[test]
-    fn unknown_conversation_types_do_not_receive_suggested_replies() {
+    fn unknown_conversation_types_are_classified_as_unknown() {
         let path = temp_file("unknown-no-reply");
         let mut store = HushStore::with_file_path(path.clone());
         let message = store
@@ -693,7 +684,6 @@ mod tests {
             .unwrap();
 
         assert_eq!(message.conversation_kind, "unknown");
-        assert!(message.suggested_reply.is_none());
         let _ = std::fs::remove_file(path);
     }
 
@@ -713,7 +703,6 @@ mod tests {
         let first = store.add_from_value(payload.clone()).unwrap();
         assert_eq!(first.received_at, "2026-07-11T01:02:03Z");
         assert!(first.preview_limited);
-        assert!(first.suggested_reply.is_none());
 
         let error = store.add_from_value(payload).unwrap_err();
         assert!(error.contains("Duplicate source message"));

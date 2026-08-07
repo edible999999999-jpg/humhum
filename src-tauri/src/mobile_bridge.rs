@@ -1242,13 +1242,12 @@ async fn sync_anywhere_device(
     if state.published_cursor.as_deref() == Some(cursor) {
         return;
     }
-    if let Ok(envelope) = anywhere_downlink_envelope(
-        &current,
-        "snapshot",
-        &random_anywhere_hex::<16>(),
-        page,
-        86_400,
-    ) {
+    let Ok(snapshot_request_id) = random_anywhere_hex::<16>() else {
+        return;
+    };
+    if let Ok(envelope) =
+        anywhere_downlink_envelope(&current, "snapshot", &snapshot_request_id, page, 86_400)
+    {
         let staged = bridge
             .relay_secrets
             .lock()
@@ -1297,12 +1296,11 @@ async fn flush_anywhere_downlink(
     Ok(())
 }
 
-fn random_anywhere_hex<const N: usize>() -> String {
+fn random_anywhere_hex<const N: usize>() -> Result<String, String> {
     let mut bytes = [0_u8; N];
-    if getrandom::fill(&mut bytes).is_err() {
-        return String::new();
-    }
-    hex::encode(bytes)
+    getrandom::fill(&mut bytes)
+        .map_err(|error| format!("Could not generate secure random bytes: {error}"))?;
+    Ok(hex::encode(bytes))
 }
 
 fn anywhere_downlink_envelope(
@@ -1323,7 +1321,7 @@ fn anywhere_downlink_envelope(
         now,
         now.saturating_add(lifetime_seconds),
         body,
-        &random_anywhere_hex::<12>(),
+        &random_anywhere_hex::<12>()?,
     )
     .map_err(|_| "Could not encrypt Anywhere downlink".to_string())
 }
@@ -1582,7 +1580,7 @@ fn sealed_temporary_pairing_body(
         now,
         now.saturating_add(PAIRING_TTL_SECONDS),
         &serde_json::json!({ "pairing": pairing }),
-        &random_anywhere_hex::<12>(),
+        &random_anywhere_hex::<12>()?,
     )
     .map_err(|_| "Could not seal temporary pairing response".to_string())?;
     Ok(serde_json::json!({ "ok": true, "sealed": sealed }))

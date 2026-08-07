@@ -126,9 +126,10 @@ export function HushReplyComposer({
           className="hush-reply-local-draft"
           disabled={busy}
           onClick={() => void createLocalDraft()}
+          title="按最新一条消息套用固定短语，不调用任何模型"
         >
           <MessageCircle size={14} aria-hidden="true" />
-          {status === "drafting" ? "正在起草" : "本地起草"}
+          {status === "drafting" ? "填入中" : "快捷短语"}
         </button>
       </div>
 

@@ -20,7 +20,7 @@ export async function runHushReplySkill(
     );
   const latest = ordered[ordered.length - 1];
   if (!latest) {
-    throw new Error("这次没有生成可显示的建议，请重试。");
+    throw new Error("这条对话还没有可参考的消息，快捷短语暂不可用。");
   }
 
   const text = latest.text.trim();

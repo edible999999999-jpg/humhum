@@ -21,6 +21,7 @@ import { failureSoundEvent } from "../../lib/audio/sound-event-policy";
 import { usePetState } from "../../hooks/usePetState";
 import { useEventBus } from "../../hooks/useEventBus";
 import { useVoiceCommand } from "../../hooks/useVoiceCommand";
+import { requiresManualConfirmation } from "../../lib/voice-command/handler";
 import { useKeyboardShortcuts } from "../../hooks/useKeyboardShortcuts";
 import { useAudioQueue } from "../../hooks/useAudioQueue";
 import { getPipeline } from "../../lib/bootstrap";
@@ -133,7 +134,7 @@ export function PetView() {
   }, []);
 
   const voiceRef = useRef<(cmd: VoiceCommand, text: string) => void>(() => {});
-  const { startListening, stopListening } = useVoiceCommand(
+  const { startListening, stopListening, voiceStatus } = useVoiceCommand(
     useCallback((cmd: VoiceCommand, text: string) => voiceRef.current(cmd, text), []),
   );
 
@@ -165,8 +166,27 @@ export function PetView() {
   // Wire voice commands via ref to avoid hook ordering issues
   voiceRef.current = (command: VoiceCommand, _text: string) => {
     if (!pendingPermission) return;
-    if (command === "confirm") handleKeyboardConfirm("allow");
-    else if (command === "reject") handleKeyboardConfirm("deny");
+    if (command === "reject") {
+      handleKeyboardConfirm("deny");
+      return;
+    }
+    if (command === "confirm") {
+      const toolName = (pendingPermission.payload as Record<string, unknown>)
+        ?.tool_name as string | undefined;
+      // High-risk tools (Bash, file writes, unknown) are never approved by
+      // voice alone — misrecognition must not run a shell command. Tell the
+      // user to confirm with the button or keyboard instead.
+      if (requiresManualConfirmation(toolName)) {
+        setNotification({
+          id: `voice-manual-${pendingPermission.id}`,
+          text: t("petview.voiceNeedsManual", { tool: toolName ?? "?" }),
+          timestamp: new Date(),
+          type: "system",
+        });
+        return;
+      }
+      handleKeyboardConfirm("allow");
+    }
   };
 
   // --- Dynamic window sizing ---
@@ -235,6 +255,22 @@ export function PetView() {
       );
     })();
   }, [targetHeight]);
+
+  // Surface microphone problems while a permission prompt is open, so the user
+  // knows voice is not being heard and can fall back to buttons/keyboard.
+  useEffect(() => {
+    if (!pendingPermission) return;
+    if (voiceStatus !== "unavailable" && voiceStatus !== "error") return;
+    setNotification({
+      id: `voice-status-${voiceStatus}`,
+      text:
+        voiceStatus === "unavailable"
+          ? t("petview.voiceUnavailable")
+          : t("petview.voiceError"),
+      timestamp: new Date(),
+      type: "system",
+    });
+  }, [voiceStatus, pendingPermission]);
 
   // Listen for server-side permission timeout to dismiss from queue
   useEffect(() => {

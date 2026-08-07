@@ -667,13 +667,6 @@ export function HushModule() {
       const readableMessage: HushInboxMessage = {
         ...message,
         text: formatHushMessageText(message.text) || "非文本消息",
-        ...(message.suggested_reply !== undefined
-          ? {
-              suggested_reply: message.suggested_reply
-                ? formatHushMessageText(message.suggested_reply)
-                : message.suggested_reply,
-            }
-          : {}),
       };
       const existing = map.get(identity.id);
       if (existing) {

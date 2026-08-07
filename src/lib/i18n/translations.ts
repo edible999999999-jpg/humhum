@@ -40,6 +40,18 @@ export const translations: TranslationMap = {
   "petview.done": { zh: "已完成", en: "done with" },
   "petview.pending": { zh: "+{n} 个待确认", en: "+{n} pending" },
   "petview.ccWaitingChoice": { zh: "Claude Code 在等你选择选项", en: "Claude Code is waiting for your pick" },
+  "petview.voiceNeedsManual": {
+    zh: "{tool} 风险较高，请用按钮或键盘确认",
+    en: "{tool} is high-risk — confirm with a button or keyboard",
+  },
+  "petview.voiceUnavailable": {
+    zh: "语音识别不可用，请用按钮或键盘",
+    en: "Voice input unavailable — use the buttons or keyboard",
+  },
+  "petview.voiceError": {
+    zh: "语音识别出错，请用按钮或键盘",
+    en: "Voice input error — use the buttons or keyboard",
+  },
 
   // ── Settings Panel ──
   "settings.loading": { zh: "加载中...", en: "Loading..." },
