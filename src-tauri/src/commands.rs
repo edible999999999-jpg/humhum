@@ -374,6 +374,20 @@ pub struct HumiBrainAnswer {
     pub fallback: bool,
 }
 
+/// Whether Claude can serve as Humi's brain right now — i.e. a real Claude CLI
+/// is installed locally. Its conversational transport is implemented
+/// (claude_followup::run_brain_turn), so readiness is just "is it installed".
+fn humi_claude_brain_ready() -> bool {
+    crate::claude_followup::is_available()
+}
+
+/// Qoder is not yet a conversational brain: its CLI dispatches tasks but does
+/// not return reply text Humi can show, so it stays unselectable until that
+/// transport exists. Kept as a named seam so it flips in one place.
+fn humi_qoder_brain_ready() -> bool {
+    false
+}
+
 #[tauri::command]
 pub async fn get_humi_brain_status(
     config: State<'_, Arc<std::sync::Mutex<AppConfig>>>,
@@ -388,7 +402,11 @@ pub async fn get_humi_brain_status(
         initialized: brain.initialized,
         primary_provider: brain.primary_provider,
         fallback_enabled: brain.fallback_enabled,
-        providers: provider_statuses(&bridge.blocking_health(), false, false),
+        providers: provider_statuses(
+            &bridge.blocking_health(),
+            humi_qoder_brain_ready(),
+            humi_claude_brain_ready(),
+        ),
     })
 }
 
@@ -398,7 +416,11 @@ pub async fn set_humi_brain_provider(
     bridge: State<'_, Arc<CodexBridgeState>>,
     provider: BrainProvider,
 ) -> Result<HumiBrainStatus, String> {
-    let providers = provider_statuses(&bridge.blocking_health(), false, false);
+    let providers = provider_statuses(
+        &bridge.blocking_health(),
+        humi_qoder_brain_ready(),
+        humi_claude_brain_ready(),
+    );
     let selected = providers
         .iter()
         .find(|status| status.provider == provider)
@@ -455,10 +477,6 @@ pub async fn ask_humi_with_brain(
             .primary_provider
             .ok_or_else(|| "请先为 Humi 选择一个 Agent 大脑".to_string())?
     };
-    if provider != BrainProvider::Codex {
-        return Err("这个 Agent 的 Humi 连接器还没有准备好".into());
-    }
-
     let context_packet =
         collect_humi_brain_context(&knowledge_store, &stats_store, prompt, options.roots)?;
     let host_prompt = build_humi_host_prompt(prompt, &context_packet)?;
@@ -468,23 +486,45 @@ pub async fn ask_humi_with_brain(
         .map_err(|error| format!("Brain session lock error: {error}"))?
         .session(provider)
         .map(String::from);
-    let reply = bridge
-        .run_brain_turn(
-            workspace
-                .to_str()
-                .ok_or_else(|| "Humi brain workspace path is invalid".to_string())?,
-            previous_thread.as_deref(),
-            &host_prompt,
-        )
-        .await
-        .map_err(|error| error.to_string())?;
+
+    // Each brain speaks its own transport but returns the same shape: the reply
+    // text plus a session id to resume next turn. Codex uses the app-server
+    // bridge; Claude drives the local CLI in --print mode.
+    let (answer_text, next_session) = match provider {
+        BrainProvider::Codex => {
+            let reply = bridge
+                .run_brain_turn(
+                    workspace
+                        .to_str()
+                        .ok_or_else(|| "Humi brain workspace path is invalid".to_string())?,
+                    previous_thread.as_deref(),
+                    &host_prompt,
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            (reply.text, reply.thread_id)
+        }
+        BrainProvider::Claude => {
+            let reply = crate::claude_followup::run_brain_turn(
+                previous_thread.as_deref(),
+                &workspace,
+                &host_prompt,
+            )
+            .await?;
+            (reply.text, reply.session_id)
+        }
+        BrainProvider::Qoder => {
+            return Err("Qoder 暂不支持作为 Humi 的对话大脑，请选择 Codex 或 Claude".into());
+        }
+    };
+
     brain_sessions
         .lock()
         .map_err(|error| format!("Brain session lock error: {error}"))?
-        .set_session(provider, &reply.thread_id)?;
+        .set_session(provider, &next_session)?;
 
     Ok(HumiBrainAnswer {
-        answer: reply.text,
+        answer: answer_text,
         provider,
         fallback: false,
     })
