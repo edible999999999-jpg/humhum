@@ -163,6 +163,7 @@ fn skill_source(provider: &str) -> String {
 pub(crate) fn ensure_installed(home: &Path) -> Result<HexaConnectorInstallReport, String> {
     let cli = home.join(".humhum/bin/humhum-hexa");
     let mut report = HexaConnectorInstallReport::default();
+    let mut cli_up_to_date = false;
     match fs::symlink_metadata(&cli) {
         Ok(metadata) => {
             if !metadata.file_type().is_file() {
@@ -181,25 +182,31 @@ pub(crate) fn ensure_installed(home: &Path) -> Result<HexaConnectorInstallReport
                 ));
                 return Ok(report);
             }
+            // Honor the "only rewritten when the bundled source changes" contract:
+            // a managed CLI whose content already matches needs no rewrite. This
+            // avoids truncating and re-chmod-ing the global executable on every
+            // launch (churn + a corruption window agents could observe).
+            cli_up_to_date = existing == CLI_SOURCE;
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(format!("could not inspect Hexa connector CLI: {error}")),
     }
-    if let Some(parent) = cli.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("could not create Hexa connector directory: {error}"))?;
-    }
-    fs::write(&cli, CLI_SOURCE)
-        .map_err(|error| format!("could not install Hexa connector CLI: {error}"))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut permissions = fs::metadata(&cli)
-            .map_err(|error| format!("could not inspect Hexa connector CLI: {error}"))?
-            .permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&cli, permissions)
-            .map_err(|error| format!("could not make Hexa connector executable: {error}"))?;
+    if !cli_up_to_date {
+        // Atomic write (temp + rename) so a crash/full-disk mid-write can never
+        // leave the global `humhum-hexa` executable — which agents invoke —
+        // truncated or half-written. Mirrors the sibling cursor module.
+        crate::knowledge_store::write_file_atomically(&cli, CLI_SOURCE.as_bytes())
+            .map_err(|error| format!("could not install Hexa connector CLI: {error}"))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = fs::metadata(&cli)
+                .map_err(|error| format!("could not inspect Hexa connector CLI: {error}"))?
+                .permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&cli, permissions)
+                .map_err(|error| format!("could not make Hexa connector executable: {error}"))?;
+        }
     }
 
     for (provider, detected_root, skill_relative) in SKILL_TARGETS {
@@ -207,6 +214,8 @@ pub(crate) fn ensure_installed(home: &Path) -> Result<HexaConnectorInstallReport
             continue;
         }
         let target = home.join(skill_relative);
+        let desired = skill_source(provider);
+        let mut skill_up_to_date = false;
         match fs::symlink_metadata(&target) {
             Ok(metadata) => {
                 if !metadata.file_type().is_file() {
@@ -225,19 +234,21 @@ pub(crate) fn ensure_installed(home: &Path) -> Result<HexaConnectorInstallReport
                     ));
                     continue;
                 }
+                skill_up_to_date = existing == desired;
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => {
                 return Err(format!("could not inspect {} skill: {error}", provider));
             }
         }
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent).map_err(|error| {
-                format!("could not create {} skill directory: {error}", provider)
-            })?;
+        if !skill_up_to_date {
+            // Atomic write so a partial write never leaves a truncated SKILL.md
+            // an agent would then read as its instructions.
+            crate::knowledge_store::write_file_atomically(&target, desired.as_bytes())
+                .map_err(|error| format!("could not install {} Hexa skill: {error}", provider))?;
         }
-        fs::write(&target, skill_source(provider))
-            .map_err(|error| format!("could not install {} Hexa skill: {error}", provider))?;
+        // `installed_skills` reflects the set of detected+ensured skill targets
+        // this pass (a coverage count for logging), not only those rewritten.
         report
             .installed_skills
             .push(target.to_string_lossy().into_owned());
@@ -344,6 +355,58 @@ mod tests {
             .warnings
             .iter()
             .any(|warning| warning.contains("unmanaged global CLI")));
+    }
+
+    #[test]
+    fn managed_files_are_not_rewritten_when_content_already_matches() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path();
+        fs::create_dir_all(home.join(".codex")).unwrap();
+
+        ensure_installed(home).unwrap();
+        let cli = home.join(".humhum/bin/humhum-hexa");
+        let skill = home.join(".codex/skills/humhum-hexa/SKILL.md");
+
+        // Capture mtimes after the first install, then re-run: an up-to-date
+        // managed file must not be rewritten (no churn, no corruption window).
+        let cli_mtime = fs::metadata(&cli).unwrap().modified().unwrap();
+        let skill_mtime = fs::metadata(&skill).unwrap().modified().unwrap();
+
+        ensure_installed(home).unwrap();
+
+        assert_eq!(
+            fs::metadata(&cli).unwrap().modified().unwrap(),
+            cli_mtime,
+            "up-to-date managed CLI must not be rewritten"
+        );
+        assert_eq!(
+            fs::metadata(&skill).unwrap().modified().unwrap(),
+            skill_mtime,
+            "up-to-date managed skill must not be rewritten"
+        );
+        assert_eq!(fs::read_to_string(&cli).unwrap(), CLI_SOURCE);
+    }
+
+    #[test]
+    fn stale_managed_files_are_refreshed_to_the_bundled_source() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path();
+        fs::create_dir_all(home.join(".codex")).unwrap();
+
+        // A prior install left an older managed body (still carries the marker).
+        let cli = home.join(".humhum/bin/humhum-hexa");
+        fs::create_dir_all(cli.parent().unwrap()).unwrap();
+        let stale_cli = format!("// old body\n// {MANAGED_MARKER}\n");
+        fs::write(&cli, &stale_cli).unwrap();
+        let skill = home.join(".codex/skills/humhum-hexa/SKILL.md");
+        fs::create_dir_all(skill.parent().unwrap()).unwrap();
+        let stale_skill = format!("stale\n{MANAGED_MARKER}\n");
+        fs::write(&skill, &stale_skill).unwrap();
+
+        ensure_installed(home).unwrap();
+
+        assert_eq!(fs::read_to_string(&cli).unwrap(), CLI_SOURCE);
+        assert_eq!(fs::read_to_string(&skill).unwrap(), skill_source("codex"));
     }
 
     #[cfg(unix)]
