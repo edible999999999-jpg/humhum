@@ -111,11 +111,29 @@ pub enum SessionStatus {
 const MAX_RECENT_TOOLS: usize = 10;
 const MAX_EVENT_NAMES: usize = 50;
 const MAX_COMPLETED_SESSIONS: usize = 30;
+/// A live session with no new event for this long is considered dead and evicted
+/// from `sessions`. Sources like QoderWork never emit `SessionEnd` (their
+/// `session_id` is a per-turn id), and any client can die without a clean
+/// `SessionEnd`, so without this the map grows unbounded and `get_active_sessions`
+/// reports stale turns as live — inflating the count and spuriously tripping the
+/// frontend's baby-mode (>=4 active sessions).
+const SESSION_STALE_MS: i64 = 15 * 60 * 1000;
+
+/// Current wall-clock in epoch millis. Isolated so the eviction logic is testable.
+fn now_ms() -> i64 {
+    chrono::Utc::now().timestamp_millis()
+}
 
 #[derive(Debug, Default)]
 pub struct SessionStore {
     sessions: HashMap<String, Session>,
     completed_sessions: Vec<Session>,
+    /// Wall-clock receipt time (epoch millis) of the last event per live session,
+    /// keyed by session_id. Tracked separately from `Session` so the serialized
+    /// frontend payload and external construction sites stay unchanged. Receipt
+    /// time is deliberate: hook `timestamp` values can be old or clock-skewed, so
+    /// staleness is measured by when *we* last heard from the session.
+    last_seen: HashMap<String, i64>,
 }
 
 impl SessionStore {
@@ -123,10 +141,31 @@ impl SessionStore {
         Self {
             sessions: HashMap::new(),
             completed_sessions: Vec::new(),
+            last_seen: HashMap::new(),
         }
     }
 
+    /// Drop live sessions we haven't heard from within `SESSION_STALE_MS`.
+    /// Cheap (called on every event) and bounds `sessions` even when a source
+    /// never sends `SessionEnd`.
+    fn evict_stale(&mut self, now: i64) {
+        let last_seen = &mut self.last_seen;
+        self.sessions.retain(|id, _| {
+            let fresh = last_seen
+                .get(id)
+                .is_some_and(|seen| now.saturating_sub(*seen) < SESSION_STALE_MS);
+            if !fresh {
+                last_seen.remove(id);
+            }
+            fresh
+        });
+        // Drop any orphaned receipt entries (e.g. sessions moved to history).
+        last_seen.retain(|id, _| self.sessions.contains_key(id));
+    }
+
     pub fn update_from_event(&mut self, event: &HookEvent) {
+        self.evict_stale(now_ms());
+        self.last_seen.insert(event.session_id.clone(), now_ms());
         let client_type = event.client_type.clone();
 
         let project_name = event
@@ -203,6 +242,7 @@ impl SessionStore {
             "SessionEnd" => {
                 session.status = SessionStatus::Completed;
                 if let Some(completed) = self.sessions.remove(&event.session_id) {
+                    self.last_seen.remove(&event.session_id);
                     self.completed_sessions.push(completed);
                     if self.completed_sessions.len() > MAX_COMPLETED_SESSIONS {
                         self.completed_sessions.remove(0);
@@ -219,10 +259,20 @@ impl SessionStore {
     }
 
     pub fn get_active_sessions(&self) -> Vec<&Session> {
+        // Filter stale entries on read too: eviction runs on the next incoming
+        // event, but a quiet source must not keep reporting dead sessions in the
+        // meantime (this is what feeds the frontend's active count / baby-mode).
+        let now = now_ms();
         let mut sessions: Vec<&Session> = self
             .sessions
             .values()
-            .filter(|s| s.status != SessionStatus::Completed)
+            .filter(|s| {
+                s.status != SessionStatus::Completed
+                    && self
+                        .last_seen
+                        .get(&s.session_id)
+                        .is_some_and(|seen| now.saturating_sub(*seen) < SESSION_STALE_MS)
+            })
             .collect();
         sessions.sort_by(|a, b| b.last_event_at.cmp(&a.last_event_at));
         sessions
@@ -439,5 +489,48 @@ mod tests {
         );
         assert_eq!(project_name_from_cwd(r"C:\"), None);
         assert_eq!(project_name_from_cwd("/"), None);
+    }
+
+    // Regression: sources like QoderWork never emit `SessionEnd` (their
+    // session_id is a per-turn id), so without staleness eviction the `sessions`
+    // map grew forever and `get_active_sessions` reported dead turns as live,
+    // inflating the count and tripping the frontend's baby-mode. A session with
+    // no event for longer than SESSION_STALE_MS must drop out of both the map
+    // and the active view.
+    #[test]
+    fn stale_sessions_are_evicted_and_hidden_from_active() {
+        let mut store = SessionStore::new();
+
+        // A session last seen well past the stale window.
+        let mut old = event(json!({}));
+        old.session_id = "stale-1".into();
+        store.update_from_event(&old);
+        store
+            .last_seen
+            .insert("stale-1".into(), now_ms() - SESSION_STALE_MS - 1);
+
+        // Read side hides it even though no new event has arrived to evict.
+        assert!(
+            store
+                .get_active_sessions()
+                .iter()
+                .all(|s| s.session_id != "stale-1"),
+            "stale session must not appear in the active list"
+        );
+
+        // A fresh event for a different session triggers eviction of the stale one.
+        let mut fresh = event(json!({}));
+        fresh.session_id = "fresh-1".into();
+        store.update_from_event(&fresh);
+
+        assert!(
+            store.get_session("stale-1").is_none(),
+            "stale session must be evicted from the map"
+        );
+        assert_eq!(
+            store.get_active_sessions().len(),
+            1,
+            "only the fresh session remains active"
+        );
     }
 }
