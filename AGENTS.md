@@ -135,6 +135,47 @@ Avoid:
 - Keep scan results available for debugging, but make interpreted summaries the default product surface.
 - Prefer small, focused changes that reinforce the product principle.
 
+## Localization (Bilingual by Default)
+
+HumHum ships in **both Chinese (`zh`) and English (`en`) on every surface**. This is a
+standing engineering requirement, not a later polish step — every new feature must be
+bilingual the moment it lands.
+
+多语言是 HumHum 的整体开发原则,不是事后补丁。以下要求对所有端、所有新代码生效。
+
+**Rules for all user-facing text:**
+
+- **Never hardcode user-visible strings.** No literal `zh` or `en` text in components,
+  toasts, notifications, menus, error messages, or empty states. Route everything through
+  the platform's translation layer.
+- **Every string gets both `zh` and `en`.** A key with only one language is incomplete.
+  Do not ship a feature until both translations exist.
+- **A single user-controlled language switch drives the whole app.** The user picks the
+  language once; every surface follows. Do not add per-screen language toggles.
+- **The choice persists** and is respected across restarts and (where applicable) across
+  paired devices.
+
+**Where the translation layer lives per surface:**
+
+| Surface | Mechanism | Language source |
+|---------|-----------|-----------------|
+| Desktop (`src/`) | `src/lib/i18n/` — `t("key")` + `translations.ts` (`{ zh, en }` map) | `ui.language` in `~/.humhum/config.json` (`"zh"` \| `"en"`) |
+| Android (`android/`) | Android resources — `res/values/strings.xml` (zh, default) + `res/values-en/strings.xml` | in-app language setting; string resources only, no inline literals |
+| Relay / native services | No user-facing UI — exempt (logs and protocol strings may stay English) |
+
+**When adding or changing any user-facing text:**
+
+1. Add the key to both languages in the surface's translation store (desktop
+   `translations.ts`; Android `strings.xml` **and** `values-en/strings.xml`).
+2. Reference it via `t(...)` (desktop) or `@string/...` / `getString(...)` (Android) —
+   never inline.
+3. Keep the desktop `en` copy in the product's warm, gentle voice (see Design Direction),
+   not a literal machine translation.
+
+Backend/agent-generated prose (Humi summaries, TTS speech) should follow the user's
+selected language too; the summarizer and STT/TTS language hints already read from
+`config.json` — keep them consistent with `ui.language`.
+
 ## Common Commands
 
 ```bash

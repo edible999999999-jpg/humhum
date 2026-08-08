@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>HumHum Design QA Comparison</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 32px;
+        width: 1536px;
+        background: #fff7ee;
+        color: #2f3338;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: 820px 620px;
+        gap: 28px;
+        align-items: start;
+      }
+      h1 {
+        margin: 0 0 24px;
+        font-size: 28px;
+      }
+      h2 {
+        margin: 0 0 10px;
+        font-size: 15px;
+      }
+      img {
+        display: block;
+        max-width: 100%;
+        border: 1px solid rgba(47, 51, 56, 0.14);
+        border-radius: 8px;
+        background: white;
+      }
+      .stack {
+        display: grid;
+        gap: 22px;
+      }
+      .mobile {
+        max-width: 310px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>HumHum Source vs Implementation</h1>
+    <div class="grid">
+      <section>
+        <h2>Source visual target</h2>
+        <img src="../public/mascots/humi-family-reference.png" alt="source reference" />
+      </section>
+      <section class="stack">
+        <div>
+          <h2>Implementation desktop 1280x720</h2>
+          <img src="./intro-desktop.png" alt="desktop implementation" />
+        </div>
+        <div>
+          <h2>Implementation mobile 390x844</h2>
+          <img class="mobile" src="./intro-mobile.png" alt="mobile implementation" />
+        </div>
+      </section>
+    </div>
+  </body>
+</html>

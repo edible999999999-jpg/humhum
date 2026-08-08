@@ -1,0 +1,93 @@
+<style>
+  .rooms { display:grid; grid-template-columns:repeat(4,minmax(210px,1fr)); gap:16px; margin-top:20px; }
+  .phone { min-height:560px; border:1px solid #dfe5ec; border-radius:28px; overflow:hidden; background:#fff; box-shadow:0 14px 36px rgba(37,50,71,.09); display:flex; flex-direction:column; }
+  .phone-head { padding:18px 16px 12px; display:flex; align-items:center; gap:10px; border-bottom:1px solid rgba(36,50,71,.08); }
+  .avatar { width:34px; height:34px; border-radius:50%; display:grid; place-items:center; font-weight:800; }
+  .phone-title { font-size:18px; font-weight:800; color:#243247; }
+  .phone-sub { font-size:11px; color:#718096; }
+  .body { padding:14px 16px; flex:1; position:relative; }
+  .search { height:38px; border:1px solid #dfe5ec; border-radius:8px; display:flex; align-items:center; padding:0 12px; color:#8491a3; font-size:12px; margin-bottom:12px; }
+  .brief { font-size:23px; line-height:1.25; font-weight:800; color:#243247; margin:18px 0 8px; }
+  .copy { font-size:12px; line-height:1.55; color:#64748b; margin-bottom:18px; }
+  .section-title { font-size:13px; font-weight:800; color:#243247; margin:16px 0 7px; display:flex; justify-content:space-between; }
+  .row { padding:11px 0; border-bottom:1px solid rgba(36,50,71,.09); display:grid; grid-template-columns:auto 1fr auto; gap:9px; align-items:start; }
+  .dot { width:8px; height:8px; border-radius:50%; margin-top:5px; }
+  .row-title { font-size:12px; font-weight:750; color:#243247; }
+  .row-copy { font-size:10px; line-height:1.4; color:#78869a; margin-top:3px; }
+  .tag { font-size:9px; padding:3px 6px; border-radius:999px; background:rgba(255,255,255,.8); border:1px solid currentColor; }
+  .composer { margin:10px 14px 14px; height:42px; border:1px solid #dfe5ec; border-radius:8px; padding:0 12px; display:flex; align-items:center; justify-content:space-between; color:#8190a4; font-size:11px; background:rgba(255,255,255,.92); }
+  .nav { height:58px; display:grid; grid-template-columns:repeat(4,1fr); border-top:1px solid #e5e9ef; background:#fff; }
+  .nav span { display:grid; place-items:center; align-content:center; gap:3px; font-size:10px; color:#7a8797; }
+  .nav b { font-size:17px; line-height:1; font-weight:700; }
+  .humi { background:linear-gradient(180deg,#fbfdff,#f6fbff); }
+  .humi .avatar { background:#edf3ff; color:#7567d8; } .humi .dot { background:#70bfc9; }
+  .hype { background:linear-gradient(180deg,#fffdfc,#fff9f7); }
+  .hype .avatar { background:#fff0e9; color:#cf553a; } .hype .dot { background:#cf553a; }
+  .hush { background:linear-gradient(180deg,#fbfffd,#f3fcf8); }
+  .hush .avatar { background:#e8f8f2; color:#2c8b70; } .hush .dot { background:#2c8b70; }
+  .hexa { background:linear-gradient(180deg,#fffefa,#f7fbff); }
+  .hexa .avatar { background:#fff4cc; color:#8a6d12; } .hexa .dot { background:#4b9bd3; }
+  @media (max-width:1100px){ .rooms{grid-template-columns:repeat(2,minmax(230px,1fr));} }
+</style>
+
+<h2>HUMHUM Android · Mobile Companion Rooms</h2>
+<p class="subtitle">Humi 保留伴侣能力；Hype、Hush、Hexa 与 Mac 角色一致。移动端沿用同一视觉语法，但不压缩桌面布局。</p>
+
+<div class="rooms">
+  <div class="phone humi">
+    <div class="phone-head"><div class="avatar">Hu</div><div><div class="phone-title">Humi</div><div class="phone-sub">今天与你有关的事 · 刚刚同步</div></div></div>
+    <div class="body">
+      <div class="brief">今天先把节奏放稳一点</div>
+      <div class="copy">有一个 Agent 决定等你确认。昨晚睡眠偏短，上午给自己留一段完整专注时间。</div>
+      <div class="section-title"><span>今天</span><span class="phone-sub">3 件事</span></div>
+      <div class="row"><i class="dot"></i><div><div class="row-title">完成移动上下文设计</div><div class="row-copy">来自 Hexa 活跃目标</div></div><span class="tag">进行中</span></div>
+      <div class="row"><i class="dot"></i><div><div class="row-title">确认 Android UI 方向</div><div class="row-copy">用户明确加入今天</div></div><span class="tag">待决定</span></div>
+      <div class="section-title"><span>Humi 的建议</span><span class="phone-sub">需确认</span></div>
+      <div class="row"><i class="dot"></i><div><div class="row-title">下午安排一次短休息</div><div class="row-copy">根据今天的睡眠日汇总提出</div></div><span class="tag">加入今天</span></div>
+    </div>
+    <div class="composer">和 Humi 说点什么 <b>↑</b></div>
+    <div class="nav"><span><b>⌕</b>Humi</span><span><b>⌁</b>Hype</span><span><b>◉</b>Hush</span><span><b>⌑</b>Hexa</span></div>
+  </div>
+
+  <div class="phone hype">
+    <div class="phone-head"><div class="avatar">Hy</div><div><div class="phone-title">Hype 知识库</div><div class="phone-sub">我安装和创建的</div></div></div>
+    <div class="body">
+      <div class="search">⌕ 搜索技能、规则、偏好与记忆</div>
+      <div class="section-title"><span>我的技能</span><span class="phone-sub">42 项</span></div>
+      <div class="row"><i class="dot"></i><div><div class="row-title">系统化调试</div><div class="row-copy">先定位根因，再实施和验证修复</div></div><span class="tag">已安装</span></div>
+      <div class="row"><i class="dot"></i><div><div class="row-title">视频连续性导演</div><div class="row-copy">检查角色、镜头与叙事连续性</div></div><span class="tag">我创建的</span></div>
+      <div class="row"><i class="dot"></i><div><div class="row-title">网站构建</div><div class="row-copy">构建并验证可交互网页</div></div><span class="tag">用过</span></div>
+      <div class="section-title"><span>最近记忆</span><span class="phone-sub">查看全部</span></div>
+      <div class="row"><i class="dot"></i><div><div class="row-title">移动端保持伴侣定位</div><div class="row-copy">Humi 增加手机能力，其余角色与 Mac 对齐</div></div><span class="tag">已确认</span></div>
+    </div>
+    <div class="nav"><span><b>⌕</b>Humi</span><span><b>⌁</b>Hype</span><span><b>◉</b>Hush</span><span><b>⌑</b>Hexa</span></div>
+  </div>
+
+  <div class="phone hush">
+    <div class="phone-head"><div class="avatar">Hs</div><div><div class="phone-title">Hush 收件箱</div><div class="phone-sub">安静整理值得留意的消息</div></div></div>
+    <div class="body">
+      <div class="search">⌕ 搜索会话</div>
+      <div class="section-title"><span>全部</span><span class="phone-sub">特别关注 · 未读</span></div>
+      <div class="row"><i class="dot"></i><div><div class="row-title">Qoder 阿里巴巴内测群</div><div class="row-copy">关于 Android 安装与国际版下载</div></div><span class="tag">12 未读</span></div>
+      <div class="row"><i class="dot"></i><div><div class="row-title">产品沟通群</div><div class="row-copy">新版界面已上传，请确认角色房间</div></div><span class="tag">重点</span></div>
+      <div class="row"><i class="dot"></i><div><div class="row-title">设计协作组</div><div class="row-copy">移动端信息架构需要重新对齐</div></div><span class="phone-sub">12:31</span></div>
+      <div class="row"><i class="dot"></i><div><div class="row-title">项目推进群</div><div class="row-copy">测试和构建已经通过</div></div><span class="phone-sub">11:58</span></div>
+    </div>
+    <div class="nav"><span><b>⌕</b>Humi</span><span><b>⌁</b>Hype</span><span><b>◉</b>Hush</span><span><b>⌑</b>Hexa</span></div>
+  </div>
+
+  <div class="phone hexa">
+    <div class="phone-head"><div class="avatar">He</div><div><div class="phone-title">Hexa 监督台</div><div class="phone-sub">2 个会话正在推进</div></div></div>
+    <div class="body">
+      <div class="section-title"><span>主动监控</span><span class="phone-sub">1 等待确认</span></div>
+      <div class="row"><i class="dot"></i><div><div class="row-title">Android 伴侣房间</div><div class="row-copy">正在实现个人上下文协议</div></div><span class="tag">进行中</span></div>
+      <div class="row"><i class="dot"></i><div><div class="row-title">官网发布检查</div><div class="row-copy">等待用户确认生产版本</div></div><span class="tag">待确认</span></div>
+      <div class="section-title"><span>当前会话</span><span class="phone-sub">详情</span></div>
+      <div class="copy">目标：让 Android 获得受控个人上下文，并与 Mac 四角色保持一致。</div>
+      <div class="row"><i class="dot"></i><div><div class="row-title">当前步骤</div><div class="row-copy">建立协议模型、加密快照和移动房间组件</div></div><span class="tag">2 / 5</span></div>
+      <div class="row"><i class="dot"></i><div><div class="row-title">风险与偏离</div><div class="row-copy">Hush 的健康数据归属需要迁移</div></div><span class="tag">1</span></div>
+    </div>
+    <div class="composer">给 Agent 发送指令 <b>↑</b></div>
+    <div class="nav"><span><b>⌕</b>Humi</span><span><b>⌁</b>Hype</span><span><b>◉</b>Hush</span><span><b>⌑</b>Hexa</span></div>
+  </div>
+</div>
