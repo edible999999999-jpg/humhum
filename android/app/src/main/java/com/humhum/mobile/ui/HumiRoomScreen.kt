@@ -347,7 +347,11 @@ private fun HealthSummaryStrip(state: HumHumUiState) {
             HealthMetricValue(
                 stringResource(R.string.humi_metric_sleep),
                 summary?.sleepMinutes?.let {
-                    stringResource(R.string.humi_sleep_duration, (it / 60).toInt(), (it % 60).roundToInt())
+                    // Round to whole minutes first, then split, so a minute
+                    // remainder rounding up to 60 carries into the hour instead
+                    // of rendering e.g. "7时60分".
+                    val totalMinutes = it.roundToInt()
+                    stringResource(R.string.humi_sleep_duration, totalMinutes / 60, totalMinutes % 60)
                 } ?: "--",
                 Humi,
                 Modifier.weight(1f),

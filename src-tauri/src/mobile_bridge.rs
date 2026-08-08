@@ -31,6 +31,13 @@ const MAX_CONVERSATION_TEXT_CHARS: usize = 500;
 const MAX_CONVERSATION_RESPONSE_BYTES: usize = 40 * 1024;
 const MAX_HUSH_SIGNAL_REQUEST_BYTES: usize = 64 * 1024;
 const MAX_HUSH_SIGNAL_BATCH: usize = 31;
+/// Body-size caps enforced *while reading* via collect_bounded_body, so an
+/// oversized (or unauthenticated) request cannot exhaust memory before the
+/// length check. Match the post-parse checks that previously followed the read.
+const MAX_PAIR_REQUEST_BYTES: usize = 4 * 1024;
+const MAX_PRESENCE_REQUEST_BYTES: usize = 4 * 1024;
+const MAX_APPROVAL_REQUEST_BYTES: usize = 4 * 1024;
+const MAX_MESSAGE_REQUEST_BYTES: usize = 24_000;
 const MOBILE_HUSH_SYNC_TIMEOUT_SECONDS: u64 = 45;
 
 type HttpBody = Full<Bytes>;
@@ -2572,8 +2579,8 @@ async fn report_mobile_presence(
     bridge: &MobileBridgeState,
 ) -> Response<HttpBody> {
     let token = request_token(&request).map(str::to_owned);
-    let body = match request.into_body().collect().await {
-        Ok(body) => body.to_bytes(),
+    let body = match collect_bounded_body(request.into_body(), MAX_PRESENCE_REQUEST_BYTES).await {
+        Ok(body) => body,
         Err(_) => return json_error(StatusCode::BAD_REQUEST, "Invalid presence report"),
     };
     match record_mobile_presence(
@@ -2671,13 +2678,10 @@ async fn pair_device(
     request: Request<hyper::body::Incoming>,
     bridge: &MobileBridgeState,
 ) -> Response<HttpBody> {
-    let body = match request.into_body().collect().await {
-        Ok(body) => body.to_bytes(),
+    let body = match collect_bounded_body(request.into_body(), MAX_PAIR_REQUEST_BYTES).await {
+        Ok(body) => body,
         Err(_) => return json_error(StatusCode::BAD_REQUEST, "Invalid pairing request"),
     };
-    if body.len() > 4096 {
-        return json_error(StatusCode::BAD_REQUEST, "Invalid pairing request");
-    }
     let input: PairRequest = match serde_json::from_slice(&body) {
         Ok(input) => input,
         Err(_) => return json_error(StatusCode::BAD_REQUEST, "Invalid pairing request"),
@@ -3098,13 +3102,10 @@ async fn resolve_mobile_codex_approval(
     request: Request<hyper::body::Incoming>,
     app: &tauri::AppHandle,
 ) -> Response<HttpBody> {
-    let body = match request.into_body().collect().await {
-        Ok(body) => body.to_bytes(),
+    let body = match collect_bounded_body(request.into_body(), MAX_APPROVAL_REQUEST_BYTES).await {
+        Ok(body) => body,
         Err(_) => return json_error(StatusCode::BAD_REQUEST, "Invalid approval request"),
     };
-    if body.len() > 4096 {
-        return json_error(StatusCode::BAD_REQUEST, "Invalid approval request");
-    }
     let input: MobileApprovalRequest = match serde_json::from_slice(&body) {
         Ok(input) => input,
         Err(_) => return json_error(StatusCode::BAD_REQUEST, "Invalid approval request"),
@@ -3131,13 +3132,10 @@ async fn send_mobile_codex_message(
     request: Request<hyper::body::Incoming>,
     app: &tauri::AppHandle,
 ) -> Response<HttpBody> {
-    let body = match request.into_body().collect().await {
-        Ok(body) => body.to_bytes(),
+    let body = match collect_bounded_body(request.into_body(), MAX_MESSAGE_REQUEST_BYTES).await {
+        Ok(body) => body,
         Err(_) => return json_error(StatusCode::BAD_REQUEST, "Invalid message request"),
     };
-    if body.len() > 24_000 {
-        return json_error(StatusCode::BAD_REQUEST, "Invalid message request");
-    }
     let input: MobileMessageRequest = match serde_json::from_slice(&body) {
         Ok(input) => input,
         Err(_) => return json_error(StatusCode::BAD_REQUEST, "Invalid message request"),
@@ -3177,13 +3175,10 @@ async fn send_mobile_agent_message(
     request: Request<hyper::body::Incoming>,
     app: &tauri::AppHandle,
 ) -> Response<HttpBody> {
-    let body = match request.into_body().collect().await {
-        Ok(body) => body.to_bytes(),
+    let body = match collect_bounded_body(request.into_body(), MAX_MESSAGE_REQUEST_BYTES).await {
+        Ok(body) => body,
         Err(_) => return json_error(StatusCode::BAD_REQUEST, "Invalid message request"),
     };
-    if body.len() > 24_000 {
-        return json_error(StatusCode::BAD_REQUEST, "Invalid message request");
-    }
     let input: MobileAgentMessageRequest = match serde_json::from_slice(&body) {
         Ok(input) => input,
         Err(_) => return json_error(StatusCode::BAD_REQUEST, "Invalid message request"),
@@ -3254,13 +3249,10 @@ async fn resolve_mobile_claude_permission(
     request: Request<hyper::body::Incoming>,
     app: &tauri::AppHandle,
 ) -> Response<HttpBody> {
-    let body = match request.into_body().collect().await {
-        Ok(body) => body.to_bytes(),
+    let body = match collect_bounded_body(request.into_body(), MAX_APPROVAL_REQUEST_BYTES).await {
+        Ok(body) => body,
         Err(_) => return json_error(StatusCode::BAD_REQUEST, "Invalid permission request"),
     };
-    if body.len() > 4096 {
-        return json_error(StatusCode::BAD_REQUEST, "Invalid permission request");
-    }
     let input: MobileHookPermissionRequest = match serde_json::from_slice(&body) {
         Ok(input) => input,
         Err(_) => return json_error(StatusCode::BAD_REQUEST, "Invalid permission request"),

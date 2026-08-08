@@ -6,7 +6,7 @@ export class AudioQueue {
   private currentIndex = 0;
   private player: AudioPlayer;
   private state: AudioQueueState = "idle";
-  private stateCallback: ((state: AudioQueueState) => void) | null = null;
+  private stateCallbacks: ((state: AudioQueueState) => void)[] = [];
   private chunkCallback: ((chunk: AudioChunk, index: number) => void) | null =
     null;
 
@@ -15,8 +15,15 @@ export class AudioQueue {
     this.player.setEndedCallback(() => this.playNext());
   }
 
-  onStateChange(cb: (state: AudioQueueState) => void): void {
-    this.stateCallback = cb;
+  // Multiple independent consumers subscribe to state (the VoicePipeline's
+  // self-heal at bootstrap, plus useAudioQueue when the pet view mounts).
+  // Returns an unsubscribe fn. A single-slot setter let the later subscriber
+  // clobber the earlier one, leaving the pipeline stuck in "speaking".
+  onStateChange(cb: (state: AudioQueueState) => void): () => void {
+    this.stateCallbacks.push(cb);
+    return () => {
+      this.stateCallbacks = this.stateCallbacks.filter((entry) => entry !== cb);
+    };
   }
 
   onChunkPlay(cb: (chunk: AudioChunk, index: number) => void): void {
@@ -25,7 +32,9 @@ export class AudioQueue {
 
   private setState(newState: AudioQueueState): void {
     this.state = newState;
-    this.stateCallback?.(newState);
+    for (const cb of this.stateCallbacks) {
+      cb(newState);
+    }
   }
 
   get length(): number {
@@ -38,7 +47,14 @@ export class AudioQueue {
 
   enqueue(chunk: AudioChunk): void {
     this.queue.push(chunk);
-    if (this.queue.length === 1 && this.state === "idle") {
+    // Restart playback whenever nothing is currently playing and this chunk is
+    // the only unplayed one. The queue array only grows (playNext advances
+    // currentIndex without trimming), so gate on `length` (unplayed count) and
+    // a non-active state — including "ended", which is where playback settles
+    // once it drains. Gating on `queue.length === 1 && "idle"` only ever fired
+    // right after clear(), stranding chunks enqueued after a drain (notably the
+    // flushed final sentence).
+    if (this.length === 1 && (this.state === "idle" || this.state === "ended")) {
       this.playCurrent();
     }
   }

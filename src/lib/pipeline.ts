@@ -19,6 +19,7 @@ export class VoicePipeline {
 
   private pendingEvents: HookEvent[] = [];
   private batchTimer: ReturnType<typeof setTimeout> | null = null;
+  private batchResolve: (() => void) | null = null;
 
   constructor(
     summarizer: OpenAISummarizer,
@@ -58,7 +59,14 @@ export class VoicePipeline {
 
     this.pendingEvents.push(event);
 
+    // A newer event preempts the pending batch window. Resolve the prior
+    // waiter (whose timer we're about to cancel) so its processEvent promise
+    // doesn't hang forever; the newer call owns the batch from here.
     if (this.batchTimer) clearTimeout(this.batchTimer);
+    if (this.batchResolve) {
+      this.batchResolve();
+      this.batchResolve = null;
+    }
 
     // If already processing, just queue — the current run will pick up pending events when done
     if (this.processing) {
@@ -67,9 +75,17 @@ export class VoicePipeline {
     }
 
     // Wait briefly to batch rapid-fire events
+    let ownResolve: (() => void) | null = null;
     await new Promise<void>((resolve) => {
+      ownResolve = resolve;
+      this.batchResolve = resolve;
       this.batchTimer = setTimeout(resolve, BATCH_WINDOW_MS);
     });
+    // Only clear the shared slot if it still points at us; a newer event may
+    // have already replaced it with its own waiter.
+    if (this.batchResolve === ownResolve) {
+      this.batchResolve = null;
+    }
 
     this.runBatch();
   }

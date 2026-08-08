@@ -747,6 +747,11 @@ impl RelayClient {
         if secret.base_url != self.base_url.as_str() || wait_seconds > 20 {
             return Err("Anywhere command poll is invalid".into());
         }
+        // Long-poll: the server holds the connection open up to `wait_seconds`
+        // (<=20). The client-wide 5s timeout would abort every idle poll before
+        // the server responds, defeating long-polling. Override it per-request
+        // with headroom past the max wait for the round-trip.
+        let poll_timeout = Duration::from_secs(u64::from(wait_seconds) + 10);
         self.client
             .get(self.endpoint(&format!(
                 "/v1/channels/{}/messages?after={}&wait={wait_seconds}",
@@ -757,6 +762,7 @@ impl RelayClient {
                 format!("Bearer {}", command.subscriber_token),
             )
             .header(reqwest::header::ACCEPT, "application/json")
+            .timeout(poll_timeout)
             .build()
             .map_err(|_| "Could not build Anywhere command poll".into())
     }

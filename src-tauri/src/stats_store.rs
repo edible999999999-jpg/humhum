@@ -7,7 +7,7 @@ use tokscale_core::sessions::{claudecode::parse_claude_file, codex::parse_codex_
 
 use crate::local_api_auth::{protect_owner_only, write_private_file_atomically};
 
-const STATS_PARSER_REVISION: u32 = 2;
+const STATS_PARSER_REVISION: u32 = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SessionStats {
@@ -24,7 +24,13 @@ pub struct SessionStats {
     pub reasoning_tokens: u64,
     pub tool_calls: u64,
     pub tool_names: Vec<String>,
+    /// First message time (min). Used for daily-bucket attribution.
     pub timestamp: String,
+    /// Last message time (max). Used for 30-day pruning so a long-lived
+    /// session that started >30 days ago but is still active is not dropped.
+    /// `serde(default)` keeps pre-revision-3 stats.json deserializable.
+    #[serde(default)]
+    pub last_activity: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -259,11 +265,12 @@ impl StatsStore {
                 }
 
                 if let Some(stats) = parse_transcript(&transcript_path, "", client_type) {
-                    self.data.sessions.retain(|s| {
-                        !(s.transcript_path == transcript_path
-                            || (s.session_id == stats.session_id
-                                && s.client_type == stats.client_type))
-                    });
+                    // Dedup strictly by transcript_path: one logical session spans many
+                    // files (Codex resume reuses session_id across files; Claude subagent
+                    // files share the parent's id). Folding by session_id undercounts.
+                    self.data
+                        .sessions
+                        .retain(|s| s.transcript_path != transcript_path);
                     self.data.sessions.push(stats);
                     self.data.processed_transcripts.insert(transcript_path);
                     changed = true;
@@ -291,10 +298,10 @@ impl StatsStore {
     ) -> Result<(), String> {
         if let Some(stats) = parse_transcript(transcript_path, session_id, client_type) {
             let previous = self.data.clone();
-            self.data.sessions.retain(|s| {
-                !(s.transcript_path == transcript_path
-                    || (s.session_id == session_id && s.client_type == client_type))
-            });
+            // Dedup strictly by transcript_path (see backfill_recent_transcripts).
+            self.data
+                .sessions
+                .retain(|s| s.transcript_path != transcript_path);
             self.data.sessions.push(stats);
             self.data
                 .processed_transcripts
@@ -376,7 +383,17 @@ impl StatsStore {
         let cutoff_str = cutoff.format("%Y-%m-%d").to_string();
 
         self.data.daily_buckets.retain(|b| b.date >= cutoff_str);
-        self.data.sessions.retain(|s| s.timestamp >= cutoff_str);
+        // Prune by last activity, not first message: a session that started
+        // >30 days ago but is still being written must be kept. Old rows
+        // (pre-revision-3) have an empty last_activity, so fall back to timestamp.
+        self.data.sessions.retain(|s| {
+            let activity = if s.last_activity.is_empty() {
+                &s.timestamp
+            } else {
+                &s.last_activity
+            };
+            activity.as_str() >= cutoff_str.as_str()
+        });
 
         if self.data.processed_transcripts.len() > 500 {
             let sorted: BTreeSet<String> =
@@ -803,7 +820,7 @@ impl StatsStore {
                         messages: sl.messages,
                     })
                     .collect();
-                clients.sort_by(|x, y| y.tokens.cmp(&x.tokens));
+                clients.sort_by_key(|c| std::cmp::Reverse(c.tokens));
                 DashDay {
                     date,
                     tokens: a.tokens,
@@ -1095,6 +1112,14 @@ fn parse_transcript(
                 })
                 .unwrap_or_else(|| chrono::Local::now().to_rfc3339())
         });
+    let last_activity = usage_messages
+        .iter()
+        .map(|message| message.timestamp)
+        .filter(|timestamp| *timestamp > 0)
+        .max()
+        .and_then(chrono::DateTime::<chrono::Utc>::from_timestamp_millis)
+        .map(|timestamp| timestamp.with_timezone(&chrono::Local).to_rfc3339())
+        .unwrap_or_else(|| timestamp.clone());
 
     Some(SessionStats {
         session_id: effective_session_id,
@@ -1109,6 +1134,7 @@ fn parse_transcript(
         tool_calls,
         tool_names,
         timestamp,
+        last_activity,
     })
 }
 
@@ -1313,6 +1339,7 @@ mod tests {
                 tool_calls: 1,
                 tool_names: vec![],
                 timestamp: ts.clone(),
+                last_activity: ts.clone(),
             });
         }
 

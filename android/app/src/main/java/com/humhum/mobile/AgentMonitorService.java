@@ -41,7 +41,10 @@ public final class AgentMonitorService extends Service {
     private volatile boolean destroyed;
     private boolean realtimeSupported = true;
     private boolean presenceSupported = true;
-    private boolean relaySupported = true;
+    // Written on the network executor, but also read on the main thread via
+    // schedulePreferredRoute() from onStartCommand(). volatile gives that read
+    // a happens-before guarantee instead of a data race on a stale value.
+    private volatile boolean relaySupported = true;
     private String lastCursor = "";
     private ConnectivityManager connectivityManager;
     private ConnectivityManager.NetworkCallback networkCallback;

@@ -546,13 +546,22 @@ export function useHexaData() {
     fetchGoalData();
     const watchedTimer = window.setInterval(fetchWatchedState, WATCHED_REFRESH_INTERVAL_MS);
 
+    // Session-lifecycle events must recompute the supervisor snapshot
+    // (supervisorSessions/alerts/agentStats), which only fetchSnapshot writes.
+    // Route them through fetchSessions (coalesced fetchSnapshot) so a passive
+    // observer's scan view and per-session panels stay live instead of frozen
+    // at their mount-time values. fetchSessions coalesces, so rapid-fire events
+    // won't stampede the backend. Pure health churn stays on the lighter
+    // fetchLiveState.
     const unlistenHook = listen("humhum://hook-event", () => {
-      fetchLiveState();
+      fetchSessions();
     });
     const unlistenTimeout = listen("humhum://permission-timeout", () => {
-      fetchLiveState();
+      fetchSessions();
     });
-    const unlistenBridgeSession = listen("humhum://hexa-session-changed", fetchLiveState);
+    const unlistenBridgeSession = listen("humhum://hexa-session-changed", () => {
+      fetchSessions();
+    });
     const unlistenBridgeHealth = listen("humhum://codex-bridge-health", fetchLiveState);
     const unlistenGoalChanged = listen("humhum://hexa-goal-changed", fetchGoalData);
     const unlistenRemoteControl = listen<CodexRemoteControlState>(
