@@ -162,6 +162,31 @@ mod client_hook_install_tests {
         assert_eq!(value["hooks"]["errorOccurred"][0]["timeoutSec"], 10);
     }
 
+    // Regression: a flat-JSON client config holding valid-but-non-object JSON
+    // (e.g. a top-level array) parses fine, so the parse-error fallback never
+    // fires. Indexing it with `config["version"]` used to panic and take down
+    // the IPC handler; it must now return a clean Err and leave the file alone.
+    #[test]
+    fn flat_json_install_refuses_non_object_root_without_panicking() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("hooks.json");
+        std::fs::write(&path, "[]").unwrap();
+
+        let result = install_flat_json_hooks(
+            &path,
+            "'/tmp/humhum-hook.sh' --client 'cursor'",
+            &["preToolUse"],
+            false,
+        );
+
+        assert!(
+            result.is_err(),
+            "non-object root must be refused, not panic"
+        );
+        // The original file is untouched.
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "[]");
+    }
+
     #[test]
     fn opencode_plugin_uses_runtime_token_without_embedding_it() {
         let temp = tempfile::tempdir().unwrap();
@@ -4057,6 +4082,16 @@ fn install_flat_json_hooks(
     } else {
         serde_json::json!({})
     };
+    // A file holding valid-but-non-object JSON (e.g. `[]`, `42`, `"x"`) parses
+    // fine, so the fallback above does NOT catch it. Indexing a non-object with
+    // a string key (`config["version"] = ...`) panics, so guard the root the
+    // same way install_json_hooks does rather than crash the IPC handler.
+    if !config.is_object() {
+        return Err(format!(
+            "Refusing to modify JSON config whose root is not an object: {}",
+            config_path.display()
+        ));
+    }
     config["version"] = serde_json::json!(1);
     if !config.get("hooks").is_some_and(Value::is_object) {
         config["hooks"] = serde_json::json!({});
@@ -4538,7 +4573,12 @@ pub async fn proxy_post_binary(
 ) -> Result<String, String> {
     use base64::Engine;
 
-    let client = reqwest::Client::new();
+    // Match proxy_post's timeout so a TTS endpoint that stalls after headers
+    // can't hang this command (and its awaiting frontend promise) forever.
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(45))
+        .build()
+        .map_err(|e| format!("Create HTTP client failed: {}", e))?;
     let mut req = client.post(&url);
 
     if let Some(obj) = headers.as_object() {
