@@ -15,6 +15,7 @@ import type { AppConfig } from "../../types";
 import { buildHumiTools } from "./tools";
 import type { HumiPiCallbacks, HumiPiConfig, HumiPiRuntime } from "./types";
 import { invoke } from "@tauri-apps/api/core";
+import { t } from "@/lib/i18n";
 
 const PROVIDER_ID = "humi-custom";
 
@@ -54,10 +55,10 @@ function finalAssistantText(agent: Agent): string {
 
 function progressForEvent(event: AgentEvent, callbacks?: HumiPiCallbacks): void {
   if (event.type === "tool_execution_start") {
-    callbacks?.onProgress?.({ label: "正在查找相关信息", tool: event.toolName });
+    callbacks?.onProgress?.({ label: t("pi.progress.searching"), tool: event.toolName });
   }
   if (event.type === "agent_start") {
-    callbacks?.onProgress?.({ label: "Humi 正在认真听你说" });
+    callbacks?.onProgress?.({ label: t("pi.progress.listening") });
   }
 }
 
@@ -91,9 +92,9 @@ export function createHumiPiRuntime(
   callbacks?: HumiPiCallbacks,
 ): HumiPiRuntime {
   const piConfig = config.pi;
-  if (!piConfig.url.trim()) throw new Error("请先填写 Pi 的 API URL");
-  if (!piConfig.model_name.trim()) throw new Error("请先填写 Pi 的 model_name");
-  if (!piConfig.token?.trim()) throw new Error("请先填写 Pi 的 Token");
+  if (!piConfig.url.trim()) throw new Error(t("pi.error.needUrl"));
+  if (!piConfig.model_name.trim()) throw new Error(t("pi.error.needModel"));
+  if (!piConfig.token?.trim()) throw new Error(t("pi.error.needToken"));
 
   const model = buildModel(piConfig);
   const provider = createProvider({
@@ -154,15 +155,7 @@ export function createHumiPiRuntime(
     initialState: {
       model,
       thinkingLevel: "off",
-      systemPrompt: [
-        "你是 Humi，HUMHUM 里温柔、准确的个人 Agent。",
-        "你通过有限的本地上下文工具理解用户，不要编造没有证据的结论。",
-        "先判断是否需要工具；需要时调用工具，再基于工具结果自然回答。",
-        "不要向用户展示隐藏思维链、原始路径、Token、工具参数或内部 JSON。",
-        "如果证据不足，直接说目前还不能确定，并告诉用户缺什么。",
-        "除非用户明确确认，不要保存记忆、修改文件、执行命令或触达私密消息。",
-        "用中文回答，像在和用户聊天，不要写成终端报告。",
-      ].join("\n"),
+      systemPrompt: t("pi.systemPrompt"),
       tools: buildHumiTools((label, tool) => callbacks?.onProgress?.({ label, tool })),
     },
     streamFn: (requestedModel, context, options) =>
@@ -177,7 +170,7 @@ export function createHumiPiRuntime(
       await agent.prompt(prompt);
       const answer = finalAssistantText(agent);
       if (!answer) {
-        throw new Error(agent.state.errorMessage || "Pi 没有返回可显示的回答");
+        throw new Error(agent.state.errorMessage || t("pi.error.noReply"));
       }
       return answer;
     },

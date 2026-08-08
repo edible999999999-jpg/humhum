@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { PanelTopOpen } from "lucide-react";
+import { useTranslation } from "@/lib/i18n/react";
 
 export interface Session {
   session_id: string;
@@ -58,6 +59,7 @@ interface SessionDashboardProps {
 }
 
 export function SessionDashboard({ visible, onOpenHub }: SessionDashboardProps) {
+  const { t } = useTranslation();
   const [sessions, setSessions] = useState<Session[]>([]);
 
   const fetchSessions = useCallback(async () => {
@@ -101,8 +103,8 @@ export function SessionDashboard({ visible, onOpenHub }: SessionDashboardProps) 
           )}
           <button
             type="button"
-            aria-label="打开 HUMHUM Hub"
-            title="打开 HUMHUM Hub"
+            aria-label={t("dashboard.openHub")}
+            title={t("dashboard.openHub")}
             onClick={onOpenHub}
             className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-[10px] font-semibold"
             style={{
@@ -121,9 +123,9 @@ export function SessionDashboard({ visible, onOpenHub }: SessionDashboardProps) 
       <div className="max-h-[220px] overflow-y-auto scrollbar-thin">
         {sessions.length === 0 ? (
           <div className="px-3 py-4 text-center">
-            <p className="text-[11px]" style={{ color: "#64748b" }}>No active sessions</p>
+            <p className="text-[11px]" style={{ color: "#64748b" }}>{t("dashboard.noSessions")}</p>
             <p className="text-[10px] mt-1" style={{ color: "#94a3b8" }}>
-              Run Claude Code or other AI tools
+              {t("dashboard.noSessionsHint")}
             </p>
           </div>
         ) : (
@@ -137,6 +139,7 @@ export function SessionDashboard({ visible, onOpenHub }: SessionDashboardProps) 
 }
 
 export function SessionRow({ session: s }: { session: Session }) {
+  const { t } = useTranslation();
   const clientColor = CLIENT_COLORS[s.client_type] ?? "bg-slate-500/80";
   const clientLabel = CLIENT_LABELS[s.client_type] ?? s.client_type;
   const statusDot = STATUS_DOTS[s.status] ?? "bg-slate-500";
@@ -148,7 +151,7 @@ export function SessionRow({ session: s }: { session: Session }) {
   return (
     <button
       type="button"
-      aria-label={`打开会话 ${s.project_name ?? clientLabel}`}
+      aria-label={t("dashboard.openSession", { name: s.project_name ?? clientLabel })}
       onClick={() => {
         invoke("focus_agent_session", { sessionId: s.session_id }).catch(
           console.error,

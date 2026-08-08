@@ -22,6 +22,8 @@ import {
   sortByRecentUpdate,
   type AgentAssetScope,
 } from "./knowledgePresentation";
+import { t } from "@/lib/i18n";
+import { useTranslation } from "@/lib/i18n/react";
 
 const CATEGORIES = ["coding_style", "tools", "workflow", "communication", "other"];
 
@@ -30,7 +32,11 @@ export function getAgentAssetScanSummary(found: AgentAsset[]): string {
     found.filter((asset) => asset.asset_type === "skill"),
   ).length;
   const agentCount = found.filter((asset) => asset.asset_type === "agent").length;
-  return `已整理 ${found.length} 项本地知识 · ${skillCount} 个个人技能 · ${agentCount} 个 Agent 配置`;
+  return t("knowledge.assetScanSummary", {
+    total: found.length,
+    skills: skillCount,
+    agents: agentCount,
+  });
 }
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -185,7 +191,10 @@ export async function runKnowledgeOperation<T>(
   } catch (error) {
     onStatusChange({
       kind: "error",
-      message: `${messages.error}：${String(error)}`,
+      message: t("knowledge.errorDetail", {
+        message: messages.error,
+        error: String(error),
+      }),
     });
     return false;
   }
@@ -200,23 +209,24 @@ export function KnowledgeLoadGate({
   error: string | null;
   onRetry: () => void;
 }) {
+  const { t } = useTranslation();
   if (loading) {
     return (
       <div
         className="hub-loading"
         role="status"
         aria-live="polite"
-        aria-label="正在读取 Hype 知识库"
+        aria-label={t("knowledge.loadingAria")}
       />
     );
   }
 
   return (
     <div className="hype-load-error" role="alert" aria-live="assertive">
-      <strong>Hype 暂时无法读取知识库</strong>
-      <span>{error || "读取知识库失败"}</span>
+      <strong>{t("knowledge.loadErrorTitle")}</strong>
+      <span>{error || t("knowledge.loadFailedShort")}</span>
       <button type="button" onClick={onRetry}>
-        重试
+        {t("knowledge.retry")}
       </button>
     </div>
   );
@@ -239,17 +249,18 @@ export function KnowledgeSearchToolbar({
   refreshLabel: string;
   status: KnowledgeOperationStatus | null;
 }) {
+  const { t } = useTranslation();
   return (
     <>
       <div className="hype-search-toolbar">
         <label className="hype-search-field">
           <Search size={18} strokeWidth={1.8} aria-hidden="true" />
-          <span className="sr-only">搜索 Hype 知识库</span>
+          <span className="sr-only">{t("knowledge.searchSrOnly")}</span>
           <input
-            aria-label="自定义 AI 服务地址"
+            aria-label={t("knowledge.searchAria")}
             value={query}
             onChange={(event) => onQueryChange(event.target.value)}
-            placeholder="搜索技能、规则、偏好与记忆"
+            placeholder={t("knowledge.searchPlaceholder")}
           />
         </label>
         <button
@@ -363,6 +374,7 @@ type AgentAssetRootDiagnostic = {
 };
 
 export function KnowledgeModule() {
+  const { t } = useTranslation();
   const [data, setData] = useState<KnowledgeData | null>(null);
   const [knowledgeLoading, setKnowledgeLoading] = useState(true);
   const [knowledgeLoadError, setKnowledgeLoadError] = useState<string | null>(null);
@@ -409,7 +421,7 @@ export function KnowledgeModule() {
       setKnowledgeLoadError(null);
       return result;
     } catch (error) {
-      setKnowledgeLoadError(`读取知识库失败：${String(error)}`);
+      setKnowledgeLoadError(t("knowledge.loadFailedDetail", { error: String(error) }));
       throw error;
     } finally {
       setKnowledgeLoading(false);
@@ -472,9 +484,9 @@ export function KnowledgeModule() {
         },
         (status) => setOperationStatus({ ...status, tab: "rules" }),
         {
-          busy: "正在扫描 Agent 规则...",
-          success: (count) => `规则已刷新，共载入 ${count} 条。`,
-          error: "扫描 Agent 规则失败",
+          busy: t("knowledge.scanningRules"),
+          success: (count) => t("knowledge.rulesRefreshed", { count }),
+          error: t("knowledge.scanRulesFailed"),
         },
       );
     } finally {
@@ -492,9 +504,9 @@ export function KnowledgeModule() {
       },
       (status) => setOperationStatus({ ...status, tab: "preferences" }),
       {
-        busy: "正在扫描偏好...",
-        success: "偏好已刷新。",
-        error: "刷新偏好失败",
+        busy: t("knowledge.scanningPreferences"),
+        success: t("knowledge.preferencesRefreshed"),
+        error: t("knowledge.refreshPreferencesFailed"),
       },
     );
   };
@@ -553,7 +565,7 @@ export function KnowledgeModule() {
       const candidates = diagnostics.reduce((sum, item) => sum + item.candidate_count, 0);
       const skills = diagnostics.reduce((sum, item) => sum + item.skill_count, 0);
       setAssetDiagnostics(diagnostics);
-      setAssetScanSummary(`诊断完成：${candidates} 个候选文件 · ${skills} 个技能文件`);
+      setAssetScanSummary(t("knowledge.diagnoseComplete", { candidates, skills }));
     } catch (error) {
       setAssetError(String(error));
     } finally {
@@ -589,9 +601,9 @@ export function KnowledgeModule() {
         },
         (status) => setOperationStatus({ ...status, tab: "memory" }),
         {
-          busy: "正在刷新本地记忆...",
-          success: (count) => `记忆已刷新，共载入 ${count} 条。`,
-          error: "刷新记忆失败",
+          busy: t("knowledge.refreshingMemory"),
+          success: (count) => t("knowledge.memoryRefreshed", { count }),
+          error: t("knowledge.refreshMemoryFailed"),
         },
       );
     } catch (error) {
@@ -612,13 +624,13 @@ export function KnowledgeModule() {
       },
     };
     await invoke("save_config", { newConfig: nextConfig });
-    setReviewMessage("自定义 AI 助手配置已保存。");
+    setReviewMessage(t("knowledge.customReviewerSaved"));
     await fetchReviewEngine();
   };
 
   const handleStartCodexReview = async () => {
     if (reviewEngine.codex?.status !== "connected") {
-      setReviewMessage("还没有可借用的 Codex。请先打开或连接 Codex。");
+      setReviewMessage(t("knowledge.codexNotReady"));
       return;
     }
     setReviewBusy(true);
@@ -631,9 +643,9 @@ export function KnowledgeModule() {
         threadId,
         message: buildContextAuditPrompt(assets, notes.length, data?.agent_rules.length ?? 0),
       });
-      setReviewMessage("已把 Hype 上下文体检任务交给 Codex。你可以在 Hexa 里跟进这个整理会话。");
+      setReviewMessage(t("knowledge.codexReviewStarted"));
     } catch (error) {
-      setReviewMessage(`借用 Codex 失败：${String(error)}`);
+      setReviewMessage(t("knowledge.codexBorrowFailed", { error: String(error) }));
     } finally {
       setReviewBusy(false);
     }
@@ -774,17 +786,17 @@ export function KnowledgeModule() {
   const refreshDisabled = refreshBusy;
   const refreshLabel =
     activeTab === "assets"
-      ? "扫描本地技能"
+      ? t("knowledge.scanLocalSkills")
       : activeTab === "rules"
-        ? "扫描 Agent 规则"
+        ? t("knowledge.scanRules")
         : activeTab === "memory"
-          ? "刷新本地记忆"
-          : "刷新偏好";
+          ? t("knowledge.refreshMemory")
+          : t("knowledge.refreshPreferencesLabel");
 
   const toolbarStatus: KnowledgeOperationStatus | null =
     activeTab === "assets"
       ? scanningAssets
-        ? { kind: "busy", message: "正在扫描 Agent 资产..." }
+        ? { kind: "busy", message: t("knowledge.scanningAssets") }
         : assetError
           ? { kind: "error", message: assetError }
           : assetScanSummary
@@ -792,7 +804,7 @@ export function KnowledgeModule() {
             : null
       : activeTab === "memory"
         ? scanningVault
-          ? { kind: "busy", message: "正在刷新本地记忆..." }
+          ? { kind: "busy", message: t("knowledge.refreshingMemory") }
           : vaultError
             ? { kind: "error", message: vaultError }
             : operationStatus?.tab === activeTab
@@ -823,8 +835,8 @@ export function KnowledgeModule() {
             aria-hidden="true"
           />
           <div>
-            <h2 className="hub-module-title"><span>Hype</span> 知识库</h2>
-            <p className="hub-module-desc">我安装和创建的</p>
+            <h2 className="hub-module-title"><span>Hype</span> {t("knowledge.title")}</h2>
+            <p className="hub-module-desc">{t("knowledge.subtitle")}</p>
           </div>
         </div>
         <KnowledgeSearchToolbar
@@ -839,7 +851,7 @@ export function KnowledgeModule() {
       </header>
 
       <div className="hype-primary-controls">
-        <div className="hype-tabs" role="tablist" aria-label="Hype 知识视图">
+        <div className="hype-tabs" role="tablist" aria-label={t("knowledge.viewsAria")}>
           {(["assets", "preferences", "rules", "memory"] as KnowledgeTab[]).map((tab) => (
             <button
               key={tab}
@@ -850,25 +862,25 @@ export function KnowledgeModule() {
               onClick={() => setActiveTab(tab)}
             >
               {tab === "assets"
-                ? `Agent 资产 ${scopedAssetCount}`
+                ? t("knowledge.tabAssets", { count: scopedAssetCount })
                 : tab === "preferences"
-                  ? `我的偏好 ${preferenceCount}`
+                  ? t("knowledge.tabPreferences", { count: preferenceCount })
                   : tab === "rules"
-                    ? `我的规则 ${ruleCount}`
-                    : `我的记忆 ${memoryCount}`}
+                    ? t("knowledge.tabRules", { count: ruleCount })
+                    : t("knowledge.tabMemory", { count: memoryCount })}
             </button>
           ))}
         </div>
 
         {activeTab === "assets" && (
-          <div className="hype-scope-control" aria-label="Agent 资产范围">
+          <div className="hype-scope-control" aria-label={t("knowledge.scopeAria")}>
             <button
               type="button"
               className={assetScope === "mine" ? "is-active" : undefined}
               aria-pressed={assetScope === "mine"}
               onClick={() => setAssetScope("mine")}
             >
-              我安装和创建的
+              {t("knowledge.scopeMine")}
             </button>
             <button
               type="button"
@@ -876,7 +888,7 @@ export function KnowledgeModule() {
               aria-pressed={assetScope === "all"}
               onClick={() => setAssetScope("all")}
             >
-              全部扫描结果
+              {t("knowledge.scopeAll")}
             </button>
           </div>
         )}
@@ -886,13 +898,15 @@ export function KnowledgeModule() {
       {activeTab === "assets" && (
         <div className="hype-inventory">
           <div className="hype-inventory-summary">
-            <span>{filteredAssetCount} 项</span>
-            <span>{filteredSkills.length} 个技能</span>
+            <span>{t("knowledge.summaryItems", { count: filteredAssetCount })}</span>
+            <span>{t("knowledge.summarySkills", { count: filteredSkills.length })}</span>
             <span>
-              {countDistinctLogicalSkillSessions(filteredSkills)} 个最近会话
+              {t("knowledge.summarySessions", {
+                count: countDistinctLogicalSkillSessions(filteredSkills),
+              })}
             </span>
             {filteredNonSkillAssets.length > 0 && (
-              <span>{filteredNonSkillAssets.length} 个其他资产</span>
+              <span>{t("knowledge.summaryOtherAssets", { count: filteredNonSkillAssets.length })}</span>
             )}
           </div>
 
@@ -900,8 +914,8 @@ export function KnowledgeModule() {
             <div className="hype-asset-list">
               <div className="hype-empty-state">
                 {assets.length === 0
-                  ? "刷新后，Hype 会把本地 Agent 资产整理到这里。"
-                  : "当前范围里没有匹配的资产。"}
+                  ? t("knowledge.assetsEmptyAfterRefresh")
+                  : t("knowledge.assetsEmptyNoMatch")}
               </div>
             </div>
           ) : (
@@ -909,10 +923,10 @@ export function KnowledgeModule() {
               {filteredSkills.length > 0 && (
                 <div className="hype-asset-list">
                   <div className="hype-asset-list-header" aria-hidden="true">
-                    <span>名称</span>
-                    <span>可用 Agent</span>
-                    <span>最近会话</span>
-                    <span>最近使用</span>
+                    <span>{t("knowledge.colName")}</span>
+                    <span>{t("knowledge.colAvailableAgents")}</span>
+                    <span>{t("knowledge.colRecentSession")}</span>
+                    <span>{t("knowledge.colRecentUse")}</span>
                   </div>
                 {filteredSkills.map((skill) => (
                   <LogicalSkillRow key={skill.key} skill={skill} />
@@ -920,14 +934,14 @@ export function KnowledgeModule() {
                 </div>
               )}
               <KnowledgeAssetSection
-                title="其他 Agent 资产"
+                title={t("knowledge.sectionOtherAssets")}
                 assets={filteredNonSkillAssets}
               />
             </>
           )}
 
           <details className="hype-asset-details">
-            <summary>高级扫描设置与诊断</summary>
+            <summary>{t("knowledge.advancedScanSettings")}</summary>
             <div className="hype-asset-details-content">
               <label className="kawaii-label" htmlFor="hype-asset-roots">
                 Agent asset roots
@@ -986,7 +1000,7 @@ export function KnowledgeModule() {
               className="hype-preference-add-button"
               onClick={() => setShowForm(true)}
             >
-              + 添加偏好
+              {t("knowledge.addPreference")}
             </button>
           )}
 
@@ -1010,7 +1024,7 @@ export function KnowledgeModule() {
               <textarea
                 value={newContent}
                 onChange={(e) => setNewContent(e.target.value)}
-                placeholder="描述你的偏好..."
+                placeholder={t("knowledge.preferencePlaceholder")}
                 className="kawaii-input"
                 style={{ minHeight: 60, resize: "vertical", marginBottom: 8 }}
               />
@@ -1021,14 +1035,14 @@ export function KnowledgeModule() {
                   className="kawaii-save-btn"
                   style={{ flex: 1, padding: 8, fontSize: 12 }}
                 >
-                  保存
+                  {t("knowledge.save")}
                 </button>
                 <button
                   type="button"
                   className="hype-preference-cancel-button"
                   onClick={() => { setShowForm(false); setNewContent(""); }}
                 >
-                  取消
+                  {t("knowledge.cancel")}
                 </button>
               </div>
             </div>
@@ -1040,7 +1054,7 @@ export function KnowledgeModule() {
             filteredPreferenceAssets.length === 0 &&
             filteredPreferenceNotes.length === 0 ? (
               <div className="hype-preference-empty">
-                {preferenceCount === 0 ? "暂无偏好，点击刷新扫描或手动添加" : "没有匹配的偏好"}
+                {preferenceCount === 0 ? t("knowledge.preferencesEmpty") : t("knowledge.preferencesNoMatch")}
               </div>
             ) : (
               <>
@@ -1139,7 +1153,7 @@ export function KnowledgeModule() {
                 );
                 })}
                 <KnowledgeAssetSection
-                  title="本地偏好文件"
+                  title={t("knowledge.sectionLocalPreferences")}
                   assets={filteredPreferenceAssets}
                 />
                 {filteredPreferenceNotes.map((note) => (
@@ -1176,8 +1190,8 @@ export function KnowledgeModule() {
             filteredRuleNotes.length === 0 ? (
               <div style={{ padding: 24, textAlign: "center", color: "rgba(255,255,255,0.25)", fontSize: 13 }}>
                 {ruleCount === 0
-                  ? "点击刷新发现 AGENTS.md / CLAUDE.md / .cursorrules 等规则文件"
-                  : "没有匹配的规则"}
+                  ? t("knowledge.rulesEmpty")
+                  : t("knowledge.rulesNoMatch")}
               </div>
             ) : (
               <>
@@ -1185,7 +1199,7 @@ export function KnowledgeModule() {
                   <RuleCard key={rule.id} rule={rule} />
                 ))}
                 <KnowledgeAssetSection
-                  title="本地规则文件"
+                  title={t("knowledge.sectionLocalRules")}
                   assets={filteredRuleAssets}
                 />
                 {filteredRuleNotes.map((note) => (
@@ -1201,9 +1215,9 @@ export function KnowledgeModule() {
       {activeTab === "memory" && (
         <div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginBottom: 12 }}>
-            <KnowledgeStat label="热记忆" value={hotCount} color="#fbbf24" />
-            <KnowledgeStat label="冷记忆" value={coldCount} color="#94a3b8" />
-            <KnowledgeStat label="待办" value={memoryNotes.reduce((sum, note) => sum + note.tasks.length, 0)} color="#34d399" />
+            <KnowledgeStat label={t("knowledge.statHot")} value={hotCount} color="#fbbf24" />
+            <KnowledgeStat label={t("knowledge.statCold")} value={coldCount} color="#94a3b8" />
+            <KnowledgeStat label={t("knowledge.statTodo")} value={memoryNotes.reduce((sum, note) => sum + note.tasks.length, 0)} color="#34d399" />
           </div>
 
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
@@ -1219,7 +1233,7 @@ export function KnowledgeModule() {
             filteredMemoryAssets.length === 0 &&
             filteredMemoryNotes.length === 0 ? (
               <div style={{ padding: 24, textAlign: "center", color: "rgba(255,255,255,0.25)", fontSize: 13 }}>
-                {memoryCount === 0 ? "点击刷新扫描本地 Agent 记忆，也可接入 Obsidian" : "没有匹配的记忆"}
+                {memoryCount === 0 ? t("knowledge.memoryEmpty") : t("knowledge.memoryNoMatch")}
               </div>
             ) : (
               <>
@@ -1227,7 +1241,7 @@ export function KnowledgeModule() {
                   <MemoryItemCard key={item.id} item={item} />
                 ))}
                 <KnowledgeAssetSection
-                  title="本地 Agent 记忆"
+                  title={t("knowledge.sectionLocalMemory")}
                   assets={filteredMemoryAssets}
                 />
                 {filteredMemoryNotes.map((note) => (
@@ -1238,10 +1252,10 @@ export function KnowledgeModule() {
           </div>
 
           <details className="hype-asset-details">
-            <summary>Obsidian 只读索引（可选）</summary>
+            <summary>{t("knowledge.obsidianIndex")}</summary>
             <div className="hype-asset-details-content">
               <label className="kawaii-label" htmlFor="hype-obsidian-vault">
-                Vault 路径
+                {t("knowledge.vaultPath")}
               </label>
               <input
                 id="hype-obsidian-vault"
@@ -1252,8 +1266,10 @@ export function KnowledgeModule() {
               />
               <span>
                 {data.obsidian_vault?.last_indexed_at
-                  ? `上次索引：${new Date(data.obsidian_vault.last_indexed_at).toLocaleString()}`
-                  : "仅在刷新时读取 Markdown，不会修改 Vault 内容。"}
+                  ? t("knowledge.vaultLastIndexed", {
+                      time: new Date(data.obsidian_vault.last_indexed_at).toLocaleString(),
+                    })
+                  : t("knowledge.vaultReadOnlyHint")}
               </span>
             </div>
           </details>
@@ -1261,7 +1277,7 @@ export function KnowledgeModule() {
       )}
 
       <details className="hype-review-drawer">
-        <summary>上下文整理与 AI 评审</summary>
+        <summary>{t("knowledge.reviewDrawer")}</summary>
         <ReviewEnginePanel
           assetsCount={assets.length}
           reviewEngine={reviewEngine}
@@ -1290,6 +1306,7 @@ function KnowledgeAssetSection({
   title: string;
   assets: AgentAsset[];
 }) {
+  const { t } = useTranslation();
   if (assets.length === 0) return null;
 
   return (
@@ -1297,10 +1314,10 @@ function KnowledgeAssetSection({
       <h3>{title}</h3>
       <div className="hype-asset-list">
         <div className="hype-asset-list-header" aria-hidden="true">
-          <span>名称</span>
-          <span>来源 / Agent</span>
-          <span>类型</span>
-          <span>更新时间</span>
+          <span>{t("knowledge.colName")}</span>
+          <span>{t("knowledge.colSourceAgent")}</span>
+          <span>{t("knowledge.colType")}</span>
+          <span>{t("knowledge.colUpdatedAt")}</span>
         </div>
         {assets.map((asset) => (
           <AgentAssetRow key={asset.id} asset={asset} />
@@ -1311,6 +1328,7 @@ function KnowledgeAssetSection({
 }
 
 function MemoryItemCard({ item }: { item: MemoryItem }) {
+  const { t } = useTranslation();
   const color = item.temperature === "hot" ? "#fbbf24" : "#94a3b8";
   return (
     <div
@@ -1324,7 +1342,7 @@ function MemoryItemCard({ item }: { item: MemoryItem }) {
     >
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
         <span style={{ color, fontSize: 10, fontWeight: 700 }}>
-          {item.temperature === "hot" ? "热记忆" : "冷记忆"}
+          {item.temperature === "hot" ? t("knowledge.memHot") : t("knowledge.memCold")}
         </span>
         <span style={{ fontSize: 10, color: "#7b8798" }}>
           {item.agent_id || "HUMHUM"}
@@ -1390,6 +1408,7 @@ function ReviewEnginePanel({
   onStartCodexReview: () => void;
   onSaveCustomReviewer: () => Promise<void>;
 }) {
+  const { t } = useTranslation();
   const codexReady = reviewEngine.codex?.status === "connected";
   const claudeReady = !!reviewEngine.hooks["claude-code"];
   const qoderReady = !!reviewEngine.qoder?.acp_supported;
@@ -1414,7 +1433,7 @@ function ReviewEnginePanel({
         <div>
           <div style={{ color: "#263241", fontSize: 13, fontWeight: 850 }}>Hype Review Engine</div>
           <div style={{ marginTop: 4, color: "#64748b", fontSize: 11, lineHeight: 1.5 }}>
-            已扫描 {assetsCount} 个上下文资产。Humi 不做低可信本地判断；会优先借用你已经登录的 AI 助手来判断哪些真的有用。
+            {t("knowledge.reviewEngineDesc", { count: assetsCount })}
           </div>
         </div>
         <button
@@ -1423,27 +1442,27 @@ function ReviewEnginePanel({
           disabled={!codexReady || busy || assetsCount === 0}
           onClick={onStartCodexReview}
           style={{ minWidth: 132, padding: "8px 12px", fontSize: 12 }}
-          title={codexReady ? "借用 Codex 做上下文体检" : "需要先连接 Codex"}
+          title={codexReady ? t("knowledge.borrowCodexTitle") : t("knowledge.needCodexTitle")}
         >
-          {busy ? "整理中..." : codexReady ? "借用 Codex 整理" : "等待 AI 助手"}
+          {busy ? t("knowledge.reviewOrganizing") : codexReady ? t("knowledge.borrowCodexOrganize") : t("knowledge.waitingAssistant")}
         </button>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 8 }}>
-        <ReviewerPill label="Codex" ok={codexReady} detail={reviewEngine.codex?.message ?? "未连接"} />
-        <ReviewerPill label="Claude" ok={claudeReady} detail={claudeReady ? "hook 可用" : "未检测到 hook"} />
-        <ReviewerPill label="Qoder" ok={qoderReady} detail={reviewEngine.qoder?.hint ?? "未检测到 ACP"} />
-        <ReviewerPill label="自定义" ok={customReady} detail={customReady ? reviewEngine.config?.pi.model_name ?? "已配置" : "高级连接"} />
+        <ReviewerPill label="Codex" ok={codexReady} detail={reviewEngine.codex?.message ?? t("knowledge.reviewerNotConnected")} />
+        <ReviewerPill label="Claude" ok={claudeReady} detail={claudeReady ? t("knowledge.reviewerHookAvailable") : t("knowledge.reviewerNoHook")} />
+        <ReviewerPill label="Qoder" ok={qoderReady} detail={reviewEngine.qoder?.hint ?? t("knowledge.reviewerNoAcp")} />
+        <ReviewerPill label={t("knowledge.reviewerCustom")} ok={customReady} detail={customReady ? reviewEngine.config?.pi.model_name ?? t("knowledge.reviewerConfigured") : t("knowledge.reviewerAdvancedConnect")} />
       </div>
 
       {!anyReviewer && (
         <div style={{ color: "#8a6a12", fontSize: 11, lineHeight: 1.5 }}>
-          现在只会展示扫描证据，不会判断好坏。请连接 Codex、Claude、Qoder，或在高级选项里连接一个自定义 AI 服务。
+          {t("knowledge.noReviewerHint")}
         </div>
       )}
 
       {message && (
-        <div style={{ color: message.includes("失败") ? "#fb7185" : "#0f9f8f", fontSize: 11, fontWeight: 750 }}>
+        <div style={{ color: message.includes("失败") || message.includes("Couldn't") ? "#fb7185" : "#0f9f8f", fontSize: 11, fontWeight: 750 }}>
           {message}
         </div>
       )}
@@ -1454,20 +1473,20 @@ function ReviewEnginePanel({
         className="kawaii-tab"
         style={{ width: "fit-content", padding: "6px 10px", fontSize: 11 }}
       >
-        {showAdvanced ? "收起高级 AI 连接" : "高级：自定义 AI 服务"}
+        {showAdvanced ? t("knowledge.collapseAdvancedConnect") : t("knowledge.advancedCustomService")}
       </button>
 
       {showAdvanced && (
         <div style={{ display: "grid", gap: 8, paddingTop: 2 }}>
           <input
-            aria-label="自定义 AI 模型名称"
+            aria-label={t("knowledge.customModelNameAria")}
             value={piUrl}
             onChange={(event) => onPiUrlChange(event.target.value)}
-            placeholder="https://api.openai.com/v1 或本地模型地址"
+            placeholder={t("knowledge.customServiceUrlPlaceholder")}
             className="kawaii-input"
           />
           <input
-            aria-label="自定义 AI 服务令牌"
+            aria-label={t("knowledge.customTokenAria")}
             value={piModel}
             onChange={(event) => onPiModelChange(event.target.value)}
             placeholder="model name"
@@ -1486,7 +1505,7 @@ function ReviewEnginePanel({
             className="kawaii-save-btn"
             style={{ width: "fit-content", padding: "8px 12px", fontSize: 12 }}
           >
-            保存自定义 AI 助手
+            {t("knowledge.saveCustomReviewer")}
           </button>
         </div>
       )}
@@ -1518,6 +1537,7 @@ function ReviewerPill({ label, ok, detail }: { label: string; ok: boolean; detai
 }
 
 function LogicalSkillRow({ skill }: { skill: LogicalSkill }) {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const title = skill.display_name_zh || skill.name;
   const latestUsedAt = skill.latest_used_at
@@ -1542,15 +1562,15 @@ function LogicalSkillRow({ skill }: { skill: LogicalSkill }) {
           <strong>{title}</strong>
           <small>
             {skill.display_name_zh
-              ? `${skill.summary} · 原名：${skill.name}`
+              ? t("knowledge.skillOriginalName", { summary: skill.summary, name: skill.name })
               : skill.summary}
           </small>
         </span>
         <span className="hype-asset-source">
-          <span>{skill.agent_count} 个 Agent</span>
+          <span>{t("knowledge.skillAgentCount", { count: skill.agent_count })}</span>
           <small>
-            {skill.copies.length} 个安装来源
-            {skill.has_multiple_versions ? " · 多个版本" : ""}
+            {t("knowledge.skillInstallSources", { count: skill.copies.length })}
+            {skill.has_multiple_versions ? t("knowledge.skillMultipleVersions") : ""}
           </small>
         </span>
         <span
@@ -1563,14 +1583,14 @@ function LogicalSkillRow({ skill }: { skill: LogicalSkill }) {
                 : "rgba(116, 143, 165, 0.09)",
           }}
         >
-          {skill.session_count} 个会话
+          {t("knowledge.skillSessionCount", { count: skill.session_count })}
         </span>
         <time dateTime={validLatestUsedAt?.toISOString()}>
           {validLatestUsedAt
             ? validLatestUsedAt.toLocaleString()
             : skill.session_count > 0
-              ? "使用时间未知"
-              : "未发现使用记录"}
+              ? t("knowledge.usedTimeUnknown")
+              : t("knowledge.noUsageFound")}
         </time>
       </button>
 
@@ -1578,8 +1598,8 @@ function LogicalSkillRow({ skill }: { skill: LogicalSkill }) {
         <div className="hype-asset-expanded hype-skill-evidence">
           <section className="hype-skill-evidence-section">
             <div className="hype-skill-evidence-heading">
-              <strong>最近使用会话</strong>
-              <span>按最近使用时间排列</span>
+              <strong>{t("knowledge.recentSessions")}</strong>
+              <span>{t("knowledge.sortedByRecentUse")}</span>
             </div>
             {skill.sessions.length > 0 ? (
               <div className="hype-skill-session-list">
@@ -1609,7 +1629,7 @@ function LogicalSkillRow({ skill }: { skill: LogicalSkill }) {
                       <time dateTime={validUsedAt?.toISOString()}>
                         {validUsedAt
                           ? validUsedAt.toLocaleString()
-                          : "使用时间未知"}
+                          : t("knowledge.usedTimeUnknown")}
                       </time>
                     </div>
                   );
@@ -1617,16 +1637,16 @@ function LogicalSkillRow({ skill }: { skill: LogicalSkill }) {
               </div>
             ) : (
               <p className="hype-skill-evidence-empty">
-                仅发现安装，未发现最近会话使用记录。
+                {t("knowledge.installOnlyNoSessions")}
               </p>
             )}
           </section>
 
           <section className="hype-skill-evidence-section">
             <div className="hype-skill-evidence-heading">
-              <strong>安装来源</strong>
+              <strong>{t("knowledge.installSources")}</strong>
               {skill.has_multiple_versions && (
-                <span>发现内容不同的版本</span>
+                <span>{t("knowledge.foundDifferentVersions")}</span>
               )}
             </div>
             <div className="hype-skill-copy-list">
@@ -1634,7 +1654,7 @@ function LogicalSkillRow({ skill }: { skill: LogicalSkill }) {
                 <div key={copy.id} className="hype-skill-copy-row">
                   <span>
                     <strong>{copy.agent_id}</strong>
-                    <small>{copy.ownership || "来源待确认"}</small>
+                    <small>{copy.ownership || t("knowledge.sourcePending")}</small>
                   </span>
                   <code title={copy.file_path}>
                     {compactHomePath(copy.file_path)}
@@ -1650,6 +1670,7 @@ function LogicalSkillRow({ skill }: { skill: LogicalSkill }) {
 }
 
 function AgentAssetRow({ asset }: { asset: AgentAsset }) {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const color = ASSET_TYPE_COLORS[asset.asset_type] || "#94eff4";
   const isSkill = asset.asset_type === "skill";
@@ -1659,12 +1680,12 @@ function AgentAssetRow({ asset }: { asset: AgentAsset }) {
   const title = asset.display_name_zh || asset.name;
   const summary = asset.summary_zh || getAgentAssetSummary(asset);
   const ownershipLabel = asset.ownership === "used"
-    ? "会话用过"
+    ? t("knowledge.ownershipUsed")
     : asset.ownership === "installed"
-      ? "已安装"
+      ? t("knowledge.ownershipInstalled")
       : asset.ownership === "created"
-        ? "我创建的"
-        : "来源待确认";
+        ? t("knowledge.ownershipCreated")
+        : t("knowledge.sourcePending");
 
   return (
     <div className={`hype-asset-item ${expanded ? "is-expanded" : ""}`}>
@@ -1677,7 +1698,7 @@ function AgentAssetRow({ asset }: { asset: AgentAsset }) {
         <span className="hype-asset-name">
           <strong>{title}</strong>
           <small>
-            {asset.display_name_zh ? `${summary} · 原名：${asset.name}` : summary}
+            {asset.display_name_zh ? t("knowledge.skillOriginalName", { summary, name: asset.name }) : summary}
           </small>
         </span>
         <span className="hype-asset-source">
@@ -1692,7 +1713,7 @@ function AgentAssetRow({ asset }: { asset: AgentAsset }) {
         </span>
         <time dateTime={displayTimestamp === null ? undefined : new Date(displayTimestamp).toISOString()}>
           {displayTimestamp === null
-            ? isSkill ? "未发现使用记录" : "—"
+            ? isSkill ? t("knowledge.noUsageFound") : "—"
             : new Date(displayTimestamp).toLocaleString()}
         </time>
       </button>

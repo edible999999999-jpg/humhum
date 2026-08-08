@@ -50,7 +50,7 @@ export function CompletionPanel({ event, onDismiss }: CompletionPanelProps) {
         <div className="completion-bubble-title">{statusLabel}</div>
         <div className="completion-bubble-detail">{detail}</div>
       </div>
-      <button type="button" onClick={onDismiss} className="completion-bubble-close" aria-label="关闭会话结束提示">×</button>
+      <button type="button" onClick={onDismiss} className="completion-bubble-close" aria-label={t("overlay.closeCompletion")}>×</button>
       <span className="completion-bubble-tail" />
     </div>
   );

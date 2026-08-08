@@ -510,7 +510,7 @@ describe("Hype loading and toolbar UI", () => {
 
   it("keeps a single search entry in the composed Hype module", () => {
     expect(
-      knowledgeModuleSource.match(/placeholder="搜索技能、规则、偏好与记忆"/g),
+      knowledgeModuleSource.match(/placeholder=\{t\("knowledge\.searchPlaceholder"\)\}/g),
     ).toHaveLength(1);
   });
 
@@ -518,7 +518,7 @@ describe("Hype loading and toolbar UI", () => {
     expect(knowledgeModuleSource).toContain('asset.asset_type === "rule"');
     expect(knowledgeModuleSource).toContain('asset.asset_type === "memory"');
     expect(knowledgeModuleSource).toContain("data.memory_items");
-    expect(knowledgeModuleSource).toContain("我的记忆");
+    expect(knowledgeModuleSource).toContain("knowledge.tabMemory");
   });
 
   it("uses bright-room preference controls instead of legacy white-on-white inline colors", () => {

@@ -129,7 +129,7 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
       config.brain.fallback_enabled &&
       (!piUrl || !config.pi.model_name.trim() || !config.pi.token?.trim())
     ) {
-      setMessage({ type: "error", text: "开启 Pi 备用时，请填写 URL、Token 和 model_name" });
+      setMessage({ type: "error", text: t("settings.piFallbackNeedsFields") });
       return;
     }
     setSaving(true);
@@ -169,7 +169,7 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
           primary_provider: provider,
         },
       } : current);
-      setMessage({ type: "success", text: `${status.providers.find((item) => item.provider === provider)?.display_name ?? provider} 已成为 Humi 大脑` });
+      setMessage({ type: "success", text: t("settings.brainSwitched", { name: status.providers.find((item) => item.provider === provider)?.display_name ?? provider }) });
     } catch (error) {
       setMessage({ type: "error", text: String(error) });
     } finally {
@@ -479,7 +479,7 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
                 >
                   {voiceOptions.map((v) => (
                     <option key={v.id} value={v.id}>
-                      {v.label}
+                      {v.labelKey ? t(v.labelKey) : v.label}
                     </option>
                   ))}
                 </select>
@@ -890,10 +890,10 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
           </div>
         </KawaiiCard>
 
-        <KawaiiCard icon="~" title="Humi 大脑" subtitle="使用 Agent 已有登录，Pi 仅作可选备用">
+        <KawaiiCard icon="~" title={t("settings.humiBrain")} subtitle={t("settings.humiBrainSubtitle")}>
           <div className="space-y-3">
             <div>
-              <label className="kawaii-label">主要 Agent</label>
+              <label className="kawaii-label">{t("settings.primaryAgent")}</label>
               <select
                 value={config.brain.primary_provider ?? ""}
                 onChange={(event) => {
@@ -903,7 +903,7 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
                 disabled={brainChanging}
                 className="kawaii-input"
               >
-                <option value="">选择一个可用 Agent</option>
+                <option value="">{t("settings.pickAgent")}</option>
                 {brainStatus?.providers.map((provider) => (
                   <option
                     key={provider.provider}
@@ -918,8 +918,8 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
             </div>
             <label className="flex items-center justify-between gap-3">
               <span>
-                <strong className="block text-sm text-white/85">Pi 备用</strong>
-                <span className="text-xs text-white/50">主要 Agent 无法连接时才使用</span>
+                <strong className="block text-sm text-white/85">{t("settings.piFallback")}</strong>
+                <span className="text-xs text-white/50">{t("settings.piFallbackHint")}</span>
               </span>
               <input
                 type="checkbox"
@@ -963,7 +963,7 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
                         pi: { ...c.pi, token: e.target.value || undefined },
                       }))
                     }
-                    placeholder="输入 Token"
+                    placeholder={t("settings.enterToken")}
                     className="kawaii-input"
                   />
                 </div>

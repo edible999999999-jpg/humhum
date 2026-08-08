@@ -1,3 +1,5 @@
+import { t } from "../../lib/i18n";
+
 export type HushFilter = "all" | "attention" | "unread";
 
 export interface HushInboxMessage {
@@ -112,9 +114,9 @@ export function getHushConversationScopeLabel(
   messages: Array<Pick<HushInboxMessage, "conversation_kind" | "raw">>,
 ): string {
   const scope = getHushConversationScope(messages);
-  if (scope === "direct") return "单聊 · 可回复";
-  if (scope === "group") return "群聊 · 仅观察";
-  return "类型待确认 · 仅观察";
+  if (scope === "direct") return t("hush.scope.direct");
+  if (scope === "group") return t("hush.scope.group");
+  return t("hush.scope.unknown");
 }
 
 export function compareHushContacts(
@@ -145,7 +147,7 @@ export function getHushPriorityLabel(
   importance: number,
   attention: boolean,
 ): string {
-  if (attention) return "P0 · 特别关注";
+  if (attention) return t("hush.priority.p0");
   if (importance >= 5) return "P1";
   if (importance >= 4) return "P2";
   if (importance >= 3) return "P3";
@@ -173,9 +175,12 @@ export function formatHushConversationTime(
     (dayStart.getTime() - valueStart.getTime()) / 86_400_000,
   );
   if (dayDifference === 0) return time;
-  if (dayDifference === 1) return `昨天 ${time}`;
+  if (dayDifference === 1) return t("hush.time.yesterday", { time });
   if (date.getFullYear() === now.getFullYear()) {
-    return `${date.getMonth() + 1}月${date.getDate()}日`;
+    return t("hush.time.monthDay", {
+      month: date.getMonth() + 1,
+      date: date.getDate(),
+    });
   }
   return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}`;
 }
@@ -425,7 +430,8 @@ export function formatHushMessageText(raw: string): string {
     .replace(/<\/?[A-Za-z][A-Za-z0-9:_-]*(?:\s[^<>]*?)?\s*\/?>/g, "")
     .replace(
       /!\[([^\]]*)\]\((?:\\.|[^)])*\)/g,
-      (_match, alt: string) => (alt.trim() ? `图片：${alt.trim()}` : "图片"),
+      (_match, alt: string) =>
+        alt.trim() ? t("hush.image.withAlt", { alt: alt.trim() }) : t("hush.image"),
     )
     .replace(
       /\[([^\]]*)\]\((?:\\.|[^)])*\)/g,
@@ -511,7 +517,7 @@ export function getHushPlatformIdentity(
 ): HushPlatformIdentity {
   const normalized = platform.toLowerCase();
   if (normalized.includes("dingtalk") || normalized === "钉钉") {
-    return { key: "dingtalk", label: "钉钉" };
+    return { key: "dingtalk", label: t("hush.platform.dingtalk") };
   }
   if (normalized.includes("wechat") || normalized === "微信") {
     return { key: "wechat", label: "WeChat" };

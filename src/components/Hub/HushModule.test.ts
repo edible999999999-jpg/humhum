@@ -1326,7 +1326,7 @@ describe("Hush conversation UI contracts", () => {
   it("offers the official DWS installer before asking for DingTalk login", () => {
     expect(hushModuleSource).toContain('state === "not_installed"');
     expect(hushModuleSource).toContain("onInstallDws");
-    expect(hushModuleSource).toContain("安装官方 DWS");
+    expect(hushModuleSource).toContain("hush.dws.installOfficial");
   });
 
   it("keeps Hush radii bounded and disables loading motion when requested", () => {

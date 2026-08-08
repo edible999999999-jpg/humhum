@@ -1,11 +1,11 @@
-export const VOICE_PRESETS: Record<string, Array<{ id: string; label: string }>> = {
+export const VOICE_PRESETS: Record<string, Array<{ id: string; label: string; labelKey?: string }>> = {
   edge: [
-    { id: "zh-CN-XiaoxiaoNeural", label: "晓晓 (中文女声)" },
-    { id: "zh-CN-YunxiNeural", label: "云希 (中文男声)" },
-    { id: "zh-CN-XiaoyiNeural", label: "晓伊 (中文女声)" },
+    { id: "zh-CN-XiaoxiaoNeural", label: "晓晓 (中文女声)", labelKey: "voice.xiaoxiao" },
+    { id: "zh-CN-YunxiNeural", label: "云希 (中文男声)", labelKey: "voice.yunxi" },
+    { id: "zh-CN-XiaoyiNeural", label: "晓伊 (中文女声)", labelKey: "voice.xiaoyi" },
     { id: "en-US-AriaNeural", label: "Aria (English F)" },
     { id: "en-US-GuyNeural", label: "Guy (English M)" },
-    { id: "ja-JP-NanamiNeural", label: "Nanami (日本語)" },
+    { id: "ja-JP-NanamiNeural", label: "Nanami (日本語)", labelKey: "voice.nanami" },
   ],
   openai: [
     { id: "alloy", label: "Alloy" },

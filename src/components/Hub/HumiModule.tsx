@@ -16,6 +16,8 @@ import { isTauriRuntime } from "../../lib/tauriRuntime";
 import type { HumiPiRuntime } from "../../lib/pi/types";
 import type { HexaDevelopmentGoal, HexaGoalAttempt } from "../../hooks/hexaGoalMonitoring";
 import type { HexaWatchedSession } from "../../hooks/useHexaData";
+import { useTranslation } from "@/lib/i18n/react";
+import { t as translate } from "@/lib/i18n";
 
 interface ActiveSession {
   session_id: string;
@@ -220,20 +222,22 @@ const HUMI_CHAT_STORAGE: Pick<Storage, "getItem" | "setItem"> = (() => {
     setItem: (key: string, value: string) => void memory.set(key, value),
   };
 })();
-const DEFAULT_HUMI_CHAT_MESSAGES: HumiChatMessage[] = [
-  {
-    id: "humi-welcome",
-    role: "assistant",
-    text: "你好，我是 Humi。想了解最近的工作、技能或偏好吗？",
-  },
-];
+function defaultHumiChatMessages(): HumiChatMessage[] {
+  return [
+    {
+      id: "humi-welcome",
+      role: "assistant",
+      text: translate("humi.chat.welcome"),
+    },
+  ];
+}
 
 function loadHumiChatMessages(): HumiChatMessage[] {
   try {
     const raw = HUMI_CHAT_STORAGE.getItem(HUMI_CHAT_STORAGE_KEY);
-    if (!raw) return DEFAULT_HUMI_CHAT_MESSAGES;
+    if (!raw) return defaultHumiChatMessages();
     const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return DEFAULT_HUMI_CHAT_MESSAGES;
+    if (!Array.isArray(parsed)) return defaultHumiChatMessages();
     return parsed.filter(
       (message): message is HumiChatMessage =>
         typeof message?.id === "string" &&
@@ -241,7 +245,7 @@ function loadHumiChatMessages(): HumiChatMessage[] {
         typeof message.text === "string",
     );
   } catch {
-    return DEFAULT_HUMI_CHAT_MESSAGES;
+    return defaultHumiChatMessages();
   }
 }
 
@@ -359,6 +363,7 @@ function summarizeHexaAttention(
 }
 
 export function HumiModule({ onActivityChange, onOpenHexa }: HumiModuleProps) {
+  const { t } = useTranslation();
   const [sessions, setSessions] = useState<ActiveSession[]>([]);
   const [developmentGoals, setDevelopmentGoals] = useState<HexaDevelopmentGoal[]>([]);
   const [hexaWatchedSessions, setHexaWatchedSessions] = useState<HexaWatchedSession[]>([]);
@@ -373,7 +378,7 @@ export function HumiModule({ onActivityChange, onOpenHexa }: HumiModuleProps) {
   const [kernelRoots, setKernelRoots] = useState(DEFAULT_KERNEL_ROOTS);
   const [localKernelResult, setLocalKernelResult] = useState<LocalAgentKernelResult | null>(null);
   const [appConfig, setAppConfig] = useState<AppConfig | null>(null);
-  const [humiProgress, setHumiProgress] = useState("Humi 正在等你说话");
+  const [humiProgress, setHumiProgress] = useState(() => translate("humi.progress.idle"));
   const [chatMessages, setChatMessages] = useState<HumiChatMessage[]>(loadHumiChatMessages);
   const [agentKernelStatus, setAgentKernelStatus] = useState<AgentKernelStatus | null>(null);
   const [stats, setStats] = useState<AggregatedStats | null>(null);
@@ -382,9 +387,12 @@ export function HumiModule({ onActivityChange, onOpenHexa }: HumiModuleProps) {
   const [ttsPreviewing, setTtsPreviewing] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
   const [operationsOpen, setOperationsOpen] = useState(false);
+  // Lets the user reopen the brain picker after a brain is already chosen, so
+  // they can switch (e.g. from an unusable Codex to an installed Claude).
+  const [showBrainPicker, setShowBrainPicker] = useState(false);
   const piRuntimeRef = useRef<HumiPiRuntime | null>(null);
   const [kernelPrompt, setKernelPrompt] = useState(
-    "现在技能用得最多的是啥？"
+    () => translate("humi.prompt.default")
   );
 
   const fetchSessions = useCallback(async () => {
@@ -537,18 +545,18 @@ export function HumiModule({ onActivityChange, onOpenHexa }: HumiModuleProps) {
 
   const askHumi = useCallback(async () => {
     if (!appConfig) {
-      setKernelMessage("还没有读取到 Humi 配置");
+      setKernelMessage(t("humi.error.noConfig"));
       return;
     }
     if (!appConfig.brain.initialized || !appConfig.brain.primary_provider) {
-      setKernelMessage("请先为 Humi 选择一个 Agent 大脑");
+      setKernelMessage(t("humi.error.noBrain"));
       return;
     }
     const prompt = kernelPrompt.trim();
     if (!prompt || kernelLoading) return;
     setKernelLoading(true);
     setKernelMessage(null);
-    setHumiProgress("Humi 正在认真听你说");
+    setHumiProgress(t("humi.progress.listening"));
     setChatMessages((messages) => [
       ...messages,
       { id: `user-${Date.now()}`, role: "user", text: prompt },
@@ -566,17 +574,17 @@ export function HumiModule({ onActivityChange, onOpenHexa }: HumiModuleProps) {
           },
         }),
         HUMI_ASK_TIMEOUT_MS,
-        "Humi 等了太久还没有收到 Agent 回复，请稍后再试。",
+        t("humi.error.timeout"),
       );
       setChatMessages((messages) => [
         ...messages,
         { id: `assistant-${Date.now()}`, role: "assistant", text: result.answer },
       ]);
-      setHumiProgress(`${result.provider === "codex" ? "Codex" : result.provider} 已帮我整理好`);
+      setHumiProgress(t("humi.progress.organized", { provider: result.provider === "codex" ? "Codex" : result.provider }));
     } catch (e) {
       if (appConfig.brain.fallback_enabled && appConfig.pi.token) {
         try {
-          setHumiProgress("主 Agent 暂时不可用，正在使用 Pi 备用");
+          setHumiProgress(t("humi.progress.usingFallback"));
           const runtime = piRuntimeRef.current ?? createHumiPiRuntime(appConfig, {
             onProgress: ({ label }) => setHumiProgress(label),
           });
@@ -584,19 +592,19 @@ export function HumiModule({ onActivityChange, onOpenHexa }: HumiModuleProps) {
           const answer = await withTimeout(
             runtime.ask(prompt),
             HUMI_ASK_TIMEOUT_MS,
-            "Pi 备用服务没有及时回复。",
+            t("humi.error.fallbackTimeout"),
           );
           setChatMessages((messages) => [
             ...messages,
             { id: `assistant-${Date.now()}`, role: "assistant", text: answer },
           ]);
-          setHumiProgress("Pi 备用已帮我整理好");
+          setHumiProgress(t("humi.progress.fallbackOrganized"));
         } catch (fallbackError) {
           const errorMessage = String(
             fallbackError instanceof Error ? fallbackError.message : fallbackError,
           );
           setKernelMessage(errorMessage);
-          setHumiProgress("这次没有连上 Agent");
+          setHumiProgress(t("humi.progress.notConnected"));
           setChatMessages((messages) => [
             ...messages,
             { id: `error-${Date.now()}`, role: "assistant", text: errorMessage },
@@ -605,7 +613,7 @@ export function HumiModule({ onActivityChange, onOpenHexa }: HumiModuleProps) {
       } else {
         const errorMessage = String(e instanceof Error ? e.message : e);
         setKernelMessage(errorMessage);
-        setHumiProgress("这次没有连上 Agent");
+        setHumiProgress(t("humi.progress.notConnected"));
         setChatMessages((messages) => [
           ...messages,
           { id: `error-${Date.now()}`, role: "assistant", text: errorMessage },
@@ -614,7 +622,7 @@ export function HumiModule({ onActivityChange, onOpenHexa }: HumiModuleProps) {
     } finally {
       setKernelLoading(false);
     }
-  }, [appConfig, kernelLoading, kernelPrompt, kernelRoots]);
+  }, [appConfig, kernelLoading, kernelPrompt, kernelRoots, t]);
 
   const selectBrain = useCallback(async (provider: HumiBrainProvider) => {
     setKernelLoading(true);
@@ -624,13 +632,14 @@ export function HumiModule({ onActivityChange, onOpenHexa }: HumiModuleProps) {
       const config = await invoke<AppConfig>("get_config");
       setBrainStatus(status);
       setAppConfig(config);
-      setHumiProgress(`${status.providers.find((item) => item.provider === provider)?.display_name ?? provider} 已连接`);
+      setShowBrainPicker(false);
+      setHumiProgress(t("humi.progress.connected", { name: status.providers.find((item) => item.provider === provider)?.display_name ?? provider }));
     } catch (error) {
       setKernelMessage(String(error));
     } finally {
       setKernelLoading(false);
     }
-  }, []);
+  }, [t]);
 
   const handleComposerKeyDown = useCallback(
     (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -693,9 +702,9 @@ export function HumiModule({ onActivityChange, onOpenHexa }: HumiModuleProps) {
     try {
       await invoke("focus_agent_session", { sessionId: session.session_id });
     } catch (error) {
-      setOperationsMessage(`无法打开会话：${String(error)}`);
+      setOperationsMessage(t("humi.error.openSession", { error: String(error) }));
     }
-  }, []);
+  }, [t]);
 
   const toggleAutoConfirm = useCallback(async () => {
     if (!appConfig) return;
@@ -712,9 +721,9 @@ export function HumiModule({ onActivityChange, onOpenHexa }: HumiModuleProps) {
       await invoke("save_config", { newConfig: updated });
     } catch (error) {
       setAppConfig(appConfig);
-      setOperationsMessage(`自动确认设置失败：${String(error)}`);
+      setOperationsMessage(t("humi.error.autoConfirm", { error: String(error) }));
     }
-  }, [appConfig]);
+  }, [appConfig, t]);
 
   const previewTts = useCallback(async () => {
     if (!appConfig || ttsPreviewing) return;
@@ -722,17 +731,17 @@ export function HumiModule({ onActivityChange, onOpenHexa }: HumiModuleProps) {
     setOperationsMessage(null);
     try {
       const base64Data = await invoke<string>("synthesize_system_speech", {
-        text: "Humi 正在为你播报 Agent 的最新进展。",
+        text: t("humi.tts.previewText"),
         voice: appConfig.tts.voice,
         speed: appConfig.tts.speed,
       });
       await invoke("play_audio", { base64Data });
     } catch (error) {
-      setOperationsMessage(`TTS 试听失败：${String(error)}`);
+      setOperationsMessage(t("humi.error.ttsPreview", { error: String(error) }));
     } finally {
       setTtsPreviewing(false);
     }
-  }, [appConfig, ttsPreviewing]);
+  }, [appConfig, ttsPreviewing, t]);
 
   const hexaAttention = summarizeHexaAttention(
     developmentGoals,
@@ -749,18 +758,18 @@ export function HumiModule({ onActivityChange, onOpenHexa }: HumiModuleProps) {
             onClick={() => setOperationsOpen((open) => !open)}
             aria-expanded={operationsOpen}
             aria-controls="humi-operations-panel"
-            aria-label={operationsOpen ? "收起运行状态" : "展开运行状态"}
-            title={operationsOpen ? "收起运行状态" : "展开运行状态"}
+            aria-label={operationsOpen ? t("humi.operations.collapse") : t("humi.operations.expand")}
+            title={operationsOpen ? t("humi.operations.collapse") : t("humi.operations.expand")}
           >
             <PanelRight size={17} strokeWidth={1.9} aria-hidden="true" />
           </button>
 
           <div className="humi-transcript">
-            {brainStatus && !brainStatus.initialized && (
-              <div className="humi-brain-setup" role="group" aria-label="选择 Humi 大脑">
+            {brainStatus && (!brainStatus.initialized || showBrainPicker) && (
+              <div className="humi-brain-setup" role="group" aria-label={t("humi.brain.selectAria")}>
                 <div className="humi-brain-setup-copy">
-                  <strong>选择 Humi 的大脑</strong>
-                  <span>使用 Agent 已有的登录，不需要再填模型 Token。</span>
+                  <strong>{t("humi.brain.selectTitle")}</strong>
+                  <span>{t("humi.brain.selectDesc")}</span>
                 </div>
                 <div className="humi-brain-provider-list">
                   {brainStatus.providers
@@ -769,16 +778,25 @@ export function HumiModule({ onActivityChange, onOpenHexa }: HumiModuleProps) {
                     <button
                       key={provider.provider}
                       type="button"
-                      className={`humi-brain-provider ${provider.ready ? "is-ready" : ""}`}
+                      className={`humi-brain-provider ${provider.ready ? "is-ready" : ""} ${provider.provider === brainStatus.primary_provider ? "is-current" : ""}`}
                       disabled={!provider.ready || kernelLoading}
                       onClick={() => void selectBrain(provider.provider)}
                       title={provider.detail}
                     >
                       <strong>{provider.display_name}</strong>
-                      <span>{provider.ready ? "可连接" : provider.detail}</span>
+                      <span>{provider.ready ? t("humi.brain.connectable") : provider.detail}</span>
                     </button>
                   ))}
                 </div>
+                {brainStatus.initialized && (
+                  <button
+                    type="button"
+                    className="humi-brain-picker-cancel"
+                    onClick={() => setShowBrainPicker(false)}
+                  >
+                    {t("humi.brain.cancelSwitch")}
+                  </button>
+                )}
               </div>
             )}
             {chatMessages.map((message) => (
@@ -815,13 +833,13 @@ export function HumiModule({ onActivityChange, onOpenHexa }: HumiModuleProps) {
                 type="button"
                 className={`humi-composer-tool ${showDetails ? "is-active" : ""}`}
                 onClick={() => setShowDetails((value) => !value)}
-                aria-label={showDetails ? "收起 Humi 详情" : "打开 Humi 详情"}
-                title={showDetails ? "收起详情" : "详情"}
+                aria-label={showDetails ? t("humi.details.collapseAria") : t("humi.details.openAria")}
+                title={showDetails ? t("humi.details.collapseTitle") : t("humi.details.title")}
               >
                 <SlidersHorizontal size={17} strokeWidth={1.9} aria-hidden="true" />
               </button>
-              <textarea aria-label="给 Humi 的消息" className="humi-composer-input" value={kernelPrompt} onChange={(e) => setKernelPrompt(e.target.value)} onKeyDown={handleComposerKeyDown} placeholder="和 Humi 聊聊" rows={1} style={{ ...warmInputStyle, flex: 1, minHeight: 30, maxHeight: 120, resize: "vertical", border: 0, padding: "5px 0", background: "transparent", boxShadow: "none" }} />
-              <button type="button" className="humi-composer-send" onClick={() => void askHumi()} disabled={kernelLoading || !kernelPrompt.trim()} aria-label="发送消息"><ArrowUp size={17} strokeWidth={2.3} aria-hidden="true" /></button>
+              <textarea aria-label={t("humi.composer.inputAria")} className="humi-composer-input" value={kernelPrompt} onChange={(e) => setKernelPrompt(e.target.value)} onKeyDown={handleComposerKeyDown} placeholder={t("humi.composer.placeholder")} rows={1} style={{ ...warmInputStyle, flex: 1, minHeight: 30, maxHeight: 120, resize: "vertical", border: 0, padding: "5px 0", background: "transparent", boxShadow: "none" }} />
+              <button type="button" className="humi-composer-send" onClick={() => void askHumi()} disabled={kernelLoading || !kernelPrompt.trim()} aria-label={t("humi.composer.sendAria")}><ArrowUp size={17} strokeWidth={2.3} aria-hidden="true" /></button>
             </div>
           </div>
 
@@ -829,37 +847,47 @@ export function HumiModule({ onActivityChange, onOpenHexa }: HumiModuleProps) {
             <div className="humi-details-panel">
               <div className="humi-details-status-grid">
                 <KernelStatusCard
-                  name="Humi 大脑"
+                  name={t("humi.brain.cardName")}
                   ok={!!brainStatus?.initialized}
                   detail={
                     brainStatus?.providers.find(
                       (provider) => provider.provider === brainStatus.primary_provider,
-                    )?.display_name ?? "尚未选择"
+                    )?.display_name ?? t("humi.brain.notSelected")
                   }
-                  note="使用 Agent 现有登录"
+                  note={t("humi.brain.cardNote")}
                 />
                 <KernelStatusCard
-                  name="Pi 备用"
+                  name={t("humi.fallback.cardName")}
                   ok={!!appConfig?.brain.fallback_enabled && !!appConfig?.pi.token}
                   detail={
                     appConfig?.brain.fallback_enabled
                       ? appConfig.pi.token
                         ? appConfig.pi.model_name
-                        : "备用已开启，尚未配置"
-                      : "未开启"
+                        : t("humi.fallback.enabledUnconfigured")
+                      : t("humi.fallback.off")
                   }
-                  note="主 Agent 不可用时才使用"
+                  note={t("humi.fallback.cardNote")}
                 />
               </div>
+              {brainStatus?.initialized && !showBrainPicker && (
+                <button
+                  type="button"
+                  onClick={() => setShowBrainPicker(true)}
+                  disabled={kernelLoading}
+                  style={{ ...warmButtonStyle(false), marginTop: 8 }}
+                >
+                  {t("humi.brain.changeAction")}
+                </button>
+              )}
               <input
-                aria-label="工作目录"
+                aria-label={t("humi.details.cwdAria")}
                 value={kernelCwd}
                 onChange={(e) => setKernelCwd(e.target.value)}
                 placeholder="Working directory"
                 style={detailsInputStyle}
               />
               <textarea
-                aria-label="Agent 资源目录"
+                aria-label={t("humi.details.rootsAria")}
                 value={kernelRoots}
                 onChange={(e) => setKernelRoots(e.target.value)}
                 placeholder="Agent asset roots, one per line"
@@ -999,6 +1027,18 @@ function HumiOperationsRail({
   onToggleAutoConfirm: () => void;
   onPreviewTts: () => void;
 }) {
+  const { t } = useTranslation();
+  const [openingDashboard, setOpeningDashboard] = useState(false);
+  const openTokenDashboard = useCallback(async () => {
+    setOpeningDashboard(true);
+    try {
+      await invoke("open_token_dashboard");
+    } catch (error) {
+      console.error("Failed to open token dashboard", error);
+    } finally {
+      setOpeningDashboard(false);
+    }
+  }, []);
   const autoConfirm = config?.ui.auto_confirm === true;
   const voiceName = config?.tts.voice
     ?.replace(/^zh-CN-/, "")
@@ -1008,20 +1048,20 @@ function HumiOperationsRail({
     <aside
       id="humi-operations-panel"
       className="humi-operations"
-      aria-label="Humi 运行状态"
+      aria-label={t("humi.operations.aria")}
     >
       <div className="humi-operations-header">
         <div>
-          <strong>运行状态</strong>
-          <span>{sessions.length > 0 ? `${sessions.length} 个会话在线` : "等待 Agent 会话"}</span>
+          <strong>{t("humi.operations.title")}</strong>
+          <span>{sessions.length > 0 ? t("humi.operations.sessionsOnline", { count: sessions.length }) : t("humi.operations.waitingSessions")}</span>
         </div>
         <button
           type="button"
           className="humi-icon-button"
           onClick={onRefresh}
           disabled={loading}
-          aria-label="刷新 Humi 运行状态"
-          title="刷新"
+          aria-label={t("humi.operations.refreshAria")}
+          title={t("humi.operations.refreshTitle")}
         >
           <RefreshCw
             size={15}
@@ -1036,24 +1076,24 @@ function HumiOperationsRail({
         type="button"
         className="humi-session-row humi-hexa-summary"
         onClick={onOpenHexa}
-        aria-label={`${hexaAttention.attentionCount} 个开发目标需要注意，${hexaAttention.failedCount} 个验证失败`}
+        aria-label={t("humi.hexa.summaryAria", { count: hexaAttention.attentionCount, failed: hexaAttention.failedCount })}
       >
         <Wrench size={15} strokeWidth={1.9} aria-hidden="true" />
         <span className="humi-session-copy">
-          <strong>{hexaAttention.attentionCount} 个开发目标需要注意</strong>
-          <small>{hexaAttention.failedCount} 个验证失败</small>
+          <strong>{t("humi.hexa.goalsNeedAttention", { count: hexaAttention.attentionCount })}</strong>
+          <small>{t("humi.hexa.verificationFailed", { count: hexaAttention.failedCount })}</small>
         </span>
         <ExternalLink size={13} strokeWidth={1.8} aria-hidden="true" />
       </button>
 
       <section className="humi-operation-section humi-session-monitor">
         <div className="humi-operation-heading">
-          <span>实时会话</span>
+          <span>{t("humi.session.liveTitle")}</span>
           <span>{sessions.length}</span>
         </div>
         {sessions.length === 0 ? (
           <div className="humi-operation-empty">
-            启动 Codex、Claude Code 或其他 Agent 后，会话会自动出现在这里。
+            {t("humi.session.empty")}
           </div>
         ) : (
           <div className="humi-session-list">
@@ -1065,7 +1105,7 @@ function HumiOperationsRail({
                   type="button"
                   className="humi-session-row"
                   onClick={() => onFocusSession(session)}
-                  aria-label={`打开会话 ${name}`}
+                  aria-label={t("humi.session.openAria", { name })}
                 >
                   <span
                     className={`humi-session-dot ${session.status === "active" ? "is-active" : ""}`}
@@ -1087,21 +1127,21 @@ function HumiOperationsRail({
 
       <section className="humi-operation-section">
         <div className="humi-operation-heading">
-          <span>自动确认</span>
+          <span>{t("humi.autoConfirm.title")}</span>
           <span className={autoConfirm ? "is-on" : undefined}>
-            {autoConfirm ? "已开启" : "已关闭"}
+            {autoConfirm ? t("humi.autoConfirm.on") : t("humi.autoConfirm.off")}
           </span>
         </div>
         <div className="humi-control-row">
           <div>
-            <strong>权限请求</strong>
-            <small>对所有会话自动允许</small>
+            <strong>{t("humi.autoConfirm.permission")}</strong>
+            <small>{t("humi.autoConfirm.desc")}</small>
           </div>
           <button
             type="button"
             role="switch"
             aria-checked={autoConfirm}
-            aria-label="自动确认所有权限"
+            aria-label={t("humi.autoConfirm.switchAria")}
             className={`humi-switch ${autoConfirm ? "is-on" : ""}`}
             onClick={onToggleAutoConfirm}
             disabled={!config}
@@ -1113,22 +1153,22 @@ function HumiOperationsRail({
 
       <section className="humi-operation-section">
         <div className="humi-operation-heading">
-          <span>TTS 播报</span>
+          <span>{t("humi.tts.title")}</span>
           <Volume2 size={14} strokeWidth={1.8} aria-hidden="true" />
         </div>
         <div className="humi-control-row">
           <div>
-            <strong>{config?.tts.provider ? config.tts.provider.toUpperCase() : "读取中"}</strong>
+            <strong>{config?.tts.provider ? config.tts.provider.toUpperCase() : t("humi.tts.loading")}</strong>
             <small>
-              {voiceName || "默认声音"}
+              {voiceName || t("humi.tts.defaultVoice")}
               {config ? ` · ${config.tts.speed.toFixed(1)}x` : ""}
             </small>
           </div>
           <button
             type="button"
             className="humi-preview-button"
-            aria-label="试听 TTS 播报"
-            title="试听"
+            aria-label={t("humi.tts.previewAria")}
+            title={t("humi.tts.previewTitle")}
             onClick={onPreviewTts}
             disabled={!config || ttsPreviewing}
           >
@@ -1137,19 +1177,35 @@ function HumiOperationsRail({
         </div>
       </section>
 
-      <section className="humi-operation-section humi-token-summary">
+      <section
+        className="humi-operation-section humi-token-summary is-clickable"
+        role="button"
+        tabIndex={0}
+        aria-label={t("humi.token.openAria")}
+        aria-busy={openingDashboard}
+        onClick={() => void openTokenDashboard()}
+        onKeyDown={(event: KeyboardEvent) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            void openTokenDashboard();
+          }
+        }}
+      >
         <div className="humi-operation-heading">
-          <span>Token 统计</span>
-          <span>{stats?.active_agents ?? 0} 个 Agent</span>
+          <span>{t("humi.token.title")}</span>
+          <span>{t("humi.token.agentCount", { count: stats?.active_agents ?? 0 })}</span>
         </div>
         <div className="humi-token-value">
           <strong>{formatHumiCount(stats?.total_tokens ?? 0)}</strong>
           <span>Token</span>
         </div>
         <div className="humi-token-meta">
-          <span>{stats?.total_sessions ?? 0} 次会话</span>
-          <span>{formatHumiCount(stats?.total_tool_calls ?? 0)} 次工具调用</span>
+          <span>{t("humi.token.sessionCount", { count: stats?.total_sessions ?? 0 })}</span>
+          <span>{t("humi.token.toolCallCount", { count: formatHumiCount(stats?.total_tool_calls ?? 0) })}</span>
         </div>
+        <span className="humi-token-cta">
+          {openingDashboard ? t("humi.token.opening") : t("humi.token.openCta")}
+        </span>
       </section>
 
       {message && <div className="humi-operation-message">{message}</div>}
@@ -1170,12 +1226,12 @@ function trimHumiDecimal(value: number): string {
 
 function formatHumiTimeAgo(value: string): string {
   const timestamp = new Date(value).getTime();
-  if (!Number.isFinite(timestamp)) return "刚刚";
+  if (!Number.isFinite(timestamp)) return translate("humi.time.justNow");
   const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
-  if (seconds < 60) return "刚刚";
-  if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟前`;
-  if (seconds < 86_400) return `${Math.floor(seconds / 3600)} 小时前`;
-  return `${Math.floor(seconds / 86_400)} 天前`;
+  if (seconds < 60) return translate("humi.time.justNow");
+  if (seconds < 3600) return translate("humi.time.minutesAgo", { count: Math.floor(seconds / 60) });
+  if (seconds < 86_400) return translate("humi.time.hoursAgo", { count: Math.floor(seconds / 3600) });
+  return translate("humi.time.daysAgo", { count: Math.floor(seconds / 86_400) });
 }
 
 function QuietSignalsStrip({
@@ -1548,12 +1604,12 @@ function describeWorkDirection(result: LocalAgentKernelResult): string {
   }
   const tools = result.top_tools.map((item) => item.name.toLowerCase());
   if (tools.some((name) => ["bash", "read", "edit", "write"].includes(name))) {
-    return "你最近明显在做工程实现和本地验证，偏向边读、边改、边跑通。";
+    return translate("humi.direction.engineering");
   }
   if (result.type_counts.skill || result.type_counts.agent) {
-    return "你正在整理 Agent 能力底座，适合把重复配置沉淀成长期知识。";
+    return translate("humi.direction.agentBase");
   }
-  return "你最近的上下文还在形成中，Humi 会继续观察你的工作节奏。";
+  return translate("humi.direction.forming");
 }
 
 function describePreferenceMemory(result: LocalAgentKernelResult): string {
@@ -1561,12 +1617,12 @@ function describePreferenceMemory(result: LocalAgentKernelResult): string {
     return result.context_packet.user_preference_candidates[0];
   }
   if (result.top_tools.length > 0) {
-    return "少展示原始配置，多给结论、偏好、下一步。这条偏好我会优先记住。";
+    return translate("humi.preference.lessRaw");
   }
   if ((result.type_counts.memory ?? 0) > 0) {
-    return "你已经有一些记忆素材，下一步是把它们整理成可复用的个人规则。";
+    return translate("humi.preference.memoryReusable");
   }
-  return "我会先记录你的表达偏好和工作习惯，再慢慢补足长期记忆。";
+  return translate("humi.preference.default");
 }
 
 function describeNextStep(result: LocalAgentKernelResult): string {
@@ -1575,12 +1631,12 @@ function describeNextStep(result: LocalAgentKernelResult): string {
   }
   const action = result.suggested_actions[0];
   if (action?.toLowerCase().includes("soul")) {
-    return "补一层 soul/personality，让不同 Agent 更稳定地理解你的表达风格。";
+    return translate("humi.nextStep.soul");
   }
   if (action?.toLowerCase().includes("memory")) {
-    return "先把今天重复出现的偏好写进 memory，后面不用反复说明。";
+    return translate("humi.nextStep.memory");
   }
-  return "先继续完成钉钉本地桥和 Hype 归档，把演示链路变顺。";
+  return translate("humi.nextStep.default");
 }
 
 function KernelStatusCard({

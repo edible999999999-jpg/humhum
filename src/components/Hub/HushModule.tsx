@@ -14,6 +14,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { useTranslation } from "../../lib/i18n/react";
+import { t as translate } from "../../lib/i18n";
 import {
   compareHushContacts,
   filterHushContacts,
@@ -666,7 +667,7 @@ export function HushModule() {
       const identity = getHushConversationIdentity(message);
       const readableMessage: HushInboxMessage = {
         ...message,
-        text: formatHushMessageText(message.text) || "非文本消息",
+        text: formatHushMessageText(message.text) || t("hush.nonTextMessage"),
       };
       const existing = map.get(identity.id);
       if (existing) {
@@ -776,8 +777,8 @@ export function HushModule() {
     <div className="hub-module hush-room-module">
       <header className="hush-room-header">
         <div className="hush-room-identity">
-          <h2>Hush 收件箱</h2>
-          <span>{filteredContacts.length} 个会话</span>
+          <h2>{t("hush.inboxTitle")}</h2>
+          <span>{t("hush.conversationCount", { count: filteredContacts.length })}</span>
         </div>
         <label className="hush-search-field">
           <Search size={16} strokeWidth={1.8} aria-hidden="true" />
@@ -785,8 +786,8 @@ export function HushModule() {
             type="search"
             value={searchQuery}
             onChange={(event) => setSearchQuery(event.target.value)}
-            placeholder="搜索单聊或群聊名称"
-            aria-label="搜索单聊或群聊名称"
+            placeholder={t("hush.searchPlaceholder")}
+            aria-label={t("hush.searchPlaceholder")}
           />
         </label>
         <button
@@ -794,9 +795,11 @@ export function HushModule() {
           className="hush-header-refresh"
           onClick={() => void refreshHush()}
           disabled={dwsSyncing}
-          aria-label="同步并刷新钉钉消息"
+          aria-label={t("hush.refreshSyncDingtalk")}
           title={
-            dwsStatus?.authenticated ? "同步并刷新钉钉消息" : "刷新本地消息"
+            dwsStatus?.authenticated
+              ? t("hush.refreshSyncDingtalk")
+              : t("hush.refreshLocal")
           }
         >
           <RefreshCw
@@ -806,14 +809,14 @@ export function HushModule() {
             aria-hidden="true"
           />
         </button>
-        <div className="hush-filter-control" aria-label="消息筛选">
+        <div className="hush-filter-control" aria-label={t("hush.filterLabel")}>
           {(
             [
-              ["all", "全部"],
-              ["attention", "特别关注"],
-              ["unread", "未读"],
+              ["all", "hush.filter.all"],
+              ["attention", "hush.filter.attention"],
+              ["unread", "hush.filter.unread"],
             ] as const
-          ).map(([value, label]) => (
+          ).map(([value, labelKey]) => (
             <button
               key={value}
               type="button"
@@ -821,7 +824,7 @@ export function HushModule() {
               aria-pressed={filter === value}
               onClick={() => setFilter(value)}
             >
-              {label}
+              {t(labelKey)}
             </button>
           ))}
         </div>
@@ -881,7 +884,7 @@ export function HushModule() {
 
       <div className="hush-inbox-toolbar">
         <span className="hush-conversation-count">
-          {filteredContacts.length} 个会话
+          {t("hush.conversationCount", { count: filteredContacts.length })}
         </span>
       </div>
 
@@ -899,7 +902,7 @@ export function HushModule() {
         </div>
       ) : (
         <div className="hush-inbox-workspace">
-          <aside className="hush-conversation-pane" aria-label="会话列表">
+          <aside className="hush-conversation-pane" aria-label={t("hush.conversationListLabel")}>
             {filteredContacts.length > 0 ? (
               <ul className="hush-contact-list">
                 {filteredContacts.map((contact) => (
@@ -917,11 +920,11 @@ export function HushModule() {
                 ))}
               </ul>
             ) : (
-              <div className="hush-filter-empty">当前筛选下没有会话</div>
+              <div className="hush-filter-empty">{t("hush.filterEmpty")}</div>
             )}
           </aside>
 
-          <section className="hush-message-pane" aria-label="消息记录">
+          <section className="hush-message-pane" aria-label={t("hush.messageRecordLabel")}>
             {selectedContact ? (
               <ConversationDetail
                 key={`${selectedContact.id}:${selectedContact.lastMessageTime}`}
@@ -952,6 +955,7 @@ function HushEgressGuardRow({
 }: {
   status: HushEgressGuardStatus | null;
 }) {
+  const { t } = useTranslation();
   const enforced = status?.enforced === true;
   return (
     <div
@@ -961,11 +965,9 @@ function HushEgressGuardRow({
     >
       <ShieldCheck size={17} strokeWidth={1.9} aria-hidden="true" />
       <div>
-        <strong>{enforced ? "第三方传输已阻止" : "防护状态不可确认"}</strong>
+        <strong>{enforced ? t("hush.egress.enforced") : t("hush.egress.unavailable")}</strong>
         <span>
-          {enforced
-            ? status.message
-            : "无法读取本机编译策略状态，请重新启动 HUMHUM 后再使用 Hush。"}
+          {enforced ? status.message : t("hush.egress.unavailableDesc")}
         </span>
       </div>
     </div>
@@ -1055,6 +1057,7 @@ function HushStatusArea({
   onCancelHealthClear: () => void;
   onConfirmHealthClear: () => void;
 }) {
+  const { t } = useTranslation();
   const notificationReady = notificationBridge?.state === "running";
   const dingTalkReady = Boolean(dwsStatus?.authenticated);
   const wechatReady = Boolean(wechatStatus?.live_read_ok);
@@ -1064,16 +1067,16 @@ function HushStatusArea({
       <summary>
         <span className="hush-status-summary-title">
           <ShieldCheck size={15} aria-hidden="true" />
-          <span>连接与状态</span>
+          <span>{t("hush.status.title")}</span>
         </span>
         <span className="hush-status-summary-meta">
-          微信
           {wechatReady
-            ? "真实消息已连接"
+            ? t("hush.summary.wechatConnected")
             : notificationReady
-              ? "通知预览已监听"
-              : "未连接"}{" "}
-          · 钉钉{dingTalkReady ? "已连接" : "未连接"} · {inbox?.total ?? 0} 条消息
+              ? t("hush.summary.wechatNotif")
+              : t("hush.summary.wechatNone")}{" "}
+          · {dingTalkReady ? t("hush.summary.dingConnected") : t("hush.summary.dingNone")} ·{" "}
+          {t("hush.summary.messageCount", { count: inbox?.total ?? 0 })}
         </span>
         <ChevronDown
           className="hush-status-chevron"
@@ -1105,7 +1108,7 @@ function HushStatusArea({
           onConfirmClear={onConfirmHealthClear}
         />
         <div className="hush-status-section">
-          <div className="hush-status-section-title">消息来源</div>
+          <div className="hush-status-section-title">{t("hush.status.sourcesTitle")}</div>
           <div className="hush-connector-list">
             {connectors.map((connector) => (
               <HushConnectorRow
@@ -1171,25 +1174,26 @@ function HushTruthPanel({
   dwsStatus: DwsHushStatus | null;
   wechatStatus: WechatHushStatus | null;
 }) {
+  const { t } = useTranslation();
   const dwsActive =
     dwsStatus?.authenticated &&
     ["ready", "syncing", "error"].includes(dwsStatus.state);
   const wechatActive = Boolean(wechatStatus?.live_read_ok);
   const notificationActive = bridge?.state === "running";
   const state = wechatActive
-    ? "微信真实消息已连接"
+    ? t("hush.truth.wechatState")
     : dwsActive
-      ? "钉钉消息已连接"
+      ? t("hush.truth.dingState")
     : notificationActive
-      ? "本地通知已连接"
-      : "消息源尚未连接";
+      ? t("hush.truth.notifState")
+      : t("hush.truth.noneState");
   const detail = wechatActive
-    ? "Hush 正在从本机微信数据库严格只读同步收到的私聊和群聊，消息不会上传，也不会自动回复。"
+    ? t("hush.truth.wechatDetail")
     : dwsActive
-      ? "Hush 通过本机 DWS 只读同步钉钉群聊和私聊，不发送或回复消息。"
+      ? t("hush.truth.dingDetail")
     : notificationActive
-      ? "Hush 正在读取 macOS 投递的 WeChat 和钉钉通知预览，不访问私有聊天数据库。"
-      : "准备微信本地读取或登录钉钉 DWS 后，即可同步最近 24 小时的真实消息。";
+      ? t("hush.truth.notifDetail")
+      : t("hush.truth.noneDetail");
 
   return (
     <div className="hush-truth-row">
@@ -1197,7 +1201,9 @@ function HushTruthPanel({
         <strong>{state}</strong>
         <span>{detail}</span>
       </div>
-      <span className="hush-truth-count">{inbox?.total ?? 0} 条已接入</span>
+      <span className="hush-truth-count">
+        {t("hush.truth.count", { count: inbox?.total ?? 0 })}
+      </span>
     </div>
   );
 }
@@ -1607,37 +1613,29 @@ function WechatLocalPanel({
   onInstall: () => void;
   onAutoSyncChange: (enabled: boolean) => void;
 }) {
+  const { t } = useTranslation();
   const state = status?.state ?? "syncing";
   const isSyncing = syncing || status?.syncing || state === "syncing";
-  const stateLabel: Record<WechatHushStatus["state"], string> = {
-    not_installed: "未安装",
-    setup_required: "待准备",
-    ready: "已就绪",
-    syncing: "同步中",
-    error: "需要处理",
-  };
+  const stateLabel = t(`hush.wechat.state.${state}`);
   const canSync = Boolean(status?.live_read_ok) && !isSyncing;
   const syncLabel = status?.last_success_at
-    ? "同步新消息"
-    : "同步最近 24 小时";
+    ? t("hush.sync.newMessages")
+    : t("hush.sync.recent24h");
   const lastSuccess = status?.last_success_at
     ? new Date(status.last_success_at).toLocaleString()
-    : "尚未同步";
+    : t("hush.sync.neverSynced");
 
   return (
     <div className="hush-status-row hush-wechat-row">
       <span className={`hush-state-dot is-${state}`} aria-hidden="true" />
       <div className="hush-status-row-copy">
-        <strong>微信真实消息 · {stateLabel[state]}</strong>
-        <span>{status?.message ?? "正在检查微信本地读取能力"}</span>
+        <strong>{t("hush.wechat.title")} · {stateLabel}</strong>
+        <span>{status?.message ?? t("hush.wechat.checking")}</span>
         <span className="hush-status-secondary">
-          HUMHUM 内置只读内核 · 正文不离开本机 · 上次成功：{lastSuccess}
+          {t("hush.wechat.secondary", { time: lastSuccess })}
         </span>
         {state === "setup_required" && (
-          <span>
-            读取内核已经内置。准备动作会调用本机 wxkey，只在本机运行，可能暂时重启
-            微信并请求一次管理员授权，不会上传聊天内容。
-          </span>
+          <span>{t("hush.wechat.setupHint")}</span>
         )}
         {status?.next_action && state !== "ready" && (
           <span className="hush-status-secondary">{status.next_action}</span>
@@ -1649,18 +1647,18 @@ function WechatLocalPanel({
             disabled={!status?.live_read_ok || autoUpdating}
             onChange={(event) => onAutoSyncChange(event.target.checked)}
           />
-          每 {status?.sync_interval_minutes ?? 5} 分钟自动同步
+          {t("hush.autoSync", { minutes: status?.sync_interval_minutes ?? 5 })}
         </label>
         {report && (
           <div className="hush-sync-report">
-            <span>会话 {report.conversations}</span>
-            <span>已检查 {report.examined_messages}</span>
-            <span>新增 {report.imported_messages}</span>
-            <span>跳过自己 {report.skipped_sent_messages}</span>
+            <span>{t("hush.report.conversations", { count: report.conversations })}</span>
+            <span>{t("hush.report.examined", { count: report.examined_messages })}</span>
+            <span>{t("hush.report.imported", { count: report.imported_messages })}</span>
+            <span>{t("hush.report.skippedSelf", { count: report.skipped_sent_messages })}</span>
             {report.failed_conversations > 0 && (
-              <span>未读取 {report.failed_conversations}</span>
+              <span>{t("hush.report.failed", { count: report.failed_conversations })}</span>
             )}
-            {report.partial && <strong>本轮为部分结果，可稍后再次同步。</strong>}
+            {report.partial && <strong>{t("hush.wechat.partial")}</strong>}
           </div>
         )}
       </div>
@@ -1673,7 +1671,7 @@ function WechatLocalPanel({
             disabled
           >
             <ExternalLink size={14} aria-hidden="true" />
-            {openingInstall ? "正在检查..." : "需要完整安装包"}
+            {openingInstall ? t("hush.wechat.checkingBtn") : t("hush.wechat.needFullInstall")}
           </button>
         )}
         {state === "setup_required" && (
@@ -1684,7 +1682,7 @@ function WechatLocalPanel({
             disabled={preparing}
           >
             <ShieldCheck size={14} aria-hidden="true" />
-            {preparing ? "正在准备..." : "准备本机读取"}
+            {preparing ? t("hush.wechat.preparing") : t("hush.wechat.prepareRead")}
           </button>
         )}
         <button
@@ -1698,7 +1696,7 @@ function WechatLocalPanel({
             size={14}
             aria-hidden="true"
           />
-          {isSyncing ? "同步中..." : syncLabel}
+          {isSyncing ? t("hush.sync.syncing") : syncLabel}
         </button>
       </div>
     </div>
@@ -1728,39 +1726,34 @@ function DwsPanel({
   onLogin: () => void;
   onAutoSyncChange: (enabled: boolean) => void;
 }) {
+  const { t } = useTranslation();
   const state = status?.state ?? "syncing";
   const isSyncing = syncing || status?.syncing || state === "syncing";
-  const stateLabel: Record<DwsHushStatus["state"], string> = {
-    not_installed: "未安装",
-    authentication_required: "待登录",
-    ready: "已就绪",
-    syncing: "同步中",
-    error: "需要处理",
-  };
+  const stateLabel = t(`hush.dws.state.${state}`);
   const sourceLabel =
     status?.executable_source === "standalone"
-      ? "独立 DWS"
+      ? t("hush.dws.sourceStandalone")
       : status?.executable_source === "wukong"
-        ? "悟空内置 DWS"
-        : "尚未发现 DWS";
+        ? t("hush.dws.sourceWukong")
+        : t("hush.dws.sourceNone");
   const canSync = Boolean(status?.authenticated) && !isSyncing;
   const syncLabel = status?.pending_sync
-    ? "继续同步"
+    ? t("hush.sync.continue")
     : status?.last_success_at
-      ? "同步新消息"
-      : "同步最近 24 小时";
+      ? t("hush.sync.newMessages")
+      : t("hush.sync.recent24h");
   const lastSuccess = status?.last_success_at
     ? new Date(status.last_success_at).toLocaleString()
-    : "尚未同步";
+    : t("hush.sync.neverSynced");
 
   return (
     <div className="hush-status-row hush-dingtalk-row">
       <span className={`hush-state-dot is-${state}`} aria-hidden="true" />
       <div className="hush-status-row-copy">
-        <strong>钉钉消息同步 · {stateLabel[state]}</strong>
-        <span>{status?.message ?? "正在检查本机钉钉 DWS"}</span>
+        <strong>{t("hush.dws.title")} · {stateLabel}</strong>
+        <span>{status?.message ?? t("hush.dws.checking")}</span>
         <span className="hush-status-secondary">
-          {sourceLabel} · 上次成功：{lastSuccess}
+          {sourceLabel} · {t("hush.lastSuccess", { time: lastSuccess })}
         </span>
         {status?.executable_path && (
           <code title={status.executable_path}>{status.executable_path}</code>
@@ -1772,15 +1765,15 @@ function DwsPanel({
             disabled={!status?.authenticated || autoUpdating}
             onChange={(event) => onAutoSyncChange(event.target.checked)}
           />
-          每 {status?.sync_interval_minutes ?? 1} 分钟自动同步
+          {t("hush.autoSync", { minutes: status?.sync_interval_minutes ?? 1 })}
         </label>
         {report && (
           <div className="hush-sync-report">
-            <span>会话 {report.conversations}</span>
-            <span>已检查 {report.examined_messages}</span>
-            <span>新增 {report.imported_messages}</span>
-            <span>重复 {report.duplicate_messages}</span>
-            {report.partial && <strong>本轮已到安全上限，可继续同步。</strong>}
+            <span>{t("hush.report.conversations", { count: report.conversations })}</span>
+            <span>{t("hush.report.examined", { count: report.examined_messages })}</span>
+            <span>{t("hush.report.imported", { count: report.imported_messages })}</span>
+            <span>{t("hush.report.duplicate", { count: report.duplicate_messages })}</span>
+            {report.partial && <strong>{t("hush.dws.partial")}</strong>}
           </div>
         )}
       </div>
@@ -1793,7 +1786,7 @@ function DwsPanel({
             disabled={openingInstall}
           >
             <ExternalLink size={14} aria-hidden="true" />
-            {openingInstall ? "正在打开..." : "安装官方 DWS"}
+            {openingInstall ? t("hush.dws.opening") : t("hush.dws.installOfficial")}
           </button>
         )}
         {state === "authentication_required" && (
@@ -1804,7 +1797,7 @@ function DwsPanel({
             disabled={loggingIn}
           >
             <LogIn size={14} aria-hidden="true" />
-            {loggingIn ? "等待登录..." : "登录钉钉"}
+            {loggingIn ? t("hush.dws.waitingLogin") : t("hush.dws.login")}
           </button>
         )}
         <button
@@ -1818,7 +1811,7 @@ function DwsPanel({
             size={14}
             aria-hidden="true"
           />
-          {isSyncing ? "同步中..." : syncLabel}
+          {isSyncing ? t("hush.sync.syncing") : syncLabel}
         </button>
       </div>
     </div>
@@ -1840,9 +1833,12 @@ function LiveInboxPanel({
   return (
     <details className="hush-live-debug">
       <summary>
-        <span>本地收件箱调试</span>
+        <span>{t("hush.debug.title")}</span>
         <span>
-          {inbox?.total ?? 0} 条 · 优先 {inbox?.unread_priority ?? 0}
+          {t("hush.debug.summary", {
+            total: inbox?.total ?? 0,
+            priority: inbox?.unread_priority ?? 0,
+          })}
         </span>
         <ChevronDown size={14} aria-hidden="true" />
       </summary>
@@ -1853,8 +1849,8 @@ function LiveInboxPanel({
             type="button"
             className="hush-icon-button"
             onClick={onRefresh}
-            aria-label="刷新本地收件箱"
-            title="刷新本地收件箱"
+            aria-label={t("hush.debug.refresh")}
+            title={t("hush.debug.refresh")}
           >
             <RefreshCw size={15} aria-hidden="true" />
           </button>
@@ -1862,14 +1858,14 @@ function LiveInboxPanel({
             type="button"
             className="hush-icon-button is-danger"
             onClick={onClear}
-            aria-label="清空本地收件箱"
-            title="清空本地收件箱"
+            aria-label={t("hush.debug.clear")}
+            title={t("hush.debug.clear")}
           >
             <Trash2 size={15} aria-hidden="true" />
           </button>
         </div>
         {messages.length === 0 ? (
-          <div className="hush-live-empty">暂无本地消息。</div>
+          <div className="hush-live-empty">{t("hush.debug.empty")}</div>
         ) : (
           <div className="hush-live-list">
             {messages.slice(0, 8).map((message) => {
@@ -1878,7 +1874,7 @@ function LiveInboxPanel({
                 <div className="hush-live-row" key={message.id}>
                   <HushPlatformLabel platform={message.platform} />
                   <strong>{message.sender}</strong>
-                  <span>{formatHushMessageText(message.text) || "非文本消息"}</span>
+                  <span>{formatHushMessageText(message.text) || t("hush.nonTextMessage")}</span>
                   <small className="hush-conversation-scope" data-scope={scope}>
                     {getHushConversationScopeLabel([message])}
                   </small>
@@ -1910,19 +1906,20 @@ function HushConnectorRow({
   busy: boolean;
   onOpen: () => void;
 }) {
+  const { t } = useTranslation();
   const sourceActive = localHistoryActive || dwsActive || notificationActive;
   const connectorIdentity = getHushPlatformIdentity(connector.name);
   const statusLabel = localHistoryActive
-    ? "真实消息已连接"
+    ? t("hush.connector.realConnected")
     : dwsActive
-      ? "DWS 已连接"
+      ? t("hush.connector.dwsConnected")
     : notificationActive
-      ? "通知桥已启用"
+      ? t("hush.connector.bridgeEnabled")
       : connector.bridge_ready
-        ? "消息桥已就绪"
+        ? t("hush.connector.bridgeReady")
         : connector.installed
-          ? "应用可打开"
-          : "未安装";
+          ? t("hush.connector.appOpenable")
+          : t("hush.connector.notInstalled");
 
   return (
     <div className="hush-connector-row">
@@ -1944,15 +1941,15 @@ function HushConnectorRow({
         className="hush-icon-button"
         onClick={onOpen}
         disabled={busy || !connector.installed}
-        aria-label={`打开${connectorIdentity.label}`}
-        title={`打开${connectorIdentity.label}`}
+        aria-label={t("hush.connector.open", { name: connectorIdentity.label })}
+        title={t("hush.connector.open", { name: connectorIdentity.label })}
       >
         <ExternalLink size={15} aria-hidden="true" />
       </button>
       <span
         className={`hush-connector-state ${sourceActive ? "is-active" : ""}`}
       >
-        {sourceActive ? "已连接" : "未连接"}
+        {sourceActive ? t("hush.connector.connected") : t("hush.connector.notConnected")}
       </span>
     </div>
   );
@@ -1973,10 +1970,11 @@ export function HushContactRow({
   onSelect: () => void;
   onToggleAttention: () => void;
 }) {
+  const t = translate;
   const priorityLabel = attention
-    ? "特别关注"
+    ? t("hush.priority.attention")
     : contact.importance >= 4
-      ? "重点"
+      ? t("hush.priority.important")
       : null;
   const unread = unreadCount > 0;
   const primarySource = getHushPlatformIdentity(contact.platforms[0] ?? "");
@@ -2024,9 +2022,9 @@ export function HushContactRow({
             {unread && (
               <span
                 className="hush-unread-label"
-                aria-label={`${unreadCount} 条未读`}
+                aria-label={t("hush.unread", { count: unreadCount })}
               >
-                {unreadCount} 条未读
+                {t("hush.unread", { count: unreadCount })}
               </span>
             )}
             {priorityLabel && (
@@ -2040,10 +2038,12 @@ export function HushContactRow({
         type="button"
         className={`hush-star-button ${attention ? "is-active" : ""}`}
         aria-label={
-          attention ? `取消特别关注${contact.name}` : `特别关注${contact.name}`
+          attention
+            ? t("hush.attentionOffName", { name: contact.name })
+            : t("hush.attentionOnName", { name: contact.name })
         }
         aria-pressed={attention}
-        title={attention ? "取消特别关注" : "特别关注"}
+        title={attention ? t("hush.attentionOff") : t("hush.priority.attention")}
         onClick={(event) => {
           event.stopPropagation();
           onToggleAttention();
@@ -2117,7 +2117,10 @@ function ConversationDetail({
           </div>
         </div>
         <span>
-          {groups.length} 组 · {contact.messages.length} 条
+          {t("hush.conversationStats", {
+            groups: groups.length,
+            messages: contact.messages.length,
+          })}
         </span>
       </header>
 

@@ -1,4 +1,5 @@
 import type { TranscriptEntry } from "@/types";
+import { t } from "@/lib/i18n";
 
 interface NotificationToastProps {
   entry: TranscriptEntry;
@@ -23,7 +24,7 @@ export function NotificationToast({ entry, onDismiss }: NotificationToastProps) 
           />
           <span className="font-semibold text-[13px]" style={{ color: "#334155" }}>{entry.timestamp.toLocaleTimeString()}</span>
         </div>
-        <button type="button" onClick={onDismiss} aria-label="关闭通知" className="text-xs transition-colors leading-none" style={{ color: "#94a3b8" }}>✕</button>
+        <button type="button" onClick={onDismiss} aria-label={t("overlay.closeNotification")} className="text-xs transition-colors leading-none" style={{ color: "#94a3b8" }}>✕</button>
       </div>
 
       {/* Content */}

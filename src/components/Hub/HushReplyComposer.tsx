@@ -5,6 +5,7 @@ import {
   runHushReplySkill,
   type HushReplySkillMessage,
 } from "../../lib/hush/replySkill";
+import { useTranslation } from "../../lib/i18n/react";
 
 interface HushReplyPreview {
   confirmation_id: string;
@@ -32,6 +33,7 @@ export function HushReplyComposer({
   targetMessageId: string | null;
   messages: HushReplySkillMessage[];
 }) {
+  const { t } = useTranslation();
   const [draft, setDraft] = useState("");
   const [preview, setPreview] = useState<HushReplyPreview | null>(null);
   const [status, setStatus] = useState<"idle" | "drafting" | "preparing" | "sending" | "sent">(
@@ -50,7 +52,7 @@ export function HushReplyComposer({
     return (
       <div className="hush-reply-unavailable">
         <ShieldCheck size={14} aria-hidden="true" />
-        回复只对已确认收件人的真实单聊开放。
+        {t("hush.reply.unavailable")}
       </div>
     );
   }
@@ -101,7 +103,7 @@ export function HushReplyComposer({
         confirmationId: preview.confirmation_id,
       });
       if (receipt.status !== "sent") {
-        throw new Error("聊天平台没有确认发送结果");
+        throw new Error(t("hush.reply.sendNotConfirmed"));
       }
       setStatus("sent");
       setPreview(null);
@@ -115,21 +117,23 @@ export function HushReplyComposer({
   const busy = status === "drafting" || status === "preparing" || status === "sending";
 
   return (
-    <section className="hush-reply-composer" aria-label="安全回复">
+    <section className="hush-reply-composer" aria-label={t("hush.reply.title")}>
       <div className="hush-reply-composer-heading">
         <div>
-          <strong>回复 {conversationName}</strong>
-          <span>草稿留在本机，发送前逐条确认</span>
+          <strong>{t("hush.reply.replyTo", { name: conversationName })}</strong>
+          <span>{t("hush.reply.subtitle")}</span>
         </div>
         <button
           type="button"
           className="hush-reply-local-draft"
           disabled={busy}
           onClick={() => void createLocalDraft()}
-          title="按最新一条消息套用固定短语，不调用任何模型"
+          title={t("hush.reply.quickPhraseTitle")}
         >
           <MessageCircle size={14} aria-hidden="true" />
-          {status === "drafting" ? "填入中" : "快捷短语"}
+          {status === "drafting"
+            ? t("hush.reply.filling")
+            : t("hush.reply.quickPhrase")}
         </button>
       </div>
 
@@ -137,8 +141,8 @@ export function HushReplyComposer({
         value={draft}
         rows={3}
         maxLength={2000}
-        placeholder="输入要回复的内容"
-        aria-label={`回复 ${conversationName}`}
+        placeholder={t("hush.reply.placeholder")}
+        aria-label={t("hush.reply.replyTo", { name: conversationName })}
         disabled={busy || status === "sent"}
         onChange={(event) => {
           setDraft(event.target.value);
@@ -151,7 +155,7 @@ export function HushReplyComposer({
       {preview && (
         <div className="hush-reply-confirmation" role="status">
           <div>
-            <strong>发送给：{preview.conversation}</strong>
+            <strong>{t("hush.reply.sendTo", { name: preview.conversation })}</strong>
             <span>{preview.notice}</span>
           </div>
           <button
@@ -160,7 +164,9 @@ export function HushReplyComposer({
             onClick={() => void confirmReply()}
           >
             <Send size={14} aria-hidden="true" />
-            {status === "sending" ? "正在发送" : "确认发送"}
+            {status === "sending"
+              ? t("hush.reply.sending")
+              : t("hush.reply.confirmSend")}
           </button>
         </div>
       )}
@@ -174,7 +180,7 @@ export function HushReplyComposer({
       {status === "sent" ? (
         <div className="hush-reply-sent" role="status">
           <Check size={14} aria-hidden="true" />
-          已发送
+          {t("hush.reply.sent")}
         </div>
       ) : (
         !preview && (
@@ -185,7 +191,9 @@ export function HushReplyComposer({
             onClick={() => void prepareReply()}
           >
             <ShieldCheck size={14} aria-hidden="true" />
-            {status === "preparing" ? "正在准备" : "检查收件人与内容"}
+            {status === "preparing"
+              ? t("hush.reply.preparing")
+              : t("hush.reply.checkRecipient")}
           </button>
         )
       )}

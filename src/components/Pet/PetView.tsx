@@ -452,8 +452,8 @@ export function PetView() {
         shouldSendNativeNotification("completed", configRef.current?.ui.notifications)
       ) {
         invoke("send_notification", {
-          title: `${latestEvent.client_type || "Agent"} 已完成`,
-          body: (payload.message as string) || "任务已经完成，可以回来查看结果。",
+          title: t("petview.notifyDoneTitle", { client: latestEvent.client_type || "Agent" }),
+          body: (payload.message as string) || t("petview.notifyDoneBody"),
         });
       }
       if (pipeline) {

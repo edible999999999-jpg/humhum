@@ -98,7 +98,7 @@ export function QuestionToast({ event, onDismiss }: QuestionToastProps) {
           type="button"
           onClick={handleDismissWithoutAnswer}
           disabled={status === "sending"}
-          aria-label="关闭提问"
+          aria-label={t("overlay.closeQuestion")}
           className="text-xs transition-colors leading-none"
           style={{ color: "#94a3b8" }}
         >✕</button>
