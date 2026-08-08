@@ -669,25 +669,41 @@ impl StatsStore {
                 let mut models_used: Vec<String> = model_set.into_iter().collect();
                 models_used.sort();
 
-                // Build per-agent daily data from daily_buckets
-                let daily_data: Vec<DailyAgentData> = self
-                    .data
-                    .daily_buckets
-                    .iter()
-                    .filter_map(|b| {
-                        let agent_sessions = b.clients.get(&client_type).copied().unwrap_or(0);
-                        if agent_sessions == 0 {
-                            return None;
-                        }
-                        let ratio = agent_sessions as f64 / b.session_count.max(1) as f64;
-                        Some(DailyAgentData {
-                            date: b.date.clone(),
-                            tokens: (b.total_tokens as f64 * ratio) as u64,
-                            cost_usd: b.estimated_cost_usd * ratio,
-                            sessions: agent_sessions,
-                        })
+                // Per-agent daily series built from THIS client's own sessions.
+                // The day slices already split each session's tokens/cost across
+                // the real calendar days they happened on, so aggregating them
+                // per date yields the client's true daily usage. The previous
+                // approach multiplied a day's *combined* total by the client's
+                // share of the *session count*, which badly skewed any day where
+                // clients ran sessions of very different sizes (e.g. one big
+                // Claude session + one tiny Codex session split ~50/50).
+                let mut per_day: HashMap<String, (u64, f64, u64)> = HashMap::new();
+                for s in &sessions {
+                    for slice in s.effective_day_slices() {
+                        let entry = per_day.entry(slice.date.clone()).or_insert((0, 0.0, 0));
+                        entry.0 = entry.0.saturating_add(slice.total_tokens());
+                        entry.1 += slice.cost(&s.model);
+                    }
+                    // Session count lands wholly on the start day, matching how
+                    // update_daily_bucket attributes per-client session counts.
+                    let start_day = s
+                        .timestamp
+                        .get(0..10)
+                        .filter(|d| d.len() == 10)
+                        .map(str::to_string)
+                        .unwrap_or_else(|| chrono::Local::now().format("%Y-%m-%d").to_string());
+                    per_day.entry(start_day).or_insert((0, 0.0, 0)).2 += 1;
+                }
+                let mut daily_data: Vec<DailyAgentData> = per_day
+                    .into_iter()
+                    .map(|(date, (tokens, cost_usd, sessions))| DailyAgentData {
+                        date,
+                        tokens,
+                        cost_usd,
+                        sessions,
                     })
                     .collect();
+                daily_data.sort_by(|a, b| a.date.cmp(&b.date));
 
                 AgentStats {
                     client_type,
@@ -1894,5 +1910,108 @@ mod tests {
         );
 
         let _ = std::fs::remove_file(&path);
+    }
+
+    // The per-agent DAILY series must reflect each client's real usage, not a
+    // session-count split of the day's combined total. On a day where claude
+    // ran one large session and codex ran one tiny session, the old code
+    // reported ~half of (large+tiny) to EACH client. Regression guard.
+    #[test]
+    fn per_agent_daily_series_reflects_real_client_usage_not_session_ratio() {
+        let dir = std::env::temp_dir().join(format!("humhum-peragent-{}", uuid::Uuid::new_v4()));
+        let mut store = StatsStore::new_with_backfill(dir.join("stats.json"), false);
+
+        let day = chrono::Local::now()
+            .date_naive()
+            .and_hms_opt(12, 0, 0)
+            .unwrap()
+            .and_local_timezone(chrono::Local)
+            .unwrap()
+            .to_rfc3339();
+        let date = day.get(0..10).unwrap().to_string();
+
+        // Large claude session: 1,000,000 input tokens on `day`.
+        store.data.sessions.push(SessionStats {
+            session_id: "big".into(),
+            client_type: "claude".into(),
+            transcript_path: "big.jsonl".into(),
+            model: "claude-sonnet-4".into(),
+            input_tokens: 1_000_000,
+            output_tokens: 0,
+            cache_creation_tokens: 0,
+            cache_read_tokens: 0,
+            reasoning_tokens: 0,
+            tool_calls: 0,
+            tool_names: vec![],
+            timestamp: day.clone(),
+            last_activity: day.clone(),
+            day_slices: vec![DaySlice {
+                date: date.clone(),
+                input_tokens: 1_000_000,
+                output_tokens: 0,
+                cache_creation_tokens: 0,
+                cache_read_tokens: 0,
+                reasoning_tokens: 0,
+                messages: 1,
+                cost: 3.0,
+            }],
+        });
+        // Tiny codex session: 1,000 input tokens on the same day.
+        store.data.sessions.push(SessionStats {
+            session_id: "tiny".into(),
+            client_type: "codex".into(),
+            transcript_path: "tiny.jsonl".into(),
+            model: "gpt-5".into(),
+            input_tokens: 1_000,
+            output_tokens: 0,
+            cache_creation_tokens: 0,
+            cache_read_tokens: 0,
+            reasoning_tokens: 0,
+            tool_calls: 0,
+            tool_names: vec![],
+            timestamp: day.clone(),
+            last_activity: day.clone(),
+            day_slices: vec![DaySlice {
+                date: date.clone(),
+                input_tokens: 1_000,
+                output_tokens: 0,
+                cache_creation_tokens: 0,
+                cache_read_tokens: 0,
+                reasoning_tokens: 0,
+                messages: 1,
+                cost: 0.003,
+            }],
+        });
+
+        let agents = store.get_per_agent_stats();
+        let claude = agents.iter().find(|a| a.client_type == "claude").unwrap();
+        let codex = agents.iter().find(|a| a.client_type == "codex").unwrap();
+
+        let claude_day = claude.daily_data.iter().find(|d| d.date == date).unwrap();
+        let codex_day = codex.daily_data.iter().find(|d| d.date == date).unwrap();
+
+        // Real usage, not (1_000_000 + 1_000) / 2 ≈ 500_500 each.
+        assert_eq!(
+            claude_day.tokens, 1_000_000,
+            "claude daily tokens must be its own usage, got {}",
+            claude_day.tokens
+        );
+        assert_eq!(
+            codex_day.tokens, 1_000,
+            "codex daily tokens must be its own usage, got {}",
+            codex_day.tokens
+        );
+        assert!(
+            (claude_day.cost_usd - 3.0).abs() < 1e-6,
+            "claude daily cost must be its own $3.00, got {}",
+            claude_day.cost_usd
+        );
+        assert!(
+            (codex_day.cost_usd - 0.003).abs() < 1e-9,
+            "codex daily cost must be its own $0.003, got {}",
+            codex_day.cost_usd
+        );
+        assert_eq!(claude_day.sessions, 1);
+        assert_eq!(codex_day.sessions, 1);
     }
 }
