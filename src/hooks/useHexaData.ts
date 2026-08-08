@@ -505,9 +505,19 @@ export function useHexaData() {
       ]);
 
       if (activeResult.status === "fulfilled") {
+        const activeIds = new Set(activeResult.value.map((session) => session.session_id));
         setSessions((current) => [
           ...activeResult.value,
-          ...current.filter((session) => session.status === "completed"),
+          // Preserve sessions the live active list can't reproduce: completed
+          // ones (get_active_sessions drops finished sessions) and watched-only
+          // sessions (injected solely by fetchSnapshot, so a health-triggered
+          // fetchLiveState would otherwise silently drop active/idle watched
+          // agents). Skip any whose id is already in the fresh active set.
+          ...current.filter(
+            (session) =>
+              !activeIds.has(session.session_id) &&
+              (session.status === "completed" || session.event_names.includes("HexaWatch")),
+          ),
         ]);
       }
       if (watchedResult.status === "fulfilled") {
