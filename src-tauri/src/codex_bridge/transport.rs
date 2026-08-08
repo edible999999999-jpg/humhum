@@ -165,7 +165,11 @@ fn is_windows_command_script(binary: &Path) -> bool {
 /// shims to their Node.js entry point and bypass `cmd.exe` entirely. Unknown
 /// batch formats fail closed rather than attempting to quote command language.
 pub(crate) fn command_for_cli_with_untrusted_args(binary: &Path) -> Result<Command, String> {
+    // The early `return` is needed on Windows because the `cfg(not(windows))`
+    // block below still compiles on other targets; clippy only sees it as the
+    // last statement on Windows.
     #[cfg(target_os = "windows")]
+    #[allow(clippy::needless_return)]
     {
         let mut command = if is_windows_command_script(binary) {
             command_for_npm_shim(binary)?

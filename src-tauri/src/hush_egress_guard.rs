@@ -6,7 +6,11 @@ use std::sync::OnceLock;
 use tokio::process::Command;
 
 const POLICY_VERSION: u8 = 2;
+// These two are only referenced from macOS-gated sandbox code; without the cfg
+// they read as dead constants on Windows/Linux under `-D warnings`.
+#[cfg(target_os = "macos")]
 const SANDBOX_EXECUTABLE: &str = "/usr/bin/sandbox-exec";
+#[cfg(target_os = "macos")]
 const SANDBOX_PREFLIGHT_EXECUTABLE: &str = "/usr/bin/true";
 const NETWORK_DENY_PROFILE: &str = "(version 1)\n(allow default)\n(deny network*)";
 const POLICY_MESSAGE: &str = "聊天正文不会发送给 AI 或第三方；只有你明确授权的配对手机可接收限量脱敏预览，Relay 只能看到端到端加密密文；回复仍需逐条确认。";

@@ -2358,7 +2358,10 @@ async fn open_native_application(name: &str, app_path: Option<&str>) -> Result<(
         };
     }
 
+    // `return` needed on Windows: the cfg(not(macos|windows)) block still
+    // compiles on Linux, so the return is not redundant there.
     #[cfg(target_os = "windows")]
+    #[allow(clippy::needless_return)]
     {
         let path = app_path.ok_or_else(|| {
             format!(
@@ -2407,7 +2410,9 @@ fn dingtalk_local_source_candidates(home: &Path) -> Vec<PathBuf> {
         ];
     }
 
+    // `return` needed on Windows; the trailing cfg block compiles on Linux.
     #[cfg(target_os = "windows")]
+    #[allow(clippy::needless_return)]
     {
         let documents = dirs::document_dir().unwrap_or_else(|| home.join("Documents"));
         let mut paths = vec![documents.join("DingTalk"), documents.join("钉钉")];
@@ -4176,7 +4181,10 @@ pub(crate) fn ensure_hook_script_installed(
 }
 
 fn build_hook_command(script: &Path, port: u16, client_id: Option<&str>) -> String {
+    // `return` needed on Windows; the cfg(not(windows)) block below compiles
+    // elsewhere, so it is not redundant there.
     #[cfg(target_os = "windows")]
+    #[allow(clippy::needless_return)]
     {
         let script = windows_command_quote(&script.to_string_lossy());
         let mut command = format!(
