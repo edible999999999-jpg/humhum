@@ -579,11 +579,8 @@ async fn handle_event(
 
         match decision {
             Ok(Ok(d)) => {
-                let hook_behavior = if d.behavior == "allowAlways" {
-                    "allow"
-                } else {
-                    &d.behavior
-                };
+                let is_always = d.behavior == "allowAlways";
+                let hook_behavior = if is_always { "allow" } else { &d.behavior };
                 log::info!(
                     "Permission decided for {}: {} (hook: {}) answer={:?}",
                     event_id,
@@ -610,6 +607,11 @@ async fn handle_event(
                             }
                         })
                     }
+                } else if is_always {
+                    // "Always allow" must persist a rule via updatedPermissions,
+                    // otherwise Claude Code re-prompts for the same tool every
+                    // time — the whole point of the button.
+                    permission_always_allow_response(&hook_event.payload)
                 } else {
                     permission_hook_response(&hook_event.client_type, hook_behavior)
                 };
@@ -933,6 +935,77 @@ fn permission_hook_response(client_type: &str, behavior: &str) -> Value {
             "decision": { "behavior": behavior }
         }
     })
+}
+
+/// Build the `updatedPermissions` array that turns a one-time allow into a
+/// persisted "always allow" rule, so Claude Code stops re-prompting for the
+/// same tool/command.
+///
+/// Claude Code already hands us the exact rules it would apply if the user
+/// picked "always allow" in the native dialog, in the request's
+/// `permission_suggestions` field. Echoing one of those back verbatim is,
+/// per the docs, equivalent to the user selecting that option — so we prefer
+/// it. Only when the request carries no suggestions (older CLI, or a tool with
+/// no rule shape) do we synthesize a minimal `addRules` entry from the tool
+/// name and command, written to `userSettings` to match where our hook lives
+/// (`~/.claude/settings.json`).
+///
+/// Returns `None` when we can't form a meaningful rule; the caller then falls
+/// back to a plain one-time allow rather than emitting an empty/invalid entry.
+fn build_always_allow_permissions(payload: &Value) -> Option<Value> {
+    // Prefer the CLI's own suggestions — same array shape as updatedPermissions.
+    if let Some(suggestions) = payload.get("permission_suggestions") {
+        if let Some(arr) = suggestions.as_array() {
+            if !arr.is_empty() {
+                return Some(suggestions.clone());
+            }
+        }
+    }
+
+    // Fall back to synthesizing an allow rule from the tool + its command.
+    let tool_name = payload.get("tool_name").and_then(|v| v.as_str())?;
+    if tool_name.is_empty() {
+        return None;
+    }
+    // Only Bash carries a meaningful ruleContent (the command). For other tools
+    // a whole-tool allow is the honest match, so we omit ruleContent.
+    let rule = match payload
+        .get("tool_input")
+        .and_then(|v| v.get("command"))
+        .and_then(|v| v.as_str())
+    {
+        Some(command) if !command.is_empty() => {
+            serde_json::json!({ "toolName": tool_name, "ruleContent": command })
+        }
+        _ => serde_json::json!({ "toolName": tool_name }),
+    };
+
+    Some(serde_json::json!([
+        {
+            "type": "addRules",
+            "rules": [rule],
+            "behavior": "allow",
+            "destination": "userSettings"
+        }
+    ]))
+}
+
+/// PermissionRequest allow response that also persists an "always allow" rule
+/// via `updatedPermissions`. Falls back to a plain allow when no rule can be
+/// derived from the payload.
+fn permission_always_allow_response(payload: &Value) -> Value {
+    match build_always_allow_permissions(payload) {
+        Some(updated) => serde_json::json!({
+            "hookSpecificOutput": {
+                "hookEventName": "PermissionRequest",
+                "decision": {
+                    "behavior": "allow",
+                    "updatedPermissions": updated
+                }
+            }
+        }),
+        None => permission_hook_response("claude-code", "allow"),
+    }
 }
 
 /// GET /knowledge?q=<keyword> — query the knowledge base
@@ -1630,7 +1703,95 @@ mod session_auto_confirm_tests {
 
 #[cfg(test)]
 mod hook_protocol_tests {
-    use super::{canonical_hook_event_name, permission_hook_response};
+    use super::{
+        build_always_allow_permissions, canonical_hook_event_name,
+        permission_always_allow_response, permission_hook_response,
+    };
+
+    #[test]
+    fn always_allow_echoes_the_clis_permission_suggestions() {
+        // When Claude Code offers suggestions, "always allow" must echo them
+        // back verbatim — that is exactly the native "always allow" the user
+        // would have picked, so the rule persists and re-prompts stop.
+        let payload = serde_json::json!({
+            "tool_name": "Bash",
+            "tool_input": { "command": "npm run lint" },
+            "permission_suggestions": [
+                {
+                    "type": "addRules",
+                    "rules": [{ "toolName": "Bash", "ruleContent": "npm run lint" }],
+                    "behavior": "allow",
+                    "destination": "localSettings"
+                }
+            ]
+        });
+        let response = permission_always_allow_response(&payload);
+        assert_eq!(
+            response.pointer("/hookSpecificOutput/decision/behavior"),
+            Some(&serde_json::json!("allow"))
+        );
+        // The updatedPermissions array is the suggestions echoed back verbatim.
+        assert_eq!(
+            response.pointer("/hookSpecificOutput/decision/updatedPermissions"),
+            payload.get("permission_suggestions")
+        );
+    }
+
+    #[test]
+    fn always_allow_synthesizes_a_rule_when_no_suggestions() {
+        // Older CLI / no suggestions: synthesize an allow rule from the tool +
+        // command, written to userSettings (where our hook lives).
+        let payload = serde_json::json!({
+            "tool_name": "Bash",
+            "tool_input": { "command": "cargo test" }
+        });
+        let updated = build_always_allow_permissions(&payload).expect("a rule");
+        let entry = &updated.as_array().unwrap()[0];
+        assert_eq!(entry.get("type"), Some(&serde_json::json!("addRules")));
+        assert_eq!(entry.get("behavior"), Some(&serde_json::json!("allow")));
+        assert_eq!(
+            entry.get("destination"),
+            Some(&serde_json::json!("userSettings"))
+        );
+        assert_eq!(
+            entry.pointer("/rules/0/toolName"),
+            Some(&serde_json::json!("Bash"))
+        );
+        assert_eq!(
+            entry.pointer("/rules/0/ruleContent"),
+            Some(&serde_json::json!("cargo test"))
+        );
+    }
+
+    #[test]
+    fn always_allow_omits_rule_content_for_non_command_tools() {
+        // A tool without a command (e.g. Write) gets a whole-tool allow — no
+        // bogus ruleContent.
+        let payload = serde_json::json!({
+            "tool_name": "Write",
+            "tool_input": { "file_path": "/tmp/x", "content": "hi" }
+        });
+        let updated = build_always_allow_permissions(&payload).expect("a rule");
+        let rule = updated.pointer("/0/rules/0").unwrap();
+        assert_eq!(rule.get("toolName"), Some(&serde_json::json!("Write")));
+        assert!(rule.get("ruleContent").is_none());
+    }
+
+    #[test]
+    fn always_allow_falls_back_to_plain_allow_without_tool() {
+        // No tool_name and no suggestions: no rule to persist, so we must still
+        // emit a valid plain allow rather than an empty updatedPermissions.
+        let payload = serde_json::json!({ "hook_event_name": "PermissionRequest" });
+        assert!(build_always_allow_permissions(&payload).is_none());
+        let response = permission_always_allow_response(&payload);
+        assert_eq!(
+            response.pointer("/hookSpecificOutput/decision/behavior"),
+            Some(&serde_json::json!("allow"))
+        );
+        assert!(response
+            .pointer("/hookSpecificOutput/decision/updatedPermissions")
+            .is_none());
+    }
 
     #[test]
     fn codex_permission_response_uses_nested_decision() {
