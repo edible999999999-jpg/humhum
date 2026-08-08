@@ -83,7 +83,13 @@ const PERMISSION_WAIT_SECS: u64 = 123;
 pub async fn start_server(app_handle: tauri::AppHandle) {
     let config = {
         let config_state = app_handle.state::<Arc<std::sync::Mutex<crate::config::AppConfig>>>();
-        let config = config_state.lock().unwrap();
+        // Recover a poisoned lock instead of panicking the server thread: a
+        // panic elsewhere while holding the config mutex must not silently take
+        // the hook server down. Matches the poison-recovery convention used
+        // across the backend.
+        let config = config_state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         config.clone()
     };
 

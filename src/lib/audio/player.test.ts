@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 // Mock the Tauri IPC before importing the player so its `invoke` binds to the mock.
-const invokeMock = vi.fn(async () => undefined);
+const invokeMock = vi.fn(async (..._args: unknown[]) => undefined);
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
 }));
