@@ -500,7 +500,9 @@ public final class AgentMonitorService extends Service {
     }
 
     private void notifyAttention(int count) {
-        String text = count == 1 ? "有 1 个操作正在等待" : "有 " + count + " 个操作正在等待";
+        String text = count == 1
+                ? getString(R.string.monitor_attention_single)
+                : getString(R.string.monitor_attention_multiple, count);
         Notification notice = new Notification.Builder(this, channel(ATTENTION_CHANNEL))
                 .setSmallIcon(android.R.drawable.stat_notify_error)
                 .setContentTitle(getString(R.string.attention_notification_title))

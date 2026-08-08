@@ -22,6 +22,7 @@ import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.HealthAndSafety
 import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.NotificationsActive
@@ -38,10 +39,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import com.humhum.mobile.LanguagePreference
+import com.humhum.mobile.R
 import com.humhum.mobile.app.ConnectionStatus
 import com.humhum.mobile.app.HumHumUiState
+import com.humhum.mobile.app.resId
+import com.humhum.mobile.app.resolve
 import com.humhum.mobile.ui.theme.Humi
 import com.humhum.mobile.ui.theme.Ink
 import com.humhum.mobile.ui.theme.Line
@@ -62,34 +72,35 @@ fun SettingsScreen(
         item {
             Row(modifier = Modifier.fillMaxWidth().height(64.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = callbacks.onCloseSettings, modifier = Modifier.size(48.dp)) {
-                    Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回")
+                    Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = stringResource(R.string.settings_back))
                 }
                 Column {
-                    Text("设置", style = MaterialTheme.typography.titleLarge, color = Ink)
-                    Text("连接、权限与隐私", style = MaterialTheme.typography.labelMedium, color = Muted)
+                    Text(stringResource(R.string.settings_title), style = MaterialTheme.typography.titleLarge, color = Ink)
+                    Text(stringResource(R.string.settings_subtitle), style = MaterialTheme.typography.labelMedium, color = Muted)
                 }
             }
         }
-        item { SettingsSection("连接") }
+        item { LanguageRow() }
+        item { SettingsSection(stringResource(R.string.settings_section_connection)) }
         item {
             SettingsRow(
                 icon = Icons.Outlined.DesktopMac,
-                title = "家庭 Mac",
+                title = stringResource(R.string.settings_home_mac),
                 detail = if (state.connection == ConnectionStatus.CONNECTED) {
-                    "HUMHUM Anywhere · 已加密"
+                    stringResource(R.string.settings_home_mac_connected)
                 } else {
-                    state.statusMessage
+                    state.statusMessage.resolve()
                 },
                 onClick = callbacks.onDisconnect,
-                trailing = if (state.scope == null) "未连接" else "已连接",
+                trailing = if (state.scope == null) stringResource(R.string.settings_not_connected) else stringResource(R.string.settings_connected),
             )
         }
-        item { SettingsSection("健康与隐私") }
+        item { SettingsSection(stringResource(R.string.settings_section_health_privacy)) }
         item {
             SettingsRow(
                 icon = Icons.Outlined.HealthAndSafety,
-                title = "健康数据来源",
-                detail = "步数、静息心率、睡眠",
+                title = stringResource(R.string.settings_health_sources),
+                detail = stringResource(R.string.settings_health_sources_detail),
                 onClick = callbacks.onManageHealthPermissions,
                 trailing = "${state.healthPermissions.granted.size}/3",
             )
@@ -97,18 +108,18 @@ fun SettingsScreen(
         item {
             SettingsToggle(
                 icon = Icons.Outlined.NotificationsActive,
-                title = "后台健康同步",
-                detail = "每 6 小时尝试一次，仅同步日汇总",
+                title = stringResource(R.string.settings_background_health),
+                detail = stringResource(R.string.settings_background_health_detail),
                 checked = state.healthPermissions.backgroundGranted,
                 onChecked = callbacks.onBackgroundHealthChanged,
             )
         }
-        item { SettingsSection("后台") }
+        item { SettingsSection(stringResource(R.string.settings_section_background)) }
         item {
             SettingsToggle(
                 icon = Icons.Outlined.NotificationsActive,
-                title = "Hexa 后台监控",
-                detail = state.monitor.status,
+                title = stringResource(R.string.settings_hexa_monitor),
+                detail = stringResource(state.monitor.status.resId()),
                 checked = state.monitor.enabled,
                 onChecked = callbacks.onMonitorChanged,
             )
@@ -116,35 +127,35 @@ fun SettingsScreen(
         item {
             SettingsRow(
                 icon = Icons.Outlined.BatteryChargingFull,
-                title = "电池与自启动",
-                detail = if (state.deviceCare.batteryOptimized) "建议允许后台运行" else "后台限制已放宽",
+                title = stringResource(R.string.settings_battery_autostart),
+                detail = if (state.deviceCare.batteryOptimized) stringResource(R.string.settings_battery_recommend) else stringResource(R.string.settings_battery_relaxed),
                 onClick = callbacks.onOpenDeviceCare,
-                trailing = "检查",
+                trailing = stringResource(R.string.settings_check),
             )
         }
         item {
             SettingsRow(
                 icon = Icons.Outlined.Lock,
-                title = "本机加密",
-                detail = "健康待传数据与会话快照均加密保存",
+                title = stringResource(R.string.settings_local_encryption),
+                detail = stringResource(R.string.settings_local_encryption_detail),
                 onClick = {},
             )
         }
         item {
             SettingsRow(
                 icon = Icons.Outlined.DeleteOutline,
-                title = "删除手机上的 HUMHUM 数据",
-                detail = "清除连接、加密队列和离线快照",
+                title = stringResource(R.string.settings_delete_data),
+                detail = stringResource(R.string.settings_delete_data_detail),
                 onClick = callbacks.onDeleteLocalData,
-                trailing = "删除",
+                trailing = stringResource(R.string.common_delete),
             )
         }
-        item { SettingsSection("关于") }
+        item { SettingsSection(stringResource(R.string.settings_section_about)) }
         item {
             SettingsRow(
                 icon = Icons.Outlined.Info,
-                title = "HUMHUM for Android",
-                detail = "版本 ${com.humhum.mobile.BuildConfig.VERSION_NAME} · 内测版",
+                title = stringResource(R.string.settings_about_title),
+                detail = stringResource(R.string.settings_about_detail, com.humhum.mobile.BuildConfig.VERSION_NAME),
                 onClick = {},
             )
         }
@@ -153,11 +164,11 @@ fun SettingsScreen(
                 modifier = Modifier.fillMaxWidth().clickable { diagnosticsOpen = !diagnosticsOpen }.padding(vertical = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("高级诊断", style = MaterialTheme.typography.titleMedium, color = Ink)
+                Text(stringResource(R.string.settings_diagnostics), style = MaterialTheme.typography.titleMedium, color = Ink)
                 Spacer(Modifier.weight(1f))
                 Icon(
                     if (diagnosticsOpen) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
-                    contentDescription = if (diagnosticsOpen) "收起" else "展开",
+                    contentDescription = if (diagnosticsOpen) stringResource(R.string.settings_collapse) else stringResource(R.string.settings_expand),
                     tint = Muted,
                 )
             }
@@ -165,7 +176,13 @@ fun SettingsScreen(
         if (diagnosticsOpen) {
             item {
                 Text(
-                    "连接状态：${state.connection}\n权限范围：${state.scope ?: "none"}\n远程恢复：${state.relayRecovered}\n离线快照：${state.offlineSnapshot}",
+                    stringResource(
+                        R.string.settings_diagnostics_detail,
+                        state.connection.toString(),
+                        state.scope ?: stringResource(R.string.settings_scope_none),
+                        state.relayRecovered.toString(),
+                        state.offlineSnapshot.toString(),
+                    ),
                     style = MaterialTheme.typography.bodyMedium,
                     color = Muted,
                     modifier = Modifier.fillMaxWidth().padding(bottom = 18.dp),
@@ -173,6 +190,69 @@ fun SettingsScreen(
             }
         }
     }
+}
+
+private fun Context.findActivity(): Activity? {
+    var context: Context? = this
+    while (context is ContextWrapper) {
+        if (context is Activity) return context
+        context = context.baseContext
+    }
+    return null
+}
+
+@Composable
+private fun LanguageRow() {
+    val context = LocalContext.current
+    val current = LanguagePreference.getLanguage(context)
+    Row(
+        modifier = Modifier.fillMaxWidth().testTag("settings-language").padding(vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Icons.Outlined.Language, contentDescription = null, tint = Humi, modifier = Modifier.size(24.dp))
+        Spacer(Modifier.size(13.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(stringResource(R.string.settings_language), style = MaterialTheme.typography.titleMedium, color = Ink)
+            Text(stringResource(R.string.settings_language_detail), style = MaterialTheme.typography.bodyMedium, color = Muted)
+        }
+        LanguageChoice(
+            label = stringResource(R.string.settings_language_chinese),
+            selected = current == LanguagePreference.CHINESE,
+            onClick = { applyLanguage(context, LanguagePreference.CHINESE) },
+            tag = "settings-language-zh",
+        )
+        Spacer(Modifier.size(10.dp))
+        LanguageChoice(
+            label = stringResource(R.string.settings_language_english),
+            selected = current == LanguagePreference.ENGLISH,
+            onClick = { applyLanguage(context, LanguagePreference.ENGLISH) },
+            tag = "settings-language-en",
+        )
+    }
+}
+
+private fun applyLanguage(context: Context, language: String) {
+    if (LanguagePreference.getLanguage(context) == language) return
+    LanguagePreference.setLanguage(context, language)
+    context.findActivity()?.recreate()
+}
+
+@Composable
+private fun LanguageChoice(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    tag: String,
+) {
+    Text(
+        label,
+        style = MaterialTheme.typography.labelLarge,
+        color = if (selected) Humi else Muted,
+        modifier = Modifier
+            .testTag(tag)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 6.dp, vertical = 4.dp),
+    )
 }
 
 @Composable

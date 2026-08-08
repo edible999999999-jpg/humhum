@@ -114,14 +114,29 @@ public final class SessionSnapshotCodec {
         }
     }
 
-    public static String ageCopy(long savedAtMillis, long nowMillis) {
+    /** Freshness bucket for offline snapshot copy, so the localized string is chosen at render time. */
+    public enum AgeBucket {
+        JUST_NOW,
+        MINUTES,
+        HOURS,
+        DAYS,
+    }
+
+    /** Structured, language-agnostic description of snapshot age. */
+    public record SnapshotAge(AgeBucket bucket, long value) {}
+
+    public static SnapshotAge age(long savedAtMillis, long nowMillis) {
         long ageMillis = nowMillis > savedAtMillis ? nowMillis - savedAtMillis : 0L;
-        if (ageMillis < 60_000L) return "离线快照 · 刚刚";
-        if (ageMillis < 60L * 60L * 1000L) return "离线快照 · " + ageMillis / 60_000L + " 分钟前";
-        if (ageMillis < 24L * 60L * 60L * 1000L) {
-            return "离线快照 · " + ageMillis / (60L * 60L * 1000L) + " 小时前";
+        if (ageMillis < 60_000L) {
+            return new SnapshotAge(AgeBucket.JUST_NOW, 0L);
         }
-        return "离线快照 · " + ageMillis / (24L * 60L * 60L * 1000L) + " 天前";
+        if (ageMillis < 60L * 60L * 1000L) {
+            return new SnapshotAge(AgeBucket.MINUTES, ageMillis / 60_000L);
+        }
+        if (ageMillis < 24L * 60L * 60L * 1000L) {
+            return new SnapshotAge(AgeBucket.HOURS, ageMillis / (60L * 60L * 1000L));
+        }
+        return new SnapshotAge(AgeBucket.DAYS, ageMillis / (24L * 60L * 60L * 1000L));
     }
 
     private static int strictInt(JSONObject object, String key) throws JSONException {

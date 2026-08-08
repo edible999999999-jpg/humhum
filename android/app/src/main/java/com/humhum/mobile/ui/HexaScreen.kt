@@ -44,6 +44,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
+import com.humhum.mobile.R
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.text.font.FontWeight
@@ -52,6 +54,8 @@ import com.humhum.mobile.Models
 import com.humhum.mobile.app.HumHumUiState
 import com.humhum.mobile.app.PendingAction
 import com.humhum.mobile.app.PendingActionKind
+import com.humhum.mobile.app.StatusText
+import com.humhum.mobile.app.resolve
 import com.humhum.mobile.ui.theme.Hexa
 import com.humhum.mobile.ui.theme.HexaPanel
 import com.humhum.mobile.ui.theme.HexaPanelMuted
@@ -101,17 +105,18 @@ fun HexaScreen(
                     ),
                     color = HexaSignal,
                 )
+                val agentSessionLabel = stringResource(R.string.hexa_agent_session)
                 Text(
-                    orderedSessions.firstOrNull()?.project()?.ifBlank { "Agent 会话" }
-                        ?: "Agent 会话",
+                    orderedSessions.firstOrNull()?.project()?.ifBlank { agentSessionLabel }
+                        ?: agentSessionLabel,
                     style = EditorialHero,
                     color = HexaPanelText,
                 )
                 Text(
                     if (state.canControl) {
-                        "你可以在这里确认权限、查看进展，并继续给 Agent 下达任务。"
+                        stringResource(R.string.hexa_control_intro)
                     } else {
-                        "只读观察 · 当前电脑没有授予确认和追问权限。"
+                        stringResource(R.string.hexa_read_only_intro)
                     },
                     style = MaterialTheme.typography.bodyMedium,
                     color = HexaPanelMuted,
@@ -128,9 +133,9 @@ fun HexaScreen(
                     border = androidx.compose.foundation.BorderStroke(1.dp, HexaPanelMuted.copy(alpha = 0.34f)),
                 ) {
                     Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("现在很安静", style = MaterialTheme.typography.titleMedium, color = HexaPanelText)
+                        Text(stringResource(R.string.hexa_quiet_title), style = MaterialTheme.typography.titleMedium, color = HexaPanelText)
                         Text(
-                            "最近没有需要你处理的 Agent 会话。",
+                            stringResource(R.string.hexa_quiet_detail),
                             style = MaterialTheme.typography.bodyMedium,
                             color = HexaPanelMuted,
                         )
@@ -149,8 +154,8 @@ fun HexaScreen(
             if (orderedSessions.size > 1) {
                 item {
                     RoomSectionHeader(
-                        title = "其他最近会话",
-                        trailing = "${orderedSessions.size - 1} 条",
+                        title = stringResource(R.string.hexa_other_sessions),
+                        trailing = stringResource(R.string.hexa_count_entries, orderedSessions.size - 1),
                         dark = true,
                         accent = HexaSignal,
                     )
@@ -168,8 +173,8 @@ fun HexaScreen(
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     RoomSectionHeader(
-                        "正在关注",
-                        trailing = "${state.personalContext!!.agents().size} 个 Agent",
+                        stringResource(R.string.hexa_following),
+                        trailing = stringResource(R.string.hexa_agent_count, state.personalContext!!.agents().size),
                         dark = true,
                         accent = HexaSignal,
                     )
@@ -178,7 +183,7 @@ fun HexaScreen(
                             title = agent.name(),
                             detail = agent.currentStep() ?: agent.status(),
                             accent = Hexa,
-                            meta = if (agent.needsUser()) "需要你" else agent.status(),
+                            meta = if (agent.needsUser()) stringResource(R.string.hexa_needs_you) else agent.status(),
                             dark = true,
                         )
                     }
@@ -294,7 +299,7 @@ private fun SessionPanel(
                     )
                 }
                 Text(
-                    if (session.needsAttention()) "需要你" else "工作中",
+                    if (session.needsAttention()) stringResource(R.string.hexa_needs_you) else stringResource(R.string.hexa_working),
                     style = MaterialTheme.typography.labelMedium,
                     color = if (session.needsAttention()) Color(0xFFFFA7A7) else accentColor,
                 )
@@ -302,7 +307,7 @@ private fun SessionPanel(
                     IconButton(onClick = { callbacks.onOpenConversation(session) }, modifier = Modifier.size(48.dp)) {
                         Icon(
                             Icons.Outlined.ChatBubbleOutline,
-                            contentDescription = "查看对话",
+                            contentDescription = stringResource(R.string.hexa_view_conversation),
                             tint = accentColor,
                         )
                     }
@@ -311,18 +316,18 @@ private fun SessionPanel(
             if (primary) {
                 Text(
                     if (session.needsAttention()) {
-                        "这条会话正在等你处理"
+                        stringResource(R.string.hexa_primary_waiting)
                     } else {
-                        "这是最近仍可继续下达任务的会话"
+                        stringResource(R.string.hexa_primary_continuing)
                     },
                     style = EditorialSection,
                     color = HexaPanelText,
                 )
                 Text(
                     if (session.needsAttention()) {
-                        "确认请求已经到达，处理后 Agent 会继续推进当前任务。"
+                        stringResource(R.string.hexa_primary_waiting_detail)
                     } else {
-                        "你可以直接补充下一步，任务会沿着这条真实会话继续。"
+                        stringResource(R.string.hexa_primary_continuing_detail)
                     },
                     style = MaterialTheme.typography.bodyMedium,
                     color = metadataColor,
@@ -349,7 +354,7 @@ private fun SessionPanel(
                     OutlinedTextField(
                         value = draft,
                         onValueChange = { draft = it.take(4000) },
-                        label = { Text("追问或补充") },
+                        label = { Text(stringResource(R.string.hexa_follow_up_label)) },
                         modifier = Modifier.weight(1f).testTag("follow-up-draft"),
                         shape = RoundedCornerShape(8.dp),
                         maxLines = 3,
@@ -390,15 +395,15 @@ private fun SessionPanel(
                     ) {
                         Icon(
                             Icons.AutoMirrored.Outlined.Send,
-                            contentDescription = "发送",
+                            contentDescription = stringResource(R.string.hexa_send),
                         )
                     }
                 }
                 state.followUpFeedback[session.id()]?.let { feedback ->
                     Text(
-                        text = feedback,
+                        text = feedback.resolve(),
                         style = MaterialTheme.typography.bodyMedium,
-                        color = if (feedback.startsWith("电脑已收到")) {
+                        color = if (feedback is StatusText.Res) {
                             metadataColor
                         } else {
                             Color(0xFFFFA7A7)
@@ -441,7 +446,7 @@ private fun ActionRow(
                     contentColor = if (dark) HexaPanel else Color.White,
                 ),
                 modifier = Modifier.height(48.dp),
-            ) { Text("允许") }
+            ) { Text(stringResource(R.string.common_allow)) }
             OutlinedButton(
                 onClick = { onResolve(false) },
                 enabled = enabled,
@@ -456,7 +461,7 @@ private fun ActionRow(
                     if (dark) HexaPanelMuted else Line,
                 ),
                 modifier = Modifier.height(48.dp),
-            ) { Text("拒绝") }
+            ) { Text(stringResource(R.string.common_deny)) }
         }
     }
 }
@@ -474,9 +479,9 @@ private fun ConversationDisclosure(
             modifier = Modifier.fillMaxWidth().clickable(onClick = onClose).padding(vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("对话内容", style = MaterialTheme.typography.titleMedium, color = titleColor)
+            Text(stringResource(R.string.hexa_conversation_title), style = MaterialTheme.typography.titleMedium, color = titleColor)
             Spacer(Modifier.weight(1f))
-            Icon(Icons.Outlined.ChevronRight, contentDescription = "收起", tint = secondaryColor)
+            Icon(Icons.Outlined.ChevronRight, contentDescription = stringResource(R.string.hexa_collapse), tint = secondaryColor)
         }
         when {
             state.conversation.loading -> CircularProgressIndicator(
@@ -486,8 +491,9 @@ private fun ConversationDisclosure(
             )
             state.conversation.error != null -> Text(state.conversation.error, color = MaterialTheme.colorScheme.error)
             else -> state.conversation.messages.forEach { message ->
+                val roleLabel = if (message.role() == Models.ConversationRole.USER) stringResource(R.string.common_you) else stringResource(R.string.common_agent)
                 Text(
-                    text = "${if (message.role() == Models.ConversationRole.USER) "你" else "Agent"}：${message.text()}",
+                    text = "$roleLabel：${message.text()}",
                     style = MaterialTheme.typography.bodyMedium,
                     color = titleColor,
                 )

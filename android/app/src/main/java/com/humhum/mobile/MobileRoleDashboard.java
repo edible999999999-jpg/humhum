@@ -7,24 +7,29 @@ public final class MobileRoleDashboard {
     private MobileRoleDashboard() {}
 
     public enum Role {
-        HUMI("humi", "Humi", "理解今天与你有关的事"),
-        HYPE("hype", "Hype", "整理你的技能、偏好和记忆"),
-        HUSH("hush", "Hush", "安静整理值得留意的消息"),
-        HEXA("hexa", "Hexa", "观察 Agent 进展与确认" );
+        HUMI("humi", "Humi", "理解今天与你有关的事", R.string.role_humi_purpose),
+        HYPE("hype", "Hype", "整理你的技能、偏好和记忆", R.string.role_hype_purpose),
+        HUSH("hush", "Hush", "安静整理值得留意的消息", R.string.role_hush_purpose),
+        HEXA("hexa", "Hexa", "观察 Agent 进展与确认", R.string.role_hexa_purpose);
 
         private final String id;
         private final String displayName;
         private final String purpose;
+        private final int purposeRes;
 
-        Role(String id, String displayName, String purpose) {
+        Role(String id, String displayName, String purpose, int purposeRes) {
             this.id = id;
             this.displayName = displayName;
             this.purpose = purpose;
+            this.purposeRes = purposeRes;
         }
 
         public String id() { return id; }
         public String displayName() { return displayName; }
         public String purpose() { return purpose; }
+
+        @androidx.annotation.StringRes
+        public int purposeRes() { return purposeRes; }
 
         public static Role fromId(String id) {
             for (Role role : values()) {

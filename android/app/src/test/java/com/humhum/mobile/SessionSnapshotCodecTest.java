@@ -115,14 +115,26 @@ public class SessionSnapshotCodecTest {
     }
 
     @Test
-    public void formatsOfflineCopyByFreshnessBucketWithoutRawTimestamps() {
-        assertEquals("离线快照 · 刚刚", SessionSnapshotCodec.ageCopy(NOW_MILLIS, NOW_MILLIS));
-        assertEquals("离线快照 · 1 分钟前",
-                SessionSnapshotCodec.ageCopy(NOW_MILLIS - 60_000L, NOW_MILLIS));
-        assertEquals("离线快照 · 1 小时前",
-                SessionSnapshotCodec.ageCopy(NOW_MILLIS - 60L * 60L * 1000L, NOW_MILLIS));
-        assertEquals("离线快照 · 1 天前",
-                SessionSnapshotCodec.ageCopy(NOW_MILLIS - 24L * 60L * 60L * 1000L, NOW_MILLIS));
+    public void classifiesOfflineAgeByFreshnessBucketWithoutRawTimestamps() {
+        SessionSnapshotCodec.SnapshotAge justNow =
+                SessionSnapshotCodec.age(NOW_MILLIS, NOW_MILLIS);
+        assertEquals(SessionSnapshotCodec.AgeBucket.JUST_NOW, justNow.bucket());
+        assertEquals(0L, justNow.value());
+
+        SessionSnapshotCodec.SnapshotAge minutes =
+                SessionSnapshotCodec.age(NOW_MILLIS - 60_000L, NOW_MILLIS);
+        assertEquals(SessionSnapshotCodec.AgeBucket.MINUTES, minutes.bucket());
+        assertEquals(1L, minutes.value());
+
+        SessionSnapshotCodec.SnapshotAge hours =
+                SessionSnapshotCodec.age(NOW_MILLIS - 60L * 60L * 1000L, NOW_MILLIS);
+        assertEquals(SessionSnapshotCodec.AgeBucket.HOURS, hours.bucket());
+        assertEquals(1L, hours.value());
+
+        SessionSnapshotCodec.SnapshotAge days =
+                SessionSnapshotCodec.age(NOW_MILLIS - 24L * 60L * 60L * 1000L, NOW_MILLIS);
+        assertEquals(SessionSnapshotCodec.AgeBucket.DAYS, days.bucket());
+        assertEquals(1L, days.value());
     }
 
     private static void assertInvalid(JSONObject payload) {

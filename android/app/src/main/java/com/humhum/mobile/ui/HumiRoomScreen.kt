@@ -34,12 +34,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.dp
 import com.humhum.mobile.MobileRoleDashboard
+import com.humhum.mobile.R
 import com.humhum.mobile.app.HealthPermission
 import com.humhum.mobile.app.HumHumUiState
+import com.humhum.mobile.app.resolve
 import com.humhum.mobile.health.HealthMetric
 import com.humhum.mobile.health.HealthFreshness
 import com.humhum.mobile.health.HealthSourceState
@@ -93,9 +96,9 @@ fun HumiRoomScreen(
                     verticalArrangement = Arrangement.spacedBy(5.dp),
                 ) {
                     Text(todayLabel(), style = MaterialTheme.typography.labelLarge, color = Muted)
-                    Text("先把最重要的事\n推进", style = EditorialHero, color = Ink)
+                    Text(stringResource(R.string.humi_hero_title), style = EditorialHero, color = Ink)
                     Text(
-                        "我把 Agent 进展和身体信号放在一起，只提醒真正值得你注意的部分。",
+                        stringResource(R.string.humi_hero_detail),
                         style = MaterialTheme.typography.bodyMedium,
                         color = Muted,
                     )
@@ -126,7 +129,7 @@ fun HumiRoomScreen(
             if (primary == null) {
                 ContextUnavailable(
                     state.personalContextAuthorized,
-                    state.personalContextMessage,
+                    state.personalContextMessage?.resolve(),
                 )
             } else {
                 FocusCard(
@@ -139,8 +142,8 @@ fun HumiRoomScreen(
         item {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 RoomSectionHeader(
-                    "今天",
-                    trailing = context?.today()?.size?.let { "$it 件值得注意" },
+                    stringResource(R.string.humi_section_today),
+                    trailing = context?.today()?.size?.let { stringResource(R.string.humi_today_trailing, it) },
                 )
                 context?.today().orEmpty().drop(1).take(1).forEach { item ->
                     HumiSignalRow(
@@ -160,7 +163,7 @@ fun HumiRoomScreen(
                 }
                 if (context?.today().isNullOrEmpty() && context?.suggestions().isNullOrEmpty()) {
                     Text(
-                        "现在没有需要打断你的事情。",
+                        stringResource(R.string.humi_nothing_to_interrupt),
                         style = MaterialTheme.typography.bodyMedium,
                         color = Muted,
                         modifier = Modifier.padding(vertical = 12.dp),
@@ -170,22 +173,22 @@ fun HumiRoomScreen(
         }
         item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                RoomSectionHeader("身体信号", trailing = healthSectionTrailing(state))
+                RoomSectionHeader(stringResource(R.string.humi_section_body_signals), trailing = healthSectionTrailing(state))
                 HealthSummaryStrip(state)
             }
         }
         item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 RoomSectionHeader(
-                    "我记得的你",
-                    trailing = if (state.personalContextFromCache) "加密缓存" else null,
+                    stringResource(R.string.humi_section_memory),
+                    trailing = if (state.personalContextFromCache) stringResource(R.string.humi_memory_cache) else null,
                 )
                 val memory = context?.memories()?.firstOrNull()
                 val habit = context?.habits()?.firstOrNull()
                 when {
                     memory != null -> RoomItem(
                         memory.content(),
-                        "已确认记忆 · ${memory.temperature()}",
+                        stringResource(R.string.humi_memory_confirmed, memory.temperature()),
                         Humi,
                     )
                     habit != null -> RoomItem(
@@ -195,18 +198,18 @@ fun HumiRoomScreen(
                     )
                     else -> ContextUnavailable(
                         state.personalContextAuthorized,
-                        "这里只放已确认的记忆与习惯，不会把推测写成事实。",
+                        stringResource(R.string.humi_memory_placeholder),
                     )
                 }
             }
         }
         item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                RoomSectionHeader("健康数据来源", trailing = "按需授权")
-                Text("数据来源", style = MaterialTheme.typography.labelLarge, color = Muted)
+                RoomSectionHeader(stringResource(R.string.humi_section_health_sources), trailing = stringResource(R.string.humi_on_demand))
+                Text(stringResource(R.string.humi_data_source), style = MaterialTheme.typography.labelLarge, color = Muted)
                 HealthSourceRow(
                     icon = Icons.AutoMirrored.Outlined.DirectionsWalk,
-                    title = "步数",
+                    title = stringResource(R.string.humi_metric_steps),
                     detail = healthSourceDetail(state, HealthPermission.STEPS, HealthMetric.STEPS),
                     enabled = HealthPermission.STEPS in state.healthPermissions.granted,
                     tag = "health-source-steps",
@@ -220,7 +223,7 @@ fun HumiRoomScreen(
                 )
                 HealthSourceRow(
                     icon = Icons.Outlined.FavoriteBorder,
-                    title = "静息心率",
+                    title = stringResource(R.string.humi_metric_resting_heart_rate),
                     detail = healthSourceDetail(
                         state,
                         HealthPermission.RESTING_HEART_RATE,
@@ -238,7 +241,7 @@ fun HumiRoomScreen(
                 )
                 HealthSourceRow(
                     icon = Icons.Outlined.Schedule,
-                    title = "睡眠",
+                    title = stringResource(R.string.humi_metric_sleep),
                     detail = healthSourceDetail(state, HealthPermission.SLEEP, HealthMetric.SLEEP),
                     enabled = HealthPermission.SLEEP in state.healthPermissions.granted,
                     tag = "health-source-sleep",
@@ -279,11 +282,11 @@ private fun FocusCard(
                     .padding(start = 17.dp, top = 15.dp, end = 15.dp, bottom = 15.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Text("Humi 注意到 · $status", style = MaterialTheme.typography.labelMedium, color = HumiSoft)
+                Text(stringResource(R.string.humi_focus_noticed, status), style = MaterialTheme.typography.labelMedium, color = HumiSoft)
                 Text(title, style = EditorialSection, color = EditorialOnFocus)
                 Text(detail, style = MaterialTheme.typography.bodyMedium, color = Color(0xFFC8CBC7))
                 Text(
-                    "继续今天的重点  →",
+                    stringResource(R.string.humi_continue_focus),
                     style = MaterialTheme.typography.labelLarge,
                     color = EditorialOnFocus,
                 )
@@ -330,21 +333,21 @@ private fun HealthSummaryStrip(state: HumHumUiState) {
         HorizontalDivider(color = Line)
         Row(modifier = Modifier.padding(vertical = 11.dp)) {
             HealthMetricValue(
-                "步数",
+                stringResource(R.string.humi_metric_steps),
                 summary?.steps?.roundToInt()?.let { "%,d".format(it) } ?: "--",
                 Hush,
                 Modifier.weight(1f),
             )
             HealthMetricValue(
-                "静息心率",
+                stringResource(R.string.humi_metric_resting_heart_rate),
                 summary?.restingHeartRate?.roundToInt()?.let { "$it bpm" } ?: "--",
                 Color(0xFFD85C67),
                 Modifier.weight(1f),
             )
             HealthMetricValue(
-                "睡眠",
+                stringResource(R.string.humi_metric_sleep),
                 summary?.sleepMinutes?.let {
-                    "${(it / 60).toInt()}时${(it % 60).roundToInt()}分"
+                    stringResource(R.string.humi_sleep_duration, (it / 60).toInt(), (it % 60).roundToInt())
                 } ?: "--",
                 Humi,
                 Modifier.weight(1f),
@@ -391,61 +394,71 @@ private fun HealthSourceRow(
             Text(detail, style = MaterialTheme.typography.bodyMedium, color = Muted)
         }
         Text(
-            if (enabled) "已允许" else "开启",
+            if (enabled) stringResource(R.string.humi_source_permission) else stringResource(R.string.humi_source_enable),
             style = MaterialTheme.typography.labelMedium,
             color = if (enabled) Hush else Humi,
         )
     }
 }
 
+@Composable
 private fun healthSummary(state: HumHumUiState): String {
-    val summary = state.health?.summary ?: return "未开启"
+    val summary = state.health?.summary ?: return stringResource(R.string.humi_health_not_enabled)
     val count = listOf(
         summary.steps,
         summary.restingHeartRate,
         summary.sleepMinutes,
     ).count { it != null }
-    return if (count == 0) "等待数据" else "$count 项日汇总"
+    return if (count == 0) {
+        stringResource(R.string.humi_health_waiting_data)
+    } else {
+        stringResource(R.string.humi_health_daily_summary_count, count)
+    }
 }
 
 private fun issueNumber(): String = LocalDate.now().format(DateTimeFormatter.ofPattern("MM"))
 
+@Composable
 private fun healthSectionTrailing(state: HumHumUiState): String {
     val captured = state.health?.summary?.capturedAt
     if (state.health?.freshness == HealthFreshness.STALE && captured != null) {
-        return "采集于 ${captured.atZone(ZoneId.systemDefault()).format(
-            DateTimeFormatter.ofPattern("M月d日 HH:mm")
-        )}"
+        val formatted = captured.atZone(ZoneId.systemDefault()).format(
+            DateTimeFormatter.ofPattern("M/d HH:mm", Locale.getDefault())
+        )
+        return stringResource(R.string.humi_health_captured_at, formatted)
     }
     return healthSummary(state)
 }
 
+@Composable
 private fun healthSourceDetail(
     state: HumHumUiState,
     permission: HealthPermission,
     metric: HealthMetric,
 ): String {
-    if (permission !in state.healthPermissions.granted) return "由 Android 系统询问权限"
+    if (permission !in state.healthPermissions.granted) return stringResource(R.string.humi_source_ask_android)
     return when (state.health?.summary?.sourceStates?.get(metric)) {
-        HealthSourceState.HEALTH_CONNECT -> "健康连接 · 只读取日汇总"
-        HealthSourceState.PHONE_STEP_COUNTER -> "本机计步器"
-        HealthSourceState.UNAVAILABLE -> "当前设备暂不可用"
-        HealthSourceState.DISABLED, null -> "已允许，等待同步"
+        HealthSourceState.HEALTH_CONNECT -> stringResource(R.string.humi_source_health_connect)
+        HealthSourceState.PHONE_STEP_COUNTER -> stringResource(R.string.humi_source_phone_counter)
+        HealthSourceState.UNAVAILABLE -> stringResource(R.string.humi_source_device_unavailable)
+        HealthSourceState.DISABLED, null -> stringResource(R.string.humi_source_allowed_waiting)
     }
 }
 
+@Composable
 private fun sourceLabel(source: String): String = when (source) {
-    "hexa_goal" -> "来自 Hexa 目标"
-    "obsidian_task" -> "来自你选中的笔记任务"
-    else -> "来自已确认信息"
+    "hexa_goal" -> stringResource(R.string.humi_source_from_hexa_goal)
+    "obsidian_task" -> stringResource(R.string.humi_source_from_note_task)
+    else -> stringResource(R.string.humi_source_from_confirmed)
 }
 
+@Composable
 private fun statusLabel(status: String): String = when (status) {
-    "waiting" -> "等待"
-    "completed" -> "完成"
-    else -> "进行中"
+    "waiting" -> stringResource(R.string.humi_status_waiting)
+    "completed" -> stringResource(R.string.humi_status_completed)
+    else -> stringResource(R.string.humi_status_in_progress)
 }
 
 private fun todayLabel(): String = LocalDate.now().format(
-    DateTimeFormatter.ofPattern("M 月 d 日 · EEEE", Locale.SIMPLIFIED_CHINESE),
+    DateTimeFormatter.ofPattern("MMMM d · EEEE", Locale.getDefault()),
 )

@@ -18,8 +18,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.humhum.mobile.MobileRoleDashboard
+import com.humhum.mobile.R
 import com.humhum.mobile.ui.theme.Ink
 import com.humhum.mobile.ui.theme.Line
 import com.humhum.mobile.ui.theme.Muted
@@ -54,7 +56,7 @@ fun RoomIntro(
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Text(
-                text = "${role.displayName()} · ${role.purpose()}",
+                text = "${role.displayName()} · ${stringResource(role.purposeRes())}",
                 style = MaterialTheme.typography.labelMedium,
                 color = palette.accent,
             )
@@ -159,12 +161,12 @@ fun ContextUnavailable(
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Text(
-                if (authorized) "这部分暂时没有内容" else "电脑尚未授权这部分信息",
+                if (authorized) stringResource(R.string.room_context_empty) else stringResource(R.string.room_context_unauthorized),
                 style = MaterialTheme.typography.titleMedium,
                 color = Ink,
             )
             Text(
-                message ?: if (authorized) "连接恢复后会自动更新。" else "在 Mac 的 Hexa 配对时开启“同步个人上下文”。",
+                message ?: if (authorized) stringResource(R.string.room_context_empty_detail) else stringResource(R.string.room_context_unauthorized_detail),
                 style = MaterialTheme.typography.bodyMedium,
                 color = Muted,
             )

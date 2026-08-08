@@ -1,6 +1,7 @@
 package com.humhum.mobile;
 
 import android.app.Application;
+import android.content.Context;
 import com.google.firebase.FirebaseApp;
 import com.google.firebase.FirebaseOptions;
 import com.google.firebase.messaging.FirebaseMessaging;
@@ -8,6 +9,10 @@ import com.humhum.mobile.health.HealthForegroundRefresh;
 
 public final class HumHumApplication extends Application {
     private static volatile boolean fcmConfigured;
+
+    @Override protected void attachBaseContext(Context base) {
+        super.attachBaseContext(LanguagePreference.wrap(base));
+    }
 
     @Override public void onCreate() {
         super.onCreate();

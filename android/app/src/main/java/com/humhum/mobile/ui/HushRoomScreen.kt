@@ -31,12 +31,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.annotation.StringRes
 import com.humhum.mobile.MobileRoleDashboard
+import com.humhum.mobile.R
 import com.humhum.mobile.Models
 import com.humhum.mobile.app.HumHumUiState
+import com.humhum.mobile.app.resolve
 import com.humhum.mobile.ui.theme.Hush
 import com.humhum.mobile.ui.theme.HushCanvas
 import com.humhum.mobile.ui.theme.HushMintWarm
@@ -51,10 +55,10 @@ import com.humhum.mobile.ui.theme.EditorialMetrics
 import com.humhum.mobile.ui.theme.EditorialOnFocus
 import com.humhum.mobile.ui.theme.editorialSpecFor
 
-private enum class InboxFilter(val label: String) {
-    ALL("全部"),
-    REPLY("需要回复"),
-    FOCUSED("特别关注"),
+private enum class InboxFilter(@StringRes val labelRes: Int) {
+    ALL(R.string.hush_filter_all),
+    REPLY(R.string.hush_filter_reply),
+    FOCUSED(R.string.hush_filter_focused),
 }
 
 @Composable
@@ -92,20 +96,20 @@ fun HushRoomScreen(
         item {
             HushHero(visible.size)
             Text(
-                "只展示来自已授权来源的联系人、时间与可用摘要。",
+                stringResource(R.string.hush_intro),
                 style = MaterialTheme.typography.bodyMedium,
                 color = Muted,
                 modifier = Modifier.padding(top = 7.dp, bottom = 12.dp),
             )
             RoomSectionHeader(
-                title = "今天",
-                trailing = if (inbox.isEmpty()) null else "${inbox.size} 条脱敏摘要",
+                title = stringResource(R.string.hush_section_today),
+                trailing = if (inbox.isEmpty()) null else stringResource(R.string.hush_redacted_count, inbox.size),
             )
         }
         state.personalContextMessage?.let { message ->
             item {
                 Text(
-                    text = message,
+                    text = message.resolve(),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.error,
                     modifier = Modifier.padding(bottom = 10.dp),
@@ -116,7 +120,7 @@ fun HushRoomScreen(
             item {
                 ContextUnavailable(
                     state.personalContextAuthorized,
-                    state.personalContextMessage,
+                    state.personalContextMessage?.resolve(),
                 )
             }
         } else {
@@ -130,7 +134,7 @@ fun HushRoomScreen(
         }
         item {
             PrivacyStrip(
-                text = "消息正文仅在你的设备与已授权电脑之间加密传输",
+                text = stringResource(R.string.hush_privacy_strip),
                 modifier = Modifier.padding(top = 18.dp),
             )
         }
@@ -162,7 +166,7 @@ private fun InboxFilterBar(
                         contentAlignment = Alignment.Center,
                     ) {
                         Text(
-                            item.label,
+                            stringResource(item.labelRes),
                             style = MaterialTheme.typography.labelMedium,
                             color = if (item == selected) EditorialOnFocus else Muted,
                         )
@@ -184,8 +188,8 @@ private fun HushHero(messageCount: Int) {
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(5.dp),
         ) {
-            Text("私人通信", style = MaterialTheme.typography.labelLarge, color = Muted)
-            Text("最近消息", style = EditorialHero, color = Ink)
+            Text(stringResource(R.string.hush_hero_private), style = MaterialTheme.typography.labelLarge, color = Muted)
+            Text(stringResource(R.string.hush_hero_title), style = EditorialHero, color = Ink)
         }
         Column(horizontalAlignment = Alignment.End) {
             Text(
@@ -199,7 +203,7 @@ private fun HushHero(messageCount: Int) {
                 color = Color(0xFFC57970),
             )
             Text(
-                editorialSpecFor(MobileRoleDashboard.Role.HUSH).indexLabel,
+                stringResource(R.string.hush_index_waiting),
                 style = MaterialTheme.typography.labelMedium.copy(fontSize = 8.sp),
                 color = Muted,
             )
@@ -224,7 +228,7 @@ private fun InboxMessageRow(message: Models.InboxItem, highlighted: Boolean) {
         ) {
             Box(contentAlignment = Alignment.Center) {
                 Text(
-                    messageInitial(message.sender()),
+                    messageInitial(message.sender(), stringResource(R.string.hush_initial_placeholder)),
                     style = MaterialTheme.typography.labelLarge,
                     color = Hush,
                 )
@@ -303,10 +307,10 @@ private fun messageTone(sender: String, importance: Int): Color = when {
     else -> HushPeach.copy(alpha = 0.58f)
 }
 
-private fun messageInitial(sender: String): String {
+private fun messageInitial(sender: String, placeholder: String): String {
     val trimmed = sender.trim()
     return when {
-        trimmed.isEmpty() -> "讯"
+        trimmed.isEmpty() -> placeholder
         trimmed.first().code > 127 -> trimmed.takeLast(1)
         else -> trimmed.take(1).uppercase()
     }

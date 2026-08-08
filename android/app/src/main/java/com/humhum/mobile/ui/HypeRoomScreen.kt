@@ -32,12 +32,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.annotation.StringRes
 import com.humhum.mobile.MobileRoleDashboard
+import com.humhum.mobile.R
 import com.humhum.mobile.Models
 import com.humhum.mobile.app.HumHumUiState
+import com.humhum.mobile.app.resolve
 import com.humhum.mobile.ui.theme.EditorialFocus
 import com.humhum.mobile.ui.theme.EditorialHero
 import com.humhum.mobile.ui.theme.EditorialMetrics
@@ -52,7 +56,12 @@ import com.humhum.mobile.ui.theme.Line
 import com.humhum.mobile.ui.theme.Muted
 import com.humhum.mobile.ui.theme.editorialSpecFor
 
-private val hypeCategories = listOf("最近使用", "Skills", "偏好", "长期记忆")
+private enum class HypeCategory(@StringRes val labelRes: Int) {
+    RECENT(R.string.hype_category_recent),
+    SKILLS(R.string.hype_category_skills),
+    PREFERENCES(R.string.hype_category_preferences),
+    MEMORIES(R.string.hype_category_memories),
+}
 
 @Composable
 fun HypeRoomScreen(
@@ -62,7 +71,7 @@ fun HypeRoomScreen(
 ) {
     val context = state.personalContext
     var query by remember { mutableStateOf("") }
-    var category by remember { mutableStateOf("最近使用") }
+    var category by remember { mutableStateOf(HypeCategory.RECENT) }
     val allKnowledge = context?.knowledge().orEmpty()
     val knowledge = allKnowledge
         .filter {
@@ -70,10 +79,10 @@ fun HypeRoomScreen(
                 it.title().contains(query, ignoreCase = true) ||
                 it.summary().contains(query, ignoreCase = true)
         }
-        .filter { category != "Skills" || it.kind() == "skill" }
-    val showKnowledge = category == "最近使用" || category == "Skills"
-    val showPreferences = category == "最近使用" || category == "偏好"
-    val showMemories = category == "最近使用" || category == "长期记忆"
+        .filter { category != HypeCategory.SKILLS || it.kind() == "skill" }
+    val showKnowledge = category == HypeCategory.RECENT || category == HypeCategory.SKILLS
+    val showPreferences = category == HypeCategory.RECENT || category == HypeCategory.PREFERENCES
+    val showMemories = category == HypeCategory.RECENT || category == HypeCategory.MEMORIES
     val indexedCount = allKnowledge.size +
         context?.preferences().orEmpty().size +
         context?.memories().orEmpty().size
@@ -103,14 +112,14 @@ fun HypeRoomScreen(
                     value = query,
                     onValueChange = { query = it.take(80) },
                     leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
-                    placeholder = { Text("搜索技能、偏好与记忆") },
+                    placeholder = { Text(stringResource(R.string.hype_search_placeholder)) },
                     singleLine = true,
                     shape = RoundedCornerShape(8.dp),
                     modifier = Modifier.fillMaxWidth().testTag("hype-search-field"),
                 )
             }
         }
-        if (category == "最近使用") {
+        if (category == HypeCategory.RECENT) {
             context?.preferences()?.firstOrNull()?.let { preference ->
                 item {
                     HypeFocusPreference(preference)
@@ -120,15 +129,15 @@ fun HypeRoomScreen(
         if (showKnowledge) {
             item {
                 RoomSectionHeader(
-                    title = "可复用能力",
-                    trailing = knowledge.size.let { "$it 项" },
+                    title = stringResource(R.string.hype_reusable_skills),
+                    trailing = stringResource(R.string.hype_count_items, knowledge.size),
                 )
             }
             if (knowledge.isEmpty()) {
                 item {
                     ContextUnavailable(
                         state.personalContextAuthorized,
-                        state.personalContextMessage,
+                        state.personalContextMessage?.resolve(),
                     )
                 }
             } else {
@@ -137,7 +146,7 @@ fun HypeRoomScreen(
                         title = item.title(),
                         detail = item.summary(),
                         accent = Hype,
-                        meta = if (item.kind() == "skill") "Skill" else "笔记",
+                        meta = if (item.kind() == "skill") stringResource(R.string.hype_meta_skill) else stringResource(R.string.hype_meta_note),
                     )
                 }
             }
@@ -146,19 +155,19 @@ fun HypeRoomScreen(
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     RoomSectionHeader(
-                        "明确偏好",
-                        trailing = context?.preferences()?.size?.let { "$it 条" },
+                        stringResource(R.string.hype_explicit_preferences),
+                        trailing = context?.preferences()?.size?.let { stringResource(R.string.hype_count_entries, it) },
                     )
                     val preferences = context?.preferences().orEmpty()
                     if (preferences.isEmpty()) {
                         Text(
-                            "尚无已确认偏好。Hype 不会把临时行为自动当成长期规则。",
+                            stringResource(R.string.hype_no_preferences),
                             style = MaterialTheme.typography.bodyMedium,
                             color = Muted,
                         )
                     } else {
                         preferences
-                            .drop(if (category == "最近使用") 1 else 0)
+                            .drop(if (category == HypeCategory.RECENT) 1 else 0)
                             .forEach { preference ->
                                 RoomItem(
                                     preference.content(),
@@ -174,19 +183,19 @@ fun HypeRoomScreen(
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     RoomSectionHeader(
-                        "长期记忆",
-                        trailing = context?.memories()?.size?.let { "$it 条" },
+                        stringResource(R.string.hype_long_term_memory),
+                        trailing = context?.memories()?.size?.let { stringResource(R.string.hype_count_entries, it) },
                     )
                     context?.memories().orEmpty().forEach { memory ->
                         RoomItem(
                             memory.content(),
-                            "记忆温度 · ${memory.temperature()}",
+                            stringResource(R.string.hype_memory_temperature, memory.temperature()),
                             Hype,
                         )
                     }
                     if (context?.memories().isNullOrEmpty()) {
                         Text(
-                            "值得跨 Agent 复用的信息，会在你确认后出现在这里。",
+                            stringResource(R.string.hype_no_memories),
                             style = MaterialTheme.typography.bodyMedium,
                             color = Muted,
                         )
@@ -208,10 +217,10 @@ private fun HypeHero(indexedCount: Int) {
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(5.dp),
         ) {
-            Text("最近最常用", style = MaterialTheme.typography.labelLarge, color = Muted)
-            Text("让下一次，\n直接更懂你", style = EditorialHero, color = Ink)
+            Text(stringResource(R.string.hype_hero_recent), style = MaterialTheme.typography.labelLarge, color = Muted)
+            Text(stringResource(R.string.hype_hero_title), style = EditorialHero, color = Ink)
             Text(
-                "这里展示整理和确认过的能力，不把文件数量当成价值。",
+                stringResource(R.string.hype_hero_detail),
                 style = MaterialTheme.typography.bodyMedium,
                 color = Muted,
             )
@@ -243,28 +252,28 @@ private fun HypeHero(indexedCount: Int) {
 
 @Composable
 private fun EditorialCategoryTabs(
-    selected: String,
-    onSelect: (String) -> Unit,
+    selected: HypeCategory,
+    onSelect: (HypeCategory) -> Unit,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(18.dp),
     ) {
-        hypeCategories.forEach { label ->
+        HypeCategory.entries.forEach { item ->
             Column(
-                modifier = Modifier.clickable { onSelect(label) }.padding(top = 3.dp),
+                modifier = Modifier.clickable { onSelect(item) }.padding(top = 3.dp),
                 horizontalAlignment = Alignment.Start,
             ) {
                 Text(
-                    label,
+                    stringResource(item.labelRes),
                     style = MaterialTheme.typography.labelMedium,
-                    color = if (selected == label) Ink else Muted,
-                    fontWeight = if (selected == label) FontWeight.Bold else FontWeight.Normal,
+                    color = if (selected == item) Ink else Muted,
+                    fontWeight = if (selected == item) FontWeight.Bold else FontWeight.Normal,
                     modifier = Modifier.padding(bottom = 8.dp),
                 )
                 HorizontalDivider(
                     thickness = 2.dp,
-                    color = if (selected == label) Hype else Color.Transparent,
+                    color = if (selected == item) Hype else Color.Transparent,
                 )
             }
         }
@@ -283,7 +292,7 @@ private fun HypeFocusPreference(preference: Models.Preference) {
             modifier = Modifier.padding(15.dp),
             verticalArrangement = Arrangement.spacedBy(7.dp),
         ) {
-            Text("明确偏好", style = MaterialTheme.typography.labelMedium, color = HypeSoft)
+            Text(stringResource(R.string.hype_explicit_preferences), style = MaterialTheme.typography.labelMedium, color = HypeSoft)
             Text(preference.content(), style = EditorialSection, color = EditorialOnFocus)
             Text(
                 preference.category(),

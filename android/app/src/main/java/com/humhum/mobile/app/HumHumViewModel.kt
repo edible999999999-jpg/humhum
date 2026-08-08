@@ -94,14 +94,14 @@ class HumHumViewModel @JvmOverloads constructor(
                 connection = ConnectionStatus.PAIRING,
                 refreshInFlight = false,
                 errorMessage = null,
-                statusMessage = "正在安全配对",
+                statusMessage = StatusText.Res(StatusKey.SECURE_PAIRING),
             )
             is HumHumAction.PairingFailed -> state.copy(
                 connection = state.connectionBeforeScan ?: ConnectionStatus.UNPAIRED,
                 connectionBeforeScan = null,
                 refreshInFlight = false,
                 errorMessage = action.message,
-                statusMessage = "等待连接",
+                statusMessage = StatusText.Res(StatusKey.WAITING_CONNECTION),
             )
             is HumHumAction.Connected -> state.copy(
                 connection = ConnectionStatus.CONNECTED,
@@ -112,7 +112,7 @@ class HumHumViewModel @JvmOverloads constructor(
                 offlineSnapshot = false,
                 relayRecovered = false,
                 errorMessage = null,
-                statusMessage = "正在同步",
+                statusMessage = StatusText.Res(StatusKey.SYNCING),
             )
             is HumHumAction.ConnectionRestored -> state.copy(
                 connection = ConnectionStatus.CONNECTED,
@@ -122,7 +122,7 @@ class HumHumViewModel @JvmOverloads constructor(
                 refreshInFlight = false,
                 offlineSnapshot = false,
                 errorMessage = action.message,
-                statusMessage = action.message,
+                statusMessage = StatusText.Literal(action.message),
             )
             is HumHumAction.SelectRole -> state.copy(
                 selectedRole = action.role,
@@ -137,13 +137,17 @@ class HumHumViewModel @JvmOverloads constructor(
                     refreshInFlight = true,
                     relayRecovered = false,
                     errorMessage = null,
-                    statusMessage = if (action.userInitiated) "正在刷新" else state.statusMessage,
+                    statusMessage = if (action.userInitiated) {
+                        StatusText.Res(StatusKey.REFRESHING)
+                    } else {
+                        state.statusMessage
+                    },
                 )
             }
             HumHumAction.RefreshCancelled -> state.copy(
                 refreshInFlight = false,
                 statusMessage = if (state.connection == ConnectionStatus.CONNECTED) {
-                    "已连接"
+                    StatusText.Res(StatusKey.CONNECTED)
                 } else {
                     state.statusMessage
                 },
@@ -155,7 +159,11 @@ class HumHumViewModel @JvmOverloads constructor(
                 offlineSnapshot = false,
                 relayRecovered = action.viaRelay,
                 errorMessage = null,
-                statusMessage = if (action.viaRelay) "远程连接 · 刚刚同步" else "刚刚同步",
+                statusMessage = if (action.viaRelay) {
+                    StatusText.Res(StatusKey.SYNCED_REMOTE)
+                } else {
+                    StatusText.Res(StatusKey.SYNCED)
+                },
             )
             is HumHumAction.RefreshFailed -> state.copy(
                 connection = ConnectionStatus.OFFLINE,
@@ -165,7 +173,7 @@ class HumHumViewModel @JvmOverloads constructor(
                 refreshInFlight = false,
                 offlineSnapshot = false,
                 errorMessage = action.message,
-                statusMessage = "电脑离线",
+                statusMessage = StatusText.Res(StatusKey.OFFLINE),
             )
             is HumHumAction.OfflineSnapshotLoaded -> state.copy(
                 connection = ConnectionStatus.OFFLINE,
@@ -174,7 +182,7 @@ class HumHumViewModel @JvmOverloads constructor(
                 offlineSnapshot = true,
                 relayRecovered = false,
                 errorMessage = null,
-                statusMessage = action.ageCopy,
+                statusMessage = StatusText.Literal(action.ageCopy),
             )
             is HumHumAction.RelayRecovered -> state.copy(
                 connection = ConnectionStatus.CONNECTED,
@@ -183,7 +191,7 @@ class HumHumViewModel @JvmOverloads constructor(
                 offlineSnapshot = false,
                 relayRecovered = true,
                 errorMessage = null,
-                statusMessage = "远程连接 · 刚刚同步",
+                statusMessage = StatusText.Res(StatusKey.SYNCED_REMOTE),
             )
             is HumHumAction.OpenConversation -> {
                 val canRead = state.sessions.any {
@@ -252,7 +260,7 @@ class HumHumViewModel @JvmOverloads constructor(
                     action.sessionId,
                 ),
                 followUpFeedback = state.followUpFeedback + (
-                    action.sessionId to "电脑已收到，但 Agent 尚未开始。刷新后可以重试。"
+                    action.sessionId to StatusText.Res(StatusKey.FOLLOW_UP_QUEUED)
                 ),
             )
             is HumHumAction.FollowUpFailed -> state.copy(
@@ -261,7 +269,7 @@ class HumHumViewModel @JvmOverloads constructor(
                     action.sessionId,
                 ),
                 followUpFeedback = state.followUpFeedback + (
-                    action.sessionId to action.message.take(200)
+                    action.sessionId to StatusText.Literal(action.message.take(200))
                 ),
             )
             is HumHumAction.MonitorChanged -> state.copy(
@@ -269,9 +277,9 @@ class HumHumViewModel @JvmOverloads constructor(
                     enabled = action.enabled,
                     permissionRequired = action.permissionRequired,
                     status = when {
-                        action.permissionRequired -> "需要通知权限"
-                        action.enabled -> "正在监控这台电脑"
-                        else -> "已关闭"
+                        action.permissionRequired -> StatusKey.MONITOR_NEEDS_NOTIFICATION
+                        action.enabled -> StatusKey.MONITOR_WATCHING
+                        else -> StatusKey.MONITOR_OFF
                     },
                 ),
             )
@@ -293,18 +301,28 @@ class HumHumViewModel @JvmOverloads constructor(
                 personalContextAuthorized = action.authorized,
                 personalContext = if (action.authorized) state.personalContext else null,
                 personalContextFromCache = false,
-                personalContextMessage = if (action.authorized) null else "电脑未授权个人上下文",
+                personalContextMessage = if (action.authorized) {
+                    null
+                } else {
+                    StatusText.Res(StatusKey.PERSONAL_CONTEXT_UNAUTHORIZED)
+                },
             )
             is HumHumAction.PersonalContextLoaded -> state.copy(
                 personalContext = action.context,
                 personalContextAuthorized = true,
                 personalContextFromCache = action.fromCache,
-                personalContextMessage = if (action.fromCache) "显示 24 小时内的加密缓存" else null,
+                personalContextMessage = if (action.fromCache) {
+                    StatusText.Res(StatusKey.PERSONAL_CONTEXT_CACHED)
+                } else {
+                    null
+                },
             )
             is HumHumAction.PersonalContextFailed -> state.copy(
-                personalContextMessage = action.message,
+                personalContextMessage = StatusText.Literal(action.message),
             )
-            is HumHumAction.StatusChanged -> state.copy(statusMessage = action.message)
+            is HumHumAction.StatusChanged -> state.copy(
+                statusMessage = StatusText.Literal(action.message),
+            )
             HumHumAction.OpenSettings -> state.copy(settingsVisible = true)
             HumHumAction.CloseSettings -> state.copy(settingsVisible = false)
             HumHumAction.DisconnectStarted -> state.copy(
@@ -312,7 +330,7 @@ class HumHumViewModel @JvmOverloads constructor(
                 refreshInFlight = false,
                 pendingActions = emptySet(),
                 conversation = ConversationDisclosure(),
-                statusMessage = "正在断开连接",
+                statusMessage = StatusText.Res(StatusKey.DISCONNECTING),
             )
             HumHumAction.Disconnected -> HumHumUiState(
                 selectedRole = state.selectedRole,

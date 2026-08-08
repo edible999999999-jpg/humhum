@@ -103,7 +103,10 @@ class HumHumViewModelTest {
 
         assertEquals(ConnectionStatus.OFFLINE, viewModel.state.value.connection)
         assertTrue(viewModel.state.value.offlineSnapshot)
-        assertEquals("12 分钟前同步", viewModel.state.value.statusMessage)
+        assertEquals(
+            StatusText.Literal("12 分钟前同步"),
+            viewModel.state.value.statusMessage,
+        )
         assertEquals("cached", viewModel.state.value.sessions.single().id())
     }
 
@@ -163,7 +166,7 @@ class HumHumViewModelTest {
         assertNull(viewModel.state.value.lastSuccessfulFollowUpSessionId)
         assertEquals(0L, viewModel.state.value.followUpSuccessRevision)
         assertEquals(
-            "Agent 没有接收，请重试",
+            StatusText.Literal("Agent 没有接收，请重试"),
             viewModel.state.value.followUpFeedback["session-1"],
         )
     }
@@ -182,7 +185,7 @@ class HumHumViewModelTest {
         assertNull(viewModel.state.value.lastSuccessfulFollowUpSessionId)
         assertEquals(0L, viewModel.state.value.followUpSuccessRevision)
         assertEquals(
-            "电脑已收到，但 Agent 尚未开始。刷新后可以重试。",
+            StatusText.Res(StatusKey.FOLLOW_UP_QUEUED),
             viewModel.state.value.followUpFeedback["session-1"],
         )
     }
@@ -281,7 +284,7 @@ class HumHumViewModelTest {
         assertEquals(Models.Scope.CONTROL, state.scope)
         assertTrue(state.canControl)
         assertEquals("one", state.sessions.single().id())
-        assertEquals("桌面端未确认断开", state.statusMessage)
+        assertEquals(StatusText.Literal("桌面端未确认断开"), state.statusMessage)
     }
 
     @Test
@@ -312,7 +315,64 @@ class HumHumViewModelTest {
     @Test
     fun visibleStatusCopyLivesInUiState() {
         viewModel.dispatch(HumHumAction.StatusChanged("远程连接 · 已处理"))
-        assertEquals("远程连接 · 已处理", viewModel.state.value.statusMessage)
+        assertEquals(
+            StatusText.Literal("远程连接 · 已处理"),
+            viewModel.state.value.statusMessage,
+        )
+    }
+
+    @Test
+    fun staticStatusCopyIsCarriedAsSemanticKeysNotLocalizedText() {
+        viewModel.dispatch(HumHumAction.PairingStarted)
+        assertEquals(
+            StatusText.Res(StatusKey.SECURE_PAIRING),
+            viewModel.state.value.statusMessage,
+        )
+
+        viewModel.dispatch(HumHumAction.Connected(Models.Scope.CONTROL))
+        assertEquals(
+            StatusText.Res(StatusKey.SYNCING),
+            viewModel.state.value.statusMessage,
+        )
+
+        viewModel.dispatch(HumHumAction.SessionsLoaded(emptyList(), viaRelay = true))
+        assertEquals(
+            StatusText.Res(StatusKey.SYNCED_REMOTE),
+            viewModel.state.value.statusMessage,
+        )
+
+        viewModel.dispatch(HumHumAction.RefreshFailed("boom"))
+        assertEquals(
+            StatusText.Res(StatusKey.OFFLINE),
+            viewModel.state.value.statusMessage,
+        )
+    }
+
+    @Test
+    fun monitorStatusIsCarriedAsSemanticKey() {
+        viewModel.dispatch(HumHumAction.MonitorChanged(enabled = true, permissionRequired = false))
+        assertEquals(StatusKey.MONITOR_WATCHING, viewModel.state.value.monitor.status)
+
+        viewModel.dispatch(HumHumAction.MonitorChanged(enabled = false, permissionRequired = true))
+        assertEquals(StatusKey.MONITOR_NEEDS_NOTIFICATION, viewModel.state.value.monitor.status)
+
+        viewModel.dispatch(HumHumAction.MonitorChanged(enabled = false, permissionRequired = false))
+        assertEquals(StatusKey.MONITOR_OFF, viewModel.state.value.monitor.status)
+    }
+
+    @Test
+    fun personalContextMessageUsesSemanticKeysForStaticStates() {
+        viewModel.dispatch(HumHumAction.PersonalContextCapabilityChanged(authorized = false))
+        assertEquals(
+            StatusText.Res(StatusKey.PERSONAL_CONTEXT_UNAUTHORIZED),
+            viewModel.state.value.personalContextMessage,
+        )
+
+        viewModel.dispatch(HumHumAction.PersonalContextLoaded(personalContext(), fromCache = true))
+        assertEquals(
+            StatusText.Res(StatusKey.PERSONAL_CONTEXT_CACHED),
+            viewModel.state.value.personalContextMessage,
+        )
     }
 
     @Test

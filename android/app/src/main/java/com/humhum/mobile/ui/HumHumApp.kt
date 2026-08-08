@@ -35,13 +35,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.humhum.mobile.MobileRoleDashboard
+import com.humhum.mobile.R
 import com.humhum.mobile.Models
 import com.humhum.mobile.app.ConnectionStatus
 import com.humhum.mobile.app.HealthPermission
 import com.humhum.mobile.app.HumHumUiState
+import com.humhum.mobile.app.resolve
 import com.humhum.mobile.ui.components.RoleNavigation
 import com.humhum.mobile.ui.components.roleIconFor
 import com.humhum.mobile.ui.theme.Canvas
@@ -197,7 +200,7 @@ private fun CompanionHeader(
                 color = titleColor,
             )
             Text(
-                state.statusMessage,
+                state.statusMessage.resolve(),
                 style = MaterialTheme.typography.labelMedium,
                 color = if (state.connection == ConnectionStatus.OFFLINE) {
                     MaterialTheme.colorScheme.error
@@ -215,7 +218,7 @@ private fun CompanionHeader(
             ) {
                 Icon(
                     Icons.Outlined.Search,
-                    contentDescription = "搜索知识",
+                    contentDescription = stringResource(R.string.app_search_knowledge),
                     tint = titleColor,
                 )
             }
@@ -231,7 +234,7 @@ private fun CompanionHeader(
             ) {
                 Icon(
                     Icons.Outlined.Refresh,
-                    contentDescription = if (role == MobileRoleDashboard.Role.HUSH) "同步消息" else "刷新",
+                    contentDescription = if (role == MobileRoleDashboard.Role.HUSH) stringResource(R.string.app_sync_messages) else stringResource(R.string.app_refresh),
                     tint = if (state.refreshInFlight) {
                         palette.accent.copy(alpha = 0.45f)
                     } else {
@@ -241,7 +244,7 @@ private fun CompanionHeader(
             }
         }
         IconButton(onClick = callbacks.onOpenSettings, modifier = Modifier.size(48.dp)) {
-            Icon(Icons.Outlined.Tune, contentDescription = "设置", tint = titleColor)
+            Icon(Icons.Outlined.Tune, contentDescription = stringResource(R.string.app_settings), tint = titleColor)
         }
     }
 }

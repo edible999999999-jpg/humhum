@@ -11,4 +11,343 @@
     <string name="role_hype">Hype</string>
     <string name="role_hush">Hush</string>
     <string name="role_hexa">Hexa</string>
+
+    <!-- 通用 -->
+    <string name="common_cancel">取消</string>
+    <string name="common_delete">删除</string>
+    <string name="common_retry">重试</string>
+    <string name="common_allow">允许</string>
+    <string name="common_deny">拒绝</string>
+    <string name="common_you">你</string>
+    <string name="common_agent">Agent</string>
+    <string name="common_error_generic">操作失败，请检查电脑是否在线</string>
+
+    <!-- 通知 -->
+    <string name="monitor_attention_single">有 1 个操作正在等待</string>
+    <string name="monitor_attention_multiple">有 %1$d 个操作正在等待</string>
+
+    <!-- 角色 kicker / 标题 / 用途 -->
+    <string name="role_humi_kicker">今天</string>
+    <string name="role_hype_kicker">个人知识</string>
+    <string name="role_hush_kicker">消息</string>
+    <string name="role_hexa_kicker">Agent 监工</string>
+    <string name="role_humi_title">我替你留意今天的重要进展</string>
+    <string name="role_hype_title">你的工作方式正在成形</string>
+    <string name="role_hush_title">值得留意的消息，由你决定</string>
+    <string name="role_hexa_title">电脑离开后，我替你看着</string>
+    <string name="role_humi_purpose">理解今天与你有关的事</string>
+    <string name="role_hype_purpose">整理你的技能、偏好和记忆</string>
+    <string name="role_hush_purpose">安静整理值得留意的消息</string>
+    <string name="role_hexa_purpose">观察 Agent 进展与确认</string>
+
+    <!-- 首页角色内容 (MainActivity 兼容视图) -->
+    <string name="main_go_hexa_decide">去 Hexa 查看并决定</string>
+    <string name="main_recent_activity">最近在做什么</string>
+    <string name="main_more_sessions_in_hexa">另外 %1$d 个会话可在 Hexa 查看</string>
+    <string name="main_next_step">接下来</string>
+    <string name="main_stay_real">保持真实和可控</string>
+    <string name="main_no_agent_sessions">暂时没有 Agent 会话</string>
+    <string name="main_sessions_in_view">%1$d 个 Agent 会话在视野中</string>
+    <string name="main_attention_detail">%1$d 件事需要你处理，详细控制保留在下方。</string>
+    <string name="main_no_pending_detail">目前没有等待确认的操作，可以继续查看最近进展。</string>
+    <string name="main_hype_title">你的知识仍安静地留在电脑上</string>
+    <string name="main_hype_detail">这台手机还没有获得个人知识摘要权限。Hype 不会把本地记忆、技能文件或路径偷偷同步过来。</string>
+    <string name="main_hype_next">等桌面端提供经过解释的只读摘要后，这里会显示值得保存的偏好、工作流和知识缺口。</string>
+    <string name="main_hush_title">消息内容没有同步到手机</string>
+    <string name="main_hush_detail">Hush 仍在电脑上按朋友、工作和家庭整理通知；没有明确授权时，手机只会说明能力边界。</string>
+    <string name="main_hush_next">未来的移动摘要会继续保持只读，并由你主动决定是否查看具体消息。</string>
+
+    <!-- 健康 -->
+    <string name="main_health_unavailable">这台手机没有可用的健康连接，暂时无法读取%1$s</string>
+    <string name="main_health_sleep">睡眠</string>
+    <string name="main_health_resting_heart_rate">静息心率</string>
+    <string name="main_health_background_needs_connect">后台健康同步需要系统健康连接</string>
+
+    <!-- 删除本地数据 -->
+    <string name="main_delete_title">删除手机上的 HUMHUM 数据？</string>
+    <string name="main_delete_message">这会清除配对、离线会话和健康待传队列。Mac 上的数据不会被删除。</string>
+    <string name="main_delete_done">手机本地数据已删除</string>
+
+    <!-- 配对 / 连接 (MainActivity) -->
+    <string name="main_scan_cancelled">已取消扫描</string>
+    <string name="main_clipboard_empty">剪贴板为空</string>
+    <string name="main_scan_prompt">扫描电脑上 Hexa 的配对二维码</string>
+    <string name="main_setup_control_filled">已填入可控制配对资料，请点击安全配对</string>
+    <string name="main_setup_read_filled">已填入只读配对资料，请点击安全配对</string>
+    <string name="main_scope_tailnet_prefix">Tailnet · </string>
+    <string name="main_scope_control">可控制</string>
+    <string name="main_scope_read">只读</string>
+    <string name="main_disconnect_warning">本机连接已清除；桌面端未确认撤销，请在 Hexa 中撤销旧设备。</string>
+    <string name="main_camera_denied">未开启相机权限，可改用粘贴配对资料</string>
+    <string name="main_connection_revoked">移动连接已失效，请重新配对</string>
+    <string name="main_disconnected_revoked">已安全断开并撤销此设备</string>
+    <string name="main_secure_pair">安全配对</string>
+    <string name="main_secure_pairing">正在安全配对</string>
+    <string name="main_pairing_encrypting">正在加密配对</string>
+    <string name="main_pairing_verifying">正在验证证书</string>
+    <string name="main_waiting_connection">等待连接</string>
+    <string name="main_scan_recognized">二维码已识别\n正在通过加密中继连接这台电脑</string>
+    <string name="main_scan_pair_button">扫描电脑配对二维码</string>
+    <string name="main_use_manual_pair">使用手动配对</string>
+    <string name="main_collapse_manual_pair">收起手动配对</string>
+
+    <!-- 监控开关状态 (MainActivity) -->
+    <string name="main_monitor_needs_notification">需要通知权限</string>
+    <string name="main_monitor_off">已关闭</string>
+    <string name="main_monitor_watching">正在监控这台电脑</string>
+    <string name="main_monitor_start_failed">无法启动后台监控</string>
+    <string name="main_open_settings_failed">无法打开系统设置</string>
+
+    <!-- 个人上下文 / 微信 -->
+    <string name="main_personal_context_unauthorized">电脑未授权个人上下文</string>
+    <string name="main_personal_context_unavailable">个人上下文暂时不可用</string>
+    <string name="main_hush_unauthorized">这台手机没有 Hush 授权，请重新扫码配对</string>
+    <string name="main_hush_syncing">正在同步微信消息</string>
+    <string name="main_hush_synced">微信消息刚刚同步</string>
+    <string name="main_hush_sync_failed">微信同步失败</string>
+    <string name="main_hush_relay_unavailable">远程微信同步通道不可用</string>
+
+    <!-- 会话列表 / 对话 (MainActivity) -->
+    <string name="main_no_recent_sessions">最近没有 Agent 会话</string>
+    <string name="main_sessions_unavailable">无法确认当前会话状态，请恢复连接后重试</string>
+    <string name="main_needs_attention_prefix">需要处理 · </string>
+    <string name="main_conversation_collapse">收起最近对话</string>
+    <string name="main_conversation_view">查看最近对话</string>
+    <string name="main_conversation_loading">正在读取最近对话</string>
+    <string name="main_conversation_unavailable">最近对话暂时不可用</string>
+    <string name="main_follow_up_hint">给这个 Agent 会话发送跟进</string>
+    <string name="main_send_follow_up">发送跟进</string>
+    <string name="main_allow_once">允许一次</string>
+
+    <!-- 远程连接状态 (MainActivity) -->
+    <string name="main_remote_connection">远程连接</string>
+    <string name="main_remote_prefix">远程连接 · </string>
+    <string name="main_remote_handled">远程连接 · 已处理</string>
+    <string name="main_follow_up_delivered">跟进已送达</string>
+    <string name="main_follow_up_queued">电脑已收到，Agent 尚未开始</string>
+    <string name="main_follow_up_rejected">Agent 没有接收这条指令，请刷新后重试</string>
+    <string name="main_follow_up_send_failed">发送失败</string>
+
+    <!-- 设备保养 (DeviceCarePlan) -->
+    <string name="device_care_battery_exempt">系统已允许后台运行</string>
+    <string name="device_care_battery_limited">系统可能限制后台运行</string>
+
+    <!-- 系统推送 (PushStateStore) -->
+    <string name="push_registering">系统推送正在连接</string>
+    <string name="push_registered">系统推送已就绪</string>
+    <string name="push_retrying">系统推送暂时不可用，自动重试</string>
+    <string name="push_needs_pairing">系统推送需要重新配对</string>
+    <string name="push_disabled">系统推送尚未配置</string>
+
+    <!-- 离线快照 (SessionSnapshotCodec) -->
+    <string name="snapshot_just_now">离线快照 · 刚刚</string>
+    <string name="snapshot_minutes_ago">离线快照 · %1$d 分钟前</string>
+    <string name="snapshot_hours_ago">离线快照 · %1$d 小时前</string>
+    <string name="snapshot_days_ago">离线快照 · %1$d 天前</string>
+
+    <!-- 未命名项目 (MobileProtocol) -->
+    <string name="session_untitled_project">未命名项目</string>
+
+    <!-- 角色摘要 (MobileRoleDashboard) -->
+    <string name="dashboard_quiet_title">现在很安静</string>
+    <string name="dashboard_quiet_detail">最近没有需要你处理的 Agent 会话。</string>
+    <string name="dashboard_attention_waiting">这些会话正在等你处理。</string>
+    <string name="dashboard_attention_continuing">另外 %1$d 个会话仍在继续。</string>
+    <string name="dashboard_attention_title">有 %1$d 件事需要你决定</string>
+    <string name="dashboard_continuing_title">%1$d 个 Agent 会话正在继续</string>
+    <string name="dashboard_no_pending">目前没有等待你处理的确认。</string>
+
+    <!-- ViewModel 状态文案 -->
+    <string name="status_secure_pairing">正在安全配对</string>
+    <string name="status_waiting_connection">等待连接</string>
+    <string name="status_syncing">正在同步</string>
+    <string name="status_refreshing">正在刷新</string>
+    <string name="status_connected">已连接</string>
+    <string name="status_synced_remote">远程连接 · 刚刚同步</string>
+    <string name="status_synced">刚刚同步</string>
+    <string name="status_offline">电脑离线</string>
+    <string name="status_disconnecting">正在断开连接</string>
+    <string name="status_monitor_needs_notification">需要通知权限</string>
+    <string name="status_monitor_watching">正在监控这台电脑</string>
+    <string name="status_monitor_off">已关闭</string>
+    <string name="status_personal_context_unauthorized">电脑未授权个人上下文</string>
+    <string name="status_personal_context_cached">显示 24 小时内的加密缓存</string>
+    <string name="status_follow_up_queued">电脑已收到，但 Agent 尚未开始。刷新后可以重试。</string>
+
+    <!-- 配对屏幕 (PairingScreen) -->
+    <string name="pairing_local_first">本地优先</string>
+    <string name="pairing_connect_your_mac">连接你的 Mac</string>
+    <string name="pairing_intro">在电脑端 Hexa 打开移动访问，扫描二维码即可完成安全配对。</string>
+    <string name="pairing_scan_button">扫描配对二维码</string>
+    <string name="pairing_paste_button">粘贴配对资料</string>
+    <string name="pairing_recovery_collapse">收起连接恢复</string>
+    <string name="pairing_recovery_open">连接遇到问题</string>
+    <string name="pairing_manual_hint">仅在二维码无法使用时手动输入</string>
+    <string name="pairing_field_address">Mac 地址</string>
+    <string name="pairing_field_code">一次性配对码</string>
+    <string name="pairing_field_fingerprint">证书指纹</string>
+    <string name="pairing_field_device_name">设备名称（可选）</string>
+    <string name="pairing_secure_pair">安全配对</string>
+    <string name="pairing_footer">连接凭证保存在 Android 私有应用存储中；个人上下文与编排权限仍需在 Mac 端分别授权。</string>
+
+    <!-- 设置屏幕 (SettingsScreen) -->
+    <string name="settings_back">返回</string>
+    <string name="settings_title">设置</string>
+    <string name="settings_subtitle">连接、权限与隐私</string>
+    <string name="settings_section_connection">连接</string>
+    <string name="settings_home_mac">家庭 Mac</string>
+    <string name="settings_home_mac_connected">HUMHUM Anywhere · 已加密</string>
+    <string name="settings_not_connected">未连接</string>
+    <string name="settings_connected">已连接</string>
+    <string name="settings_section_health_privacy">健康与隐私</string>
+    <string name="settings_health_sources">健康数据来源</string>
+    <string name="settings_health_sources_detail">步数、静息心率、睡眠</string>
+    <string name="settings_background_health">后台健康同步</string>
+    <string name="settings_background_health_detail">每 6 小时尝试一次，仅同步日汇总</string>
+    <string name="settings_section_background">后台</string>
+    <string name="settings_hexa_monitor">Hexa 后台监控</string>
+    <string name="settings_battery_autostart">电池与自启动</string>
+    <string name="settings_battery_recommend">建议允许后台运行</string>
+    <string name="settings_battery_relaxed">后台限制已放宽</string>
+    <string name="settings_check">检查</string>
+    <string name="settings_local_encryption">本机加密</string>
+    <string name="settings_local_encryption_detail">健康待传数据与会话快照均加密保存</string>
+    <string name="settings_delete_data">删除手机上的 HUMHUM 数据</string>
+    <string name="settings_delete_data_detail">清除连接、加密队列和离线快照</string>
+    <string name="settings_section_about">关于</string>
+    <string name="settings_about_title">HUMHUM for Android</string>
+    <string name="settings_about_detail">版本 %1$s · 内测版</string>
+    <string name="settings_diagnostics">高级诊断</string>
+    <string name="settings_collapse">收起</string>
+    <string name="settings_expand">展开</string>
+    <string name="settings_diagnostics_detail">连接状态：%1$s\n权限范围：%2$s\n远程恢复：%3$s\n离线快照：%4$s</string>
+    <string name="settings_scope_none">none</string>
+    <string name="settings_language">语言 / Language</string>
+    <string name="settings_language_detail">选择界面语言</string>
+    <string name="settings_language_chinese">中文</string>
+    <string name="settings_language_english">English</string>
+
+    <!-- Humi 房间 (HumiRoomScreen) -->
+    <string name="humi_hero_title">先把最重要的事\n推进</string>
+    <string name="humi_hero_detail">我把 Agent 进展和身体信号放在一起，只提醒真正值得你注意的部分。</string>
+    <string name="humi_section_today">今天</string>
+    <string name="humi_today_trailing">%1$d 件值得注意</string>
+    <string name="humi_nothing_to_interrupt">现在没有需要打断你的事情。</string>
+    <string name="humi_section_body_signals">身体信号</string>
+    <string name="humi_section_memory">我记得的你</string>
+    <string name="humi_memory_cache">加密缓存</string>
+    <string name="humi_memory_confirmed">已确认记忆 · %1$s</string>
+    <string name="humi_memory_placeholder">这里只放已确认的记忆与习惯，不会把推测写成事实。</string>
+    <string name="humi_section_health_sources">健康数据来源</string>
+    <string name="humi_on_demand">按需授权</string>
+    <string name="humi_data_source">数据来源</string>
+    <string name="humi_metric_steps">步数</string>
+    <string name="humi_metric_resting_heart_rate">静息心率</string>
+    <string name="humi_metric_sleep">睡眠</string>
+    <string name="humi_focus_noticed">Humi 注意到 · %1$s</string>
+    <string name="humi_continue_focus">继续今天的重点  →</string>
+    <string name="humi_sleep_duration">%1$d时%2$d分</string>
+    <string name="humi_source_permission">已允许</string>
+    <string name="humi_source_enable">开启</string>
+    <string name="humi_health_not_enabled">未开启</string>
+    <string name="humi_health_waiting_data">等待数据</string>
+    <string name="humi_health_daily_summary_count">%1$d 项日汇总</string>
+    <string name="humi_health_captured_at">采集于 %1$s</string>
+    <string name="humi_source_ask_android">由 Android 系统询问权限</string>
+    <string name="humi_source_health_connect">健康连接 · 只读取日汇总</string>
+    <string name="humi_source_phone_counter">本机计步器</string>
+    <string name="humi_source_device_unavailable">当前设备暂不可用</string>
+    <string name="humi_source_allowed_waiting">已允许，等待同步</string>
+    <string name="humi_source_from_hexa_goal">来自 Hexa 目标</string>
+    <string name="humi_source_from_note_task">来自你选中的笔记任务</string>
+    <string name="humi_source_from_confirmed">来自已确认信息</string>
+    <string name="humi_status_waiting">等待</string>
+    <string name="humi_status_completed">完成</string>
+    <string name="humi_status_in_progress">进行中</string>
+
+    <!-- Hype 房间 (HypeRoomScreen) -->
+    <string name="hype_category_recent">最近使用</string>
+    <string name="hype_category_skills">Skills</string>
+    <string name="hype_category_preferences">偏好</string>
+    <string name="hype_category_memories">长期记忆</string>
+    <string name="hype_search_placeholder">搜索技能、偏好与记忆</string>
+    <string name="hype_reusable_skills">可复用能力</string>
+    <string name="hype_count_items">%1$d 项</string>
+    <string name="hype_meta_skill">Skill</string>
+    <string name="hype_meta_note">笔记</string>
+    <string name="hype_explicit_preferences">明确偏好</string>
+    <string name="hype_count_entries">%1$d 条</string>
+    <string name="hype_no_preferences">尚无已确认偏好。Hype 不会把临时行为自动当成长期规则。</string>
+    <string name="hype_long_term_memory">长期记忆</string>
+    <string name="hype_memory_temperature">记忆温度 · %1$s</string>
+    <string name="hype_no_memories">值得跨 Agent 复用的信息，会在你确认后出现在这里。</string>
+    <string name="hype_hero_recent">最近最常用</string>
+    <string name="hype_hero_title">让下一次，\n直接更懂你</string>
+    <string name="hype_hero_detail">这里展示整理和确认过的能力，不把文件数量当成价值。</string>
+    <string name="hush_index_waiting">待你留意</string>
+
+    <!-- Hush 房间 (HushRoomScreen) -->
+    <string name="hush_filter_all">全部</string>
+    <string name="hush_filter_reply">需要回复</string>
+    <string name="hush_filter_focused">特别关注</string>
+    <string name="hush_intro">只展示来自已授权来源的联系人、时间与可用摘要。</string>
+    <string name="hush_section_today">今天</string>
+    <string name="hush_redacted_count">%1$d 条脱敏摘要</string>
+    <string name="hush_privacy_strip">消息正文仅在你的设备与已授权电脑之间加密传输</string>
+    <string name="hush_hero_private">私人通信</string>
+    <string name="hush_hero_title">最近消息</string>
+    <string name="hush_initial_placeholder">讯</string>
+
+    <!-- Hexa 房间 (HexaScreen) -->
+    <string name="hexa_agent_session">Agent 会话</string>
+    <string name="hexa_control_intro">你可以在这里确认权限、查看进展，并继续给 Agent 下达任务。</string>
+    <string name="hexa_read_only_intro">只读观察 · 当前电脑没有授予确认和追问权限。</string>
+    <string name="hexa_quiet_title">现在很安静</string>
+    <string name="hexa_quiet_detail">最近没有需要你处理的 Agent 会话。</string>
+    <string name="hexa_other_sessions">其他最近会话</string>
+    <string name="hexa_count_entries">%1$d 条</string>
+    <string name="hexa_following">正在关注</string>
+    <string name="hexa_agent_count">%1$d 个 Agent</string>
+    <string name="hexa_needs_you">需要你</string>
+    <string name="hexa_working">工作中</string>
+    <string name="hexa_view_conversation">查看对话</string>
+    <string name="hexa_primary_waiting">这条会话正在等你处理</string>
+    <string name="hexa_primary_continuing">这是最近仍可继续下达任务的会话</string>
+    <string name="hexa_primary_waiting_detail">确认请求已经到达，处理后 Agent 会继续推进当前任务。</string>
+    <string name="hexa_primary_continuing_detail">你可以直接补充下一步，任务会沿着这条真实会话继续。</string>
+    <string name="hexa_follow_up_label">追问或补充</string>
+    <string name="hexa_send">发送</string>
+    <string name="hexa_computer_received_prefix">电脑已收到</string>
+    <string name="hexa_conversation_title">对话内容</string>
+    <string name="hexa_collapse">收起</string>
+
+    <!-- 房间组件 (RoomComponents) -->
+    <string name="room_context_empty">这部分暂时没有内容</string>
+    <string name="room_context_unauthorized">电脑尚未授权这部分信息</string>
+    <string name="room_context_empty_detail">连接恢复后会自动更新。</string>
+    <string name="room_context_unauthorized_detail">在 Mac 的 Hexa 配对时开启“同步个人上下文”。</string>
+
+    <!-- 顶部栏 (HumHumApp) -->
+    <string name="app_search_knowledge">搜索知识</string>
+    <string name="app_sync_messages">同步消息</string>
+    <string name="app_refresh">刷新</string>
+    <string name="app_settings">设置</string>
+
+    <!-- 远程配对客户端 (RelayPairingClient) -->
+    <string name="relay_channel_unavailable">临时配对通道不可用</string>
+    <string name="relay_qr_no_remote">二维码不支持远程配对</string>
+    <string name="relay_qr_expired">配对二维码已过期，请在 Mac 上刷新</string>
+    <string name="relay_wait_timeout">远程配对等待超时，请在 Mac 上刷新二维码后重试</string>
+    <string name="relay_invalid_result">Mac 返回了无效的配对结果</string>
+    <string name="relay_pair_rejected">Mac 拒绝了这次配对</string>
+    <string name="relay_invalid_encrypted_result">Mac 返回了无效的加密配对结果</string>
+    <string name="relay_no_remote_connection">Mac 没有返回可用的远程连接</string>
+    <string name="relay_invalid_request">临时配对请求无效</string>
+
+    <!-- 配对资料解析 (PairingSetup) -->
+    <string name="setup_unsupported_version">不支持的 HUMHUM 配对资料版本</string>
+    <string name="setup_invalid_format">HUMHUM 配对资料格式无效</string>
+    <string name="setup_invalid_remote_format">HUMHUM 远程配对资料格式无效</string>
+    <string name="setup_invalid_remote_channel">HUMHUM 远程配对通道无效</string>
+    <string name="setup_no_valid_data">剪贴板里没有有效的 HUMHUM 配对资料</string>
 </resources>

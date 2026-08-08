@@ -110,6 +110,7 @@ fun editorialSpecFor(role: MobileRoleDashboard.Role): EditorialRoleSpec = when (
     MobileRoleDashboard.Role.HUSH -> EditorialRoleSpec(
         EditorialLayout.CORRESPONDENCE,
         Color(0xFFFFF9F4),
+        // Default label; the live HushHero overrides it via R.string.hush_index_waiting
         "待你留意",
         false,
     )

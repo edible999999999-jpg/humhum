@@ -41,10 +41,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import com.humhum.mobile.R
 import com.humhum.mobile.app.ConnectionStatus
 import com.humhum.mobile.app.HumHumUiState
+import com.humhum.mobile.app.resolve
 import com.humhum.mobile.ui.theme.Humi
 import com.humhum.mobile.ui.theme.HumiSoft
 import com.humhum.mobile.ui.theme.Ink
@@ -85,7 +88,7 @@ fun PairingScreen(
                     tint = Color(0xFF22A566),
                 )
                 Spacer(Modifier.size(5.dp))
-                Text("本地优先", style = MaterialTheme.typography.labelMedium, color = Color(0xFF218F5B))
+                Text(stringResource(R.string.pairing_local_first), style = MaterialTheme.typography.labelMedium, color = Color(0xFF218F5B))
             }
             Spacer(Modifier.height(30.dp))
             Surface(
@@ -109,9 +112,9 @@ fun PairingScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Text("连接你的 Mac", style = MaterialTheme.typography.headlineMedium, color = Ink)
+                Text(stringResource(R.string.pairing_connect_your_mac), style = MaterialTheme.typography.headlineMedium, color = Ink)
                 Text(
-                    "在电脑端 Hexa 打开移动访问，扫描二维码即可完成安全配对。",
+                    stringResource(R.string.pairing_intro),
                     style = MaterialTheme.typography.bodyMedium,
                     color = Muted,
                 )
@@ -126,7 +129,7 @@ fun PairingScreen(
             ) {
                 Icon(Icons.Outlined.QrCodeScanner, contentDescription = null)
                 Spacer(Modifier.size(8.dp))
-                Text("扫描配对二维码")
+                Text(stringResource(R.string.pairing_scan_button))
             }
             OutlinedButton(
                 onClick = callbacks.onPastePairing,
@@ -137,12 +140,12 @@ fun PairingScreen(
             ) {
                 Icon(Icons.Outlined.ContentPaste, contentDescription = null, tint = Ink)
                 Spacer(Modifier.size(8.dp))
-                Text("粘贴配对资料", color = Ink)
+                Text(stringResource(R.string.pairing_paste_button), color = Ink)
             }
             if (busy) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp, color = Humi)
-                    Text(state.statusMessage, style = MaterialTheme.typography.bodyMedium, color = Muted)
+                    Text(state.statusMessage.resolve(), style = MaterialTheme.typography.bodyMedium, color = Muted)
                 }
             }
             state.errorMessage?.let { error ->
@@ -173,7 +176,7 @@ fun PairingScreen(
                     tint = Muted,
                 )
                 Text(
-                    text = if (recoveryOpen) "收起连接恢复" else "连接遇到问题",
+                    text = if (recoveryOpen) stringResource(R.string.pairing_recovery_collapse) else stringResource(R.string.pairing_recovery_open),
                     style = MaterialTheme.typography.labelLarge,
                     color = Muted,
                 )
@@ -186,11 +189,11 @@ fun PairingScreen(
                         .padding(top = 4.dp),
                     verticalArrangement = Arrangement.spacedBy(11.dp),
                 ) {
-                    Text("仅在二维码无法使用时手动输入", style = MaterialTheme.typography.bodyMedium, color = Muted)
+                    Text(stringResource(R.string.pairing_manual_hint), style = MaterialTheme.typography.bodyMedium, color = Muted)
                     OutlinedTextField(
                         value = address,
                         onValueChange = { address = it },
-                        label = { Text("Mac 地址") },
+                        label = { Text(stringResource(R.string.pairing_field_address)) },
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(8.dp),
                         singleLine = true,
@@ -198,7 +201,7 @@ fun PairingScreen(
                     OutlinedTextField(
                         value = code,
                         onValueChange = { code = it },
-                        label = { Text("一次性配对码") },
+                        label = { Text(stringResource(R.string.pairing_field_code)) },
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(8.dp),
                         singleLine = true,
@@ -206,7 +209,7 @@ fun PairingScreen(
                     OutlinedTextField(
                         value = fingerprint,
                         onValueChange = { fingerprint = it },
-                        label = { Text("证书指纹") },
+                        label = { Text(stringResource(R.string.pairing_field_fingerprint)) },
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(8.dp),
                         visualTransformation = PasswordVisualTransformation(),
@@ -215,7 +218,7 @@ fun PairingScreen(
                     OutlinedTextField(
                         value = deviceName,
                         onValueChange = { deviceName = it },
-                        label = { Text("设备名称（可选）") },
+                        label = { Text(stringResource(R.string.pairing_field_device_name)) },
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(8.dp),
                         singleLine = true,
@@ -226,7 +229,7 @@ fun PairingScreen(
                         modifier = Modifier.fillMaxWidth().height(50.dp),
                         shape = RoundedCornerShape(8.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = Humi),
-                    ) { Text("安全配对") }
+                    ) { Text(stringResource(R.string.pairing_secure_pair)) }
                 }
             }
             Spacer(Modifier.height(12.dp))
@@ -235,7 +238,7 @@ fun PairingScreen(
                 color = Color.Transparent,
             ) {
                 Text(
-                    "连接凭证保存在 Android 私有应用存储中；个人上下文与编排权限仍需在 Mac 端分别授权。",
+                    stringResource(R.string.pairing_footer),
                     style = MaterialTheme.typography.labelMedium,
                     color = Muted,
                 )

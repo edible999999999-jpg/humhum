@@ -1,0 +1,353 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">HUMHUM</string>
+    <string name="monitor_channel_name">HUMHUM background watch</string>
+    <string name="attention_channel_name">Agent actions to review</string>
+    <string name="monitor_notification_title">HUMHUM is watching over your computer</string>
+    <string name="monitor_notification_text">Connected over trusted Wi-Fi</string>
+    <string name="monitor_notification_unreachable">Can\'t reach your computer right now, retrying</string>
+    <string name="attention_notification_title">An Agent action needs your confirmation</string>
+    <string name="role_humi">Humi</string>
+    <string name="role_hype">Hype</string>
+    <string name="role_hush">Hush</string>
+    <string name="role_hexa">Hexa</string>
+
+    <!-- Common -->
+    <string name="common_cancel">Cancel</string>
+    <string name="common_delete">Delete</string>
+    <string name="common_retry">Retry</string>
+    <string name="common_allow">Allow</string>
+    <string name="common_deny">Deny</string>
+    <string name="common_you">You</string>
+    <string name="common_agent">Agent</string>
+    <string name="common_error_generic">Something went wrong. Check that your computer is online.</string>
+
+    <!-- Notifications -->
+    <string name="monitor_attention_single">1 action is waiting</string>
+    <string name="monitor_attention_multiple">%1$d actions are waiting</string>
+
+    <!-- Role kicker / title / purpose -->
+    <string name="role_humi_kicker">Today</string>
+    <string name="role_hype_kicker">Personal knowledge</string>
+    <string name="role_hush_kicker">Messages</string>
+    <string name="role_hexa_kicker">Agent watch</string>
+    <string name="role_humi_title">I keep an eye on what matters today</string>
+    <string name="role_hype_title">Your way of working is taking shape</string>
+    <string name="role_hush_title">Messages worth noting, on your terms</string>
+    <string name="role_hexa_title">When you step away, I keep watch</string>
+    <string name="role_humi_purpose">Understand what today means for you</string>
+    <string name="role_hype_purpose">Organize your skills, preferences, and memory</string>
+    <string name="role_hush_purpose">Quietly sort the messages worth noting</string>
+    <string name="role_hexa_purpose">Track Agent progress and confirmations</string>
+
+    <!-- Home role content (MainActivity compatibility view) -->
+    <string name="main_go_hexa_decide">Open Hexa to review and decide</string>
+    <string name="main_recent_activity">Recent activity</string>
+    <string name="main_more_sessions_in_hexa">%1$d more session(s) available in Hexa</string>
+    <string name="main_next_step">Next</string>
+    <string name="main_stay_real">Stay real and in control</string>
+    <string name="main_no_agent_sessions">No Agent sessions right now</string>
+    <string name="main_sessions_in_view">%1$d Agent session(s) in view</string>
+    <string name="main_attention_detail">%1$d thing(s) need you. Detailed controls stay below.</string>
+    <string name="main_no_pending_detail">Nothing is waiting for confirmation. Feel free to review recent progress.</string>
+    <string name="main_hype_title">Your knowledge stays quietly on your computer</string>
+    <string name="main_hype_detail">This phone hasn\'t been granted access to personal knowledge summaries. Hype won\'t quietly sync your local memory, skill files, or paths over here.</string>
+    <string name="main_hype_next">Once your desktop shares explained, read-only summaries, this is where preferences, workflows, and knowledge gaps worth keeping will show up.</string>
+    <string name="main_hush_title">Message content isn\'t synced to your phone</string>
+    <string name="main_hush_detail">Hush still sorts notifications by friends, work, and family on your computer. Without explicit permission, the phone only explains what it can and can\'t do.</string>
+    <string name="main_hush_next">Future mobile summaries stay read-only, and you decide when to open any specific message.</string>
+
+    <!-- Health -->
+    <string name="main_health_unavailable">This phone has no Health Connect available, so %1$s can\'t be read yet</string>
+    <string name="main_health_sleep">sleep</string>
+    <string name="main_health_resting_heart_rate">resting heart rate</string>
+    <string name="main_health_background_needs_connect">Background health sync needs Health Connect</string>
+
+    <!-- Delete local data -->
+    <string name="main_delete_title">Delete HUMHUM data on this phone?</string>
+    <string name="main_delete_message">This clears pairing, offline sessions, and the health upload queue. Data on your Mac won\'t be deleted.</string>
+    <string name="main_delete_done">Local data on this phone deleted</string>
+
+    <!-- Pairing / connection (MainActivity) -->
+    <string name="main_scan_cancelled">Scan cancelled</string>
+    <string name="main_clipboard_empty">Clipboard is empty</string>
+    <string name="main_scan_prompt">Scan the Hexa pairing QR code on your computer</string>
+    <string name="main_setup_control_filled">Control pairing details filled in. Tap Secure pair.</string>
+    <string name="main_setup_read_filled">Read-only pairing details filled in. Tap Secure pair.</string>
+    <string name="main_scope_tailnet_prefix">Tailnet · </string>
+    <string name="main_scope_control">Control</string>
+    <string name="main_scope_read">Read-only</string>
+    <string name="main_disconnect_warning">This device\'s connection is cleared. The desktop hasn\'t confirmed revocation, so revoke the old device in Hexa.</string>
+    <string name="main_camera_denied">Camera permission is off. You can paste pairing details instead.</string>
+    <string name="main_connection_revoked">The mobile connection is no longer valid. Please pair again.</string>
+    <string name="main_disconnected_revoked">Securely disconnected and revoked this device</string>
+    <string name="main_secure_pair">Secure pair</string>
+    <string name="main_secure_pairing">Securely pairing</string>
+    <string name="main_pairing_encrypting">Encrypting pairing</string>
+    <string name="main_pairing_verifying">Verifying certificate</string>
+    <string name="main_waiting_connection">Waiting to connect</string>
+    <string name="main_scan_recognized">QR code recognized\nConnecting to this computer over an encrypted relay</string>
+    <string name="main_scan_pair_button">Scan computer pairing QR</string>
+    <string name="main_use_manual_pair">Pair manually</string>
+    <string name="main_collapse_manual_pair">Hide manual pairing</string>
+
+    <!-- Monitor toggle status (MainActivity) -->
+    <string name="main_monitor_needs_notification">Needs notification permission</string>
+    <string name="main_monitor_off">Off</string>
+    <string name="main_monitor_watching">Watching this computer</string>
+    <string name="main_monitor_start_failed">Couldn\'t start background monitoring</string>
+    <string name="main_open_settings_failed">Couldn\'t open system settings</string>
+
+    <!-- Personal context / WeChat -->
+    <string name="main_personal_context_unauthorized">Personal context not authorized on your computer</string>
+    <string name="main_personal_context_unavailable">Personal context is temporarily unavailable</string>
+    <string name="main_hush_unauthorized">This phone doesn\'t have Hush access. Please scan to pair again.</string>
+    <string name="main_hush_syncing">Syncing WeChat messages</string>
+    <string name="main_hush_synced">WeChat messages just synced</string>
+    <string name="main_hush_sync_failed">WeChat sync failed</string>
+    <string name="main_hush_relay_unavailable">Remote WeChat sync channel is unavailable</string>
+
+    <!-- Session list / conversation (MainActivity) -->
+    <string name="main_no_recent_sessions">No recent Agent sessions</string>
+    <string name="main_sessions_unavailable">Can\'t confirm current session state. Restore the connection and retry.</string>
+    <string name="main_needs_attention_prefix">Needs you · </string>
+    <string name="main_conversation_collapse">Hide recent conversation</string>
+    <string name="main_conversation_view">View recent conversation</string>
+    <string name="main_conversation_loading">Loading recent conversation</string>
+    <string name="main_conversation_unavailable">Recent conversation is temporarily unavailable</string>
+    <string name="main_follow_up_hint">Send a follow-up to this Agent session</string>
+    <string name="main_send_follow_up">Send follow-up</string>
+    <string name="main_allow_once">Allow once</string>
+
+    <!-- Remote connection status (MainActivity) -->
+    <string name="main_remote_connection">Remote connection</string>
+    <string name="main_remote_prefix">Remote connection · </string>
+    <string name="main_remote_handled">Remote connection · handled</string>
+    <string name="main_follow_up_delivered">Follow-up delivered</string>
+    <string name="main_follow_up_queued">Your computer received it, but the Agent hasn\'t started</string>
+    <string name="main_follow_up_rejected">The Agent didn\'t accept this instruction. Refresh and retry.</string>
+    <string name="main_follow_up_send_failed">Failed to send</string>
+
+    <!-- Device care (DeviceCarePlan) -->
+    <string name="device_care_battery_exempt">The system allows background running</string>
+    <string name="device_care_battery_limited">The system may limit background running</string>
+
+    <!-- System push (PushStateStore) -->
+    <string name="push_registering">System push is connecting</string>
+    <string name="push_registered">System push is ready</string>
+    <string name="push_retrying">System push is temporarily unavailable, retrying automatically</string>
+    <string name="push_needs_pairing">System push needs pairing again</string>
+    <string name="push_disabled">System push isn\'t set up yet</string>
+
+    <!-- Offline snapshot (SessionSnapshotCodec) -->
+    <string name="snapshot_just_now">Offline snapshot · just now</string>
+    <string name="snapshot_minutes_ago">Offline snapshot · %1$d min ago</string>
+    <string name="snapshot_hours_ago">Offline snapshot · %1$d hr ago</string>
+    <string name="snapshot_days_ago">Offline snapshot · %1$d day(s) ago</string>
+
+    <!-- Untitled project (MobileProtocol) -->
+    <string name="session_untitled_project">Untitled project</string>
+
+    <!-- Role summary (MobileRoleDashboard) -->
+    <string name="dashboard_quiet_title">All quiet for now</string>
+    <string name="dashboard_quiet_detail">No Agent sessions need you right now.</string>
+    <string name="dashboard_attention_waiting">These sessions are waiting for you.</string>
+    <string name="dashboard_attention_continuing">%1$d more session(s) still going.</string>
+    <string name="dashboard_attention_title">%1$d thing(s) need your call</string>
+    <string name="dashboard_continuing_title">%1$d Agent session(s) in progress</string>
+    <string name="dashboard_no_pending">Nothing is waiting on your confirmation.</string>
+
+    <!-- ViewModel status text -->
+    <string name="status_secure_pairing">Securely pairing</string>
+    <string name="status_waiting_connection">Waiting to connect</string>
+    <string name="status_syncing">Syncing</string>
+    <string name="status_refreshing">Refreshing</string>
+    <string name="status_connected">Connected</string>
+    <string name="status_synced_remote">Remote connection · just synced</string>
+    <string name="status_synced">Just synced</string>
+    <string name="status_offline">Computer offline</string>
+    <string name="status_disconnecting">Disconnecting</string>
+    <string name="status_monitor_needs_notification">Needs notification permission</string>
+    <string name="status_monitor_watching">Watching this computer</string>
+    <string name="status_monitor_off">Off</string>
+    <string name="status_personal_context_unauthorized">Personal context not authorized on your computer</string>
+    <string name="status_personal_context_cached">Showing encrypted cache from the last 24 hours</string>
+    <string name="status_follow_up_queued">Your computer received it, but the Agent hasn\'t started. You can retry after refreshing.</string>
+
+    <!-- Pairing screen (PairingScreen) -->
+    <string name="pairing_local_first">Local first</string>
+    <string name="pairing_connect_your_mac">Connect your Mac</string>
+    <string name="pairing_intro">Open mobile access in Hexa on your computer, then scan the QR code to finish secure pairing.</string>
+    <string name="pairing_scan_button">Scan pairing QR code</string>
+    <string name="pairing_paste_button">Paste pairing details</string>
+    <string name="pairing_recovery_collapse">Hide connection recovery</string>
+    <string name="pairing_recovery_open">Trouble connecting</string>
+    <string name="pairing_manual_hint">Enter manually only when the QR code won\'t work</string>
+    <string name="pairing_field_address">Mac address</string>
+    <string name="pairing_field_code">One-time pairing code</string>
+    <string name="pairing_field_fingerprint">Certificate fingerprint</string>
+    <string name="pairing_field_device_name">Device name (optional)</string>
+    <string name="pairing_secure_pair">Secure pair</string>
+    <string name="pairing_footer">Connection credentials are stored in Android\'s private app storage. Personal context and orchestration still need separate approval on your Mac.</string>
+
+    <!-- Settings screen (SettingsScreen) -->
+    <string name="settings_back">Back</string>
+    <string name="settings_title">Settings</string>
+    <string name="settings_subtitle">Connection, permissions, and privacy</string>
+    <string name="settings_section_connection">Connection</string>
+    <string name="settings_home_mac">Home Mac</string>
+    <string name="settings_home_mac_connected">HUMHUM Anywhere · encrypted</string>
+    <string name="settings_not_connected">Not connected</string>
+    <string name="settings_connected">Connected</string>
+    <string name="settings_section_health_privacy">Health &amp; privacy</string>
+    <string name="settings_health_sources">Health data sources</string>
+    <string name="settings_health_sources_detail">Steps, resting heart rate, sleep</string>
+    <string name="settings_background_health">Background health sync</string>
+    <string name="settings_background_health_detail">Tries every 6 hours, daily summaries only</string>
+    <string name="settings_section_background">Background</string>
+    <string name="settings_hexa_monitor">Hexa background monitoring</string>
+    <string name="settings_battery_autostart">Battery &amp; autostart</string>
+    <string name="settings_battery_recommend">Allowing background running is recommended</string>
+    <string name="settings_battery_relaxed">Background limits relaxed</string>
+    <string name="settings_check">Check</string>
+    <string name="settings_local_encryption">On-device encryption</string>
+    <string name="settings_local_encryption_detail">Pending health data and session snapshots are stored encrypted</string>
+    <string name="settings_delete_data">Delete HUMHUM data on this phone</string>
+    <string name="settings_delete_data_detail">Clears connection, encrypted queue, and offline snapshots</string>
+    <string name="settings_section_about">About</string>
+    <string name="settings_about_title">HUMHUM for Android</string>
+    <string name="settings_about_detail">Version %1$s · beta</string>
+    <string name="settings_diagnostics">Advanced diagnostics</string>
+    <string name="settings_collapse">Collapse</string>
+    <string name="settings_expand">Expand</string>
+    <string name="settings_diagnostics_detail">Connection: %1$s\nPermission scope: %2$s\nRemote recovery: %3$s\nOffline snapshot: %4$s</string>
+    <string name="settings_scope_none">none</string>
+    <string name="settings_language">语言 / Language</string>
+    <string name="settings_language_detail">Choose the interface language</string>
+    <string name="settings_language_chinese">中文</string>
+    <string name="settings_language_english">English</string>
+
+    <!-- Humi room (HumiRoomScreen) -->
+    <string name="humi_hero_title">Move the most\nimportant thing forward</string>
+    <string name="humi_hero_detail">I keep Agent progress and body signals together, and only flag what truly deserves your attention.</string>
+    <string name="humi_section_today">Today</string>
+    <string name="humi_today_trailing">%1$d worth noting</string>
+    <string name="humi_nothing_to_interrupt">Nothing needs to interrupt you right now.</string>
+    <string name="humi_section_body_signals">Body signals</string>
+    <string name="humi_section_memory">What I remember about you</string>
+    <string name="humi_memory_cache">Encrypted cache</string>
+    <string name="humi_memory_confirmed">Confirmed memory · %1$s</string>
+    <string name="humi_memory_placeholder">Only confirmed memories and habits go here. Guesses never get written down as facts.</string>
+    <string name="humi_section_health_sources">Health data sources</string>
+    <string name="humi_on_demand">On-demand access</string>
+    <string name="humi_data_source">Data source</string>
+    <string name="humi_metric_steps">Steps</string>
+    <string name="humi_metric_resting_heart_rate">Resting heart rate</string>
+    <string name="humi_metric_sleep">Sleep</string>
+    <string name="humi_focus_noticed">Humi noticed · %1$s</string>
+    <string name="humi_continue_focus">Continue today\'s focus  →</string>
+    <string name="humi_sleep_duration">%1$dh %2$dm</string>
+    <string name="humi_source_permission">Allowed</string>
+    <string name="humi_source_enable">Enable</string>
+    <string name="humi_health_not_enabled">Off</string>
+    <string name="humi_health_waiting_data">Waiting for data</string>
+    <string name="humi_health_daily_summary_count">%1$d daily summaries</string>
+    <string name="humi_health_captured_at">Captured at %1$s</string>
+    <string name="humi_source_ask_android">Android asks for permission</string>
+    <string name="humi_source_health_connect">Health Connect · daily summaries only</string>
+    <string name="humi_source_phone_counter">On-device step counter</string>
+    <string name="humi_source_device_unavailable">Not available on this device</string>
+    <string name="humi_source_allowed_waiting">Allowed, waiting to sync</string>
+    <string name="humi_source_from_hexa_goal">From a Hexa goal</string>
+    <string name="humi_source_from_note_task">From a note task you picked</string>
+    <string name="humi_source_from_confirmed">From confirmed info</string>
+    <string name="humi_status_waiting">Waiting</string>
+    <string name="humi_status_completed">Done</string>
+    <string name="humi_status_in_progress">In progress</string>
+
+    <!-- Hype room (HypeRoomScreen) -->
+    <string name="hype_category_recent">Recent</string>
+    <string name="hype_category_skills">Skills</string>
+    <string name="hype_category_preferences">Preferences</string>
+    <string name="hype_category_memories">Long-term memory</string>
+    <string name="hype_search_placeholder">Search skills, preferences, and memory</string>
+    <string name="hype_reusable_skills">Reusable skills</string>
+    <string name="hype_count_items">%1$d items</string>
+    <string name="hype_meta_skill">Skill</string>
+    <string name="hype_meta_note">Note</string>
+    <string name="hype_explicit_preferences">Explicit preferences</string>
+    <string name="hype_count_entries">%1$d entries</string>
+    <string name="hype_no_preferences">No confirmed preferences yet. Hype won\'t turn one-off behavior into a lasting rule.</string>
+    <string name="hype_long_term_memory">Long-term memory</string>
+    <string name="hype_memory_temperature">Memory warmth · %1$s</string>
+    <string name="hype_no_memories">Information worth reusing across Agents shows up here once you confirm it.</string>
+    <string name="hype_hero_recent">Used most recently</string>
+    <string name="hype_hero_title">Make the next time\nget you right away</string>
+    <string name="hype_hero_detail">This shows the skills you\'ve organized and confirmed. File count isn\'t the point.</string>
+    <string name="hush_index_waiting">For your attention</string>
+
+    <!-- Hush room (HushRoomScreen) -->
+    <string name="hush_filter_all">All</string>
+    <string name="hush_filter_reply">Needs reply</string>
+    <string name="hush_filter_focused">Focused</string>
+    <string name="hush_intro">Shows only contacts, times, and available summaries from authorized sources.</string>
+    <string name="hush_section_today">Today</string>
+    <string name="hush_redacted_count">%1$d redacted summaries</string>
+    <string name="hush_privacy_strip">Message bodies are encrypted between your device and your authorized computer only</string>
+    <string name="hush_hero_private">Private messages</string>
+    <string name="hush_hero_title">Recent messages</string>
+    <string name="hush_initial_placeholder">M</string>
+
+    <!-- Hexa room (HexaScreen) -->
+    <string name="hexa_agent_session">Agent sessions</string>
+    <string name="hexa_control_intro">Here you can confirm permissions, check progress, and keep sending tasks to your Agents.</string>
+    <string name="hexa_read_only_intro">Read-only view · this computer hasn\'t granted confirm and follow-up access.</string>
+    <string name="hexa_quiet_title">All quiet for now</string>
+    <string name="hexa_quiet_detail">No Agent sessions need you right now.</string>
+    <string name="hexa_other_sessions">Other recent sessions</string>
+    <string name="hexa_count_entries">%1$d entries</string>
+    <string name="hexa_following">Following</string>
+    <string name="hexa_agent_count">%1$d Agents</string>
+    <string name="hexa_needs_you">Needs you</string>
+    <string name="hexa_working">Working</string>
+    <string name="hexa_view_conversation">View conversation</string>
+    <string name="hexa_primary_waiting">This session is waiting for you</string>
+    <string name="hexa_primary_continuing">This is the most recent session you can keep giving tasks to</string>
+    <string name="hexa_primary_waiting_detail">A confirmation request arrived. Once you handle it, the Agent continues the current task.</string>
+    <string name="hexa_primary_continuing_detail">You can add the next step directly, and the task continues along this real session.</string>
+    <string name="hexa_follow_up_label">Follow up or add detail</string>
+    <string name="hexa_send">Send</string>
+    <string name="hexa_computer_received_prefix">Your computer received it</string>
+    <string name="hexa_conversation_title">Conversation</string>
+    <string name="hexa_collapse">Collapse</string>
+
+    <!-- Room components (RoomComponents) -->
+    <string name="room_context_empty">Nothing here yet</string>
+    <string name="room_context_unauthorized">Your computer hasn\'t authorized this information</string>
+    <string name="room_context_empty_detail">This updates automatically once the connection is restored.</string>
+    <string name="room_context_unauthorized_detail">Turn on \"Sync personal context\" when pairing Hexa on your Mac.</string>
+
+    <!-- Top bar (HumHumApp) -->
+    <string name="app_search_knowledge">Search knowledge</string>
+    <string name="app_sync_messages">Sync messages</string>
+    <string name="app_refresh">Refresh</string>
+    <string name="app_settings">Settings</string>
+
+    <!-- Remote pairing client (RelayPairingClient) -->
+    <string name="relay_channel_unavailable">The temporary pairing channel is unavailable</string>
+    <string name="relay_qr_no_remote">This QR code doesn\'t support remote pairing</string>
+    <string name="relay_qr_expired">The pairing QR code has expired. Refresh it on your Mac.</string>
+    <string name="relay_wait_timeout">Timed out waiting for remote pairing. Refresh the QR code on your Mac and retry.</string>
+    <string name="relay_invalid_result">Your Mac returned an invalid pairing result</string>
+    <string name="relay_pair_rejected">Your Mac rejected this pairing</string>
+    <string name="relay_invalid_encrypted_result">Your Mac returned an invalid encrypted pairing result</string>
+    <string name="relay_no_remote_connection">Your Mac didn\'t return a usable remote connection</string>
+    <string name="relay_invalid_request">The temporary pairing request is invalid</string>
+
+    <!-- Pairing setup parsing (PairingSetup) -->
+    <string name="setup_unsupported_version">Unsupported HUMHUM pairing profile version</string>
+    <string name="setup_invalid_format">Invalid HUMHUM pairing profile format</string>
+    <string name="setup_invalid_remote_format">Invalid HUMHUM remote pairing profile format</string>
+    <string name="setup_invalid_remote_channel">Invalid HUMHUM remote pairing channel</string>
+    <string name="setup_no_valid_data">No valid HUMHUM pairing profile on the clipboard</string>
+</resources>

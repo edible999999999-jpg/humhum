@@ -142,6 +142,11 @@ public final class MainActivity extends ComponentActivity {
             (preferences, key) -> main.post(this::updatePushStatus);
 
     @Override
+    protected void attachBaseContext(Context base) {
+        super.attachBaseContext(LanguagePreference.wrap(base));
+    }
+
+    @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
         healthPermissionLauncher = registerForActivityResult(
@@ -343,8 +348,10 @@ public final class MainActivity extends ComponentActivity {
             return;
         }
         dispatchState(new HumHumAction.StatusChanged(
-                "这台手机没有可用的健康连接，暂时无法读取"
-                        + (permission == HealthPermission.SLEEP ? "睡眠" : "静息心率")));
+                getString(R.string.main_health_unavailable,
+                        getString(permission == HealthPermission.SLEEP
+                                ? R.string.main_health_sleep
+                                : R.string.main_health_resting_heart_rate))));
     }
 
     private void setBackgroundHealth(boolean enabled) {
@@ -361,7 +368,7 @@ public final class MainActivity extends ComponentActivity {
         if (!HealthActivityBridge.healthConnectAvailable(this)) {
             preference.setEnabled(false);
             dispatchState(new HumHumAction.StatusChanged(
-                    "后台健康同步需要系统健康连接"));
+                    getString(R.string.main_health_background_needs_connect)));
             return;
         }
         preference.beginEnableRequest();
@@ -390,10 +397,10 @@ public final class MainActivity extends ComponentActivity {
 
     private void confirmDeleteLocalData() {
         new AlertDialog.Builder(this)
-                .setTitle("删除手机上的 HUMHUM 数据？")
-                .setMessage("这会清除配对、离线会话和健康待传队列。Mac 上的数据不会被删除。")
-                .setNegativeButton("取消", null)
-                .setPositiveButton("删除", (dialog, which) -> {
+                .setTitle(R.string.main_delete_title)
+                .setMessage(R.string.main_delete_message)
+                .setNegativeButton(R.string.common_cancel, null)
+                .setPositiveButton(R.string.common_delete, (dialog, which) -> {
                     if (anywhereRelayClient != null) anywhereRelayClient.cancel();
                     AgentMonitorService.stop(this);
                     PushRegistration.cancel(this);
@@ -405,7 +412,8 @@ public final class MainActivity extends ComponentActivity {
                     new HealthBackgroundPreference(this).clear();
                     getSharedPreferences("humhum_push", MODE_PRIVATE).edit().clear().apply();
                     showConnect();
-                    dispatchState(new HumHumAction.StatusChanged("手机本地数据已删除"));
+                    dispatchState(new HumHumAction.StatusChanged(
+                            getString(R.string.main_delete_done)));
                 })
                 .show();
     }
@@ -568,7 +576,8 @@ public final class MainActivity extends ComponentActivity {
         try {
             MobileRoleDashboard.Role selectedRole = state.getSelectedRole();
             List<Models.Session> sessions = state.getSessions();
-            String status = state.getStatusMessage();
+            String status = com.humhum.mobile.app.HumHumUiStateKt.resolve(
+                    state.getStatusMessage(), this);
             boolean canControl = state.getCanControl();
             java.util.Set<PendingAction> pendingActions = state.getPendingActions();
             statusText.setText(status);
@@ -952,7 +961,7 @@ public final class MainActivity extends ComponentActivity {
         IntentIntegrator integrator = new IntentIntegrator(this);
         integrator.setCaptureActivity(QrCaptureActivity.class);
         integrator.setDesiredBarcodeFormats(IntentIntegrator.QR_CODE);
-        integrator.setPrompt("扫描电脑上 Hexa 的配对二维码");
+        integrator.setPrompt(getString(R.string.main_scan_prompt));
         integrator.setBeepEnabled(false);
         integrator.setBarcodeImageEnabled(false);
         integrator.initiateScan();
@@ -1279,8 +1288,8 @@ public final class MainActivity extends ComponentActivity {
                         renderUnavailableSessions();
                         return;
                     }
-                    String ageCopy =
-                            SessionSnapshotCodec.ageCopy(snapshot.savedAtMillis(), nowMillis);
+                    String ageCopy = snapshotAgeCopy(
+                            SessionSnapshotCodec.age(snapshot.savedAtMillis(), nowMillis));
                     HumHumUiState state = dispatchState(
                             new HumHumAction.OfflineSnapshotLoaded(snapshot.sessions(), ageCopy));
                     dispatchState(new HumHumAction.PersonalContextCapabilityChanged(
@@ -1349,7 +1358,8 @@ public final class MainActivity extends ComponentActivity {
             long nowMillis) {
         if (!activeConnection.personalContext()) {
             clearPersonalContextSafely();
-            return PersonalContextRefresh.unavailable("电脑未授权个人上下文");
+            return PersonalContextRefresh.unavailable(
+                    getString(R.string.main_personal_context_unauthorized));
         }
         Models.PersonalContext context = null;
         Exception failure = null;
@@ -1381,7 +1391,9 @@ public final class MainActivity extends ComponentActivity {
             return PersonalContextRefresh.cached(cached.context());
         }
         return PersonalContextRefresh.unavailable(
-                failure == null ? "个人上下文暂时不可用" : safeError(failure));
+                failure == null
+                        ? getString(R.string.main_personal_context_unavailable)
+                        : safeError(failure));
     }
 
     private void refreshHush() {
@@ -1391,11 +1403,13 @@ public final class MainActivity extends ComponentActivity {
         if (current == null || currentConnection == null) return;
         if (hushRefreshInFlight) return;
         if (!currentConnection.personalContext()) {
-            dispatchState(new HumHumAction.PersonalContextFailed("这台手机没有 Hush 授权，请重新扫码配对"));
+            dispatchState(new HumHumAction.PersonalContextFailed(
+                    getString(R.string.main_hush_unauthorized)));
             return;
         }
         hushRefreshInFlight = true;
-        dispatchState(new HumHumAction.StatusChanged("正在同步微信消息"));
+        dispatchState(new HumHumAction.StatusChanged(
+                getString(R.string.main_hush_syncing)));
         boolean relayFirst =
                 ConnectionRoutePolicy.useRelayFirst(currentConnection, currentAnywhere != null);
         long generation = snapshotGenerationGate.capture();
@@ -1412,7 +1426,8 @@ public final class MainActivity extends ComponentActivity {
                 if (!saved) return;
                 postRefreshIfCurrent(generation, current, currentConnection, () -> {
                     dispatchState(new HumHumAction.PersonalContextLoaded(context, false));
-                    dispatchState(new HumHumAction.StatusChanged("微信消息刚刚同步"));
+                    dispatchState(new HumHumAction.StatusChanged(
+                            getString(R.string.main_hush_synced)));
                 });
             } catch (Exception error) {
                 if (OfflineFallbackPolicy.isAuthorizationRevoked(error)) {
@@ -1422,7 +1437,8 @@ public final class MainActivity extends ComponentActivity {
                 String visibleError = safeError(error);
                 postRefreshIfCurrent(generation, current, currentConnection, () -> {
                     dispatchState(new HumHumAction.PersonalContextFailed(visibleError));
-                    dispatchState(new HumHumAction.StatusChanged("微信同步失败"));
+                    dispatchState(new HumHumAction.StatusChanged(
+                            getString(R.string.main_hush_sync_failed)));
                 });
             } finally {
                 main.post(() -> hushRefreshInFlight = false);
@@ -1437,7 +1453,8 @@ public final class MainActivity extends ComponentActivity {
             boolean relayFirst) throws Exception {
         if (relayFirst) {
             if (activeAnywhere == null || activeConnection.wakeRelay() == null) {
-                throw new IllegalStateException("远程微信同步通道不可用");
+                throw new IllegalStateException(
+                        getString(R.string.main_hush_relay_unavailable));
             }
             return activeAnywhere.refreshHush(activeConnection.wakeRelay());
         }
@@ -2151,7 +2168,7 @@ public final class MainActivity extends ComponentActivity {
                     conversationErrorSessionId = null;
                     conversationErrorText = "";
                     dispatchState(new HumHumAction.ConversationLoaded(sessionId, messages));
-                    if (remote) setStatusMessage("远程连接");
+                    if (remote) setStatusMessage(getString(R.string.main_remote_connection));
                     renderSessions(currentUiState().getSessions());
                 });
     }
@@ -2198,7 +2215,7 @@ public final class MainActivity extends ComponentActivity {
                             decision);
                     postIfCurrent(generation, current, currentConnection, () -> {
                         dispatchState(new HumHumAction.ApprovalFinished(sessionId, action.id()));
-                        setStatusMessage("远程连接 · 已处理");
+                        setStatusMessage(getString(R.string.main_remote_handled));
                         refreshSessions(true);
                     });
                     return;
@@ -2231,7 +2248,7 @@ public final class MainActivity extends ComponentActivity {
                         postIfCurrent(generation, current, currentConnection, () -> {
                             dispatchState(new HumHumAction.ApprovalFinished(
                                     sessionId, action.id()));
-                            setStatusMessage("远程连接 · 已处理");
+                            setStatusMessage(getString(R.string.main_remote_handled));
                             refreshSessions(true);
                         });
                         return;
@@ -2320,34 +2337,38 @@ public final class MainActivity extends ComponentActivity {
     }
 
     private void finishFollowUp(Models.Session session, String state, boolean viaRelay) {
-        String remotePrefix = viaRelay ? "远程连接 · " : "";
+        String remotePrefix = viaRelay ? getString(R.string.main_remote_prefix) : "";
         if ("delivered".equals(state)) {
             dispatchState(new HumHumAction.FollowUpSucceeded(session.id()));
             messageDraftBySessionId.remove(session.id());
-            setStatusMessage(remotePrefix + "跟进已送达");
+            setStatusMessage(remotePrefix + getString(R.string.main_follow_up_delivered));
             renderSessions(currentUiState().getSessions());
             refreshSessions(false);
             return;
         }
         if ("queued".equals(state)) {
             dispatchState(new HumHumAction.FollowUpQueued(session.id()));
-            setStatusMessage(remotePrefix + "电脑已收到，Agent 尚未开始");
+            setStatusMessage(remotePrefix + getString(R.string.main_follow_up_queued));
         } else {
             dispatchState(new HumHumAction.FollowUpFailed(
-                    session.id(), "Agent 没有接收这条指令，请刷新后重试"));
-            setStatusMessage(remotePrefix + "发送失败");
+                    session.id(), getString(R.string.main_follow_up_rejected)));
+            setStatusMessage(remotePrefix + getString(R.string.main_follow_up_send_failed));
         }
         renderSessions(currentUiState().getSessions());
     }
 
     private void setPairing(boolean pairing) {
         connectButton.setEnabled(!pairing);
-        connectButton.setText(pairing ? "正在安全配对" : "安全配对");
+        connectButton.setText(pairing
+                ? getString(R.string.main_secure_pairing)
+                : getString(R.string.main_secure_pair));
         setStatusMessage(pairing
-                ? (scannedPairing ? "正在加密配对" : "正在验证证书")
-                : "等待连接");
+                ? getString(scannedPairing
+                        ? R.string.main_pairing_encrypting
+                        : R.string.main_pairing_verifying)
+                : getString(R.string.status_waiting_connection));
         if (pairing && scannedPairing) {
-            scanPairingStatus.setText("二维码已识别\n正在通过加密中继连接这台电脑");
+            scanPairingStatus.setText(getString(R.string.main_scan_recognized));
         }
     }
 
@@ -2447,9 +2468,25 @@ public final class MainActivity extends ComponentActivity {
         return getColor(resource);
     }
 
-    private static String safeError(Throwable error) {
+    private String snapshotAgeCopy(SessionSnapshotCodec.SnapshotAge age) {
+        switch (age.bucket()) {
+            case MINUTES:
+                return getString(R.string.snapshot_minutes_ago, age.value());
+            case HOURS:
+                return getString(R.string.snapshot_hours_ago, age.value());
+            case DAYS:
+                return getString(R.string.snapshot_days_ago, age.value());
+            case JUST_NOW:
+            default:
+                return getString(R.string.snapshot_just_now);
+        }
+    }
+
+    private String safeError(Throwable error) {
         String message = error.getMessage();
-        if (message == null || message.isBlank()) return "操作失败，请检查电脑是否在线";
+        if (message == null || message.isBlank()) {
+            return getString(R.string.common_error_generic);
+        }
         return message.length() <= 120 ? message : message.substring(0, 120);
     }
 }
