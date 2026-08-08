@@ -509,6 +509,8 @@ pub fn run() {
             commands::transcribe_audio,
             commands::play_audio,
             commands::stop_audio,
+            commands::pause_audio,
+            commands::resume_audio,
             commands::synthesize_system_speech,
             commands::get_sound_packs,
             commands::select_sound_pack,

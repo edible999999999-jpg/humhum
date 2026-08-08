@@ -4783,6 +4783,19 @@ pub async fn stop_audio() -> Result<(), String> {
     crate::native_audio::stop().await
 }
 
+/// Pause the currently-playing audio without dropping it, so it can resume.
+/// Backs the Space shortcut that silences narration during a permission prompt.
+#[tauri::command]
+pub async fn pause_audio() -> Result<(), String> {
+    crate::native_audio::pause().await
+}
+
+/// Resume audio paused by `pause_audio`.
+#[tauri::command]
+pub async fn resume_audio() -> Result<(), String> {
+    crate::native_audio::resume().await
+}
+
 #[cfg(test)]
 mod hook_config_protocol_tests {
     use super::{

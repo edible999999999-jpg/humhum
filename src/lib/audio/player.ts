@@ -49,11 +49,23 @@ export class AudioPlayer {
   }
 
   pause(): void {
+    if (!this.playing) return;
     this.onStateChange?.("paused");
+    // Actually silence the native player. The pending play_audio promise stays
+    // unresolved (afplay is stopped, not exited), so the queue does not advance
+    // until we resume-to-completion or stop. Fire-and-forget: a failed pause
+    // must not throw into the keyboard handler.
+    invoke("pause_audio").catch((e) => {
+      console.error("[AudioPlayer] pause_audio error:", e);
+    });
   }
 
   resume(): void {
+    if (!this.playing) return;
     this.onStateChange?.("playing");
+    invoke("resume_audio").catch((e) => {
+      console.error("[AudioPlayer] resume_audio error:", e);
+    });
   }
 
   async stop(): Promise<void> {

@@ -4,6 +4,9 @@ use std::sync::OnceLock;
 
 static AUDIO_QUEUE: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
 static STOP_REQUESTED: AtomicBool = AtomicBool::new(false);
+// Windows only reads this from its playback poll loop; macOS pauses the child
+// process directly via signals so it doesn't consult the flag.
+static PAUSE_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 fn audio_queue() -> &'static tokio::sync::Mutex<()> {
     AUDIO_QUEUE.get_or_init(|| tokio::sync::Mutex::new(()))
@@ -14,17 +17,40 @@ fn audio_queue() -> &'static tokio::sync::Mutex<()> {
 pub(crate) async fn play_file(path: &Path) -> Result<(), String> {
     let _queue_guard = audio_queue().lock().await;
     STOP_REQUESTED.store(false, Ordering::Release);
+    PAUSE_REQUESTED.store(false, Ordering::Release);
     platform::play(path).await
 }
 
 /// Interrupt the active file without waiting for the playback queue lock.
 pub(crate) async fn stop() -> Result<(), String> {
     STOP_REQUESTED.store(true, Ordering::Release);
+    // Clear any pending pause so a stop while paused still tears the clip down
+    // (a stopped process won't act on SIGTERM until it is continued).
+    PAUSE_REQUESTED.store(false, Ordering::Release);
     platform::stop().await
+}
+
+/// Pause the currently-playing file without dropping it from the queue, so it
+/// can be resumed. Used by the Space shortcut to silence narration while the
+/// user reads a permission prompt.
+pub(crate) async fn pause() -> Result<(), String> {
+    PAUSE_REQUESTED.store(true, Ordering::Release);
+    platform::pause().await
+}
+
+/// Resume a file paused by `pause()`.
+pub(crate) async fn resume() -> Result<(), String> {
+    PAUSE_REQUESTED.store(false, Ordering::Release);
+    platform::resume().await
 }
 
 fn stop_requested() -> bool {
     STOP_REQUESTED.load(Ordering::Acquire)
+}
+
+#[cfg(target_os = "windows")]
+fn pause_requested() -> bool {
+    PAUSE_REQUESTED.load(Ordering::Acquire)
 }
 
 #[cfg(target_os = "macos")]
@@ -70,6 +96,11 @@ mod platform {
             return Ok(());
         };
 
+        // A stopped (SIGSTOP'd) process does not act on SIGTERM until it is
+        // continued, so wake it first; otherwise a stop-while-paused would
+        // leave afplay alive and the queue's wait() would never return.
+        unsafe { kill(process_id as i32, 19) }; // SIGCONT (harmless if running)
+
         // Signal only HumHum's player instead of terminating every afplay
         // process owned by the user.
         let result = unsafe { kill(process_id as i32, 15) }; // SIGTERM
@@ -81,6 +112,32 @@ mod platform {
                 std::io::Error::last_os_error()
             ))
         }
+    }
+
+    fn signal_active(signal: i32) -> Result<(), String> {
+        let process_id = *ACTIVE_PROCESS.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(process_id) = process_id else {
+            // Nothing playing is a no-op, not an error.
+            return Ok(());
+        };
+        let result = unsafe { kill(process_id as i32, signal) };
+        // ESRCH (3) == the process already exited; treat as success.
+        if result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(3) {
+            Ok(())
+        } else {
+            Err(format!(
+                "Failed to signal afplay process {process_id}: {}",
+                std::io::Error::last_os_error()
+            ))
+        }
+    }
+
+    pub(super) async fn pause() -> Result<(), String> {
+        signal_active(17) // SIGSTOP
+    }
+
+    pub(super) async fn resume() -> Result<(), String> {
+        signal_active(19) // SIGCONT
     }
 }
 
@@ -119,6 +176,16 @@ mod platform {
         Ok(())
     }
 
+    pub(super) async fn pause() -> Result<(), String> {
+        // Same rationale as stop(): the worker thread owns the MCI alias, so it
+        // issues the actual `pause`/`resume` command when it observes the flag.
+        Ok(())
+    }
+
+    pub(super) async fn resume() -> Result<(), String> {
+        Ok(())
+    }
+
     fn play_blocking(path: PathBuf) -> Result<(), String> {
         // Clear an alias left behind if a media driver failed during an earlier
         // playback attempt.
@@ -138,10 +205,26 @@ mod platform {
 
         let playback = (|| {
             send_command(&format!("play {AUDIO_ALIAS}"))?;
+            let mut paused = false;
             loop {
                 if stop_requested() {
                     let _ = send_command(&format!("stop {AUDIO_ALIAS}"));
                     return Ok(());
+                }
+
+                // Pause/resume the MCI alias from this same thread when the flag
+                // flips, so the clip is silenced but kept for resume rather than
+                // dropped. `resume` restarts from the paused position.
+                if pause_requested() && !paused {
+                    let _ = send_command(&format!("pause {AUDIO_ALIAS}"));
+                    paused = true;
+                } else if !pause_requested() && paused {
+                    let _ = send_command(&format!("resume {AUDIO_ALIAS}"));
+                    paused = false;
+                }
+                if paused {
+                    std::thread::sleep(Duration::from_millis(25));
+                    continue;
                 }
 
                 match query_command(&format!("status {AUDIO_ALIAS} mode")) {
@@ -221,6 +304,14 @@ mod platform {
     }
 
     pub(super) async fn stop() -> Result<(), String> {
+        Ok(())
+    }
+
+    pub(super) async fn pause() -> Result<(), String> {
+        Ok(())
+    }
+
+    pub(super) async fn resume() -> Result<(), String> {
         Ok(())
     }
 }
