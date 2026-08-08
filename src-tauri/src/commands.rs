@@ -3815,9 +3815,41 @@ pub async fn focus_agent_session(
     window_focus::focus_agent_route(None)
 }
 
-/// Focus the terminal and type text + Enter (for AskUserQuestion responses)
+/// Focus the terminal and type text + Enter (for AskUserQuestion responses).
+///
+/// When `session_id` is provided, focus THAT session's own terminal first (via
+/// the same routing as `focus_agent_session`) and then type into the now-front
+/// window. Without a session_id we fall back to the legacy best-effort path
+/// that activates the first terminal it finds — which can type the answer into
+/// an unrelated terminal that merely happens to be open. Always prefer passing
+/// the session_id so the keystroke lands in the terminal that actually asked.
 #[tauri::command]
-pub async fn type_in_terminal(text: String) -> Result<(), String> {
+pub async fn type_in_terminal(
+    store: State<'_, Arc<std::sync::Mutex<SessionStore>>>,
+    text: String,
+    session_id: Option<String>,
+) -> Result<(), String> {
+    let route = match session_id.as_deref() {
+        Some(id) if !id.is_empty() => {
+            let store = store
+                .lock()
+                .map_err(|error| format!("Lock error: {error}"))?;
+            store
+                .get_all_sessions_with_history()
+                .into_iter()
+                .find(|session| session.session_id == id)
+                .and_then(|session| session.route.clone())
+        }
+        _ => None,
+    };
+
+    // Focus the session's terminal, then type into whatever is now frontmost.
+    // If routing fails or we have no route, fall back to the legacy path that
+    // finds+activates+types in one shot.
+    if route.is_some() && window_focus::focus_agent_route(route.as_ref()).is_ok() {
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        return window_focus::keystroke_text_async(&text).await;
+    }
     window_focus::type_in_terminal_async(&text).await
 }
 
