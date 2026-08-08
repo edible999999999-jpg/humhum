@@ -163,6 +163,17 @@ pub struct StatsData {
     pub sessions: Vec<SessionStats>,
     pub daily_buckets: Vec<DailyBucket>,
     pub processed_transcripts: HashSet<String>,
+    /// Last-seen file mtime (seconds since epoch) for each processed
+    /// transcript. Lets backfill re-parse a transcript that GREW since we
+    /// recorded it — e.g. a Claude session resumed and extended while the app
+    /// was closed appends to the same `<uuid>.jsonl`. Without this, backfill
+    /// skips anything already in `processed_transcripts` and the appended
+    /// tokens are lost until a future SessionEnd hook re-parses the path.
+    /// Re-parsing is idempotent (dedup by transcript_path replaces the row),
+    /// so a missing entry (legacy stats.json) just triggers one harmless
+    /// re-parse. `serde(default)` keeps older stats.json deserializable.
+    #[serde(default)]
+    pub processed_mtimes: HashMap<String, u64>,
 }
 
 impl Default for StatsData {
@@ -172,8 +183,20 @@ impl Default for StatsData {
             sessions: Vec::new(),
             daily_buckets: Vec::new(),
             processed_transcripts: HashSet::new(),
+            processed_mtimes: HashMap::new(),
         }
     }
+}
+
+/// File mtime as whole seconds since the Unix epoch, or 0 if unavailable.
+/// Used both to gate backfill re-parsing and to store the last-seen mtime.
+fn file_mtime_secs(path: &std::path::Path) -> u64 {
+    path.metadata()
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -353,6 +376,20 @@ impl StatsStore {
             .map_err(|e| format!("Failed to atomically write private stats file: {}", e))
     }
 
+    /// Whether backfill should (re-)parse `transcript_path` given the file's
+    /// current `mtime_secs`. A never-seen path always parses. A seen path only
+    /// re-parses if it grew (mtime advanced) or has no recorded mtime (legacy
+    /// stats.json), so a resumed+extended session isn't silently undercounted.
+    fn should_reparse(&self, transcript_path: &str, mtime_secs: u64) -> bool {
+        if !self.data.processed_transcripts.contains(transcript_path) {
+            return true;
+        }
+        match self.data.processed_mtimes.get(transcript_path) {
+            Some(&seen) => mtime_secs > seen,
+            None => true,
+        }
+    }
+
     fn backfill_recent_transcripts(&mut self) -> Result<(), String> {
         let Some(home) = dirs::home_dir() else {
             return Ok(());
@@ -377,15 +414,22 @@ impl StatsStore {
 
             for path in collect_jsonl_files(&root) {
                 let transcript_path = path.to_string_lossy().to_string();
-                if self.data.processed_transcripts.contains(&transcript_path) {
-                    continue;
-                }
-
                 let modified = path
                     .metadata()
                     .and_then(|m| m.modified())
                     .unwrap_or(SystemTime::UNIX_EPOCH);
                 if modified < cutoff {
+                    continue;
+                }
+
+                // Re-parse a transcript we've already seen ONLY if it grew since
+                // last time (mtime advanced). A session resumed+extended while
+                // the app was closed appends to the same file; skipping purely
+                // on set membership would lose those appended tokens until a
+                // future SessionEnd. A missing mtime entry (legacy stats.json)
+                // forces one idempotent re-parse.
+                let mtime_secs = file_mtime_secs(&path);
+                if !self.should_reparse(&transcript_path, mtime_secs) {
                     continue;
                 }
 
@@ -397,7 +441,12 @@ impl StatsStore {
                         .sessions
                         .retain(|s| s.transcript_path != transcript_path);
                     self.data.sessions.push(stats);
-                    self.data.processed_transcripts.insert(transcript_path);
+                    self.data
+                        .processed_transcripts
+                        .insert(transcript_path.clone());
+                    self.data
+                        .processed_mtimes
+                        .insert(transcript_path, mtime_secs);
                     changed = true;
                 }
             }
@@ -431,6 +480,12 @@ impl StatsStore {
             self.data
                 .processed_transcripts
                 .insert(transcript_path.to_string());
+            // Record the current mtime so a later backfill only re-parses this
+            // path if it grows further (see backfill_recent_transcripts).
+            self.data.processed_mtimes.insert(
+                transcript_path.to_string(),
+                file_mtime_secs(std::path::Path::new(transcript_path)),
+            );
             self.rebuild_daily_buckets();
             self.prune_old_data();
             if let Err(error) = self.save() {
@@ -537,6 +592,11 @@ impl StatsStore {
             let keep_count = sorted.len() / 2;
             self.data.processed_transcripts = sorted.into_iter().skip(keep_count).collect();
         }
+        // Keep the mtime map bounded to what's still tracked, so it can't grow
+        // without limit past the processed_transcripts cap.
+        self.data
+            .processed_mtimes
+            .retain(|path, _| self.data.processed_transcripts.contains(path));
     }
 
     pub fn get_aggregated_stats(&self) -> AggregatedStats {
@@ -1910,6 +1970,48 @@ mod tests {
         );
 
         let _ = std::fs::remove_file(&path);
+    }
+
+    // Backfill must re-parse a transcript that GREW since we last saw it (a
+    // session resumed+extended while the app was closed), instead of skipping
+    // it forever on set membership and losing the appended tokens.
+    #[test]
+    fn grown_transcript_is_reparsed_by_backfill_gate() {
+        let dir = std::env::temp_dir().join(format!("humhum-regrow-{}", uuid::Uuid::new_v4()));
+        let store = StatsStore::new_with_backfill(dir.join("stats.json"), false);
+        // Start from a clean default; nothing processed yet.
+        let mut store = store;
+        let path = "t-grow.jsonl".to_string();
+
+        // Never seen → must parse.
+        assert!(store.should_reparse(&path, 100), "unseen path must parse");
+
+        // Mark as seen at mtime=100 (mirrors what a parse would record).
+        store.data.processed_transcripts.insert(path.clone());
+        store.data.processed_mtimes.insert(path.clone(), 100);
+
+        // Same mtime → skip (already counted).
+        assert!(
+            !store.should_reparse(&path, 100),
+            "unchanged file must be skipped"
+        );
+        // Older/equal mtime → skip.
+        assert!(
+            !store.should_reparse(&path, 50),
+            "older mtime must be skipped"
+        );
+        // Grew (mtime advanced) → must re-parse to pick up appended tokens.
+        assert!(
+            store.should_reparse(&path, 200),
+            "grown file must be re-parsed"
+        );
+
+        // Legacy stats.json: path processed but no mtime recorded → re-parse once.
+        store.data.processed_mtimes.remove(&path);
+        assert!(
+            store.should_reparse(&path, 100),
+            "path without recorded mtime must re-parse once"
+        );
     }
 
     // The per-agent DAILY series must reflect each client's real usage, not a
