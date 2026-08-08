@@ -7,7 +7,9 @@ use tokscale_core::sessions::{claudecode::parse_claude_file, codex::parse_codex_
 
 use crate::local_api_auth::{protect_owner_only, write_private_file_atomically};
 
-const STATS_PARSER_REVISION: u32 = 3;
+// 4: DaySlice gained a per-day `messages` count so the day view reports real
+// message counts instead of session counts; bump forces a rebuild to populate it.
+const STATS_PARSER_REVISION: u32 = 4;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SessionStats {
@@ -52,6 +54,12 @@ pub struct DaySlice {
     pub cache_creation_tokens: u64,
     pub cache_read_tokens: u64,
     pub reasoning_tokens: u64,
+    /// Number of usage-bearing messages that landed on this day. Lets the day
+    /// view report real message counts instead of session counts. `serde
+    /// (default)` keeps older stats.json deserializable; the revision bump
+    /// repopulates it.
+    #[serde(default)]
+    pub messages: u64,
 }
 
 impl DaySlice {
@@ -97,6 +105,10 @@ impl SessionStats {
             cache_creation_tokens: self.cache_creation_tokens,
             cache_read_tokens: self.cache_read_tokens,
             reasoning_tokens: self.reasoning_tokens,
+            // Pre-revision data has no per-message count; the revision bump
+            // forces a rebuild that repopulates real counts, so 0 only shows
+            // for the transient fallback rather than being persisted.
+            messages: 0,
         }]
     }
 }
@@ -770,7 +782,9 @@ impl TokenAccum {
     fn add_slice(&mut self, slice: &DaySlice, model: &str) {
         self.tokens += slice.total_tokens();
         self.cost += slice.cost(model);
-        self.messages += 1;
+        // Real message count for the day, not +1-per-session — otherwise the
+        // day view's "messages" silently counted sessions.
+        self.messages += slice.messages;
         self.input += slice.input_tokens;
         self.output += slice.output_tokens;
         self.cache_read += slice.cache_read_tokens;
@@ -850,13 +864,32 @@ fn bucket_messages_by_hour(
             continue;
         }
         let key = local.format("%Y-%m-%d %H:00").to_string();
+        let input = m.tokens.input.max(0) as u64;
+        let output = m.tokens.output.max(0) as u64;
+        let cache_read = m.tokens.cache_read.max(0) as u64;
+        let cache_write = m.tokens.cache_write.max(0) as u64;
+        let reasoning = m.tokens.reasoning.max(0) as u64;
+        // tokscale's claude parser leaves per-message `cost` at 0.0 (cost is
+        // derived later, in bulk, from token totals) — so trusting `m.cost`
+        // here left the hourly view reading $0.00 while the day showed the
+        // real spend. Re-price each message from its own tokens + model, the
+        // same path calculate_cost/DaySlice::cost use, so the hourly costs sum
+        // to the day's cost.
+        let cost = cost_from_tokens(
+            &m.model_id,
+            input,
+            output,
+            cache_write,
+            cache_read,
+            reasoning,
+        );
         hour_acc.entry(key).or_default().add_breakdown(
-            m.tokens.input.max(0) as u64,
-            m.tokens.output.max(0) as u64,
-            m.tokens.cache_read.max(0) as u64,
-            m.tokens.cache_write.max(0) as u64,
-            m.tokens.reasoning.max(0) as u64,
-            m.cost,
+            input,
+            output,
+            cache_read,
+            cache_write,
+            reasoning,
+            cost,
         );
     }
 }
@@ -1186,6 +1219,7 @@ fn parse_transcript(
         slot.cache_creation_tokens = slot.cache_creation_tokens.saturating_add(m_cache_write);
         slot.cache_read_tokens = slot.cache_read_tokens.saturating_add(m_cache_read);
         slot.reasoning_tokens = slot.reasoning_tokens.saturating_add(m_reasoning);
+        slot.messages = slot.messages.saturating_add(1);
     }
     let mut tool_calls = tool_use_ids.len() as u64;
     if codex_tool_calls > 0 {
@@ -1268,6 +1302,7 @@ fn parse_transcript(
         slot.reasoning_tokens = slot
             .reasoning_tokens
             .saturating_add(undated.reasoning_tokens);
+        slot.messages = slot.messages.saturating_add(undated.messages);
     }
     let mut day_slices: Vec<DaySlice> = per_day
         .into_iter()
@@ -1592,6 +1627,21 @@ mod tests {
         assert_eq!(h09.messages, 2);
         assert_eq!(h14.input, 300);
         assert_eq!(h14.messages, 1);
+
+        // Cost must be re-priced from each message's own tokens + model, NOT
+        // read from UnifiedMessage.cost (which tokscale leaves at 0 for claude,
+        // and here is a deliberately-wrong 0.01). Opus: input $15/M, output
+        // $75/M → 09:00 = (300*15 + 20*75)/1e6 = 0.006.
+        let expected_h09 = (300.0 * 15.0 + 20.0 * 75.0) / 1_000_000.0;
+        assert!(
+            (h09.cost - expected_h09).abs() < 1e-9,
+            "hourly cost re-priced from tokens, got {} want {expected_h09}",
+            h09.cost
+        );
+        assert!(
+            h09.cost > 0.0,
+            "hourly cost must not be $0 when tokens exist"
+        );
     }
 
     // A single session whose messages straddle midnight must charge each
@@ -1632,6 +1682,10 @@ mod tests {
         assert_eq!(s1.output_tokens, 10);
         assert_eq!(s2.input_tokens, 400);
         assert_eq!(s2.output_tokens, 20);
+        // Each day recorded its own message, so the day view reports real
+        // message counts (1 + 1) rather than a per-session +1.
+        assert_eq!(s1.messages, 1, "day one saw one message");
+        assert_eq!(s2.messages, 1, "day two saw one message");
         let slice_sum: u64 = stats.day_slices.iter().map(|s| s.total_tokens()).sum();
         assert_eq!(
             slice_sum,
@@ -1666,5 +1720,51 @@ mod tests {
         assert_eq!(b2.session_count, 0, "no double-count on the second day");
 
         let _ = std::fs::remove_file(&path);
+    }
+
+    // Regression: the day view's "messages" once counted sessions (add_slice
+    // did +=1 per session-day), so N sessions on a day with hundreds of real
+    // messages reported "N 消息". It must report the summed per-day message
+    // counts instead.
+    #[test]
+    fn day_view_reports_message_count_not_session_count() {
+        use chrono::TimeZone;
+        let day = chrono::Local
+            .with_ymd_and_hms(2026, 5, 1, 12, 0, 0)
+            .unwrap();
+        let date = day.format("%Y-%m-%d").to_string();
+
+        // Two separate sessions on the same day, one with 3 messages, one with
+        // 5 — 8 real messages total across 2 sessions.
+        let make = |mtxt: &str| {
+            let lines: Vec<String> = (0..mtxt.len())
+                .map(|i| {
+                    format!(
+                        r#"{{"type":"assistant","timestamp":"{}","message":{{"id":"m{i}","model":"claude-opus-4","usage":{{"input_tokens":10,"output_tokens":2,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}},"content":[]}}}}"#,
+                        day.to_rfc3339()
+                    )
+                })
+                .collect();
+            lines.join("\n") + "\n"
+        };
+        let p1 = write_temp_jsonl("daymsg-a", &make("abc")); // 3 messages
+        let p2 = write_temp_jsonl("daymsg-b", &make("abcde")); // 5 messages
+        let s1 = parse_transcript(&p1, "sess-a", "claude-code").unwrap();
+        let s2 = parse_transcript(&p2, "sess-b", "claude-code").unwrap();
+
+        let dir = std::env::temp_dir().join(format!("humhum-daymsg-{}", uuid::Uuid::new_v4()));
+        let mut store = StatsStore::new_with_backfill(dir.join("stats.json"), false);
+        store.data.sessions.push(s1);
+        store.data.sessions.push(s2);
+
+        let dash = store.get_token_dashboard();
+        let day = dash.days.iter().find(|d| d.date == date).unwrap();
+        assert_eq!(
+            day.messages, 8,
+            "day view must sum real messages (3+5), not count sessions (would be 2)"
+        );
+
+        let _ = std::fs::remove_file(&p1);
+        let _ = std::fs::remove_file(&p2);
     }
 }
