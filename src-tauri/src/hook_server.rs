@@ -30,6 +30,37 @@ use uuid::Uuid;
 
 const MAX_HEXA_AUDIT_BODY_BYTES: usize = 64 * 1024;
 const MAX_HEXA_GOAL_BODY_BYTES: usize = 64 * 1024;
+/// Cap for the general JSON POST endpoints (/event, /respond, hush inbox, the
+/// Hexa watch register/update/plan/delete handlers). hyper's http1 server sets
+/// no body limit, and these read the whole body into memory before parsing, so
+/// an unbounded read is an OOM/crash path for any localhost caller. 1 MiB is
+/// far above any real hook payload; the Hexa audit/goal endpoints keep their
+/// own tighter 64 KiB caps.
+const MAX_JSON_BODY_BYTES: usize = 1024 * 1024;
+
+/// Read a request body with a hard size cap, returning a ready-made error
+/// response on overflow or read failure. Mirrors the hardening already applied
+/// to `handle_hexa_audit`, so every JSON POST endpoint shares one bounded path.
+async fn read_capped_body<B>(req: Request<B>, limit: usize) -> Result<Bytes, Response<Full<Bytes>>>
+where
+    B: hyper::body::Body,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    match Limited::new(req.into_body(), limit).collect().await {
+        Ok(collected) => Ok(collected.to_bytes()),
+        Err(error) => {
+            let (status, message) = if error.downcast_ref::<LengthLimitError>().is_some() {
+                (StatusCode::PAYLOAD_TOO_LARGE, "request body is too large")
+            } else {
+                (StatusCode::BAD_REQUEST, "failed to read body")
+            };
+            Err(json_response(
+                status,
+                &serde_json::json!({"error": format!("{message}: {error}")}),
+            ))
+        }
+    }
+}
 
 /// Stores a pending permission request with its event info
 pub struct PendingRequest {
@@ -370,16 +401,11 @@ async fn handle_event(
     // Extract query params before consuming the body
     let query_string = req.uri().query().unwrap_or("").to_string();
 
-    // Read the request body (JSON from hook script)
-    let body = match req.collect().await {
-        Ok(collected) => collected.to_bytes(),
-        Err(e) => {
-            log::error!("Failed to read request body: {}", e);
-            return Ok(json_response(
-                StatusCode::BAD_REQUEST,
-                &serde_json::json!({"error": "failed to read body"}),
-            ));
-        }
+    // Read the request body (JSON from hook script), capped to avoid an
+    // unbounded in-memory buffer on a hostile/oversized POST.
+    let body = match read_capped_body(req, MAX_JSON_BODY_BYTES).await {
+        Ok(bytes) => bytes,
+        Err(response) => return Ok(response),
     };
 
     let payload: Value = match serde_json::from_slice(&body) {
@@ -757,14 +783,9 @@ async fn handle_respond(
     req: Request<hyper::body::Incoming>,
     pending: PendingMap,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
-    let body = match req.collect().await {
-        Ok(collected) => collected.to_bytes(),
-        Err(e) => {
-            return Ok(json_response(
-                StatusCode::BAD_REQUEST,
-                &serde_json::json!({"error": format!("failed to read body: {}", e)}),
-            ));
-        }
+    let body = match read_capped_body(req, MAX_JSON_BODY_BYTES).await {
+        Ok(bytes) => bytes,
+        Err(response) => return Ok(response),
     };
 
     let payload: Value = match serde_json::from_slice(&body) {
@@ -859,14 +880,9 @@ async fn handle_hush_inbox_post(
     req: Request<hyper::body::Incoming>,
     app_handle: tauri::AppHandle,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
-    let body = match req.collect().await {
-        Ok(collected) => collected.to_bytes(),
-        Err(e) => {
-            return Ok(json_response(
-                StatusCode::BAD_REQUEST,
-                &serde_json::json!({"error": format!("failed to read body: {}", e)}),
-            ));
-        }
+    let body = match read_capped_body(req, MAX_JSON_BODY_BYTES).await {
+        Ok(bytes) => bytes,
+        Err(response) => return Ok(response),
     };
 
     let payload: Value = match serde_json::from_slice(&body) {
@@ -1082,14 +1098,9 @@ async fn handle_hexa_register(
     req: Request<hyper::body::Incoming>,
     app_handle: tauri::AppHandle,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
-    let body = match req.collect().await {
-        Ok(collected) => collected.to_bytes(),
-        Err(e) => {
-            return Ok(json_response(
-                StatusCode::BAD_REQUEST,
-                &serde_json::json!({"error": format!("failed to read body: {}", e)}),
-            ));
-        }
+    let body = match read_capped_body(req, MAX_JSON_BODY_BYTES).await {
+        Ok(bytes) => bytes,
+        Err(response) => return Ok(response),
     };
     let request: HexaWatchRegisterRequest = match serde_json::from_slice(&body) {
         Ok(value) => value,
@@ -1136,14 +1147,9 @@ async fn handle_hexa_update(
     req: Request<hyper::body::Incoming>,
     app_handle: tauri::AppHandle,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
-    let body = match req.collect().await {
-        Ok(collected) => collected.to_bytes(),
-        Err(e) => {
-            return Ok(json_response(
-                StatusCode::BAD_REQUEST,
-                &serde_json::json!({"error": format!("failed to read body: {}", e)}),
-            ));
-        }
+    let body = match read_capped_body(req, MAX_JSON_BODY_BYTES).await {
+        Ok(bytes) => bytes,
+        Err(response) => return Ok(response),
     };
     let request: HexaWatchUpdateRequest = match serde_json::from_slice(&body) {
         Ok(value) => value,
@@ -1270,14 +1276,9 @@ async fn handle_hexa_plan(
     req: Request<hyper::body::Incoming>,
     app_handle: tauri::AppHandle,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
-    let body = match req.collect().await {
-        Ok(collected) => collected.to_bytes(),
-        Err(error) => {
-            return Ok(json_response(
-                StatusCode::BAD_REQUEST,
-                &serde_json::json!({"error": format!("failed to read body: {error}")}),
-            ))
-        }
+    let body = match read_capped_body(req, MAX_JSON_BODY_BYTES).await {
+        Ok(bytes) => bytes,
+        Err(response) => return Ok(response),
     };
     let request: HexaPlanSyncRequest = match serde_json::from_slice(&body) {
         Ok(value) => value,
@@ -1343,14 +1344,9 @@ async fn handle_hexa_delete(
     req: Request<hyper::body::Incoming>,
     app_handle: tauri::AppHandle,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
-    let body = match req.collect().await {
-        Ok(collected) => collected.to_bytes(),
-        Err(e) => {
-            return Ok(json_response(
-                StatusCode::BAD_REQUEST,
-                &serde_json::json!({"error": format!("failed to read body: {}", e)}),
-            ));
-        }
+    let body = match read_capped_body(req, MAX_JSON_BODY_BYTES).await {
+        Ok(bytes) => bytes,
+        Err(response) => return Ok(response),
     };
     let request: HexaWatchDeleteRequest = match serde_json::from_slice(&body) {
         Ok(value) => value,
@@ -1936,5 +1932,38 @@ mod hexa_goal_endpoint_tests {
             .evidence
             .iter()
             .all(|evidence| evidence.kind == "agent_report"));
+    }
+}
+
+#[cfg(test)]
+mod capped_body_tests {
+    use super::*;
+
+    fn request_with_body(bytes: Vec<u8>) -> Request<Full<Bytes>> {
+        Request::builder()
+            .method("POST")
+            .uri("/event")
+            .body(Full::new(Bytes::from(bytes)))
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn reads_a_body_within_the_limit() {
+        let body = b"{\"ok\":true}".to_vec();
+        let result = read_capped_body(request_with_body(body.clone()), 1024).await;
+        assert_eq!(
+            result.expect("under-limit body should read"),
+            Bytes::from(body)
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_a_body_over_the_limit_with_413() {
+        // One byte past the cap must be refused before it is buffered whole.
+        let oversized = vec![b'a'; 33];
+        let response = read_capped_body(request_with_body(oversized), 32)
+            .await
+            .expect_err("over-limit body must be rejected");
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
     }
 }
