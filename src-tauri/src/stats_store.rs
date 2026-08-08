@@ -76,11 +76,13 @@ pub struct DaySlice {
 
 impl DaySlice {
     fn total_tokens(&self) -> u64 {
+        // Saturating throughout: token counts come from corruption-influenced
+        // transcripts, and a debug build would otherwise panic on overflow.
         self.input_tokens
-            + self.output_tokens
-            + self.cache_creation_tokens
-            + self.cache_read_tokens
-            + self.reasoning_tokens
+            .saturating_add(self.output_tokens)
+            .saturating_add(self.cache_creation_tokens)
+            .saturating_add(self.cache_read_tokens)
+            .saturating_add(self.reasoning_tokens)
     }
 
     /// Per-day cost. Prefers the stored per-message cost (populated at parse
@@ -470,12 +472,18 @@ impl StatsStore {
         for slice in stats.effective_day_slices() {
             let slice_cost = slice.cost(&model);
             let bucket = self.bucket_for_date(&slice.date);
-            bucket.total_tokens += slice.total_tokens();
-            bucket.input_tokens += slice.input_tokens;
-            bucket.output_tokens += slice.output_tokens;
-            bucket.cache_creation_tokens += slice.cache_creation_tokens;
-            bucket.cache_read_tokens += slice.cache_read_tokens;
-            bucket.reasoning_tokens += slice.reasoning_tokens;
+            bucket.total_tokens = bucket.total_tokens.saturating_add(slice.total_tokens());
+            bucket.input_tokens = bucket.input_tokens.saturating_add(slice.input_tokens);
+            bucket.output_tokens = bucket.output_tokens.saturating_add(slice.output_tokens);
+            bucket.cache_creation_tokens = bucket
+                .cache_creation_tokens
+                .saturating_add(slice.cache_creation_tokens);
+            bucket.cache_read_tokens = bucket
+                .cache_read_tokens
+                .saturating_add(slice.cache_read_tokens);
+            bucket.reasoning_tokens = bucket
+                .reasoning_tokens
+                .saturating_add(slice.reasoning_tokens);
             bucket.estimated_cost_usd += slice_cost;
         }
 
@@ -557,12 +565,12 @@ impl StatsStore {
         let mut active_clients: HashSet<String> = HashSet::new();
 
         for s in &self.data.sessions {
-            total_in += s.input_tokens;
-            total_out += s.output_tokens;
-            total_cache_create += s.cache_creation_tokens;
-            total_cache_read += s.cache_read_tokens;
-            total_reasoning += s.reasoning_tokens;
-            total_tools += s.tool_calls;
+            total_in = total_in.saturating_add(s.input_tokens);
+            total_out = total_out.saturating_add(s.output_tokens);
+            total_cache_create = total_cache_create.saturating_add(s.cache_creation_tokens);
+            total_cache_read = total_cache_read.saturating_add(s.cache_read_tokens);
+            total_reasoning = total_reasoning.saturating_add(s.reasoning_tokens);
+            total_tools = total_tools.saturating_add(s.tool_calls);
             total_sessions += 1;
             for t in &s.tool_names {
                 tool_set.insert(t.clone());
@@ -590,10 +598,10 @@ impl StatsStore {
 
         AggregatedStats {
             total_tokens: total_in
-                + total_out
-                + total_cache_create
-                + total_cache_read
-                + total_reasoning,
+                .saturating_add(total_out)
+                .saturating_add(total_cache_create)
+                .saturating_add(total_cache_read)
+                .saturating_add(total_reasoning),
             total_input_tokens: total_in,
             total_output_tokens: total_out,
             total_cache_creation_tokens: total_cache_create,
@@ -632,12 +640,12 @@ impl StatsStore {
                 let mut model_set: HashSet<String> = HashSet::new();
 
                 for s in &sessions {
-                    total_in += s.input_tokens;
-                    total_out += s.output_tokens;
-                    total_cc += s.cache_creation_tokens;
-                    total_cr += s.cache_read_tokens;
-                    total_reasoning += s.reasoning_tokens;
-                    total_tools += s.tool_calls;
+                    total_in = total_in.saturating_add(s.input_tokens);
+                    total_out = total_out.saturating_add(s.output_tokens);
+                    total_cc = total_cc.saturating_add(s.cache_creation_tokens);
+                    total_cr = total_cr.saturating_add(s.cache_read_tokens);
+                    total_reasoning = total_reasoning.saturating_add(s.reasoning_tokens);
+                    total_tools = total_tools.saturating_add(s.tool_calls);
                     total_cost += calculate_cost(s);
                     for t in &s.tool_names {
                         *tool_counts.entry(t.clone()).or_insert(0) += 1;
@@ -647,7 +655,11 @@ impl StatsStore {
                     }
                 }
 
-                let total_tokens = total_in + total_out + total_cc + total_cr + total_reasoning;
+                let total_tokens = total_in
+                    .saturating_add(total_out)
+                    .saturating_add(total_cc)
+                    .saturating_add(total_cr)
+                    .saturating_add(total_reasoning);
                 let n = total_sessions.max(1) as f64;
 
                 let mut top_tools: Vec<(String, u64)> = tool_counts.into_iter().collect();
@@ -788,33 +800,37 @@ struct TokenAccum {
 
 impl TokenAccum {
     fn add(&mut self, s: &SessionStats, cost: f64) {
-        self.tokens += s.input_tokens
-            + s.output_tokens
-            + s.cache_creation_tokens
-            + s.cache_read_tokens
-            + s.reasoning_tokens;
+        // Saturating: token counts are corruption-influenced; a debug build
+        // would otherwise panic on overflow when summing across sessions.
+        self.tokens = self
+            .tokens
+            .saturating_add(s.input_tokens)
+            .saturating_add(s.output_tokens)
+            .saturating_add(s.cache_creation_tokens)
+            .saturating_add(s.cache_read_tokens)
+            .saturating_add(s.reasoning_tokens);
         self.cost += cost;
-        self.messages += 1;
-        self.input += s.input_tokens;
-        self.output += s.output_tokens;
-        self.cache_read += s.cache_read_tokens;
-        self.cache_write += s.cache_creation_tokens;
-        self.reasoning += s.reasoning_tokens;
+        self.messages = self.messages.saturating_add(1);
+        self.input = self.input.saturating_add(s.input_tokens);
+        self.output = self.output.saturating_add(s.output_tokens);
+        self.cache_read = self.cache_read.saturating_add(s.cache_read_tokens);
+        self.cache_write = self.cache_write.saturating_add(s.cache_creation_tokens);
+        self.reasoning = self.reasoning.saturating_add(s.reasoning_tokens);
     }
 
     /// Add one calendar-day slice of a session, costed against `model`. Used by
     /// the day view so a midnight-crossing session lands on each real day.
     fn add_slice(&mut self, slice: &DaySlice, model: &str) {
-        self.tokens += slice.total_tokens();
+        self.tokens = self.tokens.saturating_add(slice.total_tokens());
         self.cost += slice.cost(model);
         // Real message count for the day, not +1-per-session — otherwise the
         // day view's "messages" silently counted sessions.
-        self.messages += slice.messages;
-        self.input += slice.input_tokens;
-        self.output += slice.output_tokens;
-        self.cache_read += slice.cache_read_tokens;
-        self.cache_write += slice.cache_creation_tokens;
-        self.reasoning += slice.reasoning_tokens;
+        self.messages = self.messages.saturating_add(slice.messages);
+        self.input = self.input.saturating_add(slice.input_tokens);
+        self.output = self.output.saturating_add(slice.output_tokens);
+        self.cache_read = self.cache_read.saturating_add(slice.cache_read_tokens);
+        self.cache_write = self.cache_write.saturating_add(slice.cache_creation_tokens);
+        self.reasoning = self.reasoning.saturating_add(slice.reasoning_tokens);
     }
 
     /// Add a single parsed transcript message's token breakdown directly, used
@@ -829,14 +845,20 @@ impl TokenAccum {
         reasoning: u64,
         cost: f64,
     ) {
-        self.tokens += input + output + cache_read + cache_write + reasoning;
+        self.tokens = self
+            .tokens
+            .saturating_add(input)
+            .saturating_add(output)
+            .saturating_add(cache_read)
+            .saturating_add(cache_write)
+            .saturating_add(reasoning);
         self.cost += cost;
-        self.messages += 1;
-        self.input += input;
-        self.output += output;
-        self.cache_read += cache_read;
-        self.cache_write += cache_write;
-        self.reasoning += reasoning;
+        self.messages = self.messages.saturating_add(1);
+        self.input = self.input.saturating_add(input);
+        self.output = self.output.saturating_add(output);
+        self.cache_read = self.cache_read.saturating_add(cache_read);
+        self.cache_write = self.cache_write.saturating_add(cache_write);
+        self.reasoning = self.reasoning.saturating_add(reasoning);
     }
 }
 
@@ -925,6 +947,14 @@ impl StatsStore {
     /// hourly breakdown + per-model / per-client slices).
     pub fn get_token_dashboard(&self) -> TokenDashboard {
         let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        // Bound the per-day breakdown to the same 30-day window as the persisted
+        // daily_buckets (prune_old_data). Without this, a long-lived session
+        // whose last_activity keeps it alive but whose day_slices reach back
+        // >30 days leaks stale dates the buckets already dropped, so the two
+        // views disagree. The lifetime `total` below is intentionally unbounded.
+        let day_cutoff = (chrono::Local::now() - chrono::Duration::days(30))
+            .format("%Y-%m-%d")
+            .to_string();
 
         let mut day_acc: HashMap<String, TokenAccum> = HashMap::new();
         // (date, client, model) -> slice
@@ -948,6 +978,9 @@ impl StatsStore {
             // session crossing midnight shows up on both days, matching the
             // persisted daily_buckets and the hourly view.
             for slice in s.effective_day_slices() {
+                if slice.date < day_cutoff {
+                    continue;
+                }
                 day_acc
                     .entry(slice.date.clone())
                     .or_default()
@@ -1767,9 +1800,13 @@ mod tests {
     // counts instead.
     #[test]
     fn day_view_reports_message_count_not_session_count() {
-        use chrono::TimeZone;
-        let day = chrono::Local
-            .with_ymd_and_hms(2026, 5, 1, 12, 0, 0)
+        // Use a recent day (well inside the dashboard's 30-day window) so the
+        // per-day breakdown surfaces it regardless of when the test runs.
+        let day = chrono::Local::now()
+            .date_naive()
+            .and_hms_opt(12, 0, 0)
+            .unwrap()
+            .and_local_timezone(chrono::Local)
             .unwrap();
         let date = day.format("%Y-%m-%d").to_string();
 
@@ -1813,9 +1850,12 @@ mod tests {
     // accumulated per-message by each message's own model.
     #[test]
     fn mixed_model_session_is_priced_per_message() {
-        use chrono::TimeZone;
-        let day = chrono::Local
-            .with_ymd_and_hms(2026, 5, 2, 12, 0, 0)
+        // Recent day so the dashboard's 30-day window includes it.
+        let day = chrono::Local::now()
+            .date_naive()
+            .and_hms_opt(12, 0, 0)
+            .unwrap()
+            .and_local_timezone(chrono::Local)
             .unwrap();
         let date = day.format("%Y-%m-%d").to_string();
 
