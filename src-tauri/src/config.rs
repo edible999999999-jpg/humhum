@@ -5,19 +5,30 @@ use std::path::PathBuf;
 /// Application configuration stored on disk
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
-    /// HumHum local server port for receiving hook events
+    /// HumHum local server port for receiving hook events.
+    ///
+    /// Every field carries `#[serde(default)]` on purpose: a config written by
+    /// an older/newer build (or hand-edited) that is missing a single field
+    /// must NOT fail the whole parse — that path resets the entire config to
+    /// defaults and, on the next save(), silently overwrites the user's saved
+    /// API keys and settings. Missing fields degrade to their own defaults.
+    #[serde(default = "default_hook_port")]
     pub hook_port: u16,
 
     /// API keys for various services (BYOK)
+    #[serde(default)]
     pub api_keys: ApiKeys,
 
     /// TTS configuration
+    #[serde(default)]
     pub tts: TtsConfig,
 
     /// STT configuration
+    #[serde(default)]
     pub stt: SttConfig,
 
     /// LLM summarizer configuration
+    #[serde(default)]
     pub summarizer: SummarizerConfig,
 
     /// Humi's selected host Agent. Provider credentials stay with the provider.
@@ -36,7 +47,12 @@ pub struct AppConfig {
     pub mobile_access_enabled: bool,
 
     /// UI preferences
+    #[serde(default)]
     pub ui: UiConfig,
+}
+
+fn default_hook_port() -> u16 {
+    31275
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -54,6 +70,7 @@ pub struct ApiKeys {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct TtsConfig {
     /// Which TTS provider to use: "edge" | "openai" | "elevenlabs"
     pub provider: String,
@@ -65,7 +82,19 @@ pub struct TtsConfig {
     pub model: Option<String>,
 }
 
+impl Default for TtsConfig {
+    fn default() -> Self {
+        Self {
+            provider: "edge".to_string(),
+            voice: "zh-CN-XiaoxiaoNeural".to_string(),
+            speed: 1.0,
+            model: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct SttConfig {
     /// Which STT provider: "web-speech" | "whisper"
     pub provider: String,
@@ -73,7 +102,17 @@ pub struct SttConfig {
     pub language: String,
 }
 
+impl Default for SttConfig {
+    fn default() -> Self {
+        Self {
+            provider: "web-speech".to_string(),
+            language: "zh-CN".to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct SummarizerConfig {
     /// OpenAI-compatible API base URL
     pub api_base: String,
@@ -81,6 +120,16 @@ pub struct SummarizerConfig {
     pub model: String,
     /// Max tokens for summary
     pub max_tokens: u32,
+}
+
+impl Default for SummarizerConfig {
+    fn default() -> Self {
+        Self {
+            api_base: "https://api.openai.com/v1".to_string(),
+            model: "gpt-4o-mini".to_string(),
+            max_tokens: 500,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -96,8 +145,25 @@ pub enum BrainProvider {
 pub struct BrainConfig {
     pub schema_version: u32,
     pub initialized: bool,
+    // A present-but-unknown provider string (e.g. a removed/renamed variant from
+    // another build, "gemini") would otherwise fail the whole AppConfig parse and
+    // reset every setting to defaults. Deserialize an unrecognized value to None
+    // so the rest of the config survives; the user just re-picks a host agent.
+    #[serde(default, deserialize_with = "deserialize_optional_brain_provider")]
     pub primary_provider: Option<BrainProvider>,
     pub fallback_enabled: bool,
+}
+
+fn deserialize_optional_brain_provider<'de, D>(
+    deserializer: D,
+) -> Result<Option<BrainProvider>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    // Accept null, a known snake_case variant, or any other string/value —
+    // anything unrecognized collapses to None instead of erroring.
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(value.and_then(|value| serde_json::from_value::<BrainProvider>(value).ok()))
 }
 
 impl Default for BrainConfig {
@@ -112,6 +178,7 @@ impl Default for BrainConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct PiConfig {
     /// OpenAI-compatible API base URL
     pub url: String,
@@ -440,5 +507,52 @@ mod tests {
 
         assert!(!migrated);
         assert!(!config.mobile_access_enabled);
+    }
+
+    // Regression: a config missing whole sections (older/newer build, hand edit)
+    // must deserialize by filling defaults, NOT fail the parse and reset every
+    // setting — which would clobber saved API keys on the next save().
+    #[test]
+    fn partial_config_preserves_present_fields_and_defaults_the_rest() {
+        let config: AppConfig = serde_json::from_value(serde_json::json!({
+            "api_keys": { "openai": "keep-me", "elevenlabs": "keep-me-too" }
+        }))
+        .expect("a config missing most fields must still deserialize");
+
+        // Present fields survive.
+        assert_eq!(config.api_keys.openai.as_deref(), Some("keep-me"));
+        assert_eq!(config.api_keys.elevenlabs.as_deref(), Some("keep-me-too"));
+        // Missing fields fall back to their own defaults.
+        assert_eq!(config.hook_port, 31275);
+        assert_eq!(config.tts.provider, "edge");
+        assert_eq!(config.stt.provider, "web-speech");
+        assert_eq!(config.summarizer.api_base, "https://api.openai.com/v1");
+        assert_eq!(config.ui.position, "bottom-right");
+    }
+
+    // Regression: a present-but-unknown host-agent string (e.g. a variant from a
+    // different build) must degrade to None, not fail the whole AppConfig parse.
+    #[test]
+    fn unknown_brain_provider_degrades_to_none_without_losing_config() {
+        let config: AppConfig = serde_json::from_value(serde_json::json!({
+            "api_keys": { "openai": "keep-me" },
+            "brain": {
+                "schema_version": 1,
+                "initialized": true,
+                "primary_provider": "gemini",
+                "fallback_enabled": false
+            }
+        }))
+        .expect("an unknown provider must not fail the whole config parse");
+
+        assert_eq!(config.brain.primary_provider, None);
+        assert_eq!(config.api_keys.openai.as_deref(), Some("keep-me"));
+
+        // A known value still round-trips.
+        let ok: AppConfig = serde_json::from_value(serde_json::json!({
+            "brain": { "primary_provider": "claude" }
+        }))
+        .unwrap();
+        assert_eq!(ok.brain.primary_provider, Some(BrainProvider::Claude));
     }
 }
