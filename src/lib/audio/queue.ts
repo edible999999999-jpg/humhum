@@ -7,8 +7,7 @@ export class AudioQueue {
   private player: AudioPlayer;
   private state: AudioQueueState = "idle";
   private stateCallbacks: ((state: AudioQueueState) => void)[] = [];
-  private chunkCallback: ((chunk: AudioChunk, index: number) => void) | null =
-    null;
+  private chunkCallbacks: ((chunk: AudioChunk, index: number) => void)[] = [];
 
   constructor() {
     this.player = new AudioPlayer();
@@ -26,8 +25,14 @@ export class AudioQueue {
     };
   }
 
-  onChunkPlay(cb: (chunk: AudioChunk, index: number) => void): void {
-    this.chunkCallback = cb;
+  // Same multi-subscriber shape as onStateChange: a single-slot setter let a
+  // remount clobber the prior closure and leaked a stale setCurrentChunk into
+  // the unmounted component, which then fired on the next played chunk.
+  onChunkPlay(cb: (chunk: AudioChunk, index: number) => void): () => void {
+    this.chunkCallbacks.push(cb);
+    return () => {
+      this.chunkCallbacks = this.chunkCallbacks.filter((entry) => entry !== cb);
+    };
   }
 
   private setState(newState: AudioQueueState): void {
@@ -96,7 +101,9 @@ export class AudioQueue {
       return;
     }
     this.setState("playing");
-    this.chunkCallback?.(chunk, this.currentIndex);
+    for (const cb of this.chunkCallbacks) {
+      cb(chunk, this.currentIndex);
+    }
     try {
       await this.player.play(chunk.buffer);
     } catch (e) {

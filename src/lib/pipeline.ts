@@ -165,6 +165,14 @@ export class VoicePipeline {
       setTimeout(() => {
         if (this.state === "error") this.setState("idle");
       }, 5000);
+
+      // Events that arrived while this batch was in flight must still be
+      // drained — the success path does this too. Without it, a single failed
+      // summarize/synthesize strands every event queued behind it until some
+      // future event happens to re-enter runBatch, silently dropping speech.
+      if (this.pendingEvents.length > 0) {
+        this.runBatch();
+      }
     }
   }
 

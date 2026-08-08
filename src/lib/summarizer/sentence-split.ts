@@ -44,7 +44,7 @@ export class SentenceSplitter {
         const sentence = this.buffer.slice(0, sentenceEnd).trim();
         this.buffer = this.buffer.slice(sentenceEnd);
 
-        if (sentence.length > 1 && /\w|[一-鿿]/.test(sentence)) {
+        if (sentence.length > 1 && hasSpeakableContent(sentence)) {
           chunks.push({
             text: sentence,
             index: this.sentenceIndex++,
@@ -55,7 +55,16 @@ export class SentenceSplitter {
       } else if (this.buffer.length >= maxLen) {
         // Force split at clause boundary or hard cut
         const clauseEnd = findClauseBoundary(this.buffer, maxLen);
-        const splitAt = clauseEnd > 0 ? clauseEnd : maxLen;
+        let splitAt = clauseEnd > 0 ? clauseEnd : maxLen;
+        // Never cut between the halves of a UTF-16 surrogate pair (emoji /
+        // supplementary-plane chars) — that hands a lone half-surrogate to TTS
+        // and orphans its mate. Back off one unit so the pair stays intact.
+        if (splitAt < this.buffer.length) {
+          const code = this.buffer.charCodeAt(splitAt);
+          if (code >= 0xdc00 && code <= 0xdfff && splitAt > 1) {
+            splitAt -= 1;
+          }
+        }
 
         const fragment = this.buffer.slice(0, splitAt).trim();
         this.buffer = this.buffer.slice(splitAt);
@@ -80,7 +89,7 @@ export class SentenceSplitter {
   /** Flush any remaining buffer as the final chunk */
   flush(): SentenceChunk | null {
     const remaining = this.buffer.trim();
-    if (remaining.length <= 1 || !/\w|[一-鿿]/.test(remaining)) return null;
+    if (remaining.length <= 1 || !hasSpeakableContent(remaining)) return null;
 
     this.buffer = "";
     return {
@@ -96,6 +105,16 @@ export class SentenceSplitter {
     this.sentenceIndex = 0;
     this.isFirstSentence = true;
   }
+}
+
+// A chunk is worth speaking if it contains any letter or number in any script.
+// The old guard (/\w|[一-鿿]/) accepted only ASCII word chars and the base CJK
+// block, silently dropping kana / Hangul / accented-Latin sentences. Unicode
+// property escapes cover every script the summarizer might emit.
+const SPEAKABLE = /[\p{L}\p{N}]/u;
+
+function hasSpeakableContent(text: string): boolean {
+  return SPEAKABLE.test(text);
 }
 
 // Chinese and English sentence-ending punctuation
