@@ -24,13 +24,81 @@ pub struct SessionStats {
     pub reasoning_tokens: u64,
     pub tool_calls: u64,
     pub tool_names: Vec<String>,
-    /// First message time (min). Used for daily-bucket attribution.
+    /// First message time (min). Used for the session's "start day" (tool
+    /// calls and session count attribution) and as the day_slices fallback.
     pub timestamp: String,
     /// Last message time (max). Used for 30-day pruning so a long-lived
     /// session that started >30 days ago but is still active is not dropped.
     /// `serde(default)` keeps pre-revision-3 stats.json deserializable.
     #[serde(default)]
     pub last_activity: String,
+    /// Per-day token breakdown so a session that crosses midnight charges each
+    /// calendar day the tokens actually spent that day, instead of dumping the
+    /// whole session onto its first-message day. Sums exactly to the session
+    /// totals. `serde(default)` keeps pre-revision-3 stats.json deserializable;
+    /// the revision bump forces a rebuild that repopulates it.
+    #[serde(default)]
+    pub day_slices: Vec<DaySlice>,
+}
+
+/// One calendar day's slice of a session's token usage. Cost is derived on
+/// demand from the session's model so per-day costs always sum to the
+/// session-level cost computed by `calculate_cost`.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DaySlice {
+    pub date: String,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_creation_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub reasoning_tokens: u64,
+}
+
+impl DaySlice {
+    fn total_tokens(&self) -> u64 {
+        self.input_tokens
+            + self.output_tokens
+            + self.cache_creation_tokens
+            + self.cache_read_tokens
+            + self.reasoning_tokens
+    }
+
+    fn cost(&self, model: &str) -> f64 {
+        cost_from_tokens(
+            model,
+            self.input_tokens,
+            self.output_tokens,
+            self.cache_creation_tokens,
+            self.cache_read_tokens,
+            self.reasoning_tokens,
+        )
+    }
+}
+
+impl SessionStats {
+    /// Per-day token slices, synthesizing a single slice from the session
+    /// totals when `day_slices` is absent (pre-revision data, or a session
+    /// whose messages carried no usable timestamp) so callers can always
+    /// iterate uniformly. The synthetic slice lands on the first-message day.
+    fn effective_day_slices(&self) -> Vec<DaySlice> {
+        if !self.day_slices.is_empty() {
+            return self.day_slices.clone();
+        }
+        let day = self
+            .timestamp
+            .get(0..10)
+            .filter(|s| s.len() == 10)
+            .map(str::to_string)
+            .unwrap_or_else(|| chrono::Local::now().format("%Y-%m-%d").to_string());
+        vec![DaySlice {
+            date: day,
+            input_tokens: self.input_tokens,
+            output_tokens: self.output_tokens,
+            cache_creation_tokens: self.cache_creation_tokens,
+            cache_read_tokens: self.cache_read_tokens,
+            reasoning_tokens: self.reasoning_tokens,
+        }]
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -151,14 +219,32 @@ fn get_pricing(model: &str) -> ModelPricing {
     }
 }
 
-fn calculate_cost(stats: &SessionStats) -> f64 {
-    let p = get_pricing(&stats.model);
-    (stats.input_tokens as f64 * p.input_per_million
-        + stats.output_tokens as f64 * p.output_per_million
-        + stats.cache_creation_tokens as f64 * p.cache_write_per_million
-        + stats.cache_read_tokens as f64 * p.cache_read_per_million
-        + stats.reasoning_tokens as f64 * p.output_per_million)
+fn cost_from_tokens(
+    model: &str,
+    input: u64,
+    output: u64,
+    cache_creation: u64,
+    cache_read: u64,
+    reasoning: u64,
+) -> f64 {
+    let p = get_pricing(model);
+    (input as f64 * p.input_per_million
+        + output as f64 * p.output_per_million
+        + cache_creation as f64 * p.cache_write_per_million
+        + cache_read as f64 * p.cache_read_per_million
+        + reasoning as f64 * p.output_per_million)
         / 1_000_000.0
+}
+
+fn calculate_cost(stats: &SessionStats) -> f64 {
+    cost_from_tokens(
+        &stats.model,
+        stats.input_tokens,
+        stats.output_tokens,
+        stats.cache_creation_tokens,
+        stats.cache_read_tokens,
+        stats.reasoning_tokens,
+    )
 }
 
 pub struct StatsStore {
@@ -316,57 +402,62 @@ impl StatsStore {
         Ok(())
     }
 
+    /// Return a mutable handle to the bucket for `date`, creating an empty one
+    /// if needed. Split out so token spreading and the start-day counters can
+    /// both target the right day without duplicating the find-or-insert dance.
+    fn bucket_for_date(&mut self, date: &str) -> &mut DailyBucket {
+        if let Some(idx) = self.data.daily_buckets.iter().position(|b| b.date == date) {
+            return &mut self.data.daily_buckets[idx];
+        }
+        self.data.daily_buckets.push(DailyBucket {
+            date: date.to_string(),
+            total_tokens: 0,
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_creation_tokens: 0,
+            cache_read_tokens: 0,
+            reasoning_tokens: 0,
+            tool_calls: 0,
+            session_count: 0,
+            estimated_cost_usd: 0.0,
+            clients: HashMap::new(),
+        });
+        self.data.daily_buckets.last_mut().expect("just pushed")
+    }
+
     fn update_daily_bucket(&mut self, stats: &SessionStats) {
-        let day = stats
+        // Tokens and cost spread across the real days they happened on, so a
+        // session that runs past midnight charges each day its own usage
+        // instead of dumping everything on the first-message day.
+        let model = stats.model.clone();
+        for slice in stats.effective_day_slices() {
+            let slice_cost = slice.cost(&model);
+            let bucket = self.bucket_for_date(&slice.date);
+            bucket.total_tokens += slice.total_tokens();
+            bucket.input_tokens += slice.input_tokens;
+            bucket.output_tokens += slice.output_tokens;
+            bucket.cache_creation_tokens += slice.cache_creation_tokens;
+            bucket.cache_read_tokens += slice.cache_read_tokens;
+            bucket.reasoning_tokens += slice.reasoning_tokens;
+            bucket.estimated_cost_usd += slice_cost;
+        }
+
+        // Session-level counters (session_count, tool_calls, per-client count)
+        // stay whole on the start day: a session is one session, and tool calls
+        // carry no per-message timestamp to spread by. Keeping them undivided
+        // preserves `sum(session_count) == number of sessions`.
+        let start_day = stats
             .timestamp
             .get(0..10)
             .filter(|s| s.len() == 10)
-            .unwrap_or("");
-        let bucket_date = if day.is_empty() {
-            chrono::Local::now().format("%Y-%m-%d").to_string()
-        } else {
-            day.to_string()
-        };
-        let cost = calculate_cost(stats);
-        let all_tokens = stats.input_tokens
-            + stats.output_tokens
-            + stats.cache_creation_tokens
-            + stats.cache_read_tokens
-            + stats.reasoning_tokens;
-
-        if let Some(bucket) = self
-            .data
-            .daily_buckets
-            .iter_mut()
-            .find(|b| b.date == bucket_date)
-        {
-            bucket.total_tokens += all_tokens;
-            bucket.input_tokens += stats.input_tokens;
-            bucket.output_tokens += stats.output_tokens;
-            bucket.cache_creation_tokens += stats.cache_creation_tokens;
-            bucket.cache_read_tokens += stats.cache_read_tokens;
-            bucket.reasoning_tokens += stats.reasoning_tokens;
-            bucket.tool_calls += stats.tool_calls;
-            bucket.session_count += 1;
-            bucket.estimated_cost_usd += cost;
-            *bucket.clients.entry(stats.client_type.clone()).or_insert(0) += 1;
-        } else {
-            let mut clients = HashMap::new();
-            clients.insert(stats.client_type.clone(), 1);
-            self.data.daily_buckets.push(DailyBucket {
-                date: bucket_date,
-                total_tokens: all_tokens,
-                input_tokens: stats.input_tokens,
-                output_tokens: stats.output_tokens,
-                cache_creation_tokens: stats.cache_creation_tokens,
-                cache_read_tokens: stats.cache_read_tokens,
-                reasoning_tokens: stats.reasoning_tokens,
-                tool_calls: stats.tool_calls,
-                session_count: 1,
-                estimated_cost_usd: cost,
-                clients,
-            });
-        }
+            .map(str::to_string)
+            .unwrap_or_else(|| chrono::Local::now().format("%Y-%m-%d").to_string());
+        let client_type = stats.client_type.clone();
+        let tool_calls = stats.tool_calls;
+        let bucket = self.bucket_for_date(&start_day);
+        bucket.tool_calls += tool_calls;
+        bucket.session_count += 1;
+        *bucket.clients.entry(client_type).or_insert(0) += 1;
     }
 
     fn rebuild_daily_buckets(&mut self) {
@@ -674,6 +765,19 @@ impl TokenAccum {
         self.reasoning += s.reasoning_tokens;
     }
 
+    /// Add one calendar-day slice of a session, costed against `model`. Used by
+    /// the day view so a midnight-crossing session lands on each real day.
+    fn add_slice(&mut self, slice: &DaySlice, model: &str) {
+        self.tokens += slice.total_tokens();
+        self.cost += slice.cost(model);
+        self.messages += 1;
+        self.input += slice.input_tokens;
+        self.output += slice.output_tokens;
+        self.cache_read += slice.cache_read_tokens;
+        self.cache_write += slice.cache_creation_tokens;
+        self.reasoning += slice.reasoning_tokens;
+    }
+
     /// Add a single parsed transcript message's token breakdown directly, used
     /// by the hourly view where each message carries its own timestamp so the
     /// day's usage spreads across the real hours it happened in.
@@ -757,16 +861,6 @@ fn bucket_messages_by_hour(
     }
 }
 
-// "2026-08-07T13:42:10+08:00" -> ("2026-08-07", "2026-08-07 13:00")
-fn split_local_stamp(ts: &str) -> Option<(String, String)> {
-    let date = ts.get(0..10)?;
-    if date.len() != 10 {
-        return None;
-    }
-    let hour = ts.get(11..13).unwrap_or("00");
-    Some((date.to_string(), format!("{date} {hour}:00")))
-}
-
 impl StatsStore {
     /// Build the token-usage dashboard payload straight from parsed sessions so
     /// the live Hub view mirrors the standalone snapshot's shape (days + today's
@@ -783,9 +877,6 @@ impl StatsStore {
         let mut total = TokenAccum::default();
 
         for s in &self.data.sessions {
-            let Some((date, _hour)) = split_local_stamp(&s.timestamp) else {
-                continue;
-            };
             let cost = calculate_cost(s);
             let model = if s.model.trim().is_empty() {
                 "unknown".to_string()
@@ -795,11 +886,19 @@ impl StatsStore {
             client_set.insert(s.client_type.clone());
             model_set.insert(model.clone());
             total.add(s, cost);
-            day_acc.entry(date.clone()).or_default().add(s, cost);
-            day_slice
-                .entry((date.clone(), s.client_type.clone(), model))
-                .or_default()
-                .add(s, cost);
+            // Spread each day's tokens onto the day it actually happened so a
+            // session crossing midnight shows up on both days, matching the
+            // persisted daily_buckets and the hourly view.
+            for slice in s.effective_day_slices() {
+                day_acc
+                    .entry(slice.date.clone())
+                    .or_default()
+                    .add_slice(&slice, &s.model);
+                day_slice
+                    .entry((slice.date.clone(), s.client_type.clone(), model.clone()))
+                    .or_default()
+                    .add_slice(&slice, &s.model);
+            }
         }
 
         // Hourly view needs per-message timestamps, not per-session, so re-parse
@@ -1053,12 +1152,40 @@ fn parse_transcript(
     let mut cache_creation = 0u64;
     let mut cache_read = 0u64;
     let mut reasoning_tokens = 0u64;
+    // Per-day accumulation so a session spanning midnight charges each day the
+    // tokens spent that day. Messages whose timestamp is missing/unparseable
+    // fold into `undated` and are re-attributed to the session's start day
+    // below, so the slices always sum to the session totals.
+    let mut per_day: HashMap<String, DaySlice> = HashMap::new();
+    let mut undated = DaySlice::default();
     for message in &usage_messages {
-        input_tokens = input_tokens.saturating_add(message.tokens.input.max(0) as u64);
-        output_tokens = output_tokens.saturating_add(message.tokens.output.max(0) as u64);
-        cache_creation = cache_creation.saturating_add(message.tokens.cache_write.max(0) as u64);
-        cache_read = cache_read.saturating_add(message.tokens.cache_read.max(0) as u64);
-        reasoning_tokens = reasoning_tokens.saturating_add(message.tokens.reasoning.max(0) as u64);
+        let m_input = message.tokens.input.max(0) as u64;
+        let m_output = message.tokens.output.max(0) as u64;
+        let m_cache_write = message.tokens.cache_write.max(0) as u64;
+        let m_cache_read = message.tokens.cache_read.max(0) as u64;
+        let m_reasoning = message.tokens.reasoning.max(0) as u64;
+
+        input_tokens = input_tokens.saturating_add(m_input);
+        output_tokens = output_tokens.saturating_add(m_output);
+        cache_creation = cache_creation.saturating_add(m_cache_write);
+        cache_read = cache_read.saturating_add(m_cache_read);
+        reasoning_tokens = reasoning_tokens.saturating_add(m_reasoning);
+
+        let slot = chrono::DateTime::from_timestamp_millis(message.timestamp)
+            .filter(|_| message.timestamp > 0)
+            .map(|dt| {
+                let date = dt
+                    .with_timezone(&chrono::Local)
+                    .format("%Y-%m-%d")
+                    .to_string();
+                per_day.entry(date).or_default()
+            })
+            .unwrap_or(&mut undated);
+        slot.input_tokens = slot.input_tokens.saturating_add(m_input);
+        slot.output_tokens = slot.output_tokens.saturating_add(m_output);
+        slot.cache_creation_tokens = slot.cache_creation_tokens.saturating_add(m_cache_write);
+        slot.cache_read_tokens = slot.cache_read_tokens.saturating_add(m_cache_read);
+        slot.reasoning_tokens = slot.reasoning_tokens.saturating_add(m_reasoning);
     }
     let mut tool_calls = tool_use_ids.len() as u64;
     if codex_tool_calls > 0 {
@@ -1121,6 +1248,37 @@ fn parse_transcript(
         .map(|timestamp| timestamp.with_timezone(&chrono::Local).to_rfc3339())
         .unwrap_or_else(|| timestamp.clone());
 
+    // Fold any timestamp-less tokens onto the session's start day so the
+    // per-day slices still sum to the session totals.
+    if undated.total_tokens() > 0 {
+        let start_day = timestamp
+            .get(0..10)
+            .filter(|s| s.len() == 10)
+            .unwrap_or("")
+            .to_string();
+        let slot = per_day.entry(start_day).or_default();
+        slot.input_tokens = slot.input_tokens.saturating_add(undated.input_tokens);
+        slot.output_tokens = slot.output_tokens.saturating_add(undated.output_tokens);
+        slot.cache_creation_tokens = slot
+            .cache_creation_tokens
+            .saturating_add(undated.cache_creation_tokens);
+        slot.cache_read_tokens = slot
+            .cache_read_tokens
+            .saturating_add(undated.cache_read_tokens);
+        slot.reasoning_tokens = slot
+            .reasoning_tokens
+            .saturating_add(undated.reasoning_tokens);
+    }
+    let mut day_slices: Vec<DaySlice> = per_day
+        .into_iter()
+        .map(|(date, mut slice)| {
+            slice.date = date;
+            slice
+        })
+        .filter(|slice| slice.total_tokens() > 0)
+        .collect();
+    day_slices.sort_by(|a, b| a.date.cmp(&b.date));
+
     Some(SessionStats {
         session_id: effective_session_id,
         client_type: client_type.to_string(),
@@ -1135,6 +1293,7 @@ fn parse_transcript(
         tool_names,
         timestamp,
         last_activity,
+        day_slices,
     })
 }
 
@@ -1340,6 +1499,9 @@ mod tests {
                 tool_names: vec![],
                 timestamp: ts.clone(),
                 last_activity: ts.clone(),
+                // Empty on purpose: exercises the effective_day_slices() fallback
+                // that migrates pre-revision-3 rows onto their start day.
+                day_slices: vec![],
             });
         }
 
@@ -1430,5 +1592,79 @@ mod tests {
         assert_eq!(h09.messages, 2);
         assert_eq!(h14.input, 300);
         assert_eq!(h14.messages, 1);
+    }
+
+    // A single session whose messages straddle midnight must charge each
+    // calendar day the tokens spent that day, not dump the whole session onto
+    // the first-message day. Uses two fixed local days so the assertion is
+    // stable regardless of when the test runs.
+    #[test]
+    fn parse_transcript_splits_tokens_across_midnight() {
+        use chrono::TimeZone;
+        // 23:30 on day one and 00:30 on the next day, in the viewer's local zone.
+        let day1 = chrono::Local
+            .with_ymd_and_hms(2026, 3, 10, 23, 30, 0)
+            .unwrap();
+        let day2 = chrono::Local
+            .with_ymd_and_hms(2026, 3, 11, 0, 30, 0)
+            .unwrap();
+        let d1 = day1.format("%Y-%m-%d").to_string();
+        let d2 = day2.format("%Y-%m-%d").to_string();
+        let line1 = format!(
+            r#"{{"type":"assistant","timestamp":"{}","message":{{"id":"m1","model":"claude-opus-4","usage":{{"input_tokens":100,"output_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}},"content":[]}}}}"#,
+            day1.to_rfc3339()
+        );
+        let line2 = format!(
+            r#"{{"type":"assistant","timestamp":"{}","message":{{"id":"m2","model":"claude-opus-4","usage":{{"input_tokens":400,"output_tokens":20,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}},"content":[]}}}}"#,
+            day2.to_rfc3339()
+        );
+        let body = format!("{line1}\n{line2}\n");
+        let path = write_temp_jsonl("midnight", &body);
+
+        let stats =
+            parse_transcript(&path, "sess-mid", "claude-code").expect("transcript should parse");
+
+        // Two day slices, one per calendar day, summing to the session totals.
+        assert_eq!(stats.day_slices.len(), 2, "one slice per day");
+        let s1 = stats.day_slices.iter().find(|s| s.date == d1).unwrap();
+        let s2 = stats.day_slices.iter().find(|s| s.date == d2).unwrap();
+        assert_eq!(s1.input_tokens, 100);
+        assert_eq!(s1.output_tokens, 10);
+        assert_eq!(s2.input_tokens, 400);
+        assert_eq!(s2.output_tokens, 20);
+        let slice_sum: u64 = stats.day_slices.iter().map(|s| s.total_tokens()).sum();
+        assert_eq!(
+            slice_sum,
+            stats.input_tokens + stats.output_tokens,
+            "slices must sum to session totals"
+        );
+
+        // Daily buckets built from this session must land the tokens on both
+        // days, with the whole session counted once on its start day.
+        let dir = std::env::temp_dir().join(format!("humhum-mid-{}", uuid::Uuid::new_v4()));
+        let mut store = StatsStore::new_with_backfill(dir.join("stats.json"), false);
+        store.data.sessions.push(stats);
+        store.rebuild_daily_buckets();
+        let b1 = store
+            .data
+            .daily_buckets
+            .iter()
+            .find(|b| b.date == d1)
+            .unwrap();
+        let b2 = store
+            .data
+            .daily_buckets
+            .iter()
+            .find(|b| b.date == d2)
+            .unwrap();
+        assert_eq!(b1.total_tokens, 110, "day one keeps only its own tokens");
+        assert_eq!(b2.total_tokens, 420, "day two keeps only its own tokens");
+        assert_eq!(
+            b1.session_count, 1,
+            "session counted once, on its start day"
+        );
+        assert_eq!(b2.session_count, 0, "no double-count on the second day");
+
+        let _ = std::fs::remove_file(&path);
     }
 }
