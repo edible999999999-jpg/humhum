@@ -19,6 +19,7 @@ import {
 } from "../../../hooks/hexaPlanningCapability";
 import { HexaGoalSummary, hexaSurfaceLabel } from "./HexaGoalSummary";
 import { HexaSessionReportView } from "./HexaSessionReport";
+import { t } from "@/lib/i18n";
 
 type ActiveSelection =
   | { kind: "session"; id: string }
@@ -175,11 +176,11 @@ export function HexaActiveMonitor({
   };
 
   return (
-    <section className="hexa-active-monitor" aria-label="Hexa 主动监控工作台">
+    <section className="hexa-active-monitor" aria-label={t("hexa.monitorWorkbench")}>
       <div className="hexa-active-toolbar">
         <div>
-          <strong>主动监控会话</strong>
-          <span>只收录明确绑定到 Hexa 的会话，结论基于 Agent 上报与证据。</span>
+          <strong>{t("hexa.monitorSessions")}</strong>
+          <span>{t("hexa.monitorSubtitle")}</span>
         </div>
         <button
           type="button"
@@ -189,7 +190,7 @@ export function HexaActiveMonitor({
             setEntryOpen((value) => !value);
           }}
         >
-          <Plus size={15} /> {entryOpen ? "收起绑定入口" : "绑定新会话"}
+          <Plus size={15} /> {entryOpen ? t("hexa.collapseBind") : t("hexa.bindNewSession")}
         </button>
       </div>
 
@@ -197,16 +198,16 @@ export function HexaActiveMonitor({
 
       {dataState === "error" && (
         <div className="hexa-active-state" role="alert">
-          <span>主动监控数据暂时读取失败。</span>
-          <button type="button" className="kawaii-toggle-btn" onClick={() => void onRetry()}><RefreshCw size={14} /> 重试</button>
+          <span>{t("hexa.monitorLoadFailed")}</span>
+          <button type="button" className="kawaii-toggle-btn" onClick={() => void onRetry()}><RefreshCw size={14} /> {t("hexa.retry")}</button>
         </div>
       )}
-      {dataState === "loading" && sessions.length === 0 && <div className="hexa-active-state">正在读取主动监控会话...</div>}
+      {dataState === "loading" && sessions.length === 0 && <div className="hexa-active-state">{t("hexa.monitorLoading")}</div>}
       {goalDataState === "error" && (
         <div className="hexa-goal-data-state" role="status">
-          <span>开发目标暂时无法刷新，继续显示最近一次成功索引。</span>
+          <span>{t("hexa.goalRefreshFailed")}</span>
           <button type="button" className="kawaii-toggle-btn" onClick={() => void onRetryGoals()}>
-            <RefreshCw size={14} /> 重试目标
+            <RefreshCw size={14} /> {t("hexa.retryGoal")}
           </button>
         </div>
       )}
@@ -214,12 +215,12 @@ export function HexaActiveMonitor({
       {projects.length === 0 && dataState !== "loading" ? (
         <div className="hexa-active-empty">
           <Activity size={23} />
-          <strong>还没有主动监控的会话</strong>
-          <span>在目标 Agent 会话里运行上方命令，Hexa 会立即为这一轮建立独立报告。</span>
+          <strong>{t("hexa.noMonitoredSessions")}</strong>
+          <span>{t("hexa.noMonitoredHint")}</span>
         </div>
       ) : (
         <div className="hexa-active-workbench">
-          <nav className="hexa-session-nav" aria-label="主动监控会话">
+          <nav className="hexa-session-nav" aria-label={t("hexa.monitorNav")}>
             {projects.map((project) => {
               const collapsed = collapsedGroups.has(project.key);
               const attemptCount = project.entries.reduce(
@@ -243,7 +244,7 @@ export function HexaActiveMonitor({
                             <button
                               type="button"
                               className="hexa-goal-disclosure"
-                              aria-label={`${goalCollapsed ? "展开" : "折叠"}目标 ${entry.goal.title}`}
+                              aria-label={`${goalCollapsed ? t("hexa.expand") : t("hexa.collapse")}${t("hexa.goalNav", { title: entry.goal.title })}`}
                               aria-expanded={!goalCollapsed}
                               onClick={() => toggleGoalDisclosure(entry.goal.id)}
                             >
@@ -257,9 +258,9 @@ export function HexaActiveMonitor({
                             >
                               <span className="hexa-goal-nav-copy">
                                 <strong>{entry.goal.title}</strong>
-                                <span>{entry.goal.attempts.length} 个 Agent 尝试</span>
+                                <span>{t("hexa.agentAttempts", { count: entry.goal.attempts.length })}</span>
                               </span>
-                              <small>{entry.goal.status === "completed" ? "已采用" : "开发目标"}</small>
+                              <small>{entry.goal.status === "completed" ? t("hexa.adoptedShort") : t("hexa.developmentGoal")}</small>
                             </button>
                           </div>
                           {!goalCollapsed && (
@@ -279,7 +280,7 @@ export function HexaActiveMonitor({
                                   >
                                     <span
                                       className={`hexa-session-status ${expired ? "expired" : session.status}`}
-                                      title={expired ? "超过 30 分钟没有收到 Agent 更新，已停止实时刷新" : undefined}
+                                      title={expired ? t("hexa.expiredTooltip") : undefined}
                                     />
                                     <span className="hexa-goal-attempt-nav-copy">
                                       <strong>{hexaSurfaceLabel(attempt.surface)}</strong>
@@ -314,7 +315,7 @@ export function HexaActiveMonitor({
                       >
                         <span
                           className={`hexa-session-status ${expired ? "expired" : session.status}`}
-                          title={expired ? "超过 30 分钟没有收到 Agent 更新，已停止实时刷新" : undefined}
+                          title={expired ? t("hexa.expiredTooltip") : undefined}
                         />
                         <span className="hexa-session-nav-copy">
                           <strong>{session.name}</strong>
@@ -330,7 +331,7 @@ export function HexaActiveMonitor({
               );
             })}
           </nav>
-          <div className="hexa-session-report-pane" aria-label="选中会话监督报告">
+          <div className="hexa-session-report-pane" aria-label={t("hexa.selectedReport")}>
             {selectedSession && (
               <>
                 <div className="hexa-session-report-scroll">

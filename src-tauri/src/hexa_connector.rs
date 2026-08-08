@@ -1,6 +1,19 @@
+//! Hexa skill installer.
+//!
+//! Despite the `connector` name, this module does NOT open a live connection.
+//! It installs the `humhum-hexa` CLI (`scripts/humhum-hexa.mjs`) plus the
+//! `humhum-hexa` SKILL.md into each supported agent's config directory
+//! (`~/.codex`, `~/.claude`, `~/.qoder`, etc.), so an agent can bind its own
+//! session to Hexa on request. Idempotent: managed files carry
+//! `MANAGED_MARKER` and are only rewritten when the bundled source changes.
+//!
+//! NOTE: `MANAGED_MARKER` is persisted inside installed SKILL.md files and is
+//! how we detect a prior managed install — do not change that string, or
+//! existing installs will be orphaned.
 use std::fs;
 use std::path::Path;
 
+/// Result of an install pass: which skills were (re)written and any warnings.
 #[derive(Debug, Default)]
 pub(crate) struct HexaConnectorInstallReport {
     pub installed_skills: Vec<String>,

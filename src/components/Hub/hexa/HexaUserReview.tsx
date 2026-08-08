@@ -5,11 +5,12 @@ import type {
   HexaReviewRating,
   HexaWatchedSession,
 } from "../../../hooks/useHexaData";
+import { t } from "@/lib/i18n";
 
 const RATINGS: Array<{ value: HexaReviewRating; label: string; color: string; fallback: string }> = [
-  { value: "satisfied", label: "满意", color: "#22c55e", fallback: "这轮结果符合我的预期。" },
-  { value: "average", label: "一般", color: "#f59e0b", fallback: "这轮部分达到预期，仍有需要改进的地方。" },
-  { value: "unsatisfied", label: "不满意", color: "#f87171", fallback: "这轮结果没有解决我的主要问题。" },
+  { value: "satisfied", label: t("hexa.reviewSatisfied"), color: "#22c55e", fallback: t("hexa.reviewSatisfiedFallback") },
+  { value: "average", label: t("hexa.reviewAverage"), color: "#f59e0b", fallback: t("hexa.reviewAverageFallback") },
+  { value: "unsatisfied", label: t("hexa.reviewUnsatisfied"), color: "#f87171", fallback: t("hexa.reviewUnsatisfiedFallback") },
 ];
 
 export function HexaUserReview({
@@ -48,8 +49,8 @@ export function HexaUserReview({
 
   return (
     <section className="hexa-report-section hexa-user-review">
-      <div className="hexa-report-section-title"><span>这轮结果你觉得如何？</span><small>你的评价会进入本会话复盘</small></div>
-      <div className="hexa-review-options" role="radiogroup" aria-label="用户复盘评价">
+      <div className="hexa-report-section-title"><span>{t("hexa.reviewPrompt")}</span><small>{t("hexa.reviewPromptHint")}</small></div>
+      <div className="hexa-review-options" role="radiogroup" aria-label={t("hexa.reviewRadioLabel")}>
         {RATINGS.map((item) => (
           <button
             key={item.value}
@@ -66,13 +67,13 @@ export function HexaUserReview({
       </div>
       {rating && (
         <div className="hexa-review-note">
-          <input aria-label="本轮复盘补充说明" className="kawaii-input" value={summary} onChange={(event) => setSummary(event.target.value)} placeholder="可选：说说哪里做得好，或哪里需要改进" />
+          <input aria-label={t("hexa.reviewNoteLabel")} className="kawaii-input" value={summary} onChange={(event) => setSummary(event.target.value)} placeholder={t("hexa.reviewNotePlaceholder")} />
           <button type="button" className="kawaii-toggle-btn connected" onClick={() => void save()} disabled={state === "saving"}>
-            <Save size={14} /> {state === "saved" ? "已记录" : "记录复盘"}
+            <Save size={14} /> {state === "saved" ? t("hexa.reviewSaved") : t("hexa.reviewSave")}
           </button>
         </div>
       )}
-      {state === "error" && <div className="hexa-report-error">复盘保存失败，请重试。</div>}
+      {state === "error" && <div className="hexa-report-error">{t("hexa.reviewSaveError")}</div>}
     </section>
   );
 }

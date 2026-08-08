@@ -1,4 +1,5 @@
 import type { HexaEvidenceInput, HexaEvidenceRef, HexaWatchedSession } from "./useHexaData";
+import { t } from "@/lib/i18n";
 
 export type HexaAgentSurface =
   | "codex_desktop"
@@ -123,7 +124,7 @@ function timestamp(value: string | null | undefined): number {
 }
 
 function workspaceLabel(workspace: string | null): string {
-  if (!workspace) return "未报告工作区";
+  if (!workspace) return t("hexa.noWorkspace");
   const parts = workspace.split(/[\\/]/).filter(Boolean);
   return parts[parts.length - 1] ?? workspace;
 }

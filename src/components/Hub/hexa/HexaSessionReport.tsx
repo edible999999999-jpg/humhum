@@ -21,32 +21,33 @@ import type {
 import { HexaUserReview } from "./HexaUserReview";
 import { HexaWorkflowEditor } from "./HexaWorkflowEditor";
 import { planningCapabilityCopy, watchedSessionIsExpired } from "../../../hooks/hexaPlanningCapability";
+import { t } from "@/lib/i18n";
 
 const ALIGNMENT: Record<HexaAlignment, { label: string; color: string }> = {
-  on_track: { label: "方向一致", color: "#22c55e" },
-  watch: { label: "证据待补", color: "#f59e0b" },
-  off_track: { label: "出现偏离", color: "#f87171" },
+  on_track: { label: t("hexa.alignOnTrack"), color: "#22c55e" },
+  watch: { label: t("hexa.alignWatch"), color: "#f59e0b" },
+  off_track: { label: t("hexa.alignOffTrack"), color: "#f87171" },
 };
 
 const STATUS: Record<HexaWatchedSession["status"], { label: string; color: string }> = {
-  starting: { label: "正在接入", color: "#38bdf8" },
-  working: { label: "正在推进", color: "#22c55e" },
-  waiting: { label: "等待反馈", color: "#f59e0b" },
-  idle: { label: "阶段空闲", color: "#94a3b8" },
-  completed: { label: "本轮完成", color: "#38bdf8" },
-  blocked: { label: "当前阻塞", color: "#f87171" },
+  starting: { label: t("hexa.attemptStarting"), color: "#38bdf8" },
+  working: { label: t("hexa.attemptWorking"), color: "#22c55e" },
+  waiting: { label: t("hexa.attemptWaiting"), color: "#f59e0b" },
+  idle: { label: t("hexa.attemptIdle"), color: "#94a3b8" },
+  completed: { label: t("hexa.attemptCompleted"), color: "#38bdf8" },
+  blocked: { label: t("hexa.attemptBlocked"), color: "#f87171" },
 };
 
 function timeAgo(value: string): string {
   const elapsed = Date.now() - new Date(value).getTime();
-  if (!Number.isFinite(elapsed) || elapsed < 0) return "刚刚";
+  if (!Number.isFinite(elapsed) || elapsed < 0) return t("hexa.timeJust");
   const seconds = Math.floor(elapsed / 1000);
-  if (seconds < 60) return `${seconds} 秒前`;
+  if (seconds < 60) return t("hexa.timeSeconds", { count: seconds });
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes} 分钟前`;
+  if (minutes < 60) return t("hexa.timeMinutes", { count: minutes });
   const hours = Math.floor(minutes / 60);
-  if (hours < 48) return `${hours} 小时前`;
-  return `${Math.floor(hours / 24)} 天前`;
+  if (hours < 48) return t("hexa.timeHours", { count: hours });
+  return t("hexa.timeDays", { count: Math.floor(hours / 24) });
 }
 
 function Metric({ label, value, tone, onClick }: { label: string; value: number; tone?: string; onClick?: () => void }) {
@@ -57,7 +58,7 @@ function Metric({ label, value, tone, onClick }: { label: string; value: number;
     </>
   );
   return onClick
-    ? <button type="button" className="hexa-report-metric clickable" onClick={onClick} title={`查看${label}`}>{content}</button>
+    ? <button type="button" className="hexa-report-metric clickable" onClick={onClick} title={t("hexa.viewLabel", { label })}>{content}</button>
     : <div className="hexa-report-metric">{content}</div>;
 }
 
@@ -83,7 +84,7 @@ export function HexaSessionReportView({
   const report = buildHexaSessionReport(session, pendingConfirmations);
   const alignment = ALIGNMENT[report.alignment];
   const status = watchedSessionIsExpired(session.status, session.updated_at)
-    ? { label: "已断开", color: "#94a3b8" }
+    ? { label: t("hexa.disconnected"), color: "#94a3b8" }
     : STATUS[session.status];
   const planning = planningCapabilityCopy(session.planning_capability);
   const evidence = [
@@ -112,7 +113,7 @@ export function HexaSessionReportView({
   };
 
   return (
-    <article className="hexa-report" aria-label={`${session.name} 会话监督报告`}>
+    <article className="hexa-report" aria-label={t("hexa.reportLabel", { name: session.name })}>
       <header className="hexa-report-header">
         <div className="hexa-report-heading">
           <div className="hexa-report-badges">
@@ -124,24 +125,24 @@ export function HexaSessionReportView({
             </span>
             <span>{session.provider}</span>
           </div>
-          <div className="hexa-report-eyebrow">这轮正在解决</div>
+          <div className="hexa-report-eyebrow">{t("hexa.solvingThisRound")}</div>
           <h3>{report.problem}</h3>
-          <p>{session.current_step ?? "Agent 尚未报告当前步骤"}</p>
+          <p>{session.current_step ?? t("hexa.noCurrentStep")}</p>
         </div>
         <div className="hexa-report-actions">
-          <button type="button" className="kawaii-toggle-btn" onClick={() => void focus()} disabled={focusState === "busy"} title="返回这个 Agent 会话">
+          <button type="button" className="kawaii-toggle-btn" onClick={() => void focus()} disabled={focusState === "busy"} title={t("hexa.returnToSession")}>
             <Crosshair size={15} />
           </button>
-          <button type="button" className="kawaii-toggle-btn" onClick={() => void remove()} disabled={deleting} title="停止 Hexa 主动监控">
+          <button type="button" className="kawaii-toggle-btn" onClick={() => void remove()} disabled={deleting} title={t("hexa.stopMonitor")}>
             <Trash2 size={15} />
           </button>
         </div>
       </header>
 
       <div className="hexa-report-next">
-        <span>下一步</span>
+        <span>{t("hexa.nextStep")}</span>
         <strong>{report.nextAction}</strong>
-        <small>最近更新 {timeAgo(session.updated_at)}</small>
+        <small>{t("hexa.updatedAt", { time: timeAgo(session.updated_at) })}</small>
       </div>
 
       <section className="hexa-report-section" data-tone={planning.tone}>
@@ -150,24 +151,24 @@ export function HexaSessionReportView({
       </section>
 
       <div className="hexa-report-metrics">
-        <Metric label="工作项" value={report.metrics.total} onClick={() => workflowRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })} />
-        <Metric label="已完成" value={report.metrics.completed} tone="#16a34a" />
-        <Metric label="失败" value={report.metrics.failed} tone={report.metrics.failed ? "#ef4444" : undefined} />
-        <Metric label="人工介入" value={report.metrics.interventions} tone="#7c3aed" />
-        <Metric label="等待确认" value={report.metrics.pendingConfirmations} tone={report.metrics.pendingConfirmations ? "#d97706" : undefined} />
+        <Metric label={t("hexa.workItems")} value={report.metrics.total} onClick={() => workflowRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })} />
+        <Metric label={t("hexa.completed")} value={report.metrics.completed} tone="#16a34a" />
+        <Metric label={t("hexa.failed")} value={report.metrics.failed} tone={report.metrics.failed ? "#ef4444" : undefined} />
+        <Metric label={t("hexa.interventions")} value={report.metrics.interventions} tone="#7c3aed" />
+        <Metric label={t("hexa.pendingConfirmations")} value={report.metrics.pendingConfirmations} tone={report.metrics.pendingConfirmations ? "#d97706" : undefined} />
       </div>
 
       <section className="hexa-report-section">
         <div className="hexa-report-section-title">
-          <span><Flag size={15} /> 审核进度</span>
-          <strong>{report.progress ? `${report.progress.percent}%` : "尚未定义检查点"}</strong>
+          <span><Flag size={15} /> {t("hexa.reviewProgress")}</span>
+          <strong>{report.progress ? `${report.progress.percent}%` : t("hexa.noCheckpoints")}</strong>
         </div>
         {report.progress ? (
-          <div className="hexa-report-progress" aria-label={`审核进度 ${report.progress.percent}%`}>
+          <div className="hexa-report-progress" aria-label={t("hexa.reviewProgressPct", { percent: report.progress.percent })}>
             <span style={{ width: `${report.progress.percent}%` }} />
           </div>
         ) : (
-          <p className="hexa-report-empty">当前只有任务目标，还没有可验证的工作项。Hexa 不会用事件数量伪造进度。</p>
+          <p className="hexa-report-empty">{t("hexa.onlyGoalNoItems")}</p>
         )}
         {report.successCriteria.length > 0 && (
           <ul className="hexa-report-criteria">
@@ -178,25 +179,25 @@ export function HexaSessionReportView({
 
       <div className="hexa-report-columns">
         <section className="hexa-report-section">
-          <div className="hexa-report-section-title"><span><FileCheck2 size={15} /> 重要产出</span></div>
+          <div className="hexa-report-section-title"><span><FileCheck2 size={15} /> {t("hexa.strongOutputs")}</span></div>
           {report.outputs.length ? (
             <ul className="hexa-report-list output">
               {report.outputs.slice(0, 3).map((output) => <li key={output.id}>{output.label}</li>)}
             </ul>
-          ) : <p className="hexa-report-empty">尚未报告可核验的重要产出</p>}
+          ) : <p className="hexa-report-empty">{t("hexa.noStrongOutputs")}</p>}
         </section>
         <section className="hexa-report-section">
-          <div className="hexa-report-section-title"><span><AlertTriangle size={15} /> 风险与偏离</span></div>
+          <div className="hexa-report-section-title"><span><AlertTriangle size={15} /> {t("hexa.risksDeviations")}</span></div>
           {report.risks.length ? (
             <ul className="hexa-report-list risk">
               {report.risks.slice(0, 3).map((risk) => <li key={risk.id}>{risk.summary}</li>)}
             </ul>
-          ) : <p className="hexa-report-empty">目前没有证据支持的偏离结论</p>}
+          ) : <p className="hexa-report-empty">{t("hexa.noDeviations")}</p>}
         </section>
       </div>
 
       <section className="hexa-report-section">
-        <div className="hexa-report-section-title"><span><CheckCircle2 size={15} /> 会话轨迹</span><small>仅显示最近 5 个关键节点</small></div>
+        <div className="hexa-report-section-title"><span><CheckCircle2 size={15} /> {t("hexa.sessionTrail")}</span><small>{t("hexa.trailHint")}</small></div>
         {report.milestones.length ? (
           <ol className="hexa-report-timeline">
             {report.milestones.map((milestone) => (
@@ -206,7 +207,7 @@ export function HexaSessionReportView({
               </li>
             ))}
           </ol>
-        ) : <p className="hexa-report-empty">等待 Agent 上报第一个关键节点</p>}
+        ) : <p className="hexa-report-empty">{t("hexa.awaitFirstNode")}</p>}
       </section>
 
       <div ref={workflowRef}>
@@ -215,14 +216,14 @@ export function HexaSessionReportView({
 
       <section className="hexa-report-verdicts">
         <div>
-          <span>Hexa 审核</span>
-          <strong>{report.hexaVerdict?.label ?? "待审核"}</strong>
-          <p>{report.hexaVerdict?.summary ?? "完成足够检查点后，Hexa 才会给出结论。"}</p>
+          <span>{t("hexa.hexaVerdict")}</span>
+          <strong>{report.hexaVerdict?.label ?? t("hexa.pendingVerdict")}</strong>
+          <p>{report.hexaVerdict?.summary ?? t("hexa.verdictEmpty")}</p>
         </div>
         <div>
-          <span><UserRoundCheck size={14} /> 用户复盘</span>
-          <strong>{report.userVerdict?.label ?? "未评价"}</strong>
-          <p>{report.userVerdict?.summary ?? "本轮结束后可记录满意、一般或不满意。"}</p>
+          <span><UserRoundCheck size={14} /> {t("hexa.userReviewLabel")}</span>
+          <strong>{report.userVerdict?.label ?? t("hexa.notRated")}</strong>
+          <p>{report.userVerdict?.summary ?? t("hexa.userReviewEmpty")}</p>
         </div>
       </section>
 
@@ -231,17 +232,17 @@ export function HexaSessionReportView({
       {operations}
 
       <details className="hexa-report-evidence">
-        <summary>查看原始证据引用 ({evidence.length})</summary>
+        <summary>{t("hexa.rawEvidence", { count: evidence.length })}</summary>
         {evidence.length ? (
           <ul>
             {evidence.map((item) => (
               <li key={item.id}><span>{item.label}</span>{item.location && <code>{item.location}</code>}</li>
             ))}
           </ul>
-        ) : <p>Agent 还没有附上文件、提交、测试或事件引用。</p>}
+        ) : <p>{t("hexa.noRawEvidence")}</p>}
       </details>
 
-      {focusState === "error" && <div className="hexa-report-error">无法定位原会话，请确认对应终端仍在运行。</div>}
+      {focusState === "error" && <div className="hexa-report-error">{t("hexa.cannotFocus")}</div>}
     </article>
   );
 }

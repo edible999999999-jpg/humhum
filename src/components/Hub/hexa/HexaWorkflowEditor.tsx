@@ -15,13 +15,14 @@ import type {
 } from "../../../hooks/useHexaData";
 import { workItemSourceLabel } from "../../../hooks/hexaPlanningCapability";
 import type { HexaWorkItemDisplayStatus } from "../../../hooks/hexaSessionReport";
+import { t } from "@/lib/i18n";
 
 const STATUS: Record<HexaWorkItemDisplayStatus, { label: string; color: string }> = {
-  pending: { label: "待开始", color: "#94a3b8" },
-  in_progress: { label: "进行中", color: "#38bdf8" },
-  completed: { label: "已完成", color: "#22c55e" },
-  failed: { label: "失败", color: "#f87171" },
-  unclosed: { label: "Agent 未确认完成", color: "#f59e0b" },
+  pending: { label: t("hexa.wfPending"), color: "#94a3b8" },
+  in_progress: { label: t("hexa.wfInProgress"), color: "#38bdf8" },
+  completed: { label: t("hexa.wfCompleted"), color: "#22c55e" },
+  failed: { label: t("hexa.wfFailed"), color: "#f87171" },
+  unclosed: { label: t("hexa.wfUnclosed"), color: "#f59e0b" },
 };
 
 function inputFrom(item: HexaWorkItem): HexaWorkItemInput {
@@ -71,7 +72,7 @@ export function HexaWorkflowEditor({
 
   const save = async () => {
     if (!draft?.title.trim()) {
-      setError("请写清楚这个检查点要验证什么");
+      setError(t("hexa.wfCheckpointRequired"));
       return;
     }
     setBusy(true);
@@ -110,9 +111,9 @@ export function HexaWorkflowEditor({
   return (
     <section className="hexa-report-section hexa-workflow">
       <div className="hexa-report-section-title">
-        <span><GitBranch size={15} /> 监督检查点</span>
+        <span><GitBranch size={15} /> {t("hexa.wfCheckpoints")}</span>
         <button type="button" className="kawaii-toggle-btn" onClick={add} disabled={busy || editingId === "__new__"}>
-          <Plus size={14} /> 添加
+          <Plus size={14} /> {t("hexa.wfAdd")}
         </button>
       </div>
 
@@ -127,10 +128,10 @@ export function HexaWorkflowEditor({
                   <span className="hexa-workflow-index" style={{ borderColor: status.color, color: status.color }}>{index + 1}</span>
                   <button type="button" className="hexa-workflow-main" onClick={() => expanded ? setEditingId(null) : edit(item)}>
                     <strong>{item.title} <small style={{ opacity: 0.55 }}>· {workItemSourceLabel(item.source)}</small></strong>
-                    <span>{item.acceptance_criteria ?? "尚未填写验收条件"}</span>
+                    <span>{item.acceptance_criteria ?? t("hexa.wfNoAcceptance")}</span>
                   </button>
                   <span className="hexa-workflow-status" style={{ color: status.color }}>{status.label}</span>
-                  <button type="button" className="hexa-icon-button" onClick={() => expanded ? setEditingId(null) : edit(item)} title="编辑检查点">
+                  <button type="button" className="hexa-icon-button" onClick={() => expanded ? setEditingId(null) : edit(item)} title={t("hexa.wfEditCheckpoint")}>
                     {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                   </button>
                 </div>
@@ -150,7 +151,7 @@ export function HexaWorkflowEditor({
           })}
         </ol>
       ) : (
-        <p className="hexa-report-empty">还没有监督检查点。添加后，Hexa 才会显示可核验的真实进度。</p>
+        <p className="hexa-report-empty">{t("hexa.wfEmpty")}</p>
       )}
 
       {editingId === "__new__" && draft && (
@@ -197,22 +198,22 @@ function WorkflowForm({
   return (
     <div className="hexa-workflow-form">
       <label>
-        <span>检查点</span>
-        <input className="kawaii-input" value={draft.title} onChange={(event) => onChange({ ...draft, title: event.target.value })} placeholder="例如：完成界面并通过构建" />
+        <span>{t("hexa.wfCheckpoint")}</span>
+        <input className="kawaii-input" value={draft.title} onChange={(event) => onChange({ ...draft, title: event.target.value })} placeholder={t("hexa.wfTitlePlaceholder")} />
       </label>
       <label>
-        <span>验收条件</span>
-        <input className="kawaii-input" value={draft.acceptance_criteria ?? ""} onChange={(event) => onChange({ ...draft, acceptance_criteria: event.target.value || null })} placeholder="怎样才算完成" />
+        <span>{t("hexa.wfAcceptance")}</span>
+        <input className="kawaii-input" value={draft.acceptance_criteria ?? ""} onChange={(event) => onChange({ ...draft, acceptance_criteria: event.target.value || null })} placeholder={t("hexa.wfAcceptancePlaceholder")} />
       </label>
       <label>
-        <span>状态</span>
+        <span>{t("hexa.wfStatus")}</span>
         <select className="kawaii-input" value={draft.status} onChange={(event) => onChange({ ...draft, status: event.target.value as HexaWorkItemStatus })}>
           {Object.entries(STATUS).map(([value, status]) => <option key={value} value={value}>{status.label}</option>)}
         </select>
       </label>
       {items.some((item) => item.id !== draft.id) && (
         <fieldset>
-          <legend>前置检查点</legend>
+          <legend>{t("hexa.wfPrereq")}</legend>
           <div className="hexa-dependency-options">
             {items.filter((item) => item.id !== draft.id).map((item) => (
               <label key={item.id}>
@@ -224,10 +225,10 @@ function WorkflowForm({
         </fieldset>
       )}
       <div className="hexa-workflow-form-actions">
-        {onRemove && <button type="button" className="kawaii-toggle-btn" onClick={onRemove} disabled={busy} title="删除检查点"><Trash2 size={14} /></button>}
+        {onRemove && <button type="button" className="kawaii-toggle-btn" onClick={onRemove} disabled={busy} title={t("hexa.wfDeleteCheckpoint")}><Trash2 size={14} /></button>}
         <span />
-        <button type="button" className="kawaii-toggle-btn" onClick={onCancel} disabled={busy}><X size={14} /> 取消</button>
-        <button type="button" className="kawaii-toggle-btn connected" onClick={onSave} disabled={busy}><Check size={14} /> 保存</button>
+        <button type="button" className="kawaii-toggle-btn" onClick={onCancel} disabled={busy}><X size={14} /> {t("hexa.wfCancel")}</button>
+        <button type="button" className="kawaii-toggle-btn connected" onClick={onSave} disabled={busy}><Check size={14} /> {t("hexa.wfSave")}</button>
       </div>
     </div>
   );

@@ -9,6 +9,7 @@ import type {
   HexaWorkItemStatus,
 } from "./useHexaData";
 import { watchedSessionIsExpired } from "./hexaPlanningCapability";
+import { t } from "@/lib/i18n";
 
 export interface HexaSessionGroup {
   key: string;
@@ -54,7 +55,7 @@ function timestamp(value: string): number {
 }
 
 function workspaceLabel(workspace: string | null): string {
-  if (!workspace) return "未报告工作区";
+  if (!workspace) return t("hexa.noWorkspace");
   const parts = workspace.split(/[\\/]/).filter(Boolean);
   return parts[parts.length - 1] ?? workspace;
 }
@@ -133,17 +134,17 @@ export function createWorkItemId(title: string, existingIds: string[]): string {
 
 export function workItemRemovalBlocker(items: HexaWorkItem[], workItemId: string): string | null {
   const dependant = items.find((item) => item.depends_on.includes(workItemId));
-  return dependant ? `“${dependant.title}”仍依赖这个检查点` : null;
+  return dependant ? t("hexa.removalBlocker", { title: dependant.title }) : null;
 }
 
 export function reviewLabel(rating: HexaReviewRating): string {
   switch (rating) {
     case "satisfied":
-      return "满意";
+      return t("hexa.reviewSatisfied");
     case "average":
-      return "一般";
+      return t("hexa.reviewAverage");
     case "unsatisfied":
-      return "不满意";
+      return t("hexa.reviewUnsatisfied");
   }
 }
 
@@ -194,12 +195,12 @@ function reportAlignment(session: HexaWatchedSession): HexaAlignment {
 
 function nextAction(session: HexaWatchedSession, ordered: HexaWorkItem[]): string {
   if (session.need_user) {
-    return session.blocked_reason ?? session.current_step ?? "需要用户确认后继续";
+    return session.blocked_reason ?? session.current_step ?? t("hexa.needConfirmContinue");
   }
   const current = ordered.find((item) => item.status === "in_progress");
   if (current) {
     if (session.status === "idle" || session.status === "completed") {
-      return `Agent 本轮已结束，未确认“${current.title}”是否完成`;
+      return t("hexa.roundEndedUnconfirmed", { title: current.title });
     }
     return current.title;
   }
@@ -210,8 +211,8 @@ function nextAction(session: HexaWatchedSession, ordered: HexaWorkItem[]): strin
     item.status === "pending" && item.depends_on.every((dependency) => completed.has(dependency))
   );
   if (ready) return ready.title;
-  if (session.status === "completed") return "等待最终评价";
-  return session.current_step ?? "等待 Agent 报告下一步";
+  if (session.status === "completed") return t("hexa.awaitFinalReview");
+  return session.current_step ?? t("hexa.awaitNextStep");
 }
 
 export function buildHexaSessionReport(

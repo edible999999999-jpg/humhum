@@ -13,6 +13,7 @@ import type {
   HexaGoalSummary as HexaGoalSummaryData,
   HexaGoalSummaryAttempt,
 } from "../../../hooks/hexaGoalMonitoring";
+import { t } from "@/lib/i18n";
 
 const SURFACE_LABELS: Record<HexaAgentSurface, string> = {
   codex_desktop: "Codex Desktop",
@@ -20,24 +21,24 @@ const SURFACE_LABELS: Record<HexaAgentSurface, string> = {
   qoder_ide: "Qoder IDE",
   qoder_cli: "Qoder CLI",
   qoder_worker: "Qoder Worker",
-  terminal: "终端 Agent",
-  remote_worker: "远程 Worker",
-  unknown: "端类型待确认",
+  terminal: t("hexa.clientTerminal"),
+  remote_worker: t("hexa.clientRemoteWorker"),
+  unknown: t("hexa.clientUnknown"),
 };
 
 const SESSION_STATUS_LABELS = {
-  starting: "正在接入",
-  working: "正在推进",
-  waiting: "等待反馈",
-  idle: "阶段空闲",
-  completed: "本轮完成",
-  blocked: "当前阻塞",
+  starting: t("hexa.attemptStarting"),
+  working: t("hexa.attemptWorking"),
+  waiting: t("hexa.attemptWaiting"),
+  idle: t("hexa.attemptIdle"),
+  completed: t("hexa.attemptCompleted"),
+  blocked: t("hexa.attemptBlocked"),
 } as const;
 
 const GOAL_STATUS_LABELS = {
-  active: "进行中",
-  waiting: "等待验证",
-  completed: "已采用",
+  active: t("hexa.goalStatusActive"),
+  waiting: t("hexa.goalStatusWaiting"),
+  completed: t("hexa.goalStatusCompleted"),
 } as const;
 
 const EVIDENCE_TRUST_RANK: Record<string, number> = {
@@ -75,14 +76,14 @@ function agentFamilyLabel(family: string): string {
 }
 
 function resultLabel({ attempt, session }: HexaGoalSummaryAttempt): string {
-  if (attempt.result_status === "accepted") return "已采用";
-  if (attempt.result_status === "verified") return "验证通过";
-  if (attempt.result_status === "failed") return "测试失败";
-  if (attempt.result_status === "superseded") return "已被替代";
+  if (attempt.result_status === "accepted") return t("hexa.resultAccepted");
+  if (attempt.result_status === "verified") return t("hexa.resultVerified");
+  if (attempt.result_status === "failed") return t("hexa.resultFailed");
+  if (attempt.result_status === "superseded") return t("hexa.resultSuperseded");
   if (attempt.completed_at || session?.status === "completed") {
-    return "已完成，尚未验证";
+    return t("hexa.resultDoneUnverified");
   }
-  return "结果待上报";
+  return t("hexa.resultPending");
 }
 
 function worktreeLabel(value: string): string {
@@ -129,16 +130,16 @@ export function HexaGoalSummary({
   };
 
   return (
-    <article className="hexa-goal-summary" aria-label="开发目标摘要">
+    <article className="hexa-goal-summary" aria-label={t("hexa.goalSummaryLabel")}>
       <header className="hexa-goal-summary-header">
         <div>
           <div className="hexa-goal-eyebrow">
             <CircleDot size={12} aria-hidden="true" />
-            开发目标 · {GOAL_STATUS_LABELS[goal.status]}
+            {t("hexa.goalEyebrow", { status: GOAL_STATUS_LABELS[goal.status] })}
           </div>
           <h3>{goal.title}</h3>
           {goal.success_criteria.length > 0 && (
-            <ul className="hexa-goal-criteria" aria-label="成功标准">
+            <ul className="hexa-goal-criteria" aria-label={t("hexa.successCriteria")}>
               {goal.success_criteria.map((criterion) => (
                 <li key={criterion}>{criterion}</li>
               ))}
@@ -148,13 +149,13 @@ export function HexaGoalSummary({
         <button
           type="button"
           className="hexa-goal-icon-button"
-          aria-label="删除开发目标"
-          title={pendingAction?.kind === "delete" ? "正在删除" : "删除开发目标"}
+          aria-label={t("hexa.deleteGoal")}
+          title={pendingAction?.kind === "delete" ? t("hexa.deletingGoal") : t("hexa.deleteGoal")}
           disabled={pendingAction !== null}
           onClick={async () => {
             await runAction(
               { kind: "delete" },
-              "删除失败，请重试。",
+              t("hexa.deleteGoalFailed"),
               () => onDelete(goal.id),
             );
           }}
@@ -165,25 +166,25 @@ export function HexaGoalSummary({
 
       {actionError && <div className="hexa-goal-action-error" role="alert">{actionError}</div>}
 
-      <div className="hexa-goal-metrics" aria-label="开发目标状态摘要">
-        <div><strong>{counts.total}</strong><span>全部尝试</span></div>
-        <div><strong>{counts.working}</strong><span>推进中</span></div>
-        <div><strong>{counts.verified}</strong><span>已验证</span></div>
-        <div><strong>{counts.failed}</strong><span>失败</span></div>
-        <div><strong>{counts.blocked}</strong><span>阻塞</span></div>
-        <div><strong>{counts.unverified}</strong><span>待验证</span></div>
+      <div className="hexa-goal-metrics" aria-label={t("hexa.goalMetricsLabel")}>
+        <div><strong>{counts.total}</strong><span>{t("hexa.metricTotal")}</span></div>
+        <div><strong>{counts.working}</strong><span>{t("hexa.metricWorking")}</span></div>
+        <div><strong>{counts.verified}</strong><span>{t("hexa.metricVerified")}</span></div>
+        <div><strong>{counts.failed}</strong><span>{t("hexa.metricFailed")}</span></div>
+        <div><strong>{counts.blocked}</strong><span>{t("hexa.metricBlocked")}</span></div>
+        <div><strong>{counts.unverified}</strong><span>{t("hexa.metricUnverified")}</span></div>
       </div>
 
       {availableAttempts.length >= 2 && (
-        <section className="hexa-goal-comparison" aria-label="比较结果">
-          <strong>比较结果</strong>
+        <section className="hexa-goal-comparison" aria-label={t("hexa.comparisonLabel")}>
+          <strong>{t("hexa.comparisonLabel")}</strong>
           <span>
-            {availableAttempts.length} 个可用尝试可逐一核验；只有证据通过或由你采用的结果才会成为最终结论。
+            {t("hexa.comparisonNote", { count: availableAttempts.length })}
           </span>
         </section>
       )}
 
-      <section className="hexa-goal-attempts" aria-label="开发目标尝试">
+      <section className="hexa-goal-attempts" aria-label={t("hexa.goalAttemptsLabel")}>
         {attempts.map(({ attempt, session }) => {
           const surface = hexaSurfaceLabel(attempt.surface);
           const accepted = goal.accepted_attempt_id === attempt.session_id
@@ -204,8 +205,8 @@ export function HexaGoalSummary({
                   <span>{agentFamilyLabel(attempt.agent_family)}</span>
                 </div>
                 <div className="hexa-goal-attempt-status">
-                  <span>{session ? SESSION_STATUS_LABELS[session.status] : "历史记录"}</span>
-                  <strong>{session ? resultLabel({ attempt, session }) : "历史会话不可用"}</strong>
+                  <span>{session ? SESSION_STATUS_LABELS[session.status] : t("hexa.sessionHistory")}</span>
+                  <strong>{session ? resultLabel({ attempt, session }) : t("hexa.sessionUnavailable")}</strong>
                 </div>
               </div>
 
@@ -226,7 +227,7 @@ export function HexaGoalSummary({
                 ) : (
                   <>
                     <History size={13} aria-hidden="true" />
-                    <span>{session ? "尚未附上可核验证据" : "仅保留目标索引中的历史记录"}</span>
+                    <span>{session ? t("hexa.noVerifiableEvidence") : t("hexa.onlyIndexHistory")}</span>
                   </>
                 )}
               </div>
@@ -239,7 +240,7 @@ export function HexaGoalSummary({
                     onClick={() => onViewSession(attempt.session_id)}
                   >
                     <ExternalLink size={13} aria-hidden="true" />
-                    查看会话
+                    {t("hexa.viewSession")}
                   </button>
                   <button
                     type="button"
@@ -248,13 +249,13 @@ export function HexaGoalSummary({
                     onClick={async () => {
                       await runAction(
                         { kind: "accept", sessionId: attempt.session_id },
-                        "采用失败，请重试。",
+                        t("hexa.acceptResultFailed"),
                         () => onAccept(goal.id, attempt.session_id),
                       );
                     }}
                   >
                     <Check size={13} aria-hidden="true" />
-                    {accepted ? "已采用" : accepting ? "正在采用" : "采用此结果"}
+                    {accepted ? t("hexa.resultAccepted") : accepting ? t("hexa.accepting") : t("hexa.acceptResult")}
                   </button>
                 </div>
               )}
