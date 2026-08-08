@@ -9,7 +9,11 @@ use crate::local_api_auth::{protect_owner_only, write_private_file_atomically};
 
 // 4: DaySlice gained a per-day `messages` count so the day view reports real
 // message counts instead of session counts; bump forces a rebuild to populate it.
-const STATS_PARSER_REVISION: u32 = 4;
+// 5: DaySlice gained a stored per-day `cost` accumulated per-message at parse
+// time (each message priced by its own model). Costing a whole session against
+// one model mis-priced any session that switched models (e.g. Opus→Sonnet) and
+// made the day view disagree with the per-message hourly view; bump rebuilds.
+const STATS_PARSER_REVISION: u32 = 5;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SessionStats {
@@ -43,9 +47,10 @@ pub struct SessionStats {
     pub day_slices: Vec<DaySlice>,
 }
 
-/// One calendar day's slice of a session's token usage. Cost is derived on
-/// demand from the session's model so per-day costs always sum to the
-/// session-level cost computed by `calculate_cost`.
+/// One calendar day's slice of a session's token usage. Cost is accumulated
+/// per-message at parse time (each message priced by its own model) and stored,
+/// so per-day costs sum to the session-level cost and agree with the hourly
+/// view even when a session switched models mid-way.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DaySlice {
     pub date: String,
@@ -60,6 +65,13 @@ pub struct DaySlice {
     /// repopulates it.
     #[serde(default)]
     pub messages: u64,
+    /// Cost accumulated per-message on this day, each message priced by its own
+    /// model. Stored rather than derived from the session model so a session
+    /// that switched models is costed correctly and the day view agrees with
+    /// the per-message hourly view. `serde(default)` keeps older stats.json
+    /// deserializable; the revision bump repopulates it.
+    #[serde(default)]
+    pub cost: f64,
 }
 
 impl DaySlice {
@@ -71,7 +83,14 @@ impl DaySlice {
             + self.reasoning_tokens
     }
 
+    /// Per-day cost. Prefers the stored per-message cost (populated at parse
+    /// time, correct for model-switching sessions); falls back to pricing the
+    /// slice's tokens against the session model for synthetic/pre-revision
+    /// slices that carry no stored cost.
     fn cost(&self, model: &str) -> f64 {
+        if self.cost > 0.0 {
+            return self.cost;
+        }
         cost_from_tokens(
             model,
             self.input_tokens,
@@ -109,6 +128,10 @@ impl SessionStats {
             // forces a rebuild that repopulates real counts, so 0 only shows
             // for the transient fallback rather than being persisted.
             messages: 0,
+            // 0 makes DaySlice::cost fall back to pricing tokens against the
+            // session model, matching the pre-slice-cost behavior for the
+            // transient/pre-revision fallback.
+            cost: 0.0,
         }]
     }
 }
@@ -248,15 +271,17 @@ fn cost_from_tokens(
         / 1_000_000.0
 }
 
+/// A session's total cost: the sum of its per-day slice costs, each of which
+/// prefers the stored per-message cost. This keeps a model-switching session
+/// priced correctly and consistent with the day and hourly views. Falls back
+/// to whole-session model pricing only when a session has no slices (pre-
+/// revision data), via `effective_day_slices` synthesizing one.
 fn calculate_cost(stats: &SessionStats) -> f64 {
-    cost_from_tokens(
-        &stats.model,
-        stats.input_tokens,
-        stats.output_tokens,
-        stats.cache_creation_tokens,
-        stats.cache_read_tokens,
-        stats.reasoning_tokens,
-    )
+    stats
+        .effective_day_slices()
+        .iter()
+        .map(|slice| slice.cost(&stats.model))
+        .sum()
 }
 
 pub struct StatsStore {
@@ -1204,6 +1229,18 @@ fn parse_transcript(
         cache_read = cache_read.saturating_add(m_cache_read);
         reasoning_tokens = reasoning_tokens.saturating_add(m_reasoning);
 
+        // Price each message by its own model, so a session that switched
+        // models (e.g. Opus→Sonnet) is costed correctly and the stored per-day
+        // cost matches the per-message hourly view.
+        let m_cost = cost_from_tokens(
+            &message.model_id,
+            m_input,
+            m_output,
+            m_cache_write,
+            m_cache_read,
+            m_reasoning,
+        );
+
         let slot = chrono::DateTime::from_timestamp_millis(message.timestamp)
             .filter(|_| message.timestamp > 0)
             .map(|dt| {
@@ -1220,6 +1257,7 @@ fn parse_transcript(
         slot.cache_read_tokens = slot.cache_read_tokens.saturating_add(m_cache_read);
         slot.reasoning_tokens = slot.reasoning_tokens.saturating_add(m_reasoning);
         slot.messages = slot.messages.saturating_add(1);
+        slot.cost += m_cost;
     }
     let mut tool_calls = tool_use_ids.len() as u64;
     if codex_tool_calls > 0 {
@@ -1303,6 +1341,7 @@ fn parse_transcript(
             .reasoning_tokens
             .saturating_add(undated.reasoning_tokens);
         slot.messages = slot.messages.saturating_add(undated.messages);
+        slot.cost += undated.cost;
     }
     let mut day_slices: Vec<DaySlice> = per_day
         .into_iter()
@@ -1766,5 +1805,54 @@ mod tests {
 
         let _ = std::fs::remove_file(&p1);
         let _ = std::fs::remove_file(&p2);
+    }
+
+    // Regression: a session that switched models was costed entirely against
+    // its LAST model, so 1M Opus + 1M Sonnet input tokens priced as if all 2M
+    // were Sonnet ($6) instead of $15 (Opus) + $3 (Sonnet) = $18. Cost is now
+    // accumulated per-message by each message's own model.
+    #[test]
+    fn mixed_model_session_is_priced_per_message() {
+        use chrono::TimeZone;
+        let day = chrono::Local
+            .with_ymd_and_hms(2026, 5, 2, 12, 0, 0)
+            .unwrap();
+        let date = day.format("%Y-%m-%d").to_string();
+
+        // One Opus message then one Sonnet message, each 1,000,000 input tokens.
+        let body = format!(
+            "{}\n{}\n",
+            format!(
+                r#"{{"type":"assistant","timestamp":"{ts}","message":{{"id":"m0","model":"claude-opus-4","usage":{{"input_tokens":1000000,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}},"content":[]}}}}"#,
+                ts = day.to_rfc3339()
+            ),
+            format!(
+                r#"{{"type":"assistant","timestamp":"{ts}","message":{{"id":"m1","model":"claude-sonnet-4","usage":{{"input_tokens":1000000,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}},"content":[]}}}}"#,
+                ts = day.to_rfc3339()
+            ),
+        );
+        let path = write_temp_jsonl("mixed-model", &body);
+        let session = parse_transcript(&path, "sess-mixed", "claude-code").unwrap();
+
+        // Session cost sums per-message: $15 (Opus) + $3 (Sonnet) = $18.
+        let cost = calculate_cost(&session);
+        assert!(
+            (cost - 18.0).abs() < 1e-6,
+            "per-model cost should be $18 (Opus $15 + Sonnet $3), got {cost}"
+        );
+
+        let dir = std::env::temp_dir().join(format!("humhum-mixed-{}", uuid::Uuid::new_v4()));
+        let mut store = StatsStore::new_with_backfill(dir.join("stats.json"), false);
+        store.data.sessions.push(session);
+
+        let dash = store.get_token_dashboard();
+        let day_row = dash.days.iter().find(|d| d.date == date).unwrap();
+        assert!(
+            (day_row.cost - 18.0).abs() < 1e-6,
+            "day view cost must match per-model pricing ($18), got {}",
+            day_row.cost
+        );
+
+        let _ = std::fs::remove_file(&path);
     }
 }
