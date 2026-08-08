@@ -43,6 +43,7 @@ mod sound_pack;
 mod stats_store;
 mod system_tts;
 mod tailnet;
+mod token_dashboard_page;
 mod transcript_reader;
 mod user_safe_text;
 mod wake_crypto;
@@ -516,6 +517,8 @@ pub fn run() {
             commands::get_stats,
             commands::clear_stats,
             commands::get_agent_stats,
+            commands::get_token_dashboard,
+            commands::open_token_dashboard,
             commands::get_hexa_readouts,
             commands::type_in_terminal,
             commands::toggle_hub,

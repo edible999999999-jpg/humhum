@@ -55,6 +55,7 @@ tauri-plugin-dialog = "2"
 rusqlite = { version = "0.32", features = ["bundled"] }
 toml_edit = "0.22"
 tokscale-core = { git = "https://github.com/junhoyeo/tokscale.git", rev = "5678d0a6bc0ee3be39b09543abf373a29b33a692" }
+open = "5"
 
 [dev-dependencies]
 tempfile = "3"

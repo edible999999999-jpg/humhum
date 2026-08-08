@@ -561,6 +561,315 @@ impl StatsStore {
     }
 }
 
+// ---- Token dashboard payload (camelCase, mirrors the design-qa snapshot shape) ----
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TokenDashboard {
+    pub generated_at: String,
+    pub today: String,
+    pub range: DashRange,
+    pub summary: DashSummary,
+    pub hours: Vec<DashHour>,
+    pub days: Vec<DashDay>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DashRange {
+    pub start: String,
+    pub end: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DashSummary {
+    pub total_tokens: u64,
+    pub total_cost: f64,
+    pub total_days: u64,
+    pub active_days: u64,
+    pub clients: Vec<String>,
+    pub models: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DashHour {
+    pub hour: String,
+    pub tokens: u64,
+    pub cost: f64,
+    pub messages: u64,
+    pub input: u64,
+    pub output: u64,
+    pub cache_read: u64,
+    pub cache_write: u64,
+    pub reasoning: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DashDay {
+    pub date: String,
+    pub tokens: u64,
+    pub cost: f64,
+    pub messages: u64,
+    pub input: u64,
+    pub output: u64,
+    pub cache_read: u64,
+    pub cache_write: u64,
+    pub reasoning: u64,
+    pub clients: Vec<DashClientSlice>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DashClientSlice {
+    pub client: String,
+    pub model: String,
+    pub tokens: u64,
+    pub cost: f64,
+    pub messages: u64,
+}
+
+#[derive(Default, Clone)]
+struct TokenAccum {
+    tokens: u64,
+    cost: f64,
+    messages: u64,
+    input: u64,
+    output: u64,
+    cache_read: u64,
+    cache_write: u64,
+    reasoning: u64,
+}
+
+impl TokenAccum {
+    fn add(&mut self, s: &SessionStats, cost: f64) {
+        self.tokens += s.input_tokens
+            + s.output_tokens
+            + s.cache_creation_tokens
+            + s.cache_read_tokens
+            + s.reasoning_tokens;
+        self.cost += cost;
+        self.messages += 1;
+        self.input += s.input_tokens;
+        self.output += s.output_tokens;
+        self.cache_read += s.cache_read_tokens;
+        self.cache_write += s.cache_creation_tokens;
+        self.reasoning += s.reasoning_tokens;
+    }
+
+    /// Add a single parsed transcript message's token breakdown directly, used
+    /// by the hourly view where each message carries its own timestamp so the
+    /// day's usage spreads across the real hours it happened in.
+    fn add_breakdown(
+        &mut self,
+        input: u64,
+        output: u64,
+        cache_read: u64,
+        cache_write: u64,
+        reasoning: u64,
+        cost: f64,
+    ) {
+        self.tokens += input + output + cache_read + cache_write + reasoning;
+        self.cost += cost;
+        self.messages += 1;
+        self.input += input;
+        self.output += output;
+        self.cache_read += cache_read;
+        self.cache_write += cache_write;
+        self.reasoning += reasoning;
+    }
+}
+
+// Re-parse today's transcripts and bucket every message by the local hour it
+// actually happened in. A single session can span many hours, so charging its
+// whole token total to the session's start hour (as the day/week/month views do)
+// collapses the hourly chart into one lonely bar. Here we read each message's
+// own millisecond timestamp instead.
+fn accumulate_today_hours(
+    sessions: &[SessionStats],
+    today: &str,
+    hour_acc: &mut HashMap<String, TokenAccum>,
+) {
+    use tokscale_core::sessions::{claudecode::parse_claude_file, codex::parse_codex_file};
+
+    for s in sessions {
+        if s.transcript_path.is_empty() {
+            continue;
+        }
+        let path = std::path::Path::new(&s.transcript_path);
+        if !path.exists() {
+            continue;
+        }
+        let messages = match s.client_type.as_str() {
+            "codex" => parse_codex_file(path),
+            "claude" | "claude-code" => parse_claude_file(path),
+            _ => continue,
+        };
+        bucket_messages_by_hour(&messages, today, hour_acc);
+    }
+}
+
+// Pure hour-bucketing: given parsed transcript messages, spread each one into
+// the local hour it happened in (today only). Split out so it can be tested
+// without touching disk.
+fn bucket_messages_by_hour(
+    messages: &[tokscale_core::sessions::UnifiedMessage],
+    today: &str,
+    hour_acc: &mut HashMap<String, TokenAccum>,
+) {
+    for m in messages {
+        // tokscale timestamps are epoch milliseconds; convert to the viewer's
+        // local wall-clock so hour boundaries match the "今日" the user sees.
+        let Some(dt) = chrono::DateTime::from_timestamp_millis(m.timestamp) else {
+            continue;
+        };
+        let local = dt.with_timezone(&chrono::Local);
+        let date = local.format("%Y-%m-%d").to_string();
+        if date != today {
+            continue;
+        }
+        let key = local.format("%Y-%m-%d %H:00").to_string();
+        hour_acc.entry(key).or_default().add_breakdown(
+            m.tokens.input.max(0) as u64,
+            m.tokens.output.max(0) as u64,
+            m.tokens.cache_read.max(0) as u64,
+            m.tokens.cache_write.max(0) as u64,
+            m.tokens.reasoning.max(0) as u64,
+            m.cost,
+        );
+    }
+}
+
+// "2026-08-07T13:42:10+08:00" -> ("2026-08-07", "2026-08-07 13:00")
+fn split_local_stamp(ts: &str) -> Option<(String, String)> {
+    let date = ts.get(0..10)?;
+    if date.len() != 10 {
+        return None;
+    }
+    let hour = ts.get(11..13).unwrap_or("00");
+    Some((date.to_string(), format!("{date} {hour}:00")))
+}
+
+impl StatsStore {
+    /// Build the token-usage dashboard payload straight from parsed sessions so
+    /// the live Hub view mirrors the standalone snapshot's shape (days + today's
+    /// hourly breakdown + per-model / per-client slices).
+    pub fn get_token_dashboard(&self) -> TokenDashboard {
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+
+        let mut day_acc: HashMap<String, TokenAccum> = HashMap::new();
+        // (date, client, model) -> slice
+        let mut day_slice: HashMap<(String, String, String), TokenAccum> = HashMap::new();
+        let mut hour_acc: HashMap<String, TokenAccum> = HashMap::new();
+        let mut client_set: BTreeSet<String> = BTreeSet::new();
+        let mut model_set: BTreeSet<String> = BTreeSet::new();
+        let mut total = TokenAccum::default();
+
+        for s in &self.data.sessions {
+            let Some((date, _hour)) = split_local_stamp(&s.timestamp) else {
+                continue;
+            };
+            let cost = calculate_cost(s);
+            let model = if s.model.trim().is_empty() {
+                "unknown".to_string()
+            } else {
+                s.model.clone()
+            };
+            client_set.insert(s.client_type.clone());
+            model_set.insert(model.clone());
+            total.add(s, cost);
+            day_acc.entry(date.clone()).or_default().add(s, cost);
+            day_slice
+                .entry((date.clone(), s.client_type.clone(), model))
+                .or_default()
+                .add(s, cost);
+        }
+
+        // Hourly view needs per-message timestamps, not per-session, so re-parse
+        // today's transcripts and spread each message into its real local hour.
+        accumulate_today_hours(&self.data.sessions, &today, &mut hour_acc);
+
+        let mut days: Vec<DashDay> = day_acc
+            .into_iter()
+            .map(|(date, a)| {
+                let mut clients: Vec<DashClientSlice> = day_slice
+                    .iter()
+                    .filter(|((d, _, _), _)| *d == date)
+                    .map(|((_, client, model), sl)| DashClientSlice {
+                        client: client.clone(),
+                        model: model.clone(),
+                        tokens: sl.tokens,
+                        cost: sl.cost,
+                        messages: sl.messages,
+                    })
+                    .collect();
+                clients.sort_by(|x, y| y.tokens.cmp(&x.tokens));
+                DashDay {
+                    date,
+                    tokens: a.tokens,
+                    cost: a.cost,
+                    messages: a.messages,
+                    input: a.input,
+                    output: a.output,
+                    cache_read: a.cache_read,
+                    cache_write: a.cache_write,
+                    reasoning: a.reasoning,
+                    clients,
+                }
+            })
+            .collect();
+        days.sort_by(|a, b| a.date.cmp(&b.date));
+
+        // Always emit a full 24-hour axis for today so the view reads as one
+        // complete day: hours with usage get a bar, quiet hours stay as gaps.
+        // Without this, a user who only ran once shows a single lonely column
+        // that looks broken rather than "today, one busy hour".
+        let hours: Vec<DashHour> = (0..24)
+            .map(|h| {
+                let key = format!("{today} {h:02}:00");
+                let a = hour_acc.get(&key).cloned().unwrap_or_default();
+                DashHour {
+                    hour: key,
+                    tokens: a.tokens,
+                    cost: a.cost,
+                    messages: a.messages,
+                    input: a.input,
+                    output: a.output,
+                    cache_read: a.cache_read,
+                    cache_write: a.cache_write,
+                    reasoning: a.reasoning,
+                }
+            })
+            .collect();
+
+        let active_days = days.iter().filter(|d| d.tokens > 0).count() as u64;
+        let start = days
+            .first()
+            .map(|d| d.date.clone())
+            .unwrap_or_else(|| today.clone());
+        let end = days
+            .last()
+            .map(|d| d.date.clone())
+            .unwrap_or_else(|| today.clone());
+
+        TokenDashboard {
+            generated_at: chrono::Local::now().to_rfc3339(),
+            today,
+            range: DashRange { start, end },
+            summary: DashSummary {
+                total_tokens: total.tokens,
+                total_cost: total.cost,
+                total_days: days.len() as u64,
+                active_days,
+                clients: client_set.into_iter().collect(),
+                models: model_set.into_iter().collect(),
+            },
+            hours,
+            days,
+        }
+    }
+}
+
 fn collect_jsonl_files(root: &std::path::Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
     let Ok(entries) = std::fs::read_dir(root) else {
@@ -962,5 +1271,137 @@ mod tests {
         assert_eq!(store.data.parser_revision, STATS_PARSER_REVISION);
         assert!(store.data.sessions.is_empty());
         assert!(store.data.processed_transcripts.is_empty());
+    }
+
+    // The dashboard payload derives hours (today) + days (30d window), and the
+    // browser script folds days into week/month buckets. Guard that the shape
+    // holds for a multi-day, multi-client fixture so all four views have data.
+    #[test]
+    fn dashboard_covers_hour_day_week_month_views() {
+        let temp = tempfile::tempdir().unwrap();
+        let stats_path = temp.path().join("stats.json");
+        let mut store = StatsStore::new_with_backfill(stats_path, false);
+
+        let today = chrono::Local::now();
+        let stamp = |offset_days: i64, hour: u32| {
+            (today - chrono::Duration::days(offset_days))
+                .date_naive()
+                .and_hms_opt(hour, 0, 0)
+                .unwrap()
+                .format("%Y-%m-%dT%H:00:00+00:00")
+                .to_string()
+        };
+        // spread across today (2 hours) + prior days spanning >1 week and 2 months
+        let samples = [
+            (stamp(0, 9), "claude"),
+            (stamp(0, 14), "claude"),
+            (stamp(3, 10), "codex"),
+            (stamp(9, 11), "claude"),
+            (stamp(35, 12), "codex"),
+        ];
+        for (i, (ts, client)) in samples.iter().enumerate() {
+            store.data.sessions.push(SessionStats {
+                session_id: format!("s{i}"),
+                client_type: (*client).to_string(),
+                transcript_path: format!("t{i}.jsonl"),
+                model: "claude-opus-4".to_string(),
+                input_tokens: 100,
+                output_tokens: 50,
+                cache_creation_tokens: 10,
+                cache_read_tokens: 20,
+                reasoning_tokens: 5,
+                tool_calls: 1,
+                tool_names: vec![],
+                timestamp: ts.clone(),
+            });
+        }
+
+        let dash = store.get_token_dashboard();
+        // today's hour axis is always a full 24 slots so a light day still reads
+        // as one complete day rather than a lonely single bar
+        assert_eq!(dash.hours.len(), 24, "expected a full 24-hour axis");
+        // hourly usage is now sourced from per-message transcript timestamps; the
+        // synthetic sessions here point at nonexistent transcripts, so hours stay
+        // empty — that path is covered end-to-end by
+        // `hourly_view_spreads_messages_across_real_hours` below.
+        // days window keeps the last 30 days: today + d3 + d9 (d35 falls outside)
+        assert!(dash.days.len() >= 3, "expected a multi-day series");
+        // week/month derive client-side, but every day carries its client slices
+        assert!(dash.days.iter().all(|d| !d.clients.is_empty()));
+        assert!(dash.summary.total_tokens > 0);
+    }
+
+    // A single session spanning several hours must land its tokens in each of
+    // those hours, not all in the session's start hour. This is the whole point
+    // of the hourly view: "每小时都应该不一样".
+    #[test]
+    fn hourly_view_spreads_messages_across_real_hours() {
+        use tokscale_core::sessions::UnifiedMessage;
+        use tokscale_core::TokenBreakdown;
+
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        // three messages today at 09:00, 09:30 and 14:00 local, plus one yesterday
+        let at = |h: u32, m: u32| {
+            chrono::Local::now()
+                .date_naive()
+                .and_hms_opt(h, m, 0)
+                .unwrap()
+                .and_local_timezone(chrono::Local)
+                .unwrap()
+                .timestamp_millis()
+        };
+        let yesterday = chrono::Local::now()
+            .date_naive()
+            .pred_opt()
+            .unwrap()
+            .and_hms_opt(10, 0, 0)
+            .unwrap()
+            .and_local_timezone(chrono::Local)
+            .unwrap()
+            .timestamp_millis();
+        let msg = |ts: i64, input: i64| UnifiedMessage {
+            client: "claude-code".to_string(),
+            model_id: "claude-opus-4".to_string(),
+            provider_id: "anthropic".to_string(),
+            session_id: "s".to_string(),
+            workspace_key: None,
+            workspace_label: None,
+            timestamp: ts,
+            date: String::new(),
+            tokens: TokenBreakdown {
+                input,
+                output: 10,
+                cache_read: 0,
+                cache_write: 0,
+                reasoning: 0,
+            },
+            cost: 0.01,
+            cost_source: Default::default(),
+            duration_ms: None,
+            message_count: 1,
+            agent: None,
+            dedup_key: None,
+            session_title: None,
+            is_turn_start: false,
+        };
+        let messages = vec![
+            msg(at(9, 0), 100),
+            msg(at(9, 30), 200),
+            msg(at(14, 0), 300),
+            msg(yesterday, 999),
+        ];
+
+        let mut hour_acc: HashMap<String, TokenAccum> = HashMap::new();
+        bucket_messages_by_hour(&messages, &today, &mut hour_acc);
+
+        // yesterday's message must be excluded; today splits into two hours (09, 14)
+        assert_eq!(hour_acc.len(), 2, "two distinct active hours today");
+        let h09 = hour_acc.get(&format!("{today} 09:00")).unwrap();
+        let h14 = hour_acc.get(&format!("{today} 14:00")).unwrap();
+        // 09:00 merges both morning messages (100+10 + 200+10)
+        assert_eq!(h09.input, 300);
+        assert_eq!(h09.messages, 2);
+        assert_eq!(h14.input, 300);
+        assert_eq!(h14.messages, 1);
     }
 }

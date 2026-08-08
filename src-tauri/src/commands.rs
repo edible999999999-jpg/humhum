@@ -5127,6 +5127,32 @@ pub async fn clear_stats(
         .clear()
 }
 
+/// Get the token-usage dashboard payload (days + today's hourly breakdown +
+/// per-model / per-client slices) for the token usage dashboard.
+#[tauri::command]
+pub async fn get_token_dashboard(
+    store: State<'_, Arc<std::sync::Mutex<StatsStore>>>,
+) -> Result<Value, String> {
+    let store = store.lock().map_err(|e| format!("Lock error: {}", e))?;
+    let dashboard = store.get_token_dashboard();
+    serde_json::to_value(dashboard).map_err(|e| format!("Serialize error: {}", e))
+}
+
+/// Render the live token dashboard to a self-contained HTML file and open it in
+/// the user's default browser. Driven from the Humi room's Token card so anyone
+/// who downloads HUMHUM sees their own local usage without any CLI step.
+#[tauri::command]
+pub async fn open_token_dashboard(
+    store: State<'_, Arc<std::sync::Mutex<StatsStore>>>,
+) -> Result<(), String> {
+    let data_json = {
+        let store = store.lock().map_err(|e| format!("Lock error: {}", e))?;
+        let dashboard = store.get_token_dashboard();
+        serde_json::to_string(&dashboard).map_err(|e| format!("Serialize error: {}", e))?
+    };
+    crate::token_dashboard_page::open_in_browser(&data_json)
+}
+
 /// Get per-agent usage statistics for comparison
 #[tauri::command]
 pub async fn get_agent_stats(
