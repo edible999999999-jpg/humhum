@@ -92,7 +92,7 @@ async fn restore_mobile_access(
 pub fn run() {
     env_logger::init();
 
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_autostart::init(
@@ -554,8 +554,26 @@ pub fn run() {
             commands::scan_obsidian_vault,
             commands::query_knowledge,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running HumHum");
+        .build(tauri::generate_context!())
+        .expect("error while building HumHum");
+
+    app.run(|app, event| {
+        #[cfg(target_os = "macos")]
+        if let tauri::RunEvent::Reopen { .. } = event {
+            show_main_window(app);
+        }
+    });
+}
+
+fn show_main_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+
+        #[cfg(target_os = "macos")]
+        reassert_window_level(&window);
+    }
 }
 
 #[cfg(test)]
@@ -820,10 +838,7 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
+                show_main_window(app);
             }
             "settings" => {
                 let _ = tauri::async_runtime::block_on(commands::toggle_settings(app.clone()));
