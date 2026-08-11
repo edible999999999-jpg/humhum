@@ -13,8 +13,14 @@ const MAX_OBSIDIAN_NOTES: usize = 2000;
 const MAX_AGENT_ASSETS: usize = 8000;
 const MAX_AGENT_RULE_FILES: usize = 2000;
 const MAX_AGENT_RULE_DEPTH: usize = 4;
+/// Hard ceiling on directory-tree recursion for the asset and markdown walks.
+/// Deep enough for any real skill bundle or vault layout, but a firm stop so a
+/// directory symlink cycle (e.g. `skills/loop -> skills`) cannot loop forever.
+const MAX_SCAN_DEPTH: usize = 24;
 const MAX_MARKDOWN_BYTES: u64 = 512 * 1024;
 const MAX_ASSET_BYTES: u64 = 384 * 1024;
+/// How many `knowledge.json.*.bak` snapshots to retain before pruning oldest.
+const MAX_KNOWLEDGE_BACKUPS: usize = 5;
 const AGENT_RULE_SCAN_PATHS: [(&str, &str, &str); 3] = [
     ("claude-code", "CLAUDE.md", "CLAUDE.md"),
     ("cursor", ".cursorrules", ".cursorrules"),
@@ -196,7 +202,16 @@ impl KnowledgeStore {
 
     fn load_from_file(path: &Path) -> KnowledgeData {
         match read_private_text(path) {
-            Some(contents) => serde_json::from_str(&contents).unwrap_or_default(),
+            Some(contents) => match serde_json::from_str(&contents) {
+                Ok(data) => data,
+                Err(error) => {
+                    log::warn!(
+                        "Knowledge index at {} is corrupt; starting empty (rules/notes/assets re-derive on the next scan, preferences and memory reload from the vault): {error}",
+                        path.display()
+                    );
+                    KnowledgeData::default()
+                }
+            },
             None => KnowledgeData::default(),
         }
     }
@@ -707,7 +722,47 @@ impl KnowledgeStore {
             .file_path
             .with_file_name(format!("knowledge.json.{}.bak", timestamp));
         crate::local_api_auth::write_private_file_atomically(&backup, contents.as_bytes())
-            .map_err(|error| format!("Failed to back up knowledge index: {}", error))
+            .map_err(|error| format!("Failed to back up knowledge index: {}", error))?;
+        self.prune_old_backups();
+        Ok(())
+    }
+
+    /// Keep only the most recent `MAX_KNOWLEDGE_BACKUPS` `knowledge.json.*.bak`
+    /// files. Every asset scan writes one (millisecond-stamped, so never
+    /// overwritten), which would otherwise grow `~/.humhum` without bound.
+    fn prune_old_backups(&self) {
+        let Some(dir) = self.file_path.parent() else {
+            return;
+        };
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        let mut backups = entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| {
+                        name.starts_with("knowledge.json.") && name.ends_with(".bak")
+                    })
+            })
+            .collect::<Vec<_>>();
+        if backups.len() <= MAX_KNOWLEDGE_BACKUPS {
+            return;
+        }
+        // Lexicographic order matches chronological order for the fixed-width
+        // `%Y%m%dT%H%M%S%3fZ` stamp, so the newest sort last.
+        backups.sort();
+        let remove_count = backups.len() - MAX_KNOWLEDGE_BACKUPS;
+        for stale in backups.into_iter().take(remove_count) {
+            if let Err(error) = std::fs::remove_file(&stale) {
+                log::warn!(
+                    "Failed to prune stale knowledge backup {}: {error}",
+                    stale.display()
+                );
+            }
+        }
     }
 
     pub fn diagnose_agent_asset_roots(
@@ -1037,9 +1092,9 @@ fn expand_home(path: &str, home: &Path) -> PathBuf {
 
 fn collect_agent_asset_files(root: &Path, limit: usize) -> Result<Vec<PathBuf>, String> {
     let mut files = Vec::new();
-    let mut queue = VecDeque::from([root.to_path_buf()]);
+    let mut queue = VecDeque::from([(root.to_path_buf(), 0usize)]);
 
-    while let Some(dir) = queue.pop_front() {
+    while let Some((dir, depth)) = queue.pop_front() {
         let entries = match std::fs::read_dir(&dir) {
             Ok(entries) => entries,
             Err(_) => continue,
@@ -1049,11 +1104,14 @@ fn collect_agent_asset_files(root: &Path, limit: usize) -> Result<Vec<PathBuf>, 
             let path = entry.path();
             let name = entry.file_name().to_string_lossy().to_string();
             if path.is_dir() {
+                if depth >= MAX_SCAN_DEPTH {
+                    continue;
+                }
                 if should_skip_dir(&name) || name == "target" || name == ".git" {
                     continue;
                 }
                 if is_trusted_agent_asset_root(root) || is_agent_asset_dir(&path) || dir == root {
-                    queue.push_back(path);
+                    queue.push_back((path, depth + 1));
                 }
             } else if is_agent_asset_file(&path) {
                 files.push(path);
@@ -1359,9 +1417,9 @@ fn normalize_vault_path(path: &str) -> Result<String, String> {
 
 fn collect_markdown_files(root: &Path, limit: usize) -> Result<Vec<PathBuf>, String> {
     let mut files = Vec::new();
-    let mut queue = VecDeque::from([root.to_path_buf()]);
+    let mut queue = VecDeque::from([(root.to_path_buf(), 0usize)]);
 
-    while let Some(dir) = queue.pop_front() {
+    while let Some((dir, depth)) = queue.pop_front() {
         let entries = match std::fs::read_dir(&dir) {
             Ok(entries) => entries,
             Err(_) => continue,
@@ -1372,10 +1430,13 @@ fn collect_markdown_files(root: &Path, limit: usize) -> Result<Vec<PathBuf>, Str
             let name = entry.file_name().to_string_lossy().to_string();
 
             if path.is_dir() {
+                if depth >= MAX_SCAN_DEPTH {
+                    continue;
+                }
                 if should_skip_dir(&name) {
                     continue;
                 }
-                queue.push_back(path);
+                queue.push_back((path, depth + 1));
             } else if path
                 .extension()
                 .and_then(|ext| ext.to_str())
@@ -1764,8 +1825,9 @@ fn build_excerpt(content: &str, limit: usize) -> String {
     }
 
     if excerpt.len() > limit {
-        excerpt.truncate(limit);
-        excerpt.push_str("...");
+        let mut clipped = crate::user_safe_text::utf8_prefix(&excerpt, limit).to_string();
+        clipped.push_str("...");
+        return clipped;
     }
     excerpt
 }
@@ -2783,6 +2845,99 @@ mod tests {
             store.get_all().memory_items.is_empty(),
             "an existing empty vault is authoritative for memories"
         );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn build_excerpt_clips_multibyte_content_without_panicking() {
+        // A body whose byte length crosses the limit mid-character: every glyph
+        // is 3 bytes, so no byte offset lands on a char boundary by accident.
+        let body = "内容".repeat(400);
+        let excerpt = build_excerpt(&body, 360);
+        assert!(excerpt.ends_with("..."));
+        assert!(excerpt.len() <= 360 + "...".len());
+        // The clipped prefix must still be valid UTF-8 made of whole glyphs.
+        assert!(excerpt
+            .trim_end_matches('.')
+            .chars()
+            .all(|ch| ch == '内' || ch == '容'));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn collect_markdown_files_terminates_on_a_directory_symlink_cycle() {
+        use std::os::unix::fs::symlink;
+
+        let root = temp_root("md-symlink-cycle");
+        let vault = root.join("vault");
+        std::fs::create_dir_all(vault.join("notes")).unwrap();
+        std::fs::write(vault.join("notes/a.md"), "# note").unwrap();
+        // notes/loop -> notes  (a cycle with no new markdown behind it)
+        symlink(vault.join("notes"), vault.join("notes/loop")).unwrap();
+
+        let files = collect_markdown_files(&vault, MAX_OBSIDIAN_NOTES).unwrap();
+        assert!(files.iter().any(|path| path.ends_with("a.md")));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn collect_agent_asset_files_terminates_on_a_directory_symlink_cycle() {
+        use std::os::unix::fs::symlink;
+
+        let root = temp_root("asset-symlink-cycle");
+        let skills = root.join("skills");
+        std::fs::create_dir_all(skills.join("real")).unwrap();
+        std::fs::write(skills.join("real/SKILL.md"), "---\nname: x\n---\n").unwrap();
+        symlink(&skills, skills.join("loop")).unwrap();
+
+        // Not a trusted root, so recursion is gated by is_agent_asset_dir/dir==root;
+        // the depth cap is what guarantees termination through the cycle.
+        let files = collect_agent_asset_files(&skills, MAX_AGENT_ASSETS).unwrap();
+        assert!(files.iter().any(|path| path.ends_with("SKILL.md")));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn corrupt_knowledge_index_loads_as_empty_defaults() {
+        let root = temp_root("corrupt-index");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("knowledge.json"), b"{ this is not json").unwrap();
+
+        let store = store_at(&root);
+        assert!(store.get_all().agent_rules.is_empty());
+        assert!(store.get_all().obsidian_notes.is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn asset_scan_backups_are_pruned_to_the_retention_limit() {
+        let root = temp_root("backup-prune");
+        std::fs::create_dir_all(&root).unwrap();
+        let store = store_at(&root);
+        // A real index file must exist for backup_before_asset_replace to snapshot.
+        std::fs::write(store.file_path.as_path(), b"{}").unwrap();
+
+        for index in 0..MAX_KNOWLEDGE_BACKUPS + 3 {
+            let stamp = format!("2026010100000{index:02}Z");
+            let backup = store
+                .file_path
+                .with_file_name(format!("knowledge.json.{stamp}.bak"));
+            std::fs::write(&backup, b"{}").unwrap();
+        }
+        store.prune_old_backups();
+
+        let remaining = std::fs::read_dir(&root)
+            .unwrap()
+            .flatten()
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.ends_with(".bak"))
+            })
+            .count();
+        assert_eq!(remaining, MAX_KNOWLEDGE_BACKUPS);
         let _ = std::fs::remove_dir_all(&root);
     }
 }
