@@ -189,8 +189,15 @@ impl RemoteBridgeState {
             return Err(format!("SSH tunnel exited with {exit}: {}", detail.trim()));
         }
 
-        *self.ingress.write().map_err(|error| error.to_string())? =
-            Some(RemoteIngressAuth::new(&token));
+        // Recover a poisoned lock instead of wedging connect/disconnect while
+        // the auth-read paths (authorizes_event/status) already recover — a
+        // panic elsewhere holding this lock must not permanently break the
+        // bridge's connect/disconnect. Matches the backend poison-recovery
+        // convention used across the codebase.
+        *self
+            .ingress
+            .write()
+            .unwrap_or_else(|error| error.into_inner()) = Some(RemoteIngressAuth::new(&token));
         runtime.child = Some(child);
         runtime.target = Some(target);
         runtime.last_error = None;
@@ -203,7 +210,10 @@ impl RemoteBridgeState {
             let _ = child.start_kill();
             let _ = child.wait().await;
         }
-        *self.ingress.write().map_err(|error| error.to_string())? = None;
+        *self
+            .ingress
+            .write()
+            .unwrap_or_else(|error| error.into_inner()) = None;
         runtime.target = None;
         runtime.last_error = None;
         Ok(status_from_runtime(&runtime))
