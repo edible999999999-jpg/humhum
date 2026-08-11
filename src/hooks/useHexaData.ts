@@ -505,9 +505,19 @@ export function useHexaData() {
       ]);
 
       if (activeResult.status === "fulfilled") {
+        const activeIds = new Set(activeResult.value.map((session) => session.session_id));
         setSessions((current) => [
           ...activeResult.value,
-          ...current.filter((session) => session.status === "completed"),
+          // Preserve sessions the live active list can't reproduce: completed
+          // ones (get_active_sessions drops finished sessions) and watched-only
+          // sessions (injected solely by fetchSnapshot, so a health-triggered
+          // fetchLiveState would otherwise silently drop active/idle watched
+          // agents). Skip any whose id is already in the fresh active set.
+          ...current.filter(
+            (session) =>
+              !activeIds.has(session.session_id) &&
+              (session.status === "completed" || session.event_names.includes("HexaWatch")),
+          ),
         ]);
       }
       if (watchedResult.status === "fulfilled") {
@@ -546,13 +556,22 @@ export function useHexaData() {
     fetchGoalData();
     const watchedTimer = window.setInterval(fetchWatchedState, WATCHED_REFRESH_INTERVAL_MS);
 
+    // Session-lifecycle events must recompute the supervisor snapshot
+    // (supervisorSessions/alerts/agentStats), which only fetchSnapshot writes.
+    // Route them through fetchSessions (coalesced fetchSnapshot) so a passive
+    // observer's scan view and per-session panels stay live instead of frozen
+    // at their mount-time values. fetchSessions coalesces, so rapid-fire events
+    // won't stampede the backend. Pure health churn stays on the lighter
+    // fetchLiveState.
     const unlistenHook = listen("humhum://hook-event", () => {
-      fetchLiveState();
+      fetchSessions();
     });
     const unlistenTimeout = listen("humhum://permission-timeout", () => {
-      fetchLiveState();
+      fetchSessions();
     });
-    const unlistenBridgeSession = listen("humhum://hexa-session-changed", fetchLiveState);
+    const unlistenBridgeSession = listen("humhum://hexa-session-changed", () => {
+      fetchSessions();
+    });
     const unlistenBridgeHealth = listen("humhum://codex-bridge-health", fetchLiveState);
     const unlistenGoalChanged = listen("humhum://hexa-goal-changed", fetchGoalData);
     const unlistenRemoteControl = listen<CodexRemoteControlState>(

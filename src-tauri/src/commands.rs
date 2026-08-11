@@ -162,6 +162,31 @@ mod client_hook_install_tests {
         assert_eq!(value["hooks"]["errorOccurred"][0]["timeoutSec"], 10);
     }
 
+    // Regression: a flat-JSON client config holding valid-but-non-object JSON
+    // (e.g. a top-level array) parses fine, so the parse-error fallback never
+    // fires. Indexing it with `config["version"]` used to panic and take down
+    // the IPC handler; it must now return a clean Err and leave the file alone.
+    #[test]
+    fn flat_json_install_refuses_non_object_root_without_panicking() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("hooks.json");
+        std::fs::write(&path, "[]").unwrap();
+
+        let result = install_flat_json_hooks(
+            &path,
+            "'/tmp/humhum-hook.sh' --client 'cursor'",
+            &["preToolUse"],
+            false,
+        );
+
+        assert!(
+            result.is_err(),
+            "non-object root must be refused, not panic"
+        );
+        // The original file is untouched.
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "[]");
+    }
+
     #[test]
     fn opencode_plugin_uses_runtime_token_without_embedding_it() {
         let temp = tempfile::tempdir().unwrap();
@@ -3790,9 +3815,41 @@ pub async fn focus_agent_session(
     window_focus::focus_agent_route(None)
 }
 
-/// Focus the terminal and type text + Enter (for AskUserQuestion responses)
+/// Focus the terminal and type text + Enter (for AskUserQuestion responses).
+///
+/// When `session_id` is provided, focus THAT session's own terminal first (via
+/// the same routing as `focus_agent_session`) and then type into the now-front
+/// window. Without a session_id we fall back to the legacy best-effort path
+/// that activates the first terminal it finds — which can type the answer into
+/// an unrelated terminal that merely happens to be open. Always prefer passing
+/// the session_id so the keystroke lands in the terminal that actually asked.
 #[tauri::command]
-pub async fn type_in_terminal(text: String) -> Result<(), String> {
+pub async fn type_in_terminal(
+    store: State<'_, Arc<std::sync::Mutex<SessionStore>>>,
+    text: String,
+    session_id: Option<String>,
+) -> Result<(), String> {
+    let route = match session_id.as_deref() {
+        Some(id) if !id.is_empty() => {
+            let store = store
+                .lock()
+                .map_err(|error| format!("Lock error: {error}"))?;
+            store
+                .get_all_sessions_with_history()
+                .into_iter()
+                .find(|session| session.session_id == id)
+                .and_then(|session| session.route.clone())
+        }
+        _ => None,
+    };
+
+    // Focus the session's terminal, then type into whatever is now frontmost.
+    // If routing fails or we have no route, fall back to the legacy path that
+    // finds+activates+types in one shot.
+    if route.is_some() && window_focus::focus_agent_route(route.as_ref()).is_ok() {
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        return window_focus::keystroke_text_async(&text).await;
+    }
     window_focus::type_in_terminal_async(&text).await
 }
 
@@ -4057,6 +4114,16 @@ fn install_flat_json_hooks(
     } else {
         serde_json::json!({})
     };
+    // A file holding valid-but-non-object JSON (e.g. `[]`, `42`, `"x"`) parses
+    // fine, so the fallback above does NOT catch it. Indexing a non-object with
+    // a string key (`config["version"] = ...`) panics, so guard the root the
+    // same way install_json_hooks does rather than crash the IPC handler.
+    if !config.is_object() {
+        return Err(format!(
+            "Refusing to modify JSON config whose root is not an object: {}",
+            config_path.display()
+        ));
+    }
     config["version"] = serde_json::json!(1);
     if !config.get("hooks").is_some_and(Value::is_object) {
         config["hooks"] = serde_json::json!({});
@@ -4538,7 +4605,12 @@ pub async fn proxy_post_binary(
 ) -> Result<String, String> {
     use base64::Engine;
 
-    let client = reqwest::Client::new();
+    // Match proxy_post's timeout so a TTS endpoint that stalls after headers
+    // can't hang this command (and its awaiting frontend promise) forever.
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(45))
+        .build()
+        .map_err(|e| format!("Create HTTP client failed: {}", e))?;
     let mut req = client.post(&url);
 
     if let Some(obj) = headers.as_object() {
@@ -4709,6 +4781,19 @@ fn audio_file_extension(bytes: &[u8]) -> &'static str {
 #[tauri::command]
 pub async fn stop_audio() -> Result<(), String> {
     crate::native_audio::stop().await
+}
+
+/// Pause the currently-playing audio without dropping it, so it can resume.
+/// Backs the Space shortcut that silences narration during a permission prompt.
+#[tauri::command]
+pub async fn pause_audio() -> Result<(), String> {
+    crate::native_audio::pause().await
+}
+
+/// Resume audio paused by `pause_audio`.
+#[tauri::command]
+pub async fn resume_audio() -> Result<(), String> {
+    crate::native_audio::resume().await
 }
 
 #[cfg(test)]

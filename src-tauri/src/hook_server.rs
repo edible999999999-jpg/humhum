@@ -30,6 +30,37 @@ use uuid::Uuid;
 
 const MAX_HEXA_AUDIT_BODY_BYTES: usize = 64 * 1024;
 const MAX_HEXA_GOAL_BODY_BYTES: usize = 64 * 1024;
+/// Cap for the general JSON POST endpoints (/event, /respond, hush inbox, the
+/// Hexa watch register/update/plan/delete handlers). hyper's http1 server sets
+/// no body limit, and these read the whole body into memory before parsing, so
+/// an unbounded read is an OOM/crash path for any localhost caller. 1 MiB is
+/// far above any real hook payload; the Hexa audit/goal endpoints keep their
+/// own tighter 64 KiB caps.
+const MAX_JSON_BODY_BYTES: usize = 1024 * 1024;
+
+/// Read a request body with a hard size cap, returning a ready-made error
+/// response on overflow or read failure. Mirrors the hardening already applied
+/// to `handle_hexa_audit`, so every JSON POST endpoint shares one bounded path.
+async fn read_capped_body<B>(req: Request<B>, limit: usize) -> Result<Bytes, Response<Full<Bytes>>>
+where
+    B: hyper::body::Body,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    match Limited::new(req.into_body(), limit).collect().await {
+        Ok(collected) => Ok(collected.to_bytes()),
+        Err(error) => {
+            let (status, message) = if error.downcast_ref::<LengthLimitError>().is_some() {
+                (StatusCode::PAYLOAD_TOO_LARGE, "request body is too large")
+            } else {
+                (StatusCode::BAD_REQUEST, "failed to read body")
+            };
+            Err(json_response(
+                status,
+                &serde_json::json!({"error": format!("{message}: {error}")}),
+            ))
+        }
+    }
+}
 
 /// Stores a pending permission request with its event info
 pub struct PendingRequest {
@@ -52,7 +83,13 @@ const PERMISSION_WAIT_SECS: u64 = 123;
 pub async fn start_server(app_handle: tauri::AppHandle) {
     let config = {
         let config_state = app_handle.state::<Arc<std::sync::Mutex<crate::config::AppConfig>>>();
-        let config = config_state.lock().unwrap();
+        // Recover a poisoned lock instead of panicking the server thread: a
+        // panic elsewhere while holding the config mutex must not silently take
+        // the hook server down. Matches the poison-recovery convention used
+        // across the backend.
+        let config = config_state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         config.clone()
     };
 
@@ -370,16 +407,11 @@ async fn handle_event(
     // Extract query params before consuming the body
     let query_string = req.uri().query().unwrap_or("").to_string();
 
-    // Read the request body (JSON from hook script)
-    let body = match req.collect().await {
-        Ok(collected) => collected.to_bytes(),
-        Err(e) => {
-            log::error!("Failed to read request body: {}", e);
-            return Ok(json_response(
-                StatusCode::BAD_REQUEST,
-                &serde_json::json!({"error": "failed to read body"}),
-            ));
-        }
+    // Read the request body (JSON from hook script), capped to avoid an
+    // unbounded in-memory buffer on a hostile/oversized POST.
+    let body = match read_capped_body(req, MAX_JSON_BODY_BYTES).await {
+        Ok(bytes) => bytes,
+        Err(response) => return Ok(response),
     };
 
     let payload: Value = match serde_json::from_slice(&body) {
@@ -579,11 +611,8 @@ async fn handle_event(
 
         match decision {
             Ok(Ok(d)) => {
-                let hook_behavior = if d.behavior == "allowAlways" {
-                    "allow"
-                } else {
-                    &d.behavior
-                };
+                let is_always = d.behavior == "allowAlways";
+                let hook_behavior = if is_always { "allow" } else { &d.behavior };
                 log::info!(
                     "Permission decided for {}: {} (hook: {}) answer={:?}",
                     event_id,
@@ -610,6 +639,11 @@ async fn handle_event(
                             }
                         })
                     }
+                } else if is_always {
+                    // "Always allow" must persist a rule via updatedPermissions,
+                    // otherwise Claude Code re-prompts for the same tool every
+                    // time — the whole point of the button.
+                    permission_always_allow_response(&hook_event.payload)
                 } else {
                     permission_hook_response(&hook_event.client_type, hook_behavior)
                 };
@@ -755,14 +789,9 @@ async fn handle_respond(
     req: Request<hyper::body::Incoming>,
     pending: PendingMap,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
-    let body = match req.collect().await {
-        Ok(collected) => collected.to_bytes(),
-        Err(e) => {
-            return Ok(json_response(
-                StatusCode::BAD_REQUEST,
-                &serde_json::json!({"error": format!("failed to read body: {}", e)}),
-            ));
-        }
+    let body = match read_capped_body(req, MAX_JSON_BODY_BYTES).await {
+        Ok(bytes) => bytes,
+        Err(response) => return Ok(response),
     };
 
     let payload: Value = match serde_json::from_slice(&body) {
@@ -857,14 +886,9 @@ async fn handle_hush_inbox_post(
     req: Request<hyper::body::Incoming>,
     app_handle: tauri::AppHandle,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
-    let body = match req.collect().await {
-        Ok(collected) => collected.to_bytes(),
-        Err(e) => {
-            return Ok(json_response(
-                StatusCode::BAD_REQUEST,
-                &serde_json::json!({"error": format!("failed to read body: {}", e)}),
-            ));
-        }
+    let body = match read_capped_body(req, MAX_JSON_BODY_BYTES).await {
+        Ok(bytes) => bytes,
+        Err(response) => return Ok(response),
     };
 
     let payload: Value = match serde_json::from_slice(&body) {
@@ -933,6 +957,77 @@ fn permission_hook_response(client_type: &str, behavior: &str) -> Value {
             "decision": { "behavior": behavior }
         }
     })
+}
+
+/// Build the `updatedPermissions` array that turns a one-time allow into a
+/// persisted "always allow" rule, so Claude Code stops re-prompting for the
+/// same tool/command.
+///
+/// Claude Code already hands us the exact rules it would apply if the user
+/// picked "always allow" in the native dialog, in the request's
+/// `permission_suggestions` field. Echoing one of those back verbatim is,
+/// per the docs, equivalent to the user selecting that option — so we prefer
+/// it. Only when the request carries no suggestions (older CLI, or a tool with
+/// no rule shape) do we synthesize a minimal `addRules` entry from the tool
+/// name and command, written to `userSettings` to match where our hook lives
+/// (`~/.claude/settings.json`).
+///
+/// Returns `None` when we can't form a meaningful rule; the caller then falls
+/// back to a plain one-time allow rather than emitting an empty/invalid entry.
+fn build_always_allow_permissions(payload: &Value) -> Option<Value> {
+    // Prefer the CLI's own suggestions — same array shape as updatedPermissions.
+    if let Some(suggestions) = payload.get("permission_suggestions") {
+        if let Some(arr) = suggestions.as_array() {
+            if !arr.is_empty() {
+                return Some(suggestions.clone());
+            }
+        }
+    }
+
+    // Fall back to synthesizing an allow rule from the tool + its command.
+    let tool_name = payload.get("tool_name").and_then(|v| v.as_str())?;
+    if tool_name.is_empty() {
+        return None;
+    }
+    // Only Bash carries a meaningful ruleContent (the command). For other tools
+    // a whole-tool allow is the honest match, so we omit ruleContent.
+    let rule = match payload
+        .get("tool_input")
+        .and_then(|v| v.get("command"))
+        .and_then(|v| v.as_str())
+    {
+        Some(command) if !command.is_empty() => {
+            serde_json::json!({ "toolName": tool_name, "ruleContent": command })
+        }
+        _ => serde_json::json!({ "toolName": tool_name }),
+    };
+
+    Some(serde_json::json!([
+        {
+            "type": "addRules",
+            "rules": [rule],
+            "behavior": "allow",
+            "destination": "userSettings"
+        }
+    ]))
+}
+
+/// PermissionRequest allow response that also persists an "always allow" rule
+/// via `updatedPermissions`. Falls back to a plain allow when no rule can be
+/// derived from the payload.
+fn permission_always_allow_response(payload: &Value) -> Value {
+    match build_always_allow_permissions(payload) {
+        Some(updated) => serde_json::json!({
+            "hookSpecificOutput": {
+                "hookEventName": "PermissionRequest",
+                "decision": {
+                    "behavior": "allow",
+                    "updatedPermissions": updated
+                }
+            }
+        }),
+        None => permission_hook_response("claude-code", "allow"),
+    }
 }
 
 /// GET /knowledge?q=<keyword> — query the knowledge base
@@ -1009,14 +1104,9 @@ async fn handle_hexa_register(
     req: Request<hyper::body::Incoming>,
     app_handle: tauri::AppHandle,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
-    let body = match req.collect().await {
-        Ok(collected) => collected.to_bytes(),
-        Err(e) => {
-            return Ok(json_response(
-                StatusCode::BAD_REQUEST,
-                &serde_json::json!({"error": format!("failed to read body: {}", e)}),
-            ));
-        }
+    let body = match read_capped_body(req, MAX_JSON_BODY_BYTES).await {
+        Ok(bytes) => bytes,
+        Err(response) => return Ok(response),
     };
     let request: HexaWatchRegisterRequest = match serde_json::from_slice(&body) {
         Ok(value) => value,
@@ -1063,14 +1153,9 @@ async fn handle_hexa_update(
     req: Request<hyper::body::Incoming>,
     app_handle: tauri::AppHandle,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
-    let body = match req.collect().await {
-        Ok(collected) => collected.to_bytes(),
-        Err(e) => {
-            return Ok(json_response(
-                StatusCode::BAD_REQUEST,
-                &serde_json::json!({"error": format!("failed to read body: {}", e)}),
-            ));
-        }
+    let body = match read_capped_body(req, MAX_JSON_BODY_BYTES).await {
+        Ok(bytes) => bytes,
+        Err(response) => return Ok(response),
     };
     let request: HexaWatchUpdateRequest = match serde_json::from_slice(&body) {
         Ok(value) => value,
@@ -1197,14 +1282,9 @@ async fn handle_hexa_plan(
     req: Request<hyper::body::Incoming>,
     app_handle: tauri::AppHandle,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
-    let body = match req.collect().await {
-        Ok(collected) => collected.to_bytes(),
-        Err(error) => {
-            return Ok(json_response(
-                StatusCode::BAD_REQUEST,
-                &serde_json::json!({"error": format!("failed to read body: {error}")}),
-            ))
-        }
+    let body = match read_capped_body(req, MAX_JSON_BODY_BYTES).await {
+        Ok(bytes) => bytes,
+        Err(response) => return Ok(response),
     };
     let request: HexaPlanSyncRequest = match serde_json::from_slice(&body) {
         Ok(value) => value,
@@ -1270,14 +1350,9 @@ async fn handle_hexa_delete(
     req: Request<hyper::body::Incoming>,
     app_handle: tauri::AppHandle,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
-    let body = match req.collect().await {
-        Ok(collected) => collected.to_bytes(),
-        Err(e) => {
-            return Ok(json_response(
-                StatusCode::BAD_REQUEST,
-                &serde_json::json!({"error": format!("failed to read body: {}", e)}),
-            ));
-        }
+    let body = match read_capped_body(req, MAX_JSON_BODY_BYTES).await {
+        Ok(bytes) => bytes,
+        Err(response) => return Ok(response),
     };
     let request: HexaWatchDeleteRequest = match serde_json::from_slice(&body) {
         Ok(value) => value,
@@ -1630,7 +1705,95 @@ mod session_auto_confirm_tests {
 
 #[cfg(test)]
 mod hook_protocol_tests {
-    use super::{canonical_hook_event_name, permission_hook_response};
+    use super::{
+        build_always_allow_permissions, canonical_hook_event_name,
+        permission_always_allow_response, permission_hook_response,
+    };
+
+    #[test]
+    fn always_allow_echoes_the_clis_permission_suggestions() {
+        // When Claude Code offers suggestions, "always allow" must echo them
+        // back verbatim — that is exactly the native "always allow" the user
+        // would have picked, so the rule persists and re-prompts stop.
+        let payload = serde_json::json!({
+            "tool_name": "Bash",
+            "tool_input": { "command": "npm run lint" },
+            "permission_suggestions": [
+                {
+                    "type": "addRules",
+                    "rules": [{ "toolName": "Bash", "ruleContent": "npm run lint" }],
+                    "behavior": "allow",
+                    "destination": "localSettings"
+                }
+            ]
+        });
+        let response = permission_always_allow_response(&payload);
+        assert_eq!(
+            response.pointer("/hookSpecificOutput/decision/behavior"),
+            Some(&serde_json::json!("allow"))
+        );
+        // The updatedPermissions array is the suggestions echoed back verbatim.
+        assert_eq!(
+            response.pointer("/hookSpecificOutput/decision/updatedPermissions"),
+            payload.get("permission_suggestions")
+        );
+    }
+
+    #[test]
+    fn always_allow_synthesizes_a_rule_when_no_suggestions() {
+        // Older CLI / no suggestions: synthesize an allow rule from the tool +
+        // command, written to userSettings (where our hook lives).
+        let payload = serde_json::json!({
+            "tool_name": "Bash",
+            "tool_input": { "command": "cargo test" }
+        });
+        let updated = build_always_allow_permissions(&payload).expect("a rule");
+        let entry = &updated.as_array().unwrap()[0];
+        assert_eq!(entry.get("type"), Some(&serde_json::json!("addRules")));
+        assert_eq!(entry.get("behavior"), Some(&serde_json::json!("allow")));
+        assert_eq!(
+            entry.get("destination"),
+            Some(&serde_json::json!("userSettings"))
+        );
+        assert_eq!(
+            entry.pointer("/rules/0/toolName"),
+            Some(&serde_json::json!("Bash"))
+        );
+        assert_eq!(
+            entry.pointer("/rules/0/ruleContent"),
+            Some(&serde_json::json!("cargo test"))
+        );
+    }
+
+    #[test]
+    fn always_allow_omits_rule_content_for_non_command_tools() {
+        // A tool without a command (e.g. Write) gets a whole-tool allow — no
+        // bogus ruleContent.
+        let payload = serde_json::json!({
+            "tool_name": "Write",
+            "tool_input": { "file_path": "/tmp/x", "content": "hi" }
+        });
+        let updated = build_always_allow_permissions(&payload).expect("a rule");
+        let rule = updated.pointer("/0/rules/0").unwrap();
+        assert_eq!(rule.get("toolName"), Some(&serde_json::json!("Write")));
+        assert!(rule.get("ruleContent").is_none());
+    }
+
+    #[test]
+    fn always_allow_falls_back_to_plain_allow_without_tool() {
+        // No tool_name and no suggestions: no rule to persist, so we must still
+        // emit a valid plain allow rather than an empty updatedPermissions.
+        let payload = serde_json::json!({ "hook_event_name": "PermissionRequest" });
+        assert!(build_always_allow_permissions(&payload).is_none());
+        let response = permission_always_allow_response(&payload);
+        assert_eq!(
+            response.pointer("/hookSpecificOutput/decision/behavior"),
+            Some(&serde_json::json!("allow"))
+        );
+        assert!(response
+            .pointer("/hookSpecificOutput/decision/updatedPermissions")
+            .is_none());
+    }
 
     #[test]
     fn codex_permission_response_uses_nested_decision() {
@@ -1775,5 +1938,38 @@ mod hexa_goal_endpoint_tests {
             .evidence
             .iter()
             .all(|evidence| evidence.kind == "agent_report"));
+    }
+}
+
+#[cfg(test)]
+mod capped_body_tests {
+    use super::*;
+
+    fn request_with_body(bytes: Vec<u8>) -> Request<Full<Bytes>> {
+        Request::builder()
+            .method("POST")
+            .uri("/event")
+            .body(Full::new(Bytes::from(bytes)))
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn reads_a_body_within_the_limit() {
+        let body = b"{\"ok\":true}".to_vec();
+        let result = read_capped_body(request_with_body(body.clone()), 1024).await;
+        assert_eq!(
+            result.expect("under-limit body should read"),
+            Bytes::from(body)
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_a_body_over_the_limit_with_413() {
+        // One byte past the cap must be refused before it is buffered whole.
+        let oversized = vec![b'a'; 33];
+        let response = read_capped_body(request_with_body(oversized), 32)
+            .await
+            .expect_err("over-limit body must be rejected");
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
     }
 }

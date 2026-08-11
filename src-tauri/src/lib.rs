@@ -63,6 +63,61 @@ fn mobile_restore_retry_delay(attempt: usize) -> Option<std::time::Duration> {
         .map(std::time::Duration::from_secs)
 }
 
+/// Move an unreadable data file aside so a fresh default can take its place,
+/// preserving the original bytes for post-mortem debugging instead of deleting.
+fn quarantine_path(path: &std::path::Path) -> std::path::PathBuf {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .unwrap_or(0);
+    let mut file_name = path
+        .file_name()
+        .map(std::ffi::OsStr::to_os_string)
+        .unwrap_or_default();
+    file_name.push(format!(".corrupt-{stamp}"));
+    path.with_file_name(file_name)
+}
+
+/// Load a persisted store, and if a *recoverable* on-disk corruption blocks the
+/// load (e.g. malformed JSON), quarantine the offending file and retry once so
+/// the loader can fall back to a fresh default.
+///
+/// This exists because several `~/.humhum/*.json`-backed stores are loaded in
+/// `setup()` with `?`, meaning a single corrupt file would abort the entire app
+/// launch — no pet, no tray, nothing — from an entirely recoverable condition.
+/// The Hexa stores already degrade gracefully; this brings the rest in line.
+///
+/// If the retry still fails (genuinely unrecoverable — e.g. an unwritable
+/// directory), the error is propagated so launch fails loudly rather than
+/// silently masking a real environment problem.
+fn load_store_or_recover<T>(
+    label: &str,
+    data_path: &std::path::Path,
+    loader: impl Fn() -> Result<T, String>,
+) -> Result<T, String> {
+    match loader() {
+        Ok(value) => Ok(value),
+        Err(error) => {
+            log::warn!("Could not load {label}: {error}");
+            if data_path.exists() || std::fs::symlink_metadata(data_path).is_ok() {
+                let quarantine = quarantine_path(data_path);
+                match std::fs::rename(data_path, &quarantine) {
+                    Ok(()) => log::warn!(
+                        "Quarantined unreadable {label} to {}; recreating a fresh default",
+                        quarantine.display()
+                    ),
+                    Err(rename_error) => {
+                        return Err(format!(
+                            "{error}; additionally could not quarantine the file: {rename_error}"
+                        ));
+                    }
+                }
+            }
+            loader()
+        }
+    }
+}
+
 async fn restore_mobile_access(
     bridge: Arc<mobile_bridge::MobileBridgeState>,
     app: tauri::AppHandle,
@@ -159,9 +214,16 @@ pub fn run() {
             let should_restore_mobile_access = config.mobile_access_enabled;
             let analytics_enabled = config.ui.analytics_enabled;
             app.manage(Arc::new(std::sync::Mutex::new(config)));
+            let humi_brain_path = dirs::home_dir()
+                .map(|home| home.join(".humhum").join("brain").join("sessions.json"))
+                .unwrap_or_default();
             app.manage(Arc::new(std::sync::Mutex::new(
-                humi_brain::HumiBrainSessionStore::load_default()
-                    .map_err(std::io::Error::other)?,
+                load_store_or_recover(
+                    "Humi brain sessions",
+                    &humi_brain_path,
+                    humi_brain::HumiBrainSessionStore::load_default,
+                )
+                .map_err(std::io::Error::other)?,
             )));
 
             if let Some(home) = dirs::home_dir() {
@@ -186,9 +248,12 @@ pub fn run() {
                 let auth = local_api_auth::LocalApiAuth::load_or_create(&home.join(".humhum"))
                     .map_err(std::io::Error::other)?;
                 app.manage(Arc::new(auth));
-                let intervention_queue =
-                    intervention_queue::InterventionQueue::load_or_create(&home.join(".humhum"))
-                        .map_err(std::io::Error::other)?;
+                let intervention_queue = load_store_or_recover(
+                    "intervention queue",
+                    &home.join(".humhum").join("intervention-queue.json"),
+                    || intervention_queue::InterventionQueue::load_or_create(&home.join(".humhum")),
+                )
+                .map_err(std::io::Error::other)?;
                 app.manage(Arc::new(std::sync::Mutex::new(intervention_queue)));
                 let hush_signal_store = hush_signal_store::HushSignalStore::load_or_create(
                     &home.join(".humhum"),
@@ -303,8 +368,12 @@ pub fn run() {
             let dws_home = dirs::home_dir()
                 .ok_or_else(|| std::io::Error::other("Could not determine home directory"))?;
             let dws_bridge = Arc::new(
-                dws_hush_bridge::DwsHushBridge::load_or_create(&dws_home)
-                    .map_err(std::io::Error::other)?,
+                load_store_or_recover(
+                    "DingTalk DWS sync settings",
+                    &dws_home.join(".humhum").join("hush-dws.json"),
+                    || dws_hush_bridge::DwsHushBridge::load_or_create(&dws_home),
+                )
+                .map_err(std::io::Error::other)?,
             );
             app.manage(dws_bridge.clone());
             let dws_app = app_handle.clone();
@@ -336,8 +405,12 @@ pub fn run() {
             // WeChat local history stays in strict read-only mode and imports
             // only incoming messages into the local Hush inbox.
             let wechat_bridge = Arc::new(
-                wechat_hush_bridge::WechatHushBridge::load_or_create(&dws_home)
-                    .map_err(std::io::Error::other)?,
+                load_store_or_recover(
+                    "WeChat sync settings",
+                    &dws_home.join(".humhum").join("hush-wechat.json"),
+                    || wechat_hush_bridge::WechatHushBridge::load_or_create(&dws_home),
+                )
+                .map_err(std::io::Error::other)?,
             );
             app.manage(wechat_bridge.clone());
             let wechat_app = app_handle.clone();
@@ -509,6 +582,8 @@ pub fn run() {
             commands::transcribe_audio,
             commands::play_audio,
             commands::stop_audio,
+            commands::pause_audio,
+            commands::resume_audio,
             commands::synthesize_system_speech,
             commands::get_sound_packs,
             commands::select_sound_pack,
@@ -540,7 +615,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod startup_tests {
-    use super::mobile_restore_retry_delay;
+    use super::{load_store_or_recover, mobile_restore_retry_delay, quarantine_path};
 
     #[test]
     fn mobile_restore_uses_a_bounded_backoff() {
@@ -556,6 +631,81 @@ mod startup_tests {
                 None,
             ]
         );
+    }
+
+    #[test]
+    fn corrupt_store_is_quarantined_and_a_fresh_default_loads() {
+        let dir = std::env::temp_dir().join(format!("humhum-recover-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("store.json");
+        std::fs::write(&path, b"{ this is not valid json").unwrap();
+
+        // A loader that fails on malformed bytes but succeeds when the file is
+        // absent — the shape of every JSON-backed store in setup().
+        let loader = || {
+            if path.exists() {
+                let contents = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+                serde_json::from_str::<serde_json::Value>(&contents)
+                    .map(|_| "loaded".to_string())
+                    .map_err(|e| e.to_string())
+            } else {
+                Ok("default".to_string())
+            }
+        };
+
+        let result = load_store_or_recover("test store", &path, loader).unwrap();
+        assert_eq!(
+            result, "default",
+            "recovery must fall back to a fresh default"
+        );
+        assert!(!path.exists(), "the corrupt file must be moved aside");
+
+        // The original bytes are preserved under a quarantine name for debugging.
+        let quarantined: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .contains("store.json.corrupt-")
+            })
+            .collect();
+        assert_eq!(quarantined.len(), 1, "exactly one quarantine file expected");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn healthy_store_loads_without_quarantining() {
+        let dir = std::env::temp_dir().join(format!("humhum-healthy-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("store.json");
+        std::fs::write(&path, b"{\"ok\":true}").unwrap();
+
+        let loader = || {
+            let contents = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+            serde_json::from_str::<serde_json::Value>(&contents)
+                .map(|_| "loaded".to_string())
+                .map_err(|e| e.to_string())
+        };
+
+        let result = load_store_or_recover("test store", &path, loader).unwrap();
+        assert_eq!(result, "loaded");
+        assert!(path.exists(), "a healthy file must be left untouched");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn quarantine_path_keeps_the_original_name_as_a_prefix() {
+        let original = std::path::Path::new("/tmp/humhum/sessions.json");
+        let quarantined = quarantine_path(original);
+        let name = quarantined.file_name().unwrap().to_string_lossy();
+        assert!(name.starts_with("sessions.json.corrupt-"), "got {name}");
+        assert_eq!(quarantined.parent(), original.parent());
     }
 }
 
@@ -696,6 +846,13 @@ fn apply_macos_transparency(window: &tauri::WebviewWindow) {
     }
 }
 
+/// The single process-wide SkyLight stationary space, created lazily on the
+/// first `move_to_skylight_space` call and reused for every window afterward.
+/// 0 means "not yet created". Prevents leaking a space on every settings/hub
+/// re-show (SLSSpaceCreate has no teardown API we call).
+#[cfg(target_os = "macos")]
+static SKYLIGHT_SPACE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
 #[cfg(target_os = "macos")]
 #[allow(deprecated, unexpected_cfgs)]
 pub(crate) fn move_to_skylight_space(ns_window: cocoa::base::id) {
@@ -750,18 +907,42 @@ pub(crate) fn move_to_skylight_space(ns_window: cocoa::base::id) {
         );
 
         let conn = sls_main_connection_id();
-        let space = sls_space_create(conn, 1, 0);
-        if space == 0 {
-            log::warn!("[SkyLight] Failed to create space");
-            return;
-        }
 
-        sls_space_set_absolute_level(conn, space, 100);
+        // Reuse a single process-wide stationary space instead of creating a
+        // new one on every window show. `move_to_skylight_space` is called once
+        // per window at startup AND every time a hidden window (settings/hub) is
+        // re-shown; SLSSpaceCreate has no teardown, so creating unconditionally
+        // leaked a WindowServer-side space on each toggle. All HumHum windows
+        // belong on the same stationary space anyway, so cache the first one.
+        let cached = SKYLIGHT_SPACE.load(std::sync::atomic::Ordering::Acquire);
+        let space = if cached != 0 {
+            cached
+        } else {
+            let created = sls_space_create(conn, 1, 0);
+            if created == 0 {
+                log::warn!("[SkyLight] Failed to create space");
+                return;
+            }
+            sls_space_set_absolute_level(conn, created, 100);
 
-        // Create NSArray with space ID for SLSShowSpaces
-        let ns_number: id = msg_send![class!(NSNumber), numberWithInt: space];
-        let space_array: id = msg_send![class!(NSArray), arrayWithObject: ns_number];
-        sls_show_spaces(conn, space_array);
+            // Show the freshly created space exactly once.
+            let ns_number: id = msg_send![class!(NSNumber), numberWithInt: created];
+            let space_array: id = msg_send![class!(NSArray), arrayWithObject: ns_number];
+            sls_show_spaces(conn, space_array);
+
+            // Another thread may have created one concurrently; keep the winner
+            // and let the loser's space fall out of use (single benign leak on
+            // an unlikely startup race, not one per toggle).
+            match SKYLIGHT_SPACE.compare_exchange(
+                0,
+                created,
+                std::sync::atomic::Ordering::AcqRel,
+                std::sync::atomic::Ordering::Acquire,
+            ) {
+                Ok(_) => created,
+                Err(existing) => existing,
+            }
+        };
 
         // Get window number and move it to the stationary space
         let window_number: i64 = msg_send![ns_window, windowNumber];
@@ -792,9 +973,18 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
     // Keep this as the single tray creation site. Adding app.trayIcon to
     // tauri.conf.json would create a second native icon before setup runs.
-    TrayIconBuilder::with_id("humhum-tray")
-        .icon(app.default_window_icon().unwrap().clone())
-        .icon_as_template(true)
+    //
+    // Degrade to a menu-only tray if the bundle icon is missing/unreadable
+    // rather than panicking the entire launch on `unwrap()`. A tray with no
+    // icon is still usable (and the menu still works); a crashed app is not.
+    let mut tray_builder = TrayIconBuilder::with_id("humhum-tray");
+    match app.default_window_icon() {
+        Some(icon) => tray_builder = tray_builder.icon(icon.clone()).icon_as_template(true),
+        None => log::warn!(
+            "[tray] No default window icon available; creating a menu-only tray without an icon"
+        ),
+    }
+    tray_builder
         .menu(&menu)
         .tooltip("HumHum - AI Coding Companion")
         .show_menu_on_left_click(false)

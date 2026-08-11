@@ -6,26 +6,40 @@ export class AudioQueue {
   private currentIndex = 0;
   private player: AudioPlayer;
   private state: AudioQueueState = "idle";
-  private stateCallback: ((state: AudioQueueState) => void) | null = null;
-  private chunkCallback: ((chunk: AudioChunk, index: number) => void) | null =
-    null;
+  private stateCallbacks: ((state: AudioQueueState) => void)[] = [];
+  private chunkCallbacks: ((chunk: AudioChunk, index: number) => void)[] = [];
 
   constructor() {
     this.player = new AudioPlayer();
     this.player.setEndedCallback(() => this.playNext());
   }
 
-  onStateChange(cb: (state: AudioQueueState) => void): void {
-    this.stateCallback = cb;
+  // Multiple independent consumers subscribe to state (the VoicePipeline's
+  // self-heal at bootstrap, plus useAudioQueue when the pet view mounts).
+  // Returns an unsubscribe fn. A single-slot setter let the later subscriber
+  // clobber the earlier one, leaving the pipeline stuck in "speaking".
+  onStateChange(cb: (state: AudioQueueState) => void): () => void {
+    this.stateCallbacks.push(cb);
+    return () => {
+      this.stateCallbacks = this.stateCallbacks.filter((entry) => entry !== cb);
+    };
   }
 
-  onChunkPlay(cb: (chunk: AudioChunk, index: number) => void): void {
-    this.chunkCallback = cb;
+  // Same multi-subscriber shape as onStateChange: a single-slot setter let a
+  // remount clobber the prior closure and leaked a stale setCurrentChunk into
+  // the unmounted component, which then fired on the next played chunk.
+  onChunkPlay(cb: (chunk: AudioChunk, index: number) => void): () => void {
+    this.chunkCallbacks.push(cb);
+    return () => {
+      this.chunkCallbacks = this.chunkCallbacks.filter((entry) => entry !== cb);
+    };
   }
 
   private setState(newState: AudioQueueState): void {
     this.state = newState;
-    this.stateCallback?.(newState);
+    for (const cb of this.stateCallbacks) {
+      cb(newState);
+    }
   }
 
   get length(): number {
@@ -38,7 +52,14 @@ export class AudioQueue {
 
   enqueue(chunk: AudioChunk): void {
     this.queue.push(chunk);
-    if (this.queue.length === 1 && this.state === "idle") {
+    // Restart playback whenever nothing is currently playing and this chunk is
+    // the only unplayed one. The queue array only grows (playNext advances
+    // currentIndex without trimming), so gate on `length` (unplayed count) and
+    // a non-active state — including "ended", which is where playback settles
+    // once it drains. Gating on `queue.length === 1 && "idle"` only ever fired
+    // right after clear(), stranding chunks enqueued after a drain (notably the
+    // flushed final sentence).
+    if (this.length === 1 && (this.state === "idle" || this.state === "ended")) {
       this.playCurrent();
     }
   }
@@ -80,7 +101,9 @@ export class AudioQueue {
       return;
     }
     this.setState("playing");
-    this.chunkCallback?.(chunk, this.currentIndex);
+    for (const cb of this.chunkCallbacks) {
+      cb(chunk, this.currentIndex);
+    }
     try {
       await this.player.play(chunk.buffer);
     } catch (e) {

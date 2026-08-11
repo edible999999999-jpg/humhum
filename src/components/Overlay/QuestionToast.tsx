@@ -53,7 +53,9 @@ export function QuestionToast({ event, onDismiss }: QuestionToastProps) {
       }
     } else {
       try {
-        await invoke("type_in_terminal", { text: choice });
+        // Pass the session_id so the answer is typed into the terminal that
+        // actually asked, not whichever terminal happens to be open first.
+        await invoke("type_in_terminal", { text: choice, sessionId: event.session_id });
         onDismiss();
       } catch (e) {
         console.error("[QuestionToast] type_in_terminal failed:", e);

@@ -603,7 +603,7 @@ activate
 repeat with aWindow in windows
 repeat with aTab in tabs of aWindow
 repeat with aSession in sessions of aTab
-if (unique ID of aSession as text) is in "{escaped}" then
+if (unique ID of aSession as text) is equal to "{escaped}" then
 select aTab
 select aSession
 return
@@ -697,11 +697,48 @@ pub fn focus_terminal_app() -> Result<(), String> {
     Err("Window focus is only supported on macOS and Windows".to_string())
 }
 
+/// Type `text` then press Enter into whatever application is currently
+/// frontmost, WITHOUT choosing/activating a terminal itself. Callers that know
+/// which session asked should focus that session's terminal first (see
+/// `commands::type_in_terminal`) so the keystroke lands in the right window;
+/// this keeps the "pick a terminal" and "type" concerns separate.
+#[cfg(target_os = "macos")]
+pub async fn keystroke_text_async(text: &str) -> Result<(), String> {
+    let escaped = text.replace('\\', "\\\\").replace('"', "\\\"");
+    let script = format!(
+        r#"tell application "System Events"
+    keystroke "{}"
+    delay 0.05
+    key code 36
+end tell
+"#,
+        escaped
+    );
+
+    let output = tokio::process::Command::new("osascript")
+        .arg("-e")
+        .arg(&script)
+        .output()
+        .await
+        .map_err(|e| format!("osascript failed: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("osascript error: {}", stderr));
+    }
+
+    Ok(())
+}
+
 #[cfg(target_os = "macos")]
 pub async fn type_in_terminal_async(text: &str) -> Result<(), String> {
     let escaped = text.replace('\\', "\\\\").replace('"', "\\\"");
 
-    // Single osascript: find a terminal, activate it, wait, type, press Enter
+    // Legacy best-effort fallback used only when the caller has NO session
+    // context to route by: find a terminal, activate it, wait, type, Enter.
+    // Prefer the routed path in `commands::type_in_terminal`, which focuses the
+    // session's own terminal before typing so the answer can't land in an
+    // unrelated terminal that merely happens to be open.
     let script = format!(
         r#"
 set termApps to {{"iTerm2", "iTerm", "Terminal", "WezTerm", "Alacritty", "kitty", "Cursor", "Code", "Warp"}}
@@ -743,6 +780,14 @@ end tell
     Ok(())
 }
 
+// On Windows, "type into the focused window" and "type into the terminal" are
+// the same primitive: type_text_and_enter targets the foreground window, which
+// the caller focuses first. keystroke_text_async is thus a thin wrapper.
+#[cfg(target_os = "windows")]
+pub async fn keystroke_text_async(text: &str) -> Result<(), String> {
+    windows::type_text_and_enter(text)
+}
+
 #[cfg(target_os = "windows")]
 pub async fn type_in_terminal_async(text: &str) -> Result<(), String> {
     windows::focus_terminal_window()?;
@@ -750,6 +795,11 @@ pub async fn type_in_terminal_async(text: &str) -> Result<(), String> {
     // Resolve and focus the terminal once more after the delay. This avoids
     // sending an answer if another application took focus in the meantime.
     windows::type_text_and_enter(text)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+pub async fn keystroke_text_async(_text: &str) -> Result<(), String> {
+    Err("Terminal input is only supported on macOS and Windows".to_string())
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]

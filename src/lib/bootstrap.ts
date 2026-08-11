@@ -17,7 +17,12 @@ let audioQueue: AudioQueue | null = null;
 let summarizer: OpenAISummarizer | null = null;
 let splitter: SentenceSplitter | null = null;
 let pipeline: VoicePipeline | null = null;
-let initialized = false;
+// In-flight (or completed) bootstrap promise. Concurrent callers — including
+// React 18 StrictMode's double-mount — await the SAME completion instead of one
+// racing ahead of the other. Cleared on failure so a transient error (e.g.
+// get_config rejecting before the backend is ready) can be retried rather than
+// permanently disabling the pipeline.
+let bootstrapPromise: Promise<void> | null = null;
 
 export function getAudioQueue(): AudioQueue {
   if (!audioQueue) audioQueue = new AudioQueue();
@@ -37,10 +42,20 @@ export function getPipeline(): VoicePipeline | null {
   return pipeline;
 }
 
-export async function initBootstrap(): Promise<void> {
-  if (initialized) return;
-  initialized = true;
+export function initBootstrap(): Promise<void> {
+  // Return the existing promise so concurrent callers share one run. Only reset
+  // it if a run REJECTED — a resolved promise stays cached so re-entry no-ops.
+  if (bootstrapPromise) return bootstrapPromise;
+  bootstrapPromise = runBootstrap().catch((error) => {
+    // Let the next caller retry a failed bootstrap instead of latching a dead
+    // pipeline for the rest of the process lifetime.
+    bootstrapPromise = null;
+    throw error;
+  });
+  return bootstrapPromise;
+}
 
+async function runBootstrap(): Promise<void> {
   const config = (await invoke("get_config")) as AppConfig;
   setLanguage(config.ui.language as "zh" | "en");
 

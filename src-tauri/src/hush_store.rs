@@ -79,10 +79,19 @@ impl HushStore {
                     log::warn!("Failed to protect Hush inbox before reading it: {error}");
                 }
             }
-            std::fs::read_to_string(&file_path)
-                .ok()
-                .and_then(|contents| serde_json::from_str::<Vec<HushInboxMessage>>(&contents).ok())
-                .unwrap_or_default()
+            match std::fs::read_to_string(&file_path) {
+                Ok(contents) => match serde_json::from_str::<Vec<HushInboxMessage>>(&contents) {
+                    Ok(messages) => messages,
+                    Err(error) => {
+                        log::warn!(
+                            "Hush inbox at {} is corrupt; starting from an empty inbox (it will re-sync from the bridges): {error}",
+                            file_path.display()
+                        );
+                        Vec::new()
+                    }
+                },
+                Err(_) => Vec::new(),
+            }
         };
         Self {
             messages,

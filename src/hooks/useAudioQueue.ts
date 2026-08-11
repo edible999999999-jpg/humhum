@@ -8,8 +8,12 @@ export function useAudioQueue() {
 
   useEffect(() => {
     const queue = getAudioQueue();
-    queue.onStateChange(setState);
-    queue.onChunkPlay((chunk) => setCurrentChunk(chunk));
+    const unsubscribeState = queue.onStateChange(setState);
+    const unsubscribeChunk = queue.onChunkPlay((chunk) => setCurrentChunk(chunk));
+    return () => {
+      unsubscribeState();
+      unsubscribeChunk();
+    };
   }, []);
 
   const play = useCallback(() => getAudioQueue().play(), []);
