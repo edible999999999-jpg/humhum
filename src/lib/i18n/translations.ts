@@ -52,6 +52,7 @@ export const translations: TranslationMap = {
     zh: "语音识别出错，请用按钮或键盘",
     en: "Voice input error — use the buttons or keyboard",
   },
+  "petRecovery.openHub": { zh: "打开 HumHum Hub", en: "Open HumHum Hub" },
 
   // ── Settings Panel ──
   "settings.loading": { zh: "加载中...", en: "Loading..." },

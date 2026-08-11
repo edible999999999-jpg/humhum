@@ -842,10 +842,7 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             } = event
             {
                 let app = tray.app_handle();
-                if let Some(win) = app.get_webview_window("main") {
-                    let _ = win.show();
-                    let _ = win.set_focus();
-                }
+                let _ = tauri::async_runtime::block_on(commands::toggle_hub(app.clone()));
             }
         })
         .build(app)?;

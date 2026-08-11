@@ -5,16 +5,16 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  getCurrentWindow: vi.fn(() => {
-    throw new Error("Tauri runtime is unavailable");
-  }),
+  getCurrentWindow: vi.fn(() => ({ label: "main", hide: vi.fn() })),
   initBootstrap: vi.fn(),
+  invoke: vi.fn(),
 }));
 
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: mocks.getCurrentWindow,
 }));
 vi.mock("./lib/bootstrap", () => ({ initBootstrap: mocks.initBootstrap }));
+vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
 vi.mock("./components/Hub/HubLayout", async () => {
   const { createElement } = await import("react");
   return { HubLayout: () => createElement("div", { "data-testid": "hub-preview" }, "Hub preview") };
@@ -41,6 +41,33 @@ afterEach(() => {
   window.history.replaceState({}, "", "/");
   mocks.getCurrentWindow.mockClear();
   mocks.initBootstrap.mockClear();
+  mocks.invoke.mockClear();
+  delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+});
+
+describe("App pet recovery", () => {
+  it("keeps a visible Hub entry while bootstrap is pending", async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    mocks.initBootstrap.mockReturnValue(new Promise(() => undefined));
+    mocks.invoke.mockResolvedValue(undefined);
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root: Root = createRoot(host);
+
+    await act(async () => {
+      root.render(createElement(App));
+      await Promise.resolve();
+    });
+
+    const recovery = host.querySelector<HTMLButtonElement>('[data-testid="pet-recovery-shell"]');
+    expect(recovery).not.toBeNull();
+
+    await act(async () => recovery?.click());
+    expect(mocks.invoke).toHaveBeenCalledWith("toggle_hub");
+
+    await act(async () => root.unmount());
+    host.remove();
+  });
 });
 
 describe("App browser preview", () => {
