@@ -106,6 +106,17 @@ mod tests {
         assert!(page.contains(r#"http-equiv="refresh" content="300""#));
     }
 
+    #[test]
+    fn token_breakdown_shows_every_component_in_the_total() {
+        let page = build_page("{}");
+        assert!(page.contains("['输入',b.input]"));
+        assert!(page.contains("['输出',b.output]"));
+        assert!(page.contains("['缓存读',b.cacheRead]"));
+        assert!(page.contains("['缓存写',b.cacheWrite]"));
+        assert!(page.contains("['推理',b.reasoning]"));
+        assert!(page.contains("grid-template-columns:repeat(5,1fr)"));
+    }
+
     // Manual visual check: render the real dashboard to /tmp and open it.
     //   cargo test --lib render_real_dashboard_to_tmp -- --ignored --nocapture
     #[test]

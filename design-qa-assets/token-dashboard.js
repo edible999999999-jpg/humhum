@@ -62,7 +62,7 @@ function renderFocus(b){
 }
 function renderNumbers(b){
   const items=[
-    ['输入',b.input],['输出',b.output],['缓存读',b.cacheRead],['缓存写',b.cacheWrite],
+    ['输入',b.input],['输出',b.output],['缓存读',b.cacheRead],['缓存写',b.cacheWrite],['推理',b.reasoning],
   ];
   document.getElementById('numgroup').innerHTML=items.map(it=>
     `<div class="n"><div class="nv">${fmtT(it[1])}</div><div class="nl">${it[0]}</div><div class="ns">${fmt(it[1])}</div></div>`
