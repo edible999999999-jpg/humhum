@@ -5143,14 +5143,14 @@ pub async fn get_token_dashboard(
 /// who downloads HUMHUM sees their own local usage without any CLI step.
 #[tauri::command]
 pub async fn open_token_dashboard(
-    store: State<'_, Arc<std::sync::Mutex<StatsStore>>>,
+    config: State<'_, Arc<std::sync::Mutex<AppConfig>>>,
 ) -> Result<(), String> {
-    let data_json = {
-        let store = store.lock().map_err(|e| format!("Lock error: {}", e))?;
-        let dashboard = store.get_token_dashboard();
-        serde_json::to_string(&dashboard).map_err(|e| format!("Serialize error: {}", e))?
-    };
-    crate::token_dashboard_page::open_in_browser(&data_json)
+    let port = config
+        .lock()
+        .map_err(|error| format!("Lock error: {error}"))?
+        .hook_port;
+    open::that(format!("http://127.0.0.1:{port}/token-dashboard"))
+        .map_err(|error| format!("Failed to open token dashboard: {error}"))
 }
 
 /// Get per-agent usage statistics for comparison

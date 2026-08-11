@@ -143,7 +143,7 @@ async fn handle_request(
 
     log::debug!("{} {}", method, path);
 
-    if path != "/health" {
+    if !is_public_browser_route(method.as_str(), &path) {
         let candidate = req
             .headers()
             .get(TOKEN_HEADER)
@@ -173,6 +173,7 @@ async fn handle_request(
                 "version": env!("CARGO_PKG_VERSION"),
             }),
         )),
+        ("GET", "/token-dashboard") => handle_token_dashboard(app_handle).await,
         ("GET", "/pending") => handle_pending(pending).await,
         ("POST", "/respond") => handle_respond(req, pending).await,
         ("GET", "/knowledge") => handle_knowledge_query(req, app_handle).await,
@@ -199,6 +200,33 @@ async fn handle_request(
             &serde_json::json!({"error": "not found"}),
         )),
     }
+}
+
+fn is_public_browser_route(method: &str, path: &str) -> bool {
+    method == "GET" && matches!(path, "/health" | "/token-dashboard")
+}
+
+async fn handle_token_dashboard(
+    app_handle: tauri::AppHandle,
+) -> Result<Response<Full<Bytes>>, Infallible> {
+    let stats = app_handle.state::<Arc<std::sync::Mutex<StatsStore>>>();
+    let response = match stats.lock() {
+        Ok(store) => match serde_json::to_string(&store.get_token_dashboard()) {
+            Ok(data) => html_response(
+                StatusCode::OK,
+                crate::token_dashboard_page::build_page(&data),
+            ),
+            Err(error) => json_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &serde_json::json!({"error": error.to_string()}),
+            ),
+        },
+        Err(_) => json_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            &serde_json::json!({"error": "token statistics are temporarily unavailable"}),
+        ),
+    };
+    Ok(response)
 }
 
 async fn handle_autostart_status(
@@ -1525,6 +1553,37 @@ fn json_response(status: StatusCode, body: &Value) -> Response<Full<Bytes>> {
         .header("content-type", "application/json")
         .body(Full::new(Bytes::from(json)))
         .unwrap()
+}
+
+fn html_response(status: StatusCode, body: String) -> Response<Full<Bytes>> {
+    Response::builder()
+        .status(status)
+        .header("content-type", "text/html; charset=utf-8")
+        .header("cache-control", "no-store")
+        .header("x-frame-options", "DENY")
+        .header("referrer-policy", "no-referrer")
+        .body(Full::new(Bytes::from(body)))
+        .unwrap()
+}
+
+#[cfg(test)]
+mod token_dashboard_route_tests {
+    use super::*;
+
+    #[test]
+    fn only_get_dashboard_and_health_are_public_browser_routes() {
+        assert!(is_public_browser_route("GET", "/health"));
+        assert!(is_public_browser_route("GET", "/token-dashboard"));
+        assert!(!is_public_browser_route("POST", "/token-dashboard"));
+        assert!(!is_public_browser_route("GET", "/knowledge"));
+    }
+
+    #[test]
+    fn dashboard_response_disables_caching_and_embedding() {
+        let response = html_response(StatusCode::OK, "<html></html>".to_string());
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        assert_eq!(response.headers()["x-frame-options"], "DENY");
+    }
 }
 
 fn empty_response(status: StatusCode) -> Response<Full<Bytes>> {

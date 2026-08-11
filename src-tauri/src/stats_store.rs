@@ -7,7 +7,20 @@ use tokscale_core::sessions::{claudecode::parse_claude_file, codex::parse_codex_
 
 use crate::local_api_auth::{protect_owner_only, write_private_file_atomically};
 
-const STATS_PARSER_REVISION: u32 = 2;
+const STATS_PARSER_REVISION: u32 = 4;
+const DAILY_USAGE_REVISION: u32 = 1;
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SessionDailyUsage {
+    pub date: String,
+    pub model: String,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_creation_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub reasoning_tokens: u64,
+    pub messages: u64,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SessionStats {
@@ -22,6 +35,10 @@ pub struct SessionStats {
     pub cache_read_tokens: u64,
     #[serde(default)]
     pub reasoning_tokens: u64,
+    #[serde(default)]
+    pub daily_usage: Vec<SessionDailyUsage>,
+    #[serde(default)]
+    pub hourly_usage: Vec<SessionDailyUsage>,
     pub tool_calls: u64,
     pub tool_names: Vec<String>,
     pub timestamp: String,
@@ -49,6 +66,8 @@ pub struct DailyBucket {
 pub struct StatsData {
     #[serde(default)]
     pub parser_revision: u32,
+    #[serde(default)]
+    pub daily_usage_revision: u32,
     pub sessions: Vec<SessionStats>,
     pub daily_buckets: Vec<DailyBucket>,
     pub processed_transcripts: HashSet<String>,
@@ -58,6 +77,7 @@ impl Default for StatsData {
     fn default() -> Self {
         Self {
             parser_revision: STATS_PARSER_REVISION,
+            daily_usage_revision: DAILY_USAGE_REVISION,
             sessions: Vec::new(),
             daily_buckets: Vec::new(),
             processed_transcripts: HashSet::new(),
@@ -146,12 +166,30 @@ fn get_pricing(model: &str) -> ModelPricing {
 }
 
 fn calculate_cost(stats: &SessionStats) -> f64 {
-    let p = get_pricing(&stats.model);
-    (stats.input_tokens as f64 * p.input_per_million
-        + stats.output_tokens as f64 * p.output_per_million
-        + stats.cache_creation_tokens as f64 * p.cache_write_per_million
-        + stats.cache_read_tokens as f64 * p.cache_read_per_million
-        + stats.reasoning_tokens as f64 * p.output_per_million)
+    calculate_token_cost(
+        &stats.model,
+        stats.input_tokens,
+        stats.output_tokens,
+        stats.cache_creation_tokens,
+        stats.cache_read_tokens,
+        stats.reasoning_tokens,
+    )
+}
+
+fn calculate_token_cost(
+    model: &str,
+    input_tokens: u64,
+    output_tokens: u64,
+    cache_creation_tokens: u64,
+    cache_read_tokens: u64,
+    reasoning_tokens: u64,
+) -> f64 {
+    let p = get_pricing(model);
+    (input_tokens as f64 * p.input_per_million
+        + output_tokens as f64 * p.output_per_million
+        + cache_creation_tokens as f64 * p.cache_write_per_million
+        + cache_read_tokens as f64 * p.cache_read_per_million
+        + reasoning_tokens as f64 * p.output_per_million)
         / 1_000_000.0
 }
 
@@ -176,6 +214,12 @@ impl StatsStore {
             );
             data = StatsData::default();
         }
+        for session in &data.sessions {
+            if !session.transcript_path.is_empty() {
+                data.processed_transcripts
+                    .insert(session.transcript_path.clone());
+            }
+        }
         let mut store = Self { data, file_path };
         if backfill_enabled {
             if let Err(e) = store.backfill_recent_transcripts() {
@@ -192,6 +236,39 @@ impl StatsStore {
         }
         self.data = StatsData::default();
         Ok(())
+    }
+
+    pub fn migrate_daily_usage_cache(&mut self) -> Result<(), String> {
+        if self.data.daily_usage_revision >= DAILY_USAGE_REVISION {
+            return Ok(());
+        }
+
+        let previous = self.data.clone();
+        for session in &mut self.data.sessions {
+            if session.transcript_path.is_empty() {
+                continue;
+            }
+            let Some(reparsed) = parse_transcript(
+                &session.transcript_path,
+                &session.session_id,
+                &session.client_type,
+            ) else {
+                continue;
+            };
+            *session = reparsed;
+        }
+        self.data.daily_usage_revision = DAILY_USAGE_REVISION;
+        self.rebuild_daily_buckets();
+        self.prune_old_data();
+        if let Err(error) = self.save() {
+            self.data = previous;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub fn refresh_recent_transcripts(&mut self) -> Result<(), String> {
+        self.backfill_recent_transcripts()
     }
 
     fn load_from_disk(path: &PathBuf) -> StatsData {
@@ -320,13 +397,39 @@ impl StatsStore {
         } else {
             day.to_string()
         };
-        let cost = calculate_cost(stats);
-        let all_tokens = stats.input_tokens
-            + stats.output_tokens
-            + stats.cache_creation_tokens
-            + stats.cache_read_tokens
-            + stats.reasoning_tokens;
+        self.update_daily_bucket_values(
+            &bucket_date,
+            &stats.client_type,
+            stats.input_tokens,
+            stats.output_tokens,
+            stats.cache_creation_tokens,
+            stats.cache_read_tokens,
+            stats.reasoning_tokens,
+            stats.tool_calls,
+            calculate_cost(stats),
+            true,
+        );
+    }
 
+    #[allow(clippy::too_many_arguments)]
+    fn update_daily_bucket_values(
+        &mut self,
+        bucket_date: &str,
+        client_type: &str,
+        input_tokens: u64,
+        output_tokens: u64,
+        cache_creation_tokens: u64,
+        cache_read_tokens: u64,
+        reasoning_tokens: u64,
+        tool_calls: u64,
+        cost: f64,
+        count_session: bool,
+    ) {
+        let all_tokens = input_tokens
+            + output_tokens
+            + cache_creation_tokens
+            + cache_read_tokens
+            + reasoning_tokens;
         if let Some(bucket) = self
             .data
             .daily_buckets
@@ -334,28 +437,32 @@ impl StatsStore {
             .find(|b| b.date == bucket_date)
         {
             bucket.total_tokens += all_tokens;
-            bucket.input_tokens += stats.input_tokens;
-            bucket.output_tokens += stats.output_tokens;
-            bucket.cache_creation_tokens += stats.cache_creation_tokens;
-            bucket.cache_read_tokens += stats.cache_read_tokens;
-            bucket.reasoning_tokens += stats.reasoning_tokens;
-            bucket.tool_calls += stats.tool_calls;
-            bucket.session_count += 1;
+            bucket.input_tokens += input_tokens;
+            bucket.output_tokens += output_tokens;
+            bucket.cache_creation_tokens += cache_creation_tokens;
+            bucket.cache_read_tokens += cache_read_tokens;
+            bucket.reasoning_tokens += reasoning_tokens;
+            bucket.tool_calls += tool_calls;
+            if count_session {
+                bucket.session_count += 1;
+                *bucket.clients.entry(client_type.to_string()).or_insert(0) += 1;
+            }
             bucket.estimated_cost_usd += cost;
-            *bucket.clients.entry(stats.client_type.clone()).or_insert(0) += 1;
         } else {
             let mut clients = HashMap::new();
-            clients.insert(stats.client_type.clone(), 1);
+            if count_session {
+                clients.insert(client_type.to_string(), 1);
+            }
             self.data.daily_buckets.push(DailyBucket {
-                date: bucket_date,
+                date: bucket_date.to_string(),
                 total_tokens: all_tokens,
-                input_tokens: stats.input_tokens,
-                output_tokens: stats.output_tokens,
-                cache_creation_tokens: stats.cache_creation_tokens,
-                cache_read_tokens: stats.cache_read_tokens,
-                reasoning_tokens: stats.reasoning_tokens,
-                tool_calls: stats.tool_calls,
-                session_count: 1,
+                input_tokens,
+                output_tokens,
+                cache_creation_tokens,
+                cache_read_tokens,
+                reasoning_tokens,
+                tool_calls,
+                session_count: u64::from(count_session),
                 estimated_cost_usd: cost,
                 clients,
             });
@@ -366,7 +473,34 @@ impl StatsStore {
         let sessions = self.data.sessions.clone();
         self.data.daily_buckets.clear();
         for stats in sessions {
-            self.update_daily_bucket(&stats);
+            if stats.daily_usage.is_empty() {
+                self.update_daily_bucket(&stats);
+                continue;
+            }
+
+            let mut counted_dates = HashSet::new();
+            for usage in &stats.daily_usage {
+                let count_session = counted_dates.insert(usage.date.clone());
+                self.update_daily_bucket_values(
+                    &usage.date,
+                    &stats.client_type,
+                    usage.input_tokens,
+                    usage.output_tokens,
+                    usage.cache_creation_tokens,
+                    usage.cache_read_tokens,
+                    usage.reasoning_tokens,
+                    if count_session { stats.tool_calls } else { 0 },
+                    calculate_token_cost(
+                        &usage.model,
+                        usage.input_tokens,
+                        usage.output_tokens,
+                        usage.cache_creation_tokens,
+                        usage.cache_read_tokens,
+                        usage.reasoning_tokens,
+                    ),
+                    count_session,
+                );
+            }
         }
         self.data.daily_buckets.sort_by(|a, b| a.date.cmp(&b.date));
     }
@@ -376,14 +510,19 @@ impl StatsStore {
         let cutoff_str = cutoff.format("%Y-%m-%d").to_string();
 
         self.data.daily_buckets.retain(|b| b.date >= cutoff_str);
-        self.data.sessions.retain(|s| s.timestamp >= cutoff_str);
-
-        if self.data.processed_transcripts.len() > 500 {
-            let sorted: BTreeSet<String> =
-                self.data.processed_transcripts.iter().cloned().collect();
-            let keep_count = sorted.len() / 2;
-            self.data.processed_transcripts = sorted.into_iter().skip(keep_count).collect();
+        for session in &mut self.data.sessions {
+            session.daily_usage.retain(|usage| usage.date >= cutoff_str);
+            session
+                .hourly_usage
+                .retain(|usage| usage.date >= cutoff_str);
         }
+        self.data.sessions.retain(|session| {
+            if session.daily_usage.is_empty() {
+                session.timestamp >= cutoff_str
+            } else {
+                true
+            }
+        });
     }
 
     pub fn get_aggregated_stats(&self) -> AggregatedStats {
@@ -660,6 +799,7 @@ impl TokenAccum {
     /// Add a single parsed transcript message's token breakdown directly, used
     /// by the hourly view where each message carries its own timestamp so the
     /// day's usage spreads across the real hours it happened in.
+    #[cfg(test)]
     fn add_breakdown(
         &mut self,
         input: u64,
@@ -678,40 +818,27 @@ impl TokenAccum {
         self.cache_write += cache_write;
         self.reasoning += reasoning;
     }
-}
 
-// Re-parse today's transcripts and bucket every message by the local hour it
-// actually happened in. A single session can span many hours, so charging its
-// whole token total to the session's start hour (as the day/week/month views do)
-// collapses the hourly chart into one lonely bar. Here we read each message's
-// own millisecond timestamp instead.
-fn accumulate_today_hours(
-    sessions: &[SessionStats],
-    today: &str,
-    hour_acc: &mut HashMap<String, TokenAccum>,
-) {
-    use tokscale_core::sessions::{claudecode::parse_claude_file, codex::parse_codex_file};
-
-    for s in sessions {
-        if s.transcript_path.is_empty() {
-            continue;
-        }
-        let path = std::path::Path::new(&s.transcript_path);
-        if !path.exists() {
-            continue;
-        }
-        let messages = match s.client_type.as_str() {
-            "codex" => parse_codex_file(path),
-            "claude" | "claude-code" => parse_claude_file(path),
-            _ => continue,
-        };
-        bucket_messages_by_hour(&messages, today, hour_acc);
+    fn add_daily_usage(&mut self, usage: &SessionDailyUsage, cost: f64) {
+        self.tokens += usage.input_tokens
+            + usage.output_tokens
+            + usage.cache_read_tokens
+            + usage.cache_creation_tokens
+            + usage.reasoning_tokens;
+        self.cost += cost;
+        self.messages += usage.messages;
+        self.input += usage.input_tokens;
+        self.output += usage.output_tokens;
+        self.cache_read += usage.cache_read_tokens;
+        self.cache_write += usage.cache_creation_tokens;
+        self.reasoning += usage.reasoning_tokens;
     }
 }
 
 // Pure hour-bucketing: given parsed transcript messages, spread each one into
 // the local hour it happened in (today only). Split out so it can be tested
 // without touching disk.
+#[cfg(test)]
 fn bucket_messages_by_hour(
     messages: &[tokscale_core::sessions::UnifiedMessage],
     today: &str,
@@ -766,6 +893,52 @@ impl StatsStore {
         let mut total = TokenAccum::default();
 
         for s in &self.data.sessions {
+            if !s.daily_usage.is_empty() {
+                for usage in &s.daily_usage {
+                    let cost = calculate_token_cost(
+                        &usage.model,
+                        usage.input_tokens,
+                        usage.output_tokens,
+                        usage.cache_creation_tokens,
+                        usage.cache_read_tokens,
+                        usage.reasoning_tokens,
+                    );
+                    client_set.insert(s.client_type.clone());
+                    model_set.insert(usage.model.clone());
+                    total.add_daily_usage(usage, cost);
+                    day_acc
+                        .entry(usage.date.clone())
+                        .or_default()
+                        .add_daily_usage(usage, cost);
+                    day_slice
+                        .entry((
+                            usage.date.clone(),
+                            s.client_type.clone(),
+                            usage.model.clone(),
+                        ))
+                        .or_default()
+                        .add_daily_usage(usage, cost);
+                }
+
+                for usage in &s.hourly_usage {
+                    if usage.date.starts_with(&today) {
+                        let cost = calculate_token_cost(
+                            &usage.model,
+                            usage.input_tokens,
+                            usage.output_tokens,
+                            usage.cache_creation_tokens,
+                            usage.cache_read_tokens,
+                            usage.reasoning_tokens,
+                        );
+                        hour_acc
+                            .entry(usage.date.clone())
+                            .or_default()
+                            .add_daily_usage(usage, cost);
+                    }
+                }
+                continue;
+            }
+
             let Some((date, _hour)) = split_local_stamp(&s.timestamp) else {
                 continue;
             };
@@ -785,10 +958,6 @@ impl StatsStore {
                 .add(s, cost);
         }
 
-        // Hourly view needs per-message timestamps, not per-session, so re-parse
-        // today's transcripts and spread each message into its real local hour.
-        accumulate_today_hours(&self.data.sessions, &today, &mut hour_acc);
-
         let mut days: Vec<DashDay> = day_acc
             .into_iter()
             .map(|(date, a)| {
@@ -803,7 +972,7 @@ impl StatsStore {
                         messages: sl.messages,
                     })
                     .collect();
-                clients.sort_by(|x, y| y.tokens.cmp(&x.tokens));
+                clients.sort_by_key(|client| std::cmp::Reverse(client.tokens));
                 DashDay {
                     date,
                     tokens: a.tokens,
@@ -1096,6 +1265,79 @@ fn parse_transcript(
                 .unwrap_or_else(|| chrono::Local::now().to_rfc3339())
         });
 
+    let mut daily_usage_map: HashMap<(String, String), SessionDailyUsage> = HashMap::new();
+    let mut hourly_usage_map: HashMap<(String, String), SessionDailyUsage> = HashMap::new();
+    for message in &usage_messages {
+        let Some(message_timestamp) = chrono::DateTime::from_timestamp_millis(message.timestamp)
+        else {
+            continue;
+        };
+        let date = message_timestamp
+            .with_timezone(&chrono::Local)
+            .format("%Y-%m-%d")
+            .to_string();
+        let hour = message_timestamp
+            .with_timezone(&chrono::Local)
+            .format("%Y-%m-%d %H:00")
+            .to_string();
+        let message_model = if message.model_id.trim().is_empty() || message.model_id == "unknown" {
+            model.clone()
+        } else {
+            message.model_id.clone()
+        };
+        let usage = daily_usage_map
+            .entry((date.clone(), message_model.clone()))
+            .or_insert_with(|| SessionDailyUsage {
+                date,
+                model: message_model.clone(),
+                ..SessionDailyUsage::default()
+            });
+        usage.input_tokens = usage
+            .input_tokens
+            .saturating_add(message.tokens.input.max(0) as u64);
+        usage.output_tokens = usage
+            .output_tokens
+            .saturating_add(message.tokens.output.max(0) as u64);
+        usage.cache_creation_tokens = usage
+            .cache_creation_tokens
+            .saturating_add(message.tokens.cache_write.max(0) as u64);
+        usage.cache_read_tokens = usage
+            .cache_read_tokens
+            .saturating_add(message.tokens.cache_read.max(0) as u64);
+        usage.reasoning_tokens = usage
+            .reasoning_tokens
+            .saturating_add(message.tokens.reasoning.max(0) as u64);
+        usage.messages = usage.messages.saturating_add(1);
+
+        let hourly = hourly_usage_map
+            .entry((hour.clone(), message_model.clone()))
+            .or_insert_with(|| SessionDailyUsage {
+                date: hour,
+                model: message_model,
+                ..SessionDailyUsage::default()
+            });
+        hourly.input_tokens = hourly
+            .input_tokens
+            .saturating_add(message.tokens.input.max(0) as u64);
+        hourly.output_tokens = hourly
+            .output_tokens
+            .saturating_add(message.tokens.output.max(0) as u64);
+        hourly.cache_creation_tokens = hourly
+            .cache_creation_tokens
+            .saturating_add(message.tokens.cache_write.max(0) as u64);
+        hourly.cache_read_tokens = hourly
+            .cache_read_tokens
+            .saturating_add(message.tokens.cache_read.max(0) as u64);
+        hourly.reasoning_tokens = hourly
+            .reasoning_tokens
+            .saturating_add(message.tokens.reasoning.max(0) as u64);
+        hourly.messages = hourly.messages.saturating_add(1);
+    }
+    let mut daily_usage: Vec<SessionDailyUsage> = daily_usage_map.into_values().collect();
+    daily_usage.sort_by(|a, b| (&a.date, &a.model).cmp(&(&b.date, &b.model)));
+    let mut hourly_usage: Vec<SessionDailyUsage> = hourly_usage_map.into_values().collect();
+    hourly_usage.sort_by(|a, b| (&a.date, &a.model).cmp(&(&b.date, &b.model)));
+
     Some(SessionStats {
         session_id: effective_session_id,
         client_type: client_type.to_string(),
@@ -1106,6 +1348,8 @@ fn parse_transcript(
         cache_creation_tokens: cache_creation,
         cache_read_tokens: cache_read,
         reasoning_tokens,
+        daily_usage,
+        hourly_usage,
         tool_calls,
         tool_names,
         timestamp,
@@ -1273,6 +1517,31 @@ mod tests {
         assert!(store.data.processed_transcripts.is_empty());
     }
 
+    #[test]
+    fn loaded_sessions_restore_their_processed_transcript_index() {
+        let temp = tempfile::tempdir().unwrap();
+        let stats_path = temp.path().join("stats.json");
+        let data = StatsData {
+            sessions: vec![SessionStats {
+                session_id: "cached".to_string(),
+                client_type: "codex".to_string(),
+                transcript_path: "/tmp/cached-session.jsonl".to_string(),
+                model: "gpt-test".to_string(),
+                timestamp: chrono::Local::now().to_rfc3339(),
+                ..SessionStats::default()
+            }],
+            ..StatsData::default()
+        };
+        std::fs::write(&stats_path, serde_json::to_vec(&data).unwrap()).unwrap();
+
+        let store = StatsStore::new_with_backfill(stats_path, false);
+
+        assert!(store
+            .data
+            .processed_transcripts
+            .contains("/tmp/cached-session.jsonl"));
+    }
+
     // The dashboard payload derives hours (today) + days (30d window), and the
     // browser script folds days into week/month buckets. Guard that the shape
     // holds for a multi-day, multi-client fixture so all four views have data.
@@ -1310,6 +1579,8 @@ mod tests {
                 cache_creation_tokens: 10,
                 cache_read_tokens: 20,
                 reasoning_tokens: 5,
+                daily_usage: vec![],
+                hourly_usage: vec![],
                 tool_calls: 1,
                 tool_names: vec![],
                 timestamp: ts.clone(),
@@ -1403,5 +1674,136 @@ mod tests {
         assert_eq!(h09.messages, 2);
         assert_eq!(h14.input, 300);
         assert_eq!(h14.messages, 1);
+    }
+
+    #[test]
+    fn dashboard_spreads_one_session_across_message_days() {
+        let path = write_temp_jsonl(
+            "cross-day-dashboard",
+            r#"{"timestamp":"2026-08-08T15:59:58Z","type":"session_meta","payload":{"id":"cross-day","model_provider":"openai"}}
+{"timestamp":"2026-08-08T15:59:59Z","type":"turn_context","payload":{"model":"gpt-test"}}
+{"timestamp":"2026-08-08T15:59:59Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":20,"output_tokens":5,"reasoning_output_tokens":1},"last_token_usage":{"input_tokens":100,"cached_input_tokens":20,"output_tokens":5,"reasoning_output_tokens":1}}}}
+{"timestamp":"2026-08-08T16:00:01Z","type":"turn_context","payload":{"model":"gpt-test"}}
+{"timestamp":"2026-08-08T16:00:01Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":180,"cached_input_tokens":40,"output_tokens":9,"reasoning_output_tokens":2},"last_token_usage":{"input_tokens":80,"cached_input_tokens":20,"output_tokens":4,"reasoning_output_tokens":1}}}}"#,
+        );
+        let session = parse_transcript(&path, "cross-day", "codex").unwrap();
+        let mut store = StatsStore::new_with_backfill(
+            std::env::temp_dir().join(format!("humhum-cross-day-{}.json", uuid::Uuid::new_v4())),
+            false,
+        );
+        store.data.sessions.push(session);
+
+        let dashboard = store.get_token_dashboard();
+        let aug_8 = dashboard
+            .days
+            .iter()
+            .find(|day| day.date == "2026-08-08")
+            .expect("first message should remain on August 8 in Asia/Shanghai");
+        let aug_9 = dashboard
+            .days
+            .iter()
+            .find(|day| day.date == "2026-08-09")
+            .expect("post-midnight message should move to August 9 in Asia/Shanghai");
+
+        assert_eq!(aug_8.tokens, 106);
+        assert_eq!(aug_9.tokens, 85);
+    }
+
+    #[test]
+    fn dashboard_uses_cached_daily_usage_without_reparsing_transcript() {
+        let path = write_temp_jsonl(
+            "cached-cross-day-dashboard",
+            r#"{"timestamp":"2026-08-08T15:59:58Z","type":"session_meta","payload":{"id":"cached-cross-day","model_provider":"openai"}}
+{"timestamp":"2026-08-08T15:59:59Z","type":"turn_context","payload":{"model":"gpt-test"}}
+{"timestamp":"2026-08-08T15:59:59Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":20,"output_tokens":5,"reasoning_output_tokens":1},"last_token_usage":{"input_tokens":100,"cached_input_tokens":20,"output_tokens":5,"reasoning_output_tokens":1}}}}
+{"timestamp":"2026-08-08T16:00:01Z","type":"turn_context","payload":{"model":"gpt-test"}}
+{"timestamp":"2026-08-08T16:00:01Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":180,"cached_input_tokens":40,"output_tokens":9,"reasoning_output_tokens":2},"last_token_usage":{"input_tokens":80,"cached_input_tokens":20,"output_tokens":4,"reasoning_output_tokens":1}}}}"#,
+        );
+        let session = parse_transcript(&path, "cached-cross-day", "codex").unwrap();
+        std::fs::remove_file(&path).unwrap();
+        let mut store = StatsStore::new_with_backfill(
+            std::env::temp_dir().join(format!("humhum-cached-day-{}.json", uuid::Uuid::new_v4())),
+            false,
+        );
+        store.data.sessions.push(session);
+        store.rebuild_daily_buckets();
+
+        let dashboard = store.get_token_dashboard();
+
+        assert_eq!(store.data.daily_buckets.len(), 2);
+        assert_eq!(dashboard.days.len(), 2);
+        assert_eq!(dashboard.days[0].date, "2026-08-08");
+        assert_eq!(dashboard.days[0].tokens, 106);
+        assert_eq!(dashboard.days[1].date, "2026-08-09");
+        assert_eq!(dashboard.days[1].tokens, 85);
+    }
+
+    #[test]
+    fn migration_backfills_daily_usage_without_discarding_existing_sessions() {
+        let path = write_temp_jsonl(
+            "daily-usage-migration",
+            r#"{"timestamp":"2026-08-08T15:59:58Z","type":"session_meta","payload":{"id":"migration","model_provider":"openai"}}
+{"timestamp":"2026-08-08T15:59:59Z","type":"turn_context","payload":{"model":"gpt-test"}}
+{"timestamp":"2026-08-08T15:59:59Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":20,"output_tokens":5},"last_token_usage":{"input_tokens":100,"cached_input_tokens":20,"output_tokens":5}}}}"#,
+        );
+        let mut session = parse_transcript(&path, "migration", "codex").unwrap();
+        session.daily_usage.clear();
+        let stats_path =
+            std::env::temp_dir().join(format!("humhum-migration-{}.json", uuid::Uuid::new_v4()));
+        let mut store = StatsStore {
+            data: StatsData {
+                parser_revision: STATS_PARSER_REVISION,
+                daily_usage_revision: 0,
+                sessions: vec![session],
+                daily_buckets: vec![],
+                processed_transcripts: HashSet::new(),
+            },
+            file_path: stats_path,
+        };
+
+        store.migrate_daily_usage_cache().unwrap();
+
+        assert_eq!(store.data.sessions.len(), 1);
+        assert_eq!(store.data.daily_usage_revision, DAILY_USAGE_REVISION);
+        assert_eq!(store.data.sessions[0].daily_usage.len(), 1);
+        assert_eq!(store.data.daily_buckets[0].total_tokens, 105);
+    }
+
+    #[test]
+    fn pruning_keeps_long_session_with_recent_daily_usage() {
+        let mut store = StatsStore::new_with_backfill(
+            std::env::temp_dir().join(format!("humhum-prune-{}.json", uuid::Uuid::new_v4())),
+            false,
+        );
+        let recent_date = chrono::Local::now().format("%Y-%m-%d").to_string();
+        store.data.sessions.push(SessionStats {
+            session_id: "long-running".to_string(),
+            client_type: "codex".to_string(),
+            transcript_path: "long-running.jsonl".to_string(),
+            model: "gpt-test".to_string(),
+            input_tokens: 100,
+            output_tokens: 5,
+            cache_creation_tokens: 0,
+            cache_read_tokens: 20,
+            reasoning_tokens: 0,
+            daily_usage: vec![SessionDailyUsage {
+                date: recent_date,
+                model: "gpt-test".to_string(),
+                input_tokens: 100,
+                output_tokens: 5,
+                cache_read_tokens: 20,
+                messages: 1,
+                ..SessionDailyUsage::default()
+            }],
+            hourly_usage: vec![],
+            tool_calls: 0,
+            tool_names: vec![],
+            timestamp: "2020-01-01T00:00:00+08:00".to_string(),
+        });
+
+        store.prune_old_data();
+
+        assert_eq!(store.data.sessions.len(), 1);
+        assert_eq!(store.data.sessions[0].daily_usage.len(), 1);
     }
 }

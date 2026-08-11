@@ -286,9 +286,29 @@ pub fn run() {
                 .unwrap_or_else(|| std::path::PathBuf::from("."))
                 .join(".humhum")
                 .join("stats.json");
-            let stats_store =
-                stats_store::StatsStore::new_with_backfill(stats_path, analytics_enabled);
-            app.manage(Arc::new(std::sync::Mutex::new(stats_store)));
+            let stats_store = Arc::new(std::sync::Mutex::new(
+                stats_store::StatsStore::new_with_backfill(stats_path, false),
+            ));
+            app.manage(stats_store.clone());
+            if analytics_enabled {
+                // Let windows and the local HTTP service become available before
+                // scanning active transcripts. The dashboard can serve the last
+                // durable cache while this background refresh catches up.
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(5));
+                    match stats_store.lock() {
+                    Ok(mut store) => {
+                        if let Err(error) = store.migrate_daily_usage_cache() {
+                            log::warn!("Could not migrate daily token usage cache: {error}");
+                        }
+                        if let Err(error) = store.refresh_recent_transcripts() {
+                            log::warn!("Could not refresh recent token usage: {error}");
+                        }
+                    }
+                    Err(error) => log::warn!("Could not lock token usage cache: {error}"),
+                    }
+                });
+            }
 
             // Knowledge store (persistent)
             let knowledge_store = knowledge_store::KnowledgeStore::new();

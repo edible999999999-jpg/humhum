@@ -2,8 +2,6 @@
 // opens it in the system browser. The render script is reused verbatim from
 // the design-qa asset so the page stays in sync with the reviewed design.
 
-use std::path::PathBuf;
-
 // The vetted editorial render script (reads `window.TOKEN_DATA`).
 const DASHBOARD_JS: &str = include_str!("../../design-qa-assets/token-dashboard.js");
 
@@ -15,10 +13,10 @@ const DASHBOARD_CSS: &str = include_str!("../../design-qa-assets/token-dashboard
 /// without touching the design-qa asset (its own snapshot flow still uses them).
 fn live_dashboard_js() -> String {
     DASHBOARD_JS
-        .replace("（本地，非实时）", "（打开时刻）")
+        .replace("（本地，非实时）", "（每 5 分钟更新）")
         .replace(
             "。数值为静态快照，重跑 <b>scripts/gen-token-dashboard.sh</b> 刷新。",
-            "。数据取自本地会话记录，重新打开即刷新。",
+            "。数据取自本地会话记录，页面每 5 分钟自动更新。",
         )
 }
 
@@ -30,12 +28,13 @@ pub fn build_page(data_json: &str) -> String {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="refresh" content="300">
 <title>Token 用量 · HUMHUM</title>
 <style>{css}</style>
 </head>
 <body>
 <div class="stage">
-  <p class="kicker">数据源本地会话 · 快照 <span class="snap" id="snap">—</span></p>
+  <p class="kicker">数据源本地会话 · 更新 <span class="snap" id="snap">—</span></p>
   <h1 class="title">Token 用量</h1>
   <p class="note" id="rangeNote">加载中…</p>
   <section class="focus" id="focus"></section>
@@ -81,17 +80,6 @@ pub fn build_page(data_json: &str) -> String {
     )
 }
 
-/// Write the page to a temp file and open it in the default browser.
-pub fn open_in_browser(data_json: &str) -> Result<(), String> {
-    let html = build_page(data_json);
-    let mut path: PathBuf = std::env::temp_dir();
-    path.push("humhum-token-dashboard.html");
-    std::fs::write(&path, html.as_bytes())
-        .map_err(|e| format!("Failed to write dashboard page: {e}"))?;
-    open::that(&path).map_err(|e| format!("Failed to open browser: {e}"))?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -112,14 +100,20 @@ mod tests {
         assert!(!page.contains("gen-token-dashboard.sh"));
     }
 
+    #[test]
+    fn page_refreshes_every_five_minutes() {
+        let page = build_page("{}");
+        assert!(page.contains(r#"http-equiv="refresh" content="300""#));
+    }
+
     // Manual visual check: render the real dashboard to /tmp and open it.
     //   cargo test --lib render_real_dashboard_to_tmp -- --ignored --nocapture
     #[test]
     #[ignore]
     fn render_real_dashboard_to_tmp() {
         use crate::stats_store::StatsStore;
-        let path = dirs::home_dir().unwrap().join(".humhum/stats.json");
-        let store = StatsStore::new_with_backfill(path, false);
+        let stats_path = dirs::home_dir().unwrap().join(".humhum/stats.json");
+        let store = StatsStore::new_with_backfill(stats_path, false);
         let dash = store.get_token_dashboard();
         let json = serde_json::to_string(&dash).unwrap();
         let html = build_page(&json);
