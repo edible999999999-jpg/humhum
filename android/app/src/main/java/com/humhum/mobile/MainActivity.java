@@ -1221,7 +1221,10 @@ public final class MainActivity extends ComponentActivity {
         ConnectionStore.Connection currentConnection = connection;
         AnywhereGateway currentAnywhere = anywhereGateway;
         boolean relayFirst =
-                ConnectionRoutePolicy.useRelayFirst(currentConnection, currentAnywhere != null);
+                ConnectionRoutePolicy.useRelayFirst(
+                        currentConnection,
+                        currentAnywhere != null,
+                        currentUiState().getRelayRecovered());
         long refreshGeneration = snapshotGenerationGate.capture();
         boolean accepted = companionRepository.executeNetwork(() -> {
             try {
@@ -1411,7 +1414,10 @@ public final class MainActivity extends ComponentActivity {
         dispatchState(new HumHumAction.StatusChanged(
                 getString(R.string.main_hush_syncing)));
         boolean relayFirst =
-                ConnectionRoutePolicy.useRelayFirst(currentConnection, currentAnywhere != null);
+                ConnectionRoutePolicy.useRelayFirst(
+                        currentConnection,
+                        currentAnywhere != null,
+                        currentUiState().getRelayRecovered());
         long generation = snapshotGenerationGate.capture();
         companionRepository.executeNetwork(() -> {
             try {
@@ -2079,7 +2085,10 @@ public final class MainActivity extends ComponentActivity {
         AnywhereGateway currentAnywhere = anywhereGateway;
         if (current == null || currentConnection == null) return;
         boolean relayFirst =
-                ConnectionRoutePolicy.useRelayFirst(currentConnection, currentAnywhere != null);
+                ConnectionRoutePolicy.useRelayFirst(
+                        currentConnection,
+                        currentAnywhere != null,
+                        currentUiState().getRelayRecovered());
         String sessionId = session.id();
         long generation = snapshotGenerationGate.capture();
         companionRepository.executeNetwork(() -> {
@@ -2203,7 +2212,10 @@ public final class MainActivity extends ComponentActivity {
         ConnectionStore.Connection currentConnection = connection;
         AnywhereGateway currentAnywhere = anywhereGateway;
         boolean relayFirst =
-                ConnectionRoutePolicy.useRelayFirst(currentConnection, currentAnywhere != null);
+                ConnectionRoutePolicy.useRelayFirst(
+                        currentConnection,
+                        currentAnywhere != null,
+                        currentUiState().getRelayRecovered());
         long generation = snapshotGenerationGate.capture();
         companionRepository.executeNetwork(() -> {
             if (relayFirst) {
@@ -2224,6 +2236,14 @@ public final class MainActivity extends ComponentActivity {
                         clearRevokedConnection(generation, current, currentConnection);
                         return;
                     }
+                    String visibleError = safeError(remoteError);
+                    postIfCurrent(generation, current, currentConnection, () -> {
+                        dispatchState(new HumHumAction.ApprovalFinished(sessionId, action.id()));
+                        first.setEnabled(true);
+                        second.setEnabled(true);
+                        setStatusMessage(visibleError);
+                    });
+                    return;
                 }
             }
             try {
@@ -2279,7 +2299,10 @@ public final class MainActivity extends ComponentActivity {
         ConnectionStore.Connection currentConnection = connection;
         AnywhereGateway currentAnywhere = anywhereGateway;
         boolean relayFirst =
-                ConnectionRoutePolicy.useRelayFirst(currentConnection, currentAnywhere != null);
+                ConnectionRoutePolicy.useRelayFirst(
+                        currentConnection,
+                        currentAnywhere != null,
+                        currentUiState().getRelayRecovered());
         long generation = snapshotGenerationGate.capture();
         companionRepository.executeNetwork(() -> {
             if (relayFirst) {
@@ -2298,6 +2321,14 @@ public final class MainActivity extends ComponentActivity {
                         clearRevokedConnection(generation, current, currentConnection);
                         return;
                     }
+                    String visibleError = safeError(remoteError);
+                    postIfCurrent(generation, current, currentConnection, () -> {
+                        dispatchState(new HumHumAction.FollowUpFailed(
+                                session.id(), visibleError));
+                        setStatusMessage(visibleError);
+                        renderSessions(currentUiState().getSessions());
+                    });
+                    return;
                 }
             }
             try {

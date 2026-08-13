@@ -142,6 +142,27 @@ public class ManifestContractTest {
     }
 
     @Test
+    public void relayFirstControlNeverRetriesTheSameWriteOverTheLan() throws Exception {
+        String source = new String(
+                Files.readAllBytes(
+                        Path.of("src/main/java/com/humhum/mobile/MainActivity.java")),
+                StandardCharsets.UTF_8);
+        String send = methodSource(
+                source,
+                "private void send(Models.Session session, EditText draft, Button send)",
+                "private void finishFollowUp(");
+        String remoteBranch = methodSource(
+                send,
+                "if (relayFirst) {",
+                "try {\n                String state = current.sendMessage(");
+
+        assertTrue(remoteBranch.contains("currentAnywhere.sendMessage("));
+        assertTrue(remoteBranch.contains("catch (Exception remoteError)"));
+        assertTrue(remoteBranch.contains("return;"));
+        assertFalse(remoteBranch.contains("current.sendMessage("));
+    }
+
+    @Test
     public void rotationKeepsTheActivityOwnedDraftAndSendStateAlive() throws Exception {
         DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
         factory.setNamespaceAware(true);

@@ -78,6 +78,16 @@ class HumHumViewModelTest {
     }
 
     @Test
+    fun refreshKeepsTheLastSuccessfulRelayRouteUntilAnotherRouteSucceeds() {
+        viewModel.dispatch(HumHumAction.Connected(Models.Scope.CONTROL))
+        viewModel.dispatch(HumHumAction.RelayRecovered(listOf(session("remote"))))
+
+        viewModel.dispatch(HumHumAction.RefreshRequested(userInitiated = true))
+
+        assertTrue(viewModel.state.value.relayRecovered)
+    }
+
+    @Test
     fun personalContextSurvivesSessionRefreshAndClearsOnDisconnect() {
         val context = personalContext()
         viewModel.dispatch(HumHumAction.Connected(Models.Scope.READ))

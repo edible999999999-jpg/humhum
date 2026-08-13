@@ -977,6 +977,91 @@ pub(crate) async fn enqueue_and_deliver_codex_message(
     }
 }
 
+pub(crate) fn enqueue_cli_message_for_background_delivery(
+    store: &std::sync::Mutex<SessionStore>,
+    queue: Arc<std::sync::Mutex<InterventionQueue>>,
+    provider: InterventionProvider,
+    session_id: &str,
+    message: &str,
+) -> Result<CodexSendReceipt, String> {
+    let (workspace, qoder_surface) = match provider {
+        InterventionProvider::Claude => (
+            cli_followup_workspace(store, session_id, "claude-code", "Claude")?,
+            None,
+        ),
+        InterventionProvider::OpenCode => (
+            cli_followup_workspace(store, session_id, "opencode", "OpenCode")?,
+            None,
+        ),
+        InterventionProvider::Qoder => {
+            let (workspace, surface) = qoder_followup_target(store, session_id)?;
+            (workspace, Some(surface))
+        }
+        InterventionProvider::Codex => return Err("Codex uses the app-server transport".into()),
+    };
+    let entry = queue
+        .lock()
+        .map_err(|error| format!("Queue lock error: {error}"))?
+        .enqueue_for_delivery(provider, session_id, message)?;
+    let intervention_id = entry.id.clone();
+    let delivery_queue = Arc::clone(&queue);
+    tauri::async_runtime::spawn(async move {
+        let result = match provider {
+            InterventionProvider::Claude => {
+                deliver_queued_claude_message(&delivery_queue, &intervention_id, &workspace).await
+            }
+            InterventionProvider::OpenCode => {
+                deliver_queued_opencode_message(&delivery_queue, &intervention_id, &workspace).await
+            }
+            InterventionProvider::Qoder => {
+                deliver_queued_qoder_message(
+                    &delivery_queue,
+                    &intervention_id,
+                    &workspace,
+                    qoder_surface.expect("Qoder surface is resolved with its workspace"),
+                )
+                .await
+            }
+            InterventionProvider::Codex => unreachable!(),
+        };
+        if result.is_err() {
+            log::warn!("A phone-queued Agent follow-up did not complete successfully");
+        }
+    });
+    Ok(queued_delivery_receipt(entry))
+}
+
+pub(crate) fn enqueue_codex_message_for_background_delivery(
+    state: Arc<CodexBridgeState>,
+    queue: Arc<std::sync::Mutex<InterventionQueue>>,
+    thread_id: &str,
+    message: &str,
+) -> Result<CodexSendReceipt, String> {
+    let entry = queue
+        .lock()
+        .map_err(|error| format!("Queue lock error: {error}"))?
+        .enqueue_for_delivery(InterventionProvider::Codex, thread_id, message)?;
+    let intervention_id = entry.id.clone();
+    let delivery_queue = Arc::clone(&queue);
+    tauri::async_runtime::spawn(async move {
+        if deliver_queued_codex_message(&state, &delivery_queue, &intervention_id)
+            .await
+            .is_err()
+        {
+            log::warn!("A phone-queued Codex follow-up did not complete successfully");
+        }
+    });
+    Ok(queued_delivery_receipt(entry))
+}
+
+fn queued_delivery_receipt(entry: QueuedIntervention) -> CodexSendReceipt {
+    CodexSendReceipt {
+        status: "queued".into(),
+        turn_id: None,
+        intervention_id: entry.id,
+    }
+}
+
 fn delivery_receipt_status(delivered: bool) -> Result<&'static str, String> {
     if delivered {
         Ok("delivered")
@@ -6543,6 +6628,26 @@ mod humi_agent_kernel_tests {
     fn delivery_failure_is_never_reported_as_queued() {
         assert_eq!(delivery_receipt_status(true).unwrap(), "delivered");
         assert!(delivery_receipt_status(false).is_err());
+    }
+
+    #[test]
+    fn persisted_remote_follow_up_has_an_explicit_queued_receipt() {
+        let entry = QueuedIntervention {
+            id: "intervention-1".into(),
+            thread_id: "thread-1".into(),
+            message: "continue".into(),
+            created_at: "2026-08-13T00:00:00Z".into(),
+            attempts: 0,
+            status: crate::intervention_queue::InterventionStatus::Pending,
+            last_error: None,
+            provider: InterventionProvider::Claude,
+        };
+
+        let receipt = queued_delivery_receipt(entry);
+
+        assert_eq!(receipt.status, "queued");
+        assert_eq!(receipt.intervention_id, "intervention-1");
+        assert!(receipt.turn_id.is_none());
     }
 
     fn asset(

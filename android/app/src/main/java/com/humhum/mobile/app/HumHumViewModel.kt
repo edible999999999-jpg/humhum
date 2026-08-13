@@ -135,7 +135,6 @@ class HumHumViewModel @JvmOverloads constructor(
             is HumHumAction.RefreshRequested -> {
                 if (state.scope == null || state.refreshInFlight) state else state.copy(
                     refreshInFlight = true,
-                    relayRecovered = false,
                     errorMessage = null,
                     statusMessage = if (action.userInitiated) {
                         StatusText.Res(StatusKey.REFRESHING)

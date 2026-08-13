@@ -935,13 +935,12 @@ async fn execute_anywhere_request(
                     .state::<Arc<crate::codex_bridge::CodexBridgeState>>()
                     .inner()
                     .clone();
-                crate::commands::enqueue_and_deliver_codex_message(
-                    &codex,
-                    &queue,
+                crate::commands::enqueue_codex_message_for_background_delivery(
+                    codex,
+                    queue,
                     &session_id,
                     &message,
-                )
-                .await?
+                )?
             } else {
                 let provider = match provider.as_str() {
                     "claude" | "claude-code" => {
@@ -955,14 +954,13 @@ async fn execute_anywhere_request(
                     .state::<Arc<std::sync::Mutex<crate::session_store::SessionStore>>>()
                     .inner()
                     .clone();
-                crate::commands::enqueue_and_deliver_cli_message(
+                crate::commands::enqueue_cli_message_for_background_delivery(
                     &store,
-                    &queue,
+                    queue,
                     provider,
                     &session_id,
                     &message,
-                )
-                .await?
+                )?
             };
             serde_json::to_value(receipt).map_err(|_| "Could not send follow-up".to_string())
         }

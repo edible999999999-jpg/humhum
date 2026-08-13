@@ -5,10 +5,17 @@ public final class ConnectionRoutePolicy {
 
     public static boolean useRelayFirst(
             ConnectionStore.Connection connection, boolean relayGatewayAvailable) {
+        return useRelayFirst(connection, relayGatewayAvailable, false);
+    }
+
+    public static boolean useRelayFirst(
+            ConnectionStore.Connection connection,
+            boolean relayGatewayAvailable,
+            boolean lastSuccessfulRouteWasRelay) {
         return relayGatewayAvailable
                 && connection != null
-                && connection.prefersRelay()
                 && connection.wakeRelay() != null
-                && connection.wakeRelay().version() == 2;
+                && connection.wakeRelay().version() == 2
+                && (connection.prefersRelay() || lastSuccessfulRouteWasRelay);
     }
 }
